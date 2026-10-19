@@ -22,6 +22,16 @@ class GitPrivacyTests(unittest.TestCase):
                      "BM.xcodeproj/xcuserdata/user.xcuserdatad/UserInterfaceState.xcuserstate", "BM/avatar.png"]:
             self.assertFalse(allowed_path(path), path)
 
+    def test_tool_metadata_and_generated_swift_are_not_source(self):
+        for path in ["BM/.claude/config.swift", "BM/.omc/session.swift", "BM/.omx/session.swift",
+                     "BM/.codex/state.swift", "BM/.worktrees/local/Test.swift", "BM/generated/Client.swift",
+                     "BM/Domain/.private/Notes.swift", "BMTests/generated/Test.swift",
+                     "BMUITests/.cache/Session.swift"]:
+            self.assertFalse(allowed_path(path), path)
+        self.assertTrue(allowed_path(".githooks/pre-commit"))
+        self.assertTrue(allowed_path("BMTests/CareerStoreTests.swift"))
+        self.assertTrue(allowed_path("AGENTS.md"))
+
     def test_secret_and_personal_values_are_detected(self):
         cases = [
             ("private-key", "-----BEGIN " + "PRIVATE KEY-----"),
@@ -62,9 +72,14 @@ class GitPrivacyTests(unittest.TestCase):
             shutil.copytree(ROOT / "scripts", repo / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
             (repo / "BM").mkdir()
             good = repo / "BM/Good.swift"; good.write_text("struct Safe {}\n")
-            for path in ["qa/record.json", "BM/.env", "Signing.local.xcconfig", "BM/secrets/key.swift", "BM/db.store"]:
+            for path in ["qa/record.json", "BM/.env", "Signing.local.xcconfig", "BM/secrets/key.swift", "BM/db.store",
+                         "BM/.claude/config.swift", "BM/Domain/.private/Notes.swift", "BM/.omc/session.swift",
+                         "BM/.omx/session.swift", "BM/.codex/state.swift", "BM/.worktrees/local/Test.swift",
+                         "BM/generated/Client.swift", "BM/local.sql", "BM/local.iml"]:
                 self.assertEqual(git("check-ignore", "-q", path).returncode, 0, path)
-            self.assertEqual(git("check-ignore", "-q", "BM/Good.swift").returncode, 1)
+            for path in ["BM/Good.swift", "BMTests/CareerStoreTests.swift", "AGENTS.md", "README.md",
+                         ".githooks/pre-commit", ".githooks/commit-msg"]:
+                self.assertEqual(git("check-ignore", "-q", path).returncode, 1, path)
             (repo / "qa").mkdir(); (repo / "qa/record.json").write_text("{}")
             git("add", "BM/Good.swift"); git("add", "-f", "qa/record.json")
             result = git("commit", "-m", "2026.10.19 검사 작업 수행")
@@ -72,6 +87,13 @@ class GitPrivacyTests(unittest.TestCase):
             self.assertIn(b"not-in-source-allowlist", result.stderr)
             self.assertNotEqual(git("rev-parse", "--verify", "HEAD").returncode, 0)
             git("rm", "--cached", "qa/record.json")
+            (repo / "BM/generated").mkdir()
+            (repo / "BM/generated/Client.swift").write_text("struct Generated {}")
+            git("add", "-f", "BM/generated/Client.swift")
+            result = git("commit", "-m", "2026.10.19 검사 작업 수행")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"not-in-source-allowlist", result.stderr)
+            git("rm", "--cached", "BM/generated/Client.swift")
             value = "ghp_" + "z" * 36
             (repo / "BM/Hidden.swift").write_text('let key = "' + value + '"')
             git("add", "BM/Hidden.swift")

@@ -45,6 +45,17 @@
 **/.idea/
 **/.vscode/
 **/xcuserdata/
+
+# Shared local tooling and generated-file exclusions.
+# Restrict hidden source subdirectories; keep shared root Git hooks/settings above.
+/BM/**/.*/
+/BMTests/**/.*/
+/BMUITests/**/.*/
+**/generated/
+**/*.iws
+**/*.iml
+**/*.ipr
+**/*.sql
 **/*.xcuserstate
 **/*.local.xcconfig
 **/GoogleService-Info.plist

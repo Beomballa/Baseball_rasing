@@ -59,6 +59,8 @@ xcodebuild -project BM.xcodeproj -scheme BM -destination 'platform=iOS Simulator
 
 ## 소스 업로드와 개인정보 보호
 
+기존 Java 프로젝트의 제외 정책을 검토해 소스 내부 숨김 도구 폴더·자동 생성 코드·IDE 모듈 설정·SQL 제외를 보완했습니다. 해당 프로젝트의 Gradle/Java 규칙, Markdown 전체 제외, 테스트 제외는 iOS에 복사하지 않습니다. 개발 규칙·공유 훅·테스트 코드는 유지합니다.
+
 업로드 대상은 Swift 앱/테스트, 공유 Xcode 프로젝트/스킴, 학교 JSON, Git 검사 스크립트, README/개발 규칙입니다. 테스트 결과·스크린샷·로그·세이브·개인 IDE 설정·환경 파일·인증/서명 파일은 로컬에만 둡니다. QA 경로를 설명하는 문서가 있어도 해당 산출물은 원격에 포함되지 않습니다.
 
 일반 Bundle Identifier와 Xcode 내부 참조ID는 빌드에 필요한 공개 가능한 설정이며 비밀키가 아닙니다. 개인 Team/인증값은 공유 프로젝트에 입력해 커밋하지 말고 `Signing.local.xcconfig` 등 로컬 설정으로 관리합니다. `.gitignore`만으로 이미 추적하거나 강제 추가한 파일을 보호할 수 없어 pre-commit에서 staged 파일을 다시 검사합니다. 패턴 검사는 완전한 비밀 탐지 도구가 아니므로 staged diff 검토도 수행합니다.

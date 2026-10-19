@@ -12,7 +12,7 @@ EXACT_PATHS = {
     ".githooks/pre-commit", ".githooks/commit-msg",
     "scripts/check_staged.py", "scripts/check_commit_message.py", "scripts/test_git_security.py",
 }
-BLOCKED_PARTS = {"secrets", "credentials", ".ssh", ".aws", ".idea", ".vscode", "xcuserdata", "__pycache__"}
+BLOCKED_PARTS = {"secrets", "credentials", ".ssh", ".aws", ".idea", ".vscode", "xcuserdata", "__pycache__", "generated"}
 PATTERNS = [
     ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----")),
     ("github-token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")),
@@ -33,7 +33,9 @@ def allowed_path(path: str) -> bool:
         return False
     if path in EXACT_PATHS:
         return True
-    return len(parts) > 1 and parts[0] in {"BM", "BMTests", "BMUITests"} and path.endswith(".swift")
+    return (len(parts) > 1 and parts[0] in {"BM", "BMTests", "BMUITests"}
+            and not any(part.startswith(".") for part in parts[1:-1])
+            and path.endswith(".swift"))
 
 
 def content_issues(data: bytes) -> list[str]:
