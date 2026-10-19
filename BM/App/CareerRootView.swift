@@ -3,6 +3,9 @@ import SwiftData
 
 struct CareerRootView: View {
     let schools: [School]
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var transition = CareerTransition()
     @Query(sort: \CareerPlayer.createdAt) private var players: [CareerPlayer]
     @Query private var calendars: [CareerCalendarState]
     @State private var selectedID: UUID?
@@ -16,9 +19,13 @@ struct CareerRootView: View {
             Group {
                 if let player = selected {
                     PlayerHomeView(player: player, players: players,
-                                   calendar: calendars.first { $0.playerID == player.id }, schools: schools,
+                                   calendar: calendars.first { $0.playerID == player.id }, schools: schools, transition: transition,
                                    select: { selectedID = $0 }, create: { showCreation = true },
-                                   play: { path.append(player.id) })
+                                   play: {
+                                       transition.perform(date: player.gameDate, label: "연습장으로 이동", reduced: reduced) {
+                                           path.append(player.id)
+                                       }
+                                   })
                 } else {
                     PlayerCreationView(schools: schools, availableRoles: PlayerRole.allCases) { selectedID = $0 }
                 }
@@ -37,5 +44,10 @@ struct CareerRootView: View {
                 }
             }
         }
+        .disabled(transition.display != nil)
+        .accessibilityHidden(transition.display != nil)
+        .overlay { CareerTransitionOverlay(transition: transition) }
+        .onChange(of: scenePhase) { _, phase in if phase == .background { transition.requestCancel() } }
+        .onDisappear { transition.requestCancel() }
     }
 }

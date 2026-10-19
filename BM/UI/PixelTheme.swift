@@ -55,7 +55,7 @@ struct StatRow: View {
                         .frame(width: max(0, geometry.size.width) * min(100, max(0, value)) / 100)
                 }
             }.frame(height: 10).accessibilityHidden(true)
-            Text(value.formatted(.number.precision(.fractionLength(0...4))))
+            Text(value.formatted(.number.precision(.fractionLength(1))))
                 .monospacedDigit().frame(minWidth: 28, alignment: .trailing)
         }.font(.subheadline).accessibilityElement(children: .combine)
     }

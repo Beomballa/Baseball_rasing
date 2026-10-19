@@ -6,12 +6,13 @@ struct CareerCalendarPanel: View {
     let player: CareerPlayer
     let state: CareerCalendarState
     let schools: [School]
+    let transition: CareerTransition
+    @Environment(\.accessibilityReduceMotion) private var reduced
     @State private var showSchedule = false
     @State private var confirmBirthday = false
     @State private var errorMessage: String?
     @State private var summary = ""
     @State private var advancing = false
-    @State private var advanceTask: Task<Void, Never>?
 
     private var fixtures: [SeasonFixture] { (try? state.upcoming(for: player)) ?? [] }
     private var today: SeasonFixture? { fixtures.first { $0.date.description == player.gameDate } }
@@ -28,9 +29,15 @@ struct CareerCalendarPanel: View {
             if try CalendarProgression.isAnniversaryTomorrow(player: player, state: state), !confirmed {
                 confirmBirthday = true
             } else {
-                try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision,
-                                                   confirmAnniversary: confirmed, in: context)
-                summary = "하루 진행 완료 · 수면 회복 −4 · \(player.gameDate) 저장"
+                let revision = state.revision
+                transition.perform(date: player.gameDate, label: "하루를 마무리하는 중", reduced: reduced) {
+                    run {
+                        try CalendarProgression.advanceDay(player: player, state: state, revision: revision,
+                                                           confirmAnniversary: confirmed, in: context)
+                        transition.arrive(on: player.gameDate, reduced: reduced)
+                        summary = "하루 진행 완료 · 수면 회복 −4 · \(player.gameDate) 저장"
+                    }
+                }
             }
         }
     }
@@ -76,14 +83,17 @@ struct CareerCalendarPanel: View {
                     .disabled(!hasAction || today != nil || advancing).accessibilityIdentifier("advanceDay")
             }
             if advancing {
-                Button("묶음 진행 중지") { advanceTask?.cancel() }.buttonStyle(GameButtonStyle(secondary: true))
+                Button("묶음 진행 중지") { transition.requestCancel() }.buttonStyle(GameButtonStyle(secondary: true))
             } else {
                 Button("다음 일정까지 · 회복 우선") {
-                    advancing = true
-                    advanceTask = Task { @MainActor in
-                        defer { advancing = false; advanceTask = nil }
+                    transition.perform(date: player.gameDate, label: "다음 일정까지 · 회복 우선", reduced: reduced, cancellable: true) {
+                        advancing = true
+                        defer { advancing = false }
                         do {
-                            summary = try await CalendarProgression.advanceOffDays(player: player, state: state, in: context).message
+                            summary = try await CalendarProgression.advanceOffDays(player: player, state: state, in: context) { date in
+                                transition.arrive(on: date, reduced: reduced)
+                                try? await Task.sleep(for: .milliseconds(reduced ? 0 : 100))
+                            }.message
                         } catch { errorMessage = error.localizedDescription }
                     }
                 }.buttonStyle(GameButtonStyle(secondary: true)).disabled(today != nil)
@@ -95,7 +105,7 @@ struct CareerCalendarPanel: View {
                 Text(summary).font(.caption).accessibilityIdentifier("calendarSummary")
             }
         }
-        .onDisappear { advanceTask?.cancel() }
+        .onDisappear { transition.requestCancel() }
         .confirmationDialog("나이·학적 변경일로 진행할까요?", isPresented: $confirmBirthday, titleVisibility: .visible) {
             Button("확인하고 다음 날") { nextDay(confirmed: true) }
         } message: { Text("게임 달력의 기념일에만 나이가 바뀝니다. 성인 도달이 프로 입단을 뜻하지 않습니다.") }

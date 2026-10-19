@@ -63,7 +63,7 @@ struct CalendarAdvanceSummary: Equatable {
     }
 
     static func advanceOffDays(player: CareerPlayer, state: CareerCalendarState,
-                               in context: ModelContext) async throws -> CalendarAdvanceSummary {
+                               in context: ModelContext, onDaySaved: (@MainActor (String) async -> Void)? = nil) async throws -> CalendarAdvanceSummary {
         let before = player.fatigue
         var days = 0, rests = 0
         var stop = CalendarAdvanceSummary.Stop.limit
@@ -78,6 +78,7 @@ struct CalendarAdvanceSummary: Equatable {
             expectedRevision = state.revision
             days += 1
             if needsRest { rests += 1 }
+            await onDaySaved?(player.gameDate)
             await Task.yield()
         }
         if stop == .limit {

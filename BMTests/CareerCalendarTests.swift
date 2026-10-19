@@ -200,4 +200,38 @@ import SwiftData
         XCTAssertEqual(players.first { $0.role == .batter }?.gameDate, "2028-04-02")
         XCTAssertEqual(players.first { $0.role == .batter }?.fatigue, 91)
     }
+    func testTransitionRejectsRepeatedInputAndCancelBeforeCommitDoesNotRunAction() async throws {
+        let transition = CareerTransition()
+        var calls = 0
+        transition.perform(date: "2026-04-02", label: "하루 진행", reduced: true) { calls += 1 }
+        transition.perform(date: "2026-04-02", label: "중복 입력", reduced: true) { calls += 100 }
+        XCTAssertNotNil(transition.display)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(calls, 1)
+        XCTAssertNil(transition.display)
+        transition.perform(date: "2026-04-03", label: "취소", reduced: true) { calls += 100 }
+        transition.requestCancel()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(calls, 1)
+        XCTAssertNil(transition.display)
+    }
+
+    func testAnimatedBulkNotifiesOnlySavedDaysAndStopsAfterCancellation() async throws {
+        let (container, player, state) = try fixture()
+        var dates: [String] = []
+        let task = Task { @MainActor in
+            try await CalendarProgression.advanceOffDays(player: player, state: state, in: container.mainContext) { date in
+                XCTAssertFalse(container.mainContext.hasChanges)
+                dates.append(date)
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+        }
+        let summary = try await task.value
+        XCTAssertEqual(dates, ["2026-04-03"])
+        XCTAssertEqual(summary.days, 1)
+        XCTAssertEqual(summary.stop, .cancelled)
+        XCTAssertEqual(player.fatigue, 30)
+        XCTAssertEqual(player.gameDate, "2026-04-03")
+    }
+
 }

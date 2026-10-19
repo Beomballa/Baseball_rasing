@@ -5,6 +5,7 @@ struct PlayerHomeView: View {
     let players: [CareerPlayer]
     let calendar: CareerCalendarState?
     let schools: [School]
+    let transition: CareerTransition
     let select: @MainActor @Sendable (UUID) -> Void
     let create: () -> Void
     let play: () -> Void
@@ -40,7 +41,7 @@ struct PlayerHomeView: View {
                     }
                 }
                 if let calendar {
-                    CareerCalendarPanel(player: player, state: calendar, schools: schools).id(player.id)
+                    CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
                 } else {
                     Text("달력 정보를 불러오지 못했습니다. 앱을 다시 열어 주세요.").font(.caption)
                 }
