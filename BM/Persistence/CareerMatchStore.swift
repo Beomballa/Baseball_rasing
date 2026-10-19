@@ -29,7 +29,7 @@ enum CareerSchemaV3: VersionedSchema {
         }
         static func key(_ playerID: UUID, _ fixtureID: String) -> String { "\(playerID.uuidString):\(fixtureID)" }
         func snapshot() throws -> CareerMatch {
-            guard rulesVersion == "native-match-v1", let match = try? JSONDecoder().decode(CareerMatch.self, from: payload),
+            guard ["native-match-v1", "native-match-v2"].contains(rulesVersion), let match = try? JSONDecoder().decode(CareerMatch.self, from: payload),
                   match.completed == completed, match.appearance == appearance else { throw MatchError.invalidRecord }
             return match
         }
@@ -63,22 +63,25 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
                                 appearance: fixture.isAppearance(for: player.role), contact: player.contact, power: player.power,
                                 discipline: player.discipline, mastery: Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }))
         // Non-appearance team games are only simulated after explicit confirmation, not on screen entry.
+        match.controlVersion = 2
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
+        saved.rulesVersion = "native-match-v2"
         context.insert(saved); state.revision += 1
         do { try save(context) } catch { context.rollback(); throw error }
         return saved
     }
     static func advance(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
-                        revision: Int, input: MatchInput, pitchCode: String? = nil, in context: ModelContext,
+                        revision: Int, input: MatchInput, pitchCode: String? = nil, control: ManualMatchInput? = nil, in context: ModelContext,
                         save: CalendarProgression.Save = { try $0.save() }) throws {
         let fixture = try today(player: player, state: state)
         guard record.playerID == player.id, record.key == CareerMatchRecord.key(player.id, fixture.id),
               record.revision == revision, state.hasAction(on: player.gameDate) else { throw MatchError.stale }
         guard !record.completed else { throw MatchError.finished }
         var match = try record.snapshot()
-        try match.advance(input, pitchCode: pitchCode)
+        try match.advance(input, pitchCode: pitchCode, control: control)
         record.payload = try JSONEncoder().encode(match)
+        if match.controlVersion == 2 { record.rulesVersion = "native-match-v2" }
         record.revision += 1
         if match.completed {
             record.completed = true

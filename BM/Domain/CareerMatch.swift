@@ -28,6 +28,8 @@ struct CareerMatch: Codable, Equatable {
     var appliedFatigueCost: Int { Int(((fatigueCost * 10_000).rounded() / 10_000).rounded(.up)) }
     var message = "경기 시작"
     var completed = false
+    var controlVersion: Int?
+    var lastManual: ManualMatchResult?
     var offense: Bool { (half % 2 == 1) == isHome }
     var ownAtBat: Bool { offense && (isHome ? homeOrder : awayOrder) % 9 == 0 }
     var teamScore: Int { isHome ? homeScore : awayScore }
@@ -39,15 +41,41 @@ struct CareerMatch: Codable, Equatable {
         return Double(random >> 11) / 9007199254740992
     }
 
-    mutating func advance(_ input: MatchInput, pitchCode: String? = nil) throws {
+    func delivery(pitchCode: String? = nil) -> MatchDelivery {
+        var copy = self
+        let x = copy.roll(), y = copy.roll()
+        let speeds = ["four-seam": 145, "slider": 132, "changeup": 125, "fork": 129]
+        return MatchDelivery(x: role == "pitcher" ? 0.25 + x * 0.5 : 0.05 + x * 0.9,
+                             y: role == "pitcher" ? 0.25 + y * 0.5 : 0.05 + y * 0.9,
+                             speed: speeds[pitchCode ?? "four-seam"] ?? 135)
+    }
+
+    func automaticControl(_ input: MatchInput, pitchCode: String?) -> ManualMatchInput {
+        let ball = delivery(pitchCode: pitchCode)
+        if role == "pitcher" {
+            let spread = 0.9 - (mastery[pitchCode ?? ""] ?? 60) * 0.004
+            return ManualMatchInput(release: min(1, max(0, 0.68 + (ball.y - 0.5) * spread)))
+        }
+        let spread = 1 - contact * 0.007
+        return ManualMatchInput(x: min(1, max(0, ball.x + (ball.y - 0.5) * spread)), y: ball.y,
+                                timing: input == .watch ? nil : min(1, max(0, MatchDelivery.contactPhase + (ball.x - 0.5) * (0.7 - contact * 0.004))))
+    }
+
+    mutating func advance(_ input: MatchInput, pitchCode: String? = nil, control: ManualMatchInput? = nil) throws {
         guard !completed else { throw MatchError.finished }
         if role == "pitcher", input == .pitch, mastery[pitchCode ?? ""] == nil { throw MatchError.invalidInput }
+        if input != .automatic {
+            guard appearance, (role == "batter" ? [.watch, .swing, .bunt].contains(input) : input == .pitch) else { throw MatchError.invalidInput }
+        }
+        if let control {
+            try control.validate(for: input, role: role)
+            controlVersion = 2
+        }
         if input == .automatic {
             while !completed { step(role == "batter" ? .swing : .pitch, pitchCode: mastery.keys.sorted().first); settle() }
         } else {
-            guard appearance, (role == "batter" ? [.watch, .swing, .bunt].contains(input) : input == .pitch) else { throw MatchError.invalidInput }
             settle()
-            if !completed { step(input, pitchCode: pitchCode); settle() }
+            if !completed { step(input, pitchCode: pitchCode, control: control); settle() }
         }
     }
 
@@ -57,7 +85,12 @@ struct CareerMatch: Codable, Equatable {
         }
     }
 
-    private mutating func step(_ input: MatchInput, pitchCode: String?) {
+    private mutating func step(_ input: MatchInput, pitchCode: String?, control: ManualMatchInput? = nil) {
+        let personal = appearance && (role == "batter" ? ownAtBat : !offense)
+        if personal && controlVersion == 2 {
+            manualStep(input, pitchCode: pitchCode, control: control ?? automaticControl(input, pitchCode: pitchCode))
+            return
+        }
         let personalBatter = appearance && role == "batter" && ownAtBat
         let personalPitcher = appearance && role == "pitcher" && !offense
         if personalBatter && input != .watch { fatigueCost += 1 }
@@ -81,6 +114,46 @@ struct CareerMatch: Codable, Equatable {
         }
         if strikes >= 3 { endPlate("삼진", batter: personalBatter, pitcher: personalPitcher) }
         else if balls >= 4 { endPlate("볼넷", batter: personalBatter, pitcher: personalPitcher) }
+    }
+
+    private mutating func manualStep(_ selected: MatchInput, pitchCode: String?, control: ManualMatchInput) {
+        let pitcher = role == "pitcher"
+        let input: MatchInput = !pitcher && control.timing == nil ? .watch : selected
+        let plan = delivery(pitchCode: pitchCode)
+        let directionX = roll() < 0.5 ? -1.0 : 1.0
+        let directionY = roll() < 0.5 ? -1.0 : 1.0
+        let masteryValue = mastery[pitchCode ?? ""] ?? 60
+        let quality = pitcher ? ManualMatchRules.releaseQuality(control.release ?? 0, mastery: masteryValue)
+            : ManualMatchRules.battingQuality(input: control, delivery: plan, contact: contact)
+        let scatter = pitcher ? (1 - quality) * 0.5 : 0
+        let x = plan.x + directionX * scatter, y = plan.y + directionY * scatter
+        let inZone = ManualMatchRules.isStrike(x: x, y: y)
+        let releaseError = abs((control.release ?? 0) - ManualMatchRules.releaseCenter)
+        let grade = pitcher ? (releaseError <= ManualMatchRules.perfectWidth(mastery: masteryValue) ? "PERFECT"
+            : releaseError <= ManualMatchRules.goodWidth(mastery: masteryValue) ? "GOOD" : "MISS")
+            : input == .watch ? "지켜보기" : quality > 0.7 ? "정타" : quality > 0 ? "컨택" : "헛스윙"
+        if pitcher { line.pitches += 1; fatigueCost += 0.38 }
+        else if input != .watch { fatigueCost += 1 }
+        let swing = pitcher ? (inZone || roll() < 0.22) : input != .watch
+        if !swing {
+            if inZone { strikes += 1; message = "루킹 스트라이크" }
+            else { balls += 1; message = "볼" }
+        } else if !pitcher && quality == 0 {
+            strikes += 1; message = "헛스윙"
+        } else {
+            let hitChance = pitcher ? 0.36 - quality * 0.20 : 0.10 + contact * 0.001 + quality * 0.35
+            let value = roll()
+            if value < hitChance {
+                let homeRun = input != .bunt && roll() < (pitcher ? 0.16 - quality * 0.10 : power / 500 * quality)
+                endPlate(homeRun ? "홈런" : "안타", batter: !pitcher, pitcher: pitcher)
+            } else if !pitcher || value < hitChance + 0.35 {
+                endPlate("범타", batter: !pitcher, pitcher: pitcher)
+            } else { strikes += 1; message = "헛스윙" }
+        }
+        if strikes >= 3 { endPlate("삼진", batter: !pitcher, pitcher: pitcher) }
+        else if balls >= 4 { endPlate("볼넷", batter: !pitcher, pitcher: pitcher) }
+        lastManual = ManualMatchResult(action: input.rawValue, quality: quality, grade: grade,
+                                       x: x, y: y, speed: plan.speed, outcome: message)
     }
 
     private mutating func endPlate(_ result: String, batter: Bool, pitcher: Bool) {

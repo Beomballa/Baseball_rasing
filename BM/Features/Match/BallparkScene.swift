@@ -64,21 +64,30 @@ import SpriteKit
         (childNode(withName: "scoreboard") as? SKLabelNode)?.text = text
     }
 
-    @discardableResult func demonstrate(reduceMotion: Bool) -> Bool {
+    func cancelDelivery() {
+        removeAction(forKey: "delivery"); ball.removeAllActions(); arm.removeAllActions()
+        arm.zRotation = 0
+    }
+
+    @discardableResult func demonstrate(reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5) -> Bool {
         guard ready, action(forKey: "delivery") == nil else { return false }
+        ball.setScale(flightDuration == nil ? 1 : 1.6)
         arm.zRotation = 0; ball.position = CGPoint(x: arm.position.x, y: 170)
-        if reduceMotion { ball.position = CGPoint(x: 160, y: 49); return true }
+        if reduceMotion && flightDuration == nil { ball.position = CGPoint(x: 160, y: 49); return true }
         let direction: CGFloat = hand == "left" ? -1 : 1
         run(.sequence([
-            .run { [weak self] in self?.arm.run(.rotate(toAngle: direction * 1.1, duration: 0.3)) },
-            .wait(forDuration: 0.3),
+            .run { [weak self] in if !reduceMotion { self?.arm.run(.rotate(toAngle: direction * 1.1, duration: 0.3)) } },
+            .wait(forDuration: flightDuration == nil ? 0.3 : MatchDelivery.windup),
             .run { [weak self] in
                 guard let self else { return }
-                self.arm.run(.rotate(toAngle: -direction * 0.7, duration: 0.16))
+                if !reduceMotion { self.arm.run(.rotate(toAngle: -direction * 0.7, duration: 0.16)) }
                 self.ball.position = CGPoint(x: self.arm.position.x, y: 168)
-                self.ball.run(.move(to: CGPoint(x: 160, y: 49), duration: 0.52))
+                let target = flightDuration == nil ? CGPoint(x: 160, y: 49)
+                    : CGPoint(x: 160 + (x - 0.5) * 102.4, y: 80 - (y - 0.5) * 80)
+                self.ball.run(.move(to: target,
+                                     duration: flightDuration.map { $0 * MatchDelivery.contactPhase } ?? 0.52))
             },
-            .wait(forDuration: 0.7),
+            .wait(forDuration: flightDuration ?? 0.7),
             .run { [weak self] in self?.arm.zRotation = 0 }
         ]), withKey: "delivery")
         return true
