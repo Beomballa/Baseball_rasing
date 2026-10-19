@@ -1,0 +1,8 @@
+* text=auto
+*.swift text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.pbxproj text eol=lf
+*.xcscheme text eol=lf
+.githooks/* text eol=lf

@@ -1,0 +1,252 @@
+[
+  {
+    "id": "hs-ref-001",
+    "region": "서울",
+    "name": "경기고"
+  },
+  {
+    "id": "hs-ref-002",
+    "region": "서울",
+    "name": "경기상업고"
+  },
+  {
+    "id": "hs-ref-003",
+    "region": "서울",
+    "name": "경동고"
+  },
+  {
+    "id": "hs-ref-004",
+    "region": "서울",
+    "name": "덕수고"
+  },
+  {
+    "id": "hs-ref-005",
+    "region": "서울",
+    "name": "배명고"
+  },
+  {
+    "id": "hs-ref-006",
+    "region": "서울",
+    "name": "배재고"
+  },
+  {
+    "id": "hs-ref-007",
+    "region": "서울",
+    "name": "서울고"
+  },
+  {
+    "id": "hs-ref-008",
+    "region": "서울",
+    "name": "선린인터넷고"
+  },
+  {
+    "id": "hs-ref-009",
+    "region": "서울",
+    "name": "성남고"
+  },
+  {
+    "id": "hs-ref-010",
+    "region": "서울",
+    "name": "신일고"
+  },
+  {
+    "id": "hs-ref-011",
+    "region": "서울",
+    "name": "장충고"
+  },
+  {
+    "id": "hs-ref-012",
+    "region": "서울",
+    "name": "충암고"
+  },
+  {
+    "id": "hs-ref-013",
+    "region": "서울",
+    "name": "휘문고"
+  },
+  {
+    "id": "hs-ref-014",
+    "region": "경기",
+    "name": "경기항공고"
+  },
+  {
+    "id": "hs-ref-015",
+    "region": "경기",
+    "name": "라온고"
+  },
+  {
+    "id": "hs-ref-017",
+    "region": "경기",
+    "name": "비봉고"
+  },
+  {
+    "id": "hs-ref-018",
+    "region": "경기",
+    "name": "소래고"
+  },
+  {
+    "id": "hs-ref-019",
+    "region": "경기",
+    "name": "안산공업고"
+  },
+  {
+    "id": "hs-ref-020",
+    "region": "경기",
+    "name": "야탑고"
+  },
+  {
+    "id": "hs-ref-021",
+    "region": "경기",
+    "name": "유신고"
+  },
+  {
+    "id": "hs-ref-022",
+    "region": "경기",
+    "name": "인창고"
+  },
+  {
+    "id": "hs-ref-023",
+    "region": "경기",
+    "name": "장안고"
+  },
+  {
+    "id": "hs-ref-024",
+    "region": "경기",
+    "name": "청담고"
+  },
+  {
+    "id": "hs-ref-025",
+    "region": "경기",
+    "name": "충훈고"
+  },
+  {
+    "id": "hs-ref-026",
+    "region": "인천",
+    "name": "동산고"
+  },
+  {
+    "id": "hs-ref-027",
+    "region": "인천",
+    "name": "인천고"
+  },
+  {
+    "id": "hs-ref-028",
+    "region": "인천",
+    "name": "제물포고"
+  },
+  {
+    "id": "hs-ref-029",
+    "region": "강원",
+    "name": "강릉고"
+  },
+  {
+    "id": "hs-ref-030",
+    "region": "강원",
+    "name": "설악고"
+  },
+  {
+    "id": "hs-ref-031",
+    "region": "대전·충청",
+    "name": "공주고"
+  },
+  {
+    "id": "hs-ref-032",
+    "region": "대전·충청",
+    "name": "대전고"
+  },
+  {
+    "id": "hs-ref-033",
+    "region": "대전·충청",
+    "name": "북일고"
+  },
+  {
+    "id": "hs-ref-034",
+    "region": "대전·충청",
+    "name": "세광고"
+  },
+  {
+    "id": "hs-ref-035",
+    "region": "대전·충청",
+    "name": "청주고"
+  },
+  {
+    "id": "hs-ref-036",
+    "region": "광주·전라",
+    "name": "광주동성고"
+  },
+  {
+    "id": "hs-ref-037",
+    "region": "광주·전라",
+    "name": "광주제일고"
+  },
+  {
+    "id": "hs-ref-038",
+    "region": "광주·전라",
+    "name": "광주진흥고"
+  },
+  {
+    "id": "hs-ref-039",
+    "region": "광주·전라",
+    "name": "군산상일고"
+  },
+  {
+    "id": "hs-ref-040",
+    "region": "광주·전라",
+    "name": "전주고"
+  },
+  {
+    "id": "hs-ref-042",
+    "region": "대구·부산·경상",
+    "name": "경남고"
+  },
+  {
+    "id": "hs-ref-043",
+    "region": "대구·부산·경상",
+    "name": "경북고"
+  },
+  {
+    "id": "hs-ref-044",
+    "region": "대구·부산·경상",
+    "name": "대구고"
+  },
+  {
+    "id": "hs-ref-045",
+    "region": "대구·부산·경상",
+    "name": "대구상원고"
+  },
+  {
+    "id": "hs-ref-046",
+    "region": "대구·부산·경상",
+    "name": "마산고"
+  },
+  {
+    "id": "hs-ref-047",
+    "region": "대구·부산·경상",
+    "name": "마산용마고"
+  },
+  {
+    "id": "hs-ref-048",
+    "region": "대구·부산·경상",
+    "name": "부산고"
+  },
+  {
+    "id": "hs-ref-049",
+    "region": "대구·부산·경상",
+    "name": "물금고"
+  },
+  {
+    "id": "hs-ref-050",
+    "region": "제주",
+    "name": "제주고"
+  },
+  {
+    "id": "hs-ref-051",
+    "region": "대구·부산·경상",
+    "name": "김해고"
+  },
+  {
+    "id": "hs-ref-052",
+    "region": "광주·전라",
+    "name": "인상고"
+  }
+]
