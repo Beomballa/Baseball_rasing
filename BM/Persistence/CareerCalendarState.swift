@@ -29,6 +29,8 @@ enum CareerSchemaV2: VersionedSchema {
             try GameDate(originDate).age(startingAt: player.startAge, on: GameDate(player.gameDate))
         }
         func fixtures(for player: CareerPlayer, year: Int) throws -> [SeasonFixture] {
+            guard playerID == player.id else { throw CalendarError.staleState }
+            guard schoolIDs.contains(player.schoolID) else { throw CalendarError.invalidGroup }
             let origin = try GameDate(originDate)
             let fixtures = try SeasonSchedule.fixtures(year: year, schoolIDs: schoolIDs)
             return fixtures.filter {
@@ -45,3 +47,28 @@ enum CareerSchemaV2: VersionedSchema {
 }
 
 typealias CareerCalendarState = CareerSchemaV2.CalendarState
+
+@MainActor enum CalendarScheduleStatus {
+    struct Schedule {
+        let annual: [SeasonFixture]
+        let upcoming: [SeasonFixture]
+        let today: SeasonFixture?
+    }
+    case loaded(Schedule)
+    case failed(String)
+
+    init(player: CareerPlayer, state: CareerCalendarState) {
+        do {
+            let today = try GameDate(player.gameDate)
+            let annual = try state.fixtures(for: player, year: today.year)
+            self = .loaded(Schedule(annual: annual, upcoming: try state.upcoming(for: player),
+                                    today: annual.first { $0.date == today }))
+        } catch { self = .failed(error.localizedDescription) }
+    }
+    var schedule: Schedule? {
+        if case .loaded(let value) = self { value } else { nil }
+    }
+    var errorMessage: String? {
+        if case .failed(let message) = self { message } else { nil }
+    }
+}

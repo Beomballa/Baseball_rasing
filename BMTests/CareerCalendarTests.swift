@@ -220,11 +220,11 @@ import SwiftData
         let (container, player, state) = try fixture()
         var dates: [String] = []
         let task = Task { @MainActor in
-            try await CalendarProgression.advanceOffDays(player: player, state: state, in: container.mainContext) { date in
+            try await CalendarProgression.advanceOffDays(player: player, state: state, in: container.mainContext, onDaySaved: { date in
                 XCTAssertFalse(container.mainContext.hasChanges)
                 dates.append(date)
                 withUnsafeCurrentTask { $0?.cancel() }
-            }
+            })
         }
         let summary = try await task.value
         XCTAssertEqual(dates, ["2026-04-03"])
@@ -232,6 +232,184 @@ import SwiftData
         XCTAssertEqual(summary.stop, .cancelled)
         XCTAssertEqual(player.fatigue, 30)
         XCTAssertEqual(player.gameDate, "2026-04-03")
+    }
+
+    func testScheduleLookupFailuresAreNotAnEmptyOffDayAndCannotConsumeActions() throws {
+        let (container, player, state) = try fixture()
+        let validIDs = state.schoolIDs
+        let cases: [(String, [String])] = [
+            ("invalid-date", validIDs), ("2026-04-02", Array(validIDs.prefix(3))),
+            ("2026-04-02", Array(repeating: player.schoolID, count: 6)),
+            ("2026-04-02", ["A", "B", "C", "D", "E", "F"])
+        ]
+        for (date, ids) in cases {
+            player.gameDate = date; state.schoolIDs = ids
+            try container.mainContext.save()
+            let status = CalendarScheduleStatus(player: player, state: state)
+            XCTAssertNil(status.schedule)
+            XCTAssertNotNil(status.errorMessage)
+            XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: 0, in: container.mainContext))
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player: player, state: state, revision: 0,
+                                                                   automaticRest: true, in: container.mainContext))
+            XCTAssertEqual(player.gameDate, date)
+            XCTAssertEqual(player.fatigue, 52)
+            XCTAssertNil(state.actionDate)
+            XCTAssertEqual(state.revision, 0)
+            XCTAssertFalse(container.mainContext.hasChanges)
+        }
+        player.gameDate = "2026-04-02"; state.schoolIDs = validIDs
+        try container.mainContext.save()
+        let retried = CalendarScheduleStatus(player: player, state: state)
+        XCTAssertNil(retried.errorMessage)
+        XCTAssertEqual(retried.schedule?.annual.count, 30)
+        XCTAssertNil(retried.schedule?.today)
+    }
+
+    func testValidEmptyScheduleAfterGraduationIsNotALookupError() throws {
+        let (container, player, state) = try fixture(date: "2029-04-02")
+        let status = CalendarScheduleStatus(player: player, state: state)
+        XCTAssertNil(status.errorMessage)
+        XCTAssertTrue(try XCTUnwrap(status.schedule).annual.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(status.schedule).upcoming.isEmpty)
+        XCTAssertFalse(container.mainContext.hasChanges)
+    }
+
+    func testManualAndAutomaticRestHaveIdenticalRecoveryAtFatigueBoundaries() throws {
+        for role in PlayerRole.allCases {
+            for fatigue in [0, 1, 4, 17, 18, 19, 52, 90, 100] {
+                let (manualStore, manual, manualState) = try fixture(role: role)
+                let (autoStore, automatic, autoState) = try fixture(role: role)
+                manual.fatigue = fatigue; automatic.fatigue = fatigue
+                try manualStore.mainContext.save(); try autoStore.mainContext.save()
+                try CalendarProgression.rest(player: manual, state: manualState, revision: 0, in: manualStore.mainContext)
+                try CalendarProgression.advanceDay(player: manual, state: manualState, revision: 1, in: manualStore.mainContext)
+                try CalendarProgression.advanceDay(player: automatic, state: autoState, revision: 0,
+                                                   automaticRest: true, in: autoStore.mainContext)
+                XCTAssertEqual(manual.fatigue, max(0, fatigue - 22))
+                XCTAssertEqual(automatic.fatigue, manual.fatigue)
+                XCTAssertEqual(automatic.gameDate, manual.gameDate)
+                XCTAssertNil(autoState.actionDate)
+                XCTAssertNil(manualState.actionDate)
+            }
+        }
+    }
+
+    func testFirstBulkSaveFailureReportsZeroDaysAndRollsBackTheWholeDay() async throws {
+        let (container, player, state) = try fixture()
+        let injected = CocoaError(.fileWriteOutOfSpace)
+        var notices: [String] = []
+        do {
+            _ = try await CalendarProgression.advanceOffDays(player: player, state: state, in: container.mainContext,
+                                                             save: { _ in throw injected }, onDaySaved: { notices.append($0) })
+            XCTFail("Expected an injected save failure")
+        } catch let failure as CalendarAdvanceFailure {
+            XCTAssertEqual(failure.summary.days, 0)
+            XCTAssertEqual(failure.summary.restDays, 0)
+            XCTAssertEqual(failure.summary.lastSavedDate, "2026-04-02")
+            XCTAssertEqual(failure.summary.fatigueBefore, 52)
+            XCTAssertEqual(failure.summary.fatigueAfter, 52)
+            XCTAssertEqual(failure.summary.stop, .failed)
+            XCTAssertEqual(failure.reason, injected.localizedDescription)
+            XCTAssertTrue(failure.localizedDescription.contains("0일 진행"))
+        }
+        XCTAssertTrue(notices.isEmpty)
+        XCTAssertEqual(player.gameDate, "2026-04-02")
+        XCTAssertEqual(player.fatigue, 52)
+        XCTAssertEqual(state.revision, 0)
+        XCTAssertNil(state.actionDate)
+        XCTAssertFalse(container.mainContext.hasChanges)
+    }
+
+    func testPartialBulkSaveFailurePreservesCommittedDaysOnDiskAndRetryDoesNotRepeatRecovery() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("partial.store")
+        let schools = try SchoolCatalog.load()
+        var playerID: UUID?
+        do {
+            let store = try CareerStore.makeContainer(url: url)
+            var draft = PlayerDraft(); draft.name = "부분저장"; draft.schoolID = schools[0].id; draft.role = .pitcher
+            let player = try CareerStore.create(draft, schools: schools, in: store.mainContext)
+            draft.role = .batter
+            _ = try CareerStore.create(draft, schools: schools, in: store.mainContext)
+            let state = try XCTUnwrap(store.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+            player.gameDate = "2026-04-02"; player.fatigue = 90; playerID = player.id
+            try store.mainContext.save()
+            var calls = 0
+            var notices: [String] = []
+            do {
+                _ = try await CalendarProgression.advanceOffDays(player: player, state: state, in: store.mainContext, save: { context in
+                    calls += 1
+                    if calls == 3 { throw CocoaError(.fileWriteOutOfSpace) }
+                    try context.save()
+                }, onDaySaved: { notices.append($0) })
+                XCTFail("Expected failure on the third save")
+            } catch let failure as CalendarAdvanceFailure {
+                XCTAssertEqual(failure.summary.days, 2)
+                XCTAssertEqual(failure.summary.restDays, 2)
+                XCTAssertEqual(failure.summary.lastSavedDate, "2026-04-04")
+                XCTAssertEqual(failure.summary.fatigueBefore, 90)
+                XCTAssertEqual(failure.summary.fatigueAfter, 46)
+                XCTAssertTrue(failure.localizedDescription.contains("2일 진행"))
+                XCTAssertTrue(failure.localizedDescription.contains("마지막 저장일 2026-04-04"))
+                XCTAssertTrue(failure.localizedDescription.contains("90 → 46"))
+            }
+            XCTAssertEqual(notices, ["2026-04-03", "2026-04-04"])
+            XCTAssertEqual(player.gameDate, "2026-04-04")
+            XCTAssertEqual(player.fatigue, 46)
+            XCTAssertEqual(state.revision, 2)
+            XCTAssertFalse(store.mainContext.hasChanges)
+        }
+        let reopened = try CareerStore.makeContainer(url: url)
+        let players = try reopened.mainContext.fetch(FetchDescriptor<CareerPlayer>())
+        let pitcher = try XCTUnwrap(players.first { $0.id == playerID })
+        let state = try XCTUnwrap(reopened.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == pitcher.id })
+        XCTAssertEqual(pitcher.gameDate, "2026-04-04")
+        XCTAssertEqual(pitcher.fatigue, 46)
+        XCTAssertEqual(pitcher.pitches.sorted { $0.order < $1.order }.map(\.mastery), [72, 65, 48, 35])
+        let retry = try await CalendarProgression.advanceOffDays(player: pitcher, state: state, in: reopened.mainContext)
+        XCTAssertEqual(retry.days, 3)
+        XCTAssertEqual(retry.restDays, 3)
+        XCTAssertEqual(retry.lastSavedDate, "2026-04-07")
+        XCTAssertEqual(pitcher.fatigue, 0)
+        XCTAssertEqual(state.revision, 5)
+        XCTAssertEqual(players.first { $0.role == .batter }?.gameDate, "2026-04-01")
+        XCTAssertEqual(players.first { $0.role == .batter }?.fatigue, 24)
+    }
+
+    func testFailedSleepPreservesAlreadySavedRestAndRetryOnlyAppliesSleep() async throws {
+        let (container, player, state) = try fixture(date: "2026-04-06", role: .batter)
+        player.fatigue = 90
+        try container.mainContext.save()
+        try CalendarProgression.rest(player: player, state: state, revision: 0, in: container.mainContext)
+        do {
+            _ = try await CalendarProgression.advanceOffDays(player: player, state: state, in: container.mainContext,
+                                                             save: { _ in throw CocoaError(.fileWriteOutOfSpace) })
+            XCTFail("Expected save failure")
+        } catch let failure as CalendarAdvanceFailure {
+            XCTAssertEqual(failure.summary.days, 0)
+            XCTAssertEqual(failure.summary.fatigueAfter, 72)
+        }
+        XCTAssertEqual(player.fatigue, 72)
+        XCTAssertEqual(state.actionDate, "2026-04-06")
+        XCTAssertEqual(state.revision, 1)
+        let retry = try await CalendarProgression.advanceOffDays(player: player, state: state, in: container.mainContext)
+        XCTAssertEqual(retry.days, 1)
+        XCTAssertEqual(retry.restDays, 0)
+        XCTAssertEqual(player.fatigue, 68)
+    }
+
+    func testFailedManualRestDoesNotConsumeActionOrRecovery() throws {
+        let (container, player, state) = try fixture()
+        XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: 0,
+                                                         in: container.mainContext, save: { _ in throw CocoaError(.fileWriteOutOfSpace) }))
+        XCTAssertEqual(player.fatigue, 52)
+        XCTAssertEqual(state.revision, 0)
+        XCTAssertNil(state.actionDate)
+        try CalendarProgression.rest(player: player, state: state, revision: 0, in: container.mainContext)
+        XCTAssertEqual(player.fatigue, 34)
+        XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: 1, in: container.mainContext))
     }
 
 }
