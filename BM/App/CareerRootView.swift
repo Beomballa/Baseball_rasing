@@ -4,6 +4,7 @@ import SwiftData
 struct CareerRootView: View {
     let schools: [School]
     @Query(sort: \CareerPlayer.createdAt) private var players: [CareerPlayer]
+    @Query private var calendars: [CareerCalendarState]
     @State private var selectedID: UUID?
     @State private var showCreation = false
     @State private var path: [UUID] = []
@@ -15,6 +16,7 @@ struct CareerRootView: View {
             Group {
                 if let player = selected {
                     PlayerHomeView(player: player, players: players,
+                                   calendar: calendars.first { $0.playerID == player.id }, schools: schools,
                                    select: { selectedID = $0 }, create: { showCreation = true },
                                    play: { path.append(player.id) })
                 } else {

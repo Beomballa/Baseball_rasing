@@ -16,14 +16,15 @@ extension Color {
 }
 
 struct GameButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var secondary = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(.body, design: .monospaced, weight: .bold))
             .frame(maxWidth: .infinity, minHeight: 48)
-            .foregroundStyle(secondary ? GameTheme.navy : .white)
-            .background(secondary ? GameTheme.gold : GameTheme.green)
-            .overlay(Rectangle().strokeBorder(GameTheme.navy, lineWidth: 2))
+            .foregroundStyle(!isEnabled ? GameTheme.muted : (secondary ? GameTheme.navy : .white))
+            .background(!isEnabled ? GameTheme.paper : (secondary ? GameTheme.gold : GameTheme.green))
+            .overlay(Rectangle().strokeBorder(GameTheme.navy.opacity(isEnabled ? 1 : 0.25), lineWidth: 2))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
