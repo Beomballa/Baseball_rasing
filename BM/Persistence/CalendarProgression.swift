@@ -3,7 +3,7 @@ import SwiftData
 
 struct CalendarAdvanceSummary: Equatable, Sendable {
     enum Stop: String, Sendable {
-        case fixture = "경기일 도착 · 실제 경기 연결 대기"
+        case fixture = "경기일 도착 · 경기 진행/완료 확인"
         case anniversary = "나이·학적 변경 전 · 하루 진행으로 확인"
         case limit = "30일 진행 완료"
         case failed = "진행 중단 · 완료한 날짜는 저장되어 있습니다"
@@ -63,7 +63,10 @@ struct CalendarAdvanceFailure: LocalizedError {
                            automaticRest: Bool = false, confirmAnniversary: Bool = false,
                            in context: ModelContext, save: Save = { try $0.save() }) throws {
         try validate(player, state, revision: revision)
-        guard try !hasGameToday(player: player, state: state) else { throw CalendarError.fixturePending }
+        if try hasGameToday(player: player, state: state) {
+            let fixture = try CareerMatchStore.today(player: player, state: state)
+            guard try CareerMatchStore.isCompleted(player: player, fixture: fixture, in: context) else { throw CalendarError.fixturePending }
+        }
         if try isAnniversaryTomorrow(player: player, state: state), !confirmAnniversary {
             throw CalendarError.anniversaryConfirmation
         }

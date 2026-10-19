@@ -3,7 +3,7 @@ import SwiftData
 
 @MainActor enum CareerStore {
     static func makeContainer(url: URL? = nil, inMemory: Bool = false) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: CareerSchemaV2.self)
+        let schema = Schema(versionedSchema: CareerSchemaV3.self)
         let configuration: ModelConfiguration
         if let url {
             configuration = ModelConfiguration("Career", schema: schema, url: url, cloudKitDatabase: .none)

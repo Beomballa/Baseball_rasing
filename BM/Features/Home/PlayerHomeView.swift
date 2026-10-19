@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct PlayerHomeView: View {
     let player: CareerPlayer
@@ -9,6 +10,7 @@ struct PlayerHomeView: View {
     let select: @MainActor @Sendable (UUID) -> Void
     let create: () -> Void
     let play: () -> Void
+    @Query(sort: \CareerMatchRecord.gameDate, order: .reverse) private var gameRecords: [CareerMatchRecord]
 
     private var age: Int { (try? calendar?.age(of: player)) ?? player.startAge }
 
@@ -45,6 +47,32 @@ struct PlayerHomeView: View {
                 } else {
                     Text("달력 정보를 불러오지 못했습니다. 앱을 다시 열어 주세요.").font(.caption)
                 }
+                if let calendar {
+                    let status = CalendarScheduleStatus(player: player, state: calendar)
+                    if let fixture = status.schedule?.today {
+                        let saved = gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id }
+                        NavigationLink {
+                            CareerGameView(player: player, calendar: calendar, schools: schools)
+                        } label: {
+                            Text(saved?.completed == true ? "오늘 경기 결과" : (saved == nil ? "오늘 경기 시작" : "오늘 경기 이어하기"))
+                        }.buttonStyle(GameButtonStyle()).accessibilityIdentifier("openCareerGame")
+                            .disabled(!calendar.hasAction(on: player.gameDate) && saved == nil)
+                    }
+                }
+                GamePanel(title: "최근 경기 결과") {
+                    let recent = gameRecords.filter { $0.playerID == player.id && $0.completed }.prefix(5)
+                    if recent.isEmpty { Text("완료한 경기가 없습니다.").font(.caption) }
+                    ForEach(Array(recent)) { record in
+                        if let match = try? record.snapshot() {
+                            VStack(alignment: .leading) {
+                                Text("\(record.gameDate) · \(match.teamScore) : \(match.opponentScore)").bold()
+                                Text(record.appearance ? (player.role == .batter
+                                    ? "\(match.line.atBats)타수 \(match.line.hits)안타 · \(match.line.homeRuns)홈런"
+                                    : "\(match.line.pitchingOuts / 3).\(match.line.pitchingOuts % 3)이닝 · \(match.line.pitchingStrikeouts)K") : "비등판 · 팀 경기")
+                            }.font(.caption)
+                        }
+                    }
+                }.accessibilityIdentifier("homeGameResults")
                 GamePanel(title: player.role == .batter ? "주요 능력치" : "보유 구종 · 숙련도") {
                     if player.role == .batter {
                         StatRow(name: "컨택", value: player.contact)

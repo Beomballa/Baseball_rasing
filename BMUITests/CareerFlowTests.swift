@@ -52,6 +52,32 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["matchCue"].label.contains("포수 수신"))
         let matchShot = XCTAttachment(screenshot: app.screenshot()); matchShot.name = "SpriteKit practice"; matchShot.lifetime = .keepAlways; add(matchShot)
         app.navigationBars.buttons.element(boundBy: 0).tap()
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["openCareerGame"], in: app)
+        app.buttons["openCareerGame"].tap()
+        XCTAssertTrue(app.buttons["gameInput-watch"].waitForExistence(timeout: 5))
+        let gameShot = XCTAttachment(screenshot: app.screenshot()); gameShot.name = "Native batter game"; gameShot.lifetime = .keepAlways; add(gameShot)
+        app.buttons["gameInput-watch"].tap()
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        reveal(app.buttons["openCareerGame"], in: app)
+        XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 이어하기")
+        app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["gameAutomatic"], in: app)
+        app.buttons["gameAutomatic"].tap()
+        app.buttons["진행하고 결과 저장"].tap()
+        XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
+        reveal(app.buttons["gameReturnHome"], in: app)
+        app.buttons["gameReturnHome"].tap()
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["advanceDay"], in: app)
+        XCTAssertTrue(app.buttons["advanceDay"].isEnabled)
+        app.buttons["advanceDay"].tap()
+        let newDate = app.staticTexts["calendarDate"]
+        let predicate = NSPredicate(format: "label == %@", "2026-04-02")
+        expectation(for: predicate, evaluatedWith: newDate)
+        waitForExpectations(timeout: 5)
+        XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 미사용")
         reveal(app.buttons["createOtherRole"], in: app)
         app.buttons["createOtherRole"].tap()
         let pitcherName = app.textFields["playerName"]
@@ -70,5 +96,17 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.segmentedControls["homeRolePicker"].exists)
         app.segmentedControls["homeRolePicker"].buttons["투수 · LeftPitcher"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("LeftPitcher"))
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["restToday"], in: app); app.buttons["restToday"].tap()
+        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
+        let pitchShot = XCTAttachment(screenshot: app.screenshot()); pitchShot.name = "Native pitcher game"; pitchShot.lifetime = .keepAlways; add(pitchShot)
+        app.buttons["gamePitch"].tap()
+        reveal(app.buttons["gameAutomatic"], in: app); app.buttons["gameAutomatic"].tap()
+        app.buttons["진행하고 결과 저장"].tap()
+        XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
+        reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["advanceDay"], in: app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled)
     }
 }

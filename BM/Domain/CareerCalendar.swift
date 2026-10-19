@@ -101,7 +101,7 @@ enum CalendarError: LocalizedError {
         case .invalidGroup: "6팀 일정 정보를 확인할 수 없습니다."
         case .actionUsed: "오늘 행동을 이미 사용했습니다."
         case .preparationRequired: "오늘의 휴식을 먼저 선택해 주세요. 훈련은 다음 구현에서 연결합니다."
-        case .fixturePending: "오늘은 경기일입니다. 실제 경기 결과 연결 전까지 날짜를 넘길 수 없습니다."
+        case .fixturePending: "오늘 경기를 먼저 완료하고 결과를 저장해 주세요."
         case .anniversaryConfirmation: "다음 날은 나이·학적 변경일입니다. 하루 진행으로 확인해 주세요."
         case .staleState: "선수 또는 날짜 상태가 바뀌었습니다. 현재 화면에서 다시 진행해 주세요."
         }

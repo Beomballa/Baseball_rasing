@@ -17,6 +17,7 @@ struct CareerCalendarPanel: View {
     @State private var scheduleRetry = 0
     private var hasAction: Bool { state.hasAction(on: player.gameDate) }
     private func teamName(_ id: String) -> String { schools.first { $0.id == id }?.name ?? id }
+    @Query private var gameRecords: [CareerMatchRecord]
     private func detail(_ fixture: SeasonFixture) -> String {
         "\(fixture.date) · \(teamName(fixture.opponent(of: player.schoolID))) · \(fixture.homeID == player.schoolID ? "홈" : "원정")"
     }
@@ -56,6 +57,8 @@ struct CareerCalendarPanel: View {
         let status = CalendarScheduleStatus(player: player, state: state)
         let schedule = status.schedule
         let today = schedule?.today
+        let savedGame = today.flatMap { fixture in gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id } }
+        let gameCompleted = savedGame?.completed == true && (try? savedGame?.snapshot()) != nil
         return GamePanel(title: "오늘 일정") {
             HStack {
                 Text(player.gameDate).monospacedDigit().bold().accessibilityIdentifier("calendarDate")
@@ -70,7 +73,7 @@ struct CareerCalendarPanel: View {
                     Text("\(today.number) / 30차전 · \(today.isAppearance(for: player.role) ? (player.role == .pitcher ? "선발 등판 예정" : "출전 예정") : "비등판 · 팀 경기 예정")")
                         .font(.headline).accessibilityIdentifier("todaySchedule")
                     Text(detail(today)).font(.subheadline)
-                    Text("경기일 · 실제 경기 결과 연결 전까지 날짜 진행 대기")
+                    Text(gameCompleted ? "경기 결과 저장 완료 · 다음 날 진행 가능" : "경기일 · 경기 완료 후 다음 날 진행 가능")
                         .font(.caption).foregroundStyle(GameTheme.muted).accessibilityIdentifier("fixtureGate")
                 } else {
                     Text("비경기일 · 훈련 / 휴식 준비").font(.headline).accessibilityIdentifier("todaySchedule")
@@ -97,7 +100,7 @@ struct CareerCalendarPanel: View {
                 }.buttonStyle(GameButtonStyle(secondary: true)).disabled(hasAction || advancing || schedule == nil)
                     .accessibilityIdentifier("restToday")
                 Button("다음 날") { nextDay() }.buttonStyle(GameButtonStyle())
-                    .disabled(!hasAction || today != nil || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
+                    .disabled(!hasAction || (today != nil && !gameCompleted) || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
             }
             if advancing {
                 Button("묶음 진행 중지") { transition.requestCancel() }.buttonStyle(GameButtonStyle(secondary: true))
@@ -121,7 +124,7 @@ struct CareerCalendarPanel: View {
                 }.buttonStyle(GameButtonStyle(secondary: true)).disabled(today != nil || schedule == nil)
                     .accessibilityIdentifier("advanceOffDays")
             }
-            Text("최대 30일 · 매일 저장 · 경기일/나이 변경 전에 정지\n현재는 휴식만 연결 · 훈련 성장은 생성하지 않습니다.")
+            Text("최대 30일 · 매일 저장 · 경기일/나이 변경 전에 정지\n완료한 경기일은 다음 날 버튼으로 진행합니다.")
                 .font(.caption).foregroundStyle(GameTheme.muted)
             if !summary.isEmpty {
                 Text(summary).font(.caption).accessibilityIdentifier("calendarSummary")

@@ -35,7 +35,7 @@ import SpriteKit
         let board = SKSpriteNode(color: UIColor(red: 0.08, green: 0.16, blue: 0.25, alpha: 1), size: CGSize(width: 288, height: 36))
         board.position = CGPoint(x: 160, y: 370); addChild(board)
         let label = SKLabelNode(fontNamed: "Menlo-Bold"); label.text = "BM  |  PRACTICE  |  B 0  S 0  O 0"
-        label.fontSize = 10; label.position = CGPoint(x: 160, y: 366); addChild(label)
+        label.name = "scoreboard"; label.fontSize = 10; label.position = CGPoint(x: 160, y: 366); addChild(label)
         for point in [CGPoint(x: 70, y: 305), CGPoint(x: 160, y: 325), CGPoint(x: 250, y: 305),
                       CGPoint(x: 230, y: 164), CGPoint(x: 193, y: 225), CGPoint(x: 119, y: 225), CGPoint(x: 90, y: 164)] {
             addChild(pixelFielder(at: point))
@@ -58,6 +58,10 @@ import SpriteKit
             let part = SKSpriteNode(color: c, size: CGSize(width: w, height: h)); part.position = CGPoint(x: x, y: y); node.addChild(part)
         }
         return node
+    }
+
+    func updateScoreboard(_ text: String) {
+        (childNode(withName: "scoreboard") as? SKLabelNode)?.text = text
     }
 
     @discardableResult func demonstrate(reduceMotion: Bool) -> Bool {
