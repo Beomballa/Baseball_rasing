@@ -640,6 +640,57 @@ extension CareerFlowTests {
         XCTAssertGreaterThanOrEqual(action.frame.minX, app.windows.firstMatch.frame.minX)
         XCTAssertLessThanOrEqual(action.frame.maxX, app.windows.firstMatch.frame.maxX)
         let large = XCTAttachment(screenshot: app.screenshot()); large.name = "Acquisition large"; large.lifetime = .keepAlways; add(large)
+        action.tap()
+        let submit = app.buttons["traitDrillSubmit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 5)); reveal(submit, in: app)
+        XCTAssertGreaterThanOrEqual(submit.frame.minX, app.windows.firstMatch.frame.minX)
+        XCTAssertLessThanOrEqual(submit.frame.maxX, app.windows.firstMatch.frame.maxX)
+        let largeDrill = XCTAttachment(screenshot: app.screenshot()); largeDrill.name = "Detailed drill large"; largeDrill.lifetime = .keepAlways; add(largeDrill)
+        submit.tap(); XCTAssertTrue(app.staticTexts["traitDrillFeedback"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor func testTraitDrillExperienceInputsAndFiveAttempts() throws {
+        let app = XCUIApplication(); app.launchArguments = ["-trait-acquisition-preview"]; app.launch()
+        XCTAssertTrue(app.buttons["acquisitionStartPreview"].waitForExistence(timeout: 5))
+        for id in ["strong-arm", "cheetah", "safe-hands"] {
+            app.buttons["acquisitionTrait-" + id].tap(); app.buttons["acquisitionStartPreview"].tap()
+            let arena = app.otherElements["traitDrillArena"]
+            XCTAssertTrue(arena.waitForExistence(timeout: 5))
+            let initial = XCTAttachment(screenshot: app.screenshot()); initial.name = "Detailed drill " + id; initial.lifetime = .keepAlways; add(initial)
+            if id == "cheetah" {
+                app.buttons["traitDrillLeft"].tap()
+                XCUIDevice.shared.press(.home); app.activate()
+                XCTAssertFalse(app.staticTexts["traitDrillFeedback"].exists)
+                XCTAssertTrue(app.staticTexts["traitDrillSteps"].label.contains("0걸음"))
+                app.buttons["traitDrillLeft"].tap(); app.buttons["traitDrillLeft"].tap()
+                XCTAssertTrue(app.staticTexts["traitDrillSteps"].label.contains("1걸음"))
+                app.buttons["traitDrillRight"].tap()
+            } else if id == "safe-hands" {
+                arena.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.66)).press(forDuration: 0.1, thenDragTo: arena.coordinate(withNormalizedOffset: CGVector(dx: 0.68, dy: 0.48)))
+                app.buttons["traitDrillSubmit"].tap()
+            } else {
+                app.buttons["traitDrillSubmit"].tap()
+            }
+            XCTAssertTrue(app.staticTexts["traitDrillFeedback"].waitForExistence(timeout: 7))
+            if id != "cheetah" { XCTAssertTrue(app.staticTexts["traitDrillFeedback"].label.contains("GREAT")) }
+            let feedback = XCTAttachment(screenshot: app.screenshot()); feedback.name = "Detailed feedback " + id; feedback.lifetime = .keepAlways; add(feedback)
+            if id == "strong-arm" {
+                for base in [2, 3, 2, 1] {
+                    app.buttons["traitDrillNext"].tap()
+                    app.buttons["traitDrillBase-\(base)"].tap()
+                    let target = base == 2 ? CGVector(dx: 0.5, dy: 0.34) : base == 3 ? CGVector(dx: 0.22, dy: 0.63) : CGVector(dx: 0.78, dy: 0.63)
+                    arena.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.63)).press(forDuration: 0.1, thenDragTo: arena.coordinate(withNormalizedOffset: target))
+                    app.buttons["traitDrillSubmit"].tap()
+                    XCTAssertTrue(app.staticTexts["traitDrillFeedback"].waitForExistence(timeout: 4))
+                    XCTAssertTrue(app.staticTexts["traitDrillFeedback"].label.contains("GREAT"))
+                }
+                XCTAssertTrue(app.staticTexts["traitDrillResult"].exists)
+                XCTAssertTrue(app.staticTexts["traitDrillResult"].label.contains("100점"))
+                XCTAssertFalse(app.buttons["traitDrillNext"].exists)
+            }
+            app.buttons["acquisitionCloseDrill"].tap()
+            XCTAssertEqual(app.staticTexts["acquisitionProgress"].label, "36.8 / 100.0")
+        }
     }
 
     @MainActor func testTraitDetailBothRolesPersistenceAndLocks() throws {

@@ -179,8 +179,6 @@ struct TraitAcquisitionPreview: View {
     private var threshold: Double { selected == .safeHands ? 50 : 60 }
     private var current: Double { threshold + (sample == .short ? -5 : 4) }
     private var progress: Double { sample == .owned ? 100 : sample == .near ? 99.4 : 36.8 }
-    private var kind: TrainingKind { switch selected { case .strongArm: .arm; case .cheetah: .speed; case .safeHands: .defense } }
-    private var drill: String { switch selected { case .strongArm: "베이스 · 방향 · 강도 조절"; case .cheetah: "4초 교대 달리기"; case .safeHands: "낙하지점 이동 · 포구" } }
     private var reason: String {
         switch sample {
         case .short: "먼저 \(selected.condition)을 달성하세요."
@@ -194,9 +192,8 @@ struct TraitAcquisitionPreview: View {
         typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout())
     }
     private var board: some View {
-        FieldTrainingBoard(kind: kind, target: TrainingTarget(x: 0.68, y: 0.4), base: 1,
-                           angle: 0, force: 65, steps: 8, appearance: PlayerAppearance(),
-                           x: .constant(0.48), y: .constant(0.55), locked: true)
+        TraitTrainingArena(trait: selected, target: TrainingRules.basePoint(1), player: TrainingTarget(x: 0.48, y: 0.7),
+                           endpoint: TrainingRules.basePoint(1), motion: 0, steps: 0, moving: false, success: nil)
             .accessibilityHidden(true)
     }
     var body: some View {
@@ -242,15 +239,15 @@ struct TraitAcquisitionPreview: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         informationLayout {
-                            Text("특성 전용 훈련").bold()
+                            Text(selected.drillTitle).bold()
                             if !typeSize.isAccessibilitySize { Spacer() }
                             Text("5회").monospaced()
                         }.font(.subheadline)
-                        board.frame(height: typeSize.isAccessibilitySize ? 170 : max(120, min(180, geometry.size.height - 490)))
-                        Text(drill).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                        board.frame(height: typeSize.isAccessibilitySize ? 190 : max(150, min(210, geometry.size.height - 470)))
+                        Text(selected.drillInstruction).font(.caption).foregroundStyle(GameTheme.gold)
                     }
                     Text(reason).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("acquisitionState")
-                    Button(sample == .owned ? "이미 습득한 특성" : sample == .short ? "능력치 조건 미충족" : sample == .locked ? "오늘 훈련 불가" : "훈련 구성 미리보기") { showDrill = true }
+                    Button(sample == .owned ? "이미 습득한 특성" : sample == .short ? "능력치 조건 미충족" : sample == .locked ? "오늘 훈련 불가" : "훈련 체험 · 5회") { showDrill = true }
                         .buttonStyle(GameButtonStyle(onBoard: true)).disabled(!canPreview).accessibilityIdentifier("acquisitionStartPreview")
                 }.padding(12)
             }
@@ -266,28 +263,256 @@ struct TraitAcquisitionPreview: View {
                         .accessibilityIdentifier("acquisitionSampleState")
                 }
             }
-            .sheet(isPresented: $showDrill) {
-                NavigationStack {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("훈련 구성 미리보기 · 실제 훈련/보상 없음").font(.caption).foregroundStyle(GameTheme.gold)
-                            GamePanel(title: selected.label + " · 5회 과제", onBoard: true) {
-                                board.frame(height: 180)
-                                Text(drill).font(.headline)
-                                Text("5회 평균 점수에 따라 특성 진척만 증가합니다. 능력치 추가 보상은 없습니다.").font(.subheadline)
+            .fullScreenCover(isPresented: $showDrill) { NavigationStack { TraitDrillExperience(trait: selected) } }
+    }
+}
+
+private extension PlayerTrait {
+    var drillTitle: String { switch self { case .strongArm: "송구 클리닉"; case .cheetah: "첫발 스프린트"; case .safeHands: "낙구 포구 훈련" } }
+    var drillInstruction: String {
+        switch self {
+        case .strongArm: "베이스 선택 후 훈련장에서 방향·거리를 드래그해 송구하세요."
+        case .cheetah: "4초 동안 왼발·오른발을 번갈아 눌러 질주하세요."
+        case .safeHands: "선수를 낙하지점으로 옮긴 뒤 글러브를 내미세요."
+        }
+    }
+}
+
+private struct TraitTrainingArena: View {
+    let trait: PlayerTrait
+    let target: TrainingTarget
+    let player: TrainingTarget
+    let endpoint: TrainingTarget
+    let motion: Double
+    let steps: Int
+    let moving: Bool
+    let success: Bool?
+    var body: some View {
+        Canvas { context, size in
+            context.scaleBy(x: size.width / 320, y: size.height / 220)
+            func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double, _ color: Int) {
+                context.fill(Path(CGRect(x: x.rounded(), y: y.rounded(), width: w, height: h)), with: .color(Color(hex: color)))
+            }
+            func line(_ a: CGPoint, _ b: CGPoint, _ color: Int, _ width: Double = 2) {
+                var p = Path(); p.move(to: a); p.addLine(to: b)
+                context.stroke(p, with: .color(Color(hex: color)), lineWidth: width)
+            }
+            func point(_ p: TrainingTarget) -> CGPoint { CGPoint(x: p.x * 320, y: p.y * 220) }
+            func athlete(_ x: Double, _ y: Double, _ kit: Int, _ stride: Bool = false, _ throwing: Bool = false) {
+                box(x - 9, y + 13, 20, 4, 0x22583f)
+                box(x - 6, y - 18, 12, 4, 0x132b40); box(x - 5, y - 14, 10, 9, 0xe8b68b)
+                box(x - 3, y - 12, 2, 2, 0x132b40); box(x + 2, y - 12, 2, 2, 0x132b40)
+                box(x - 6, y - 6, 12, 13, kit); box(x - 1, y - 5, 3, 11, 0xf3edd5)
+                box(x - 10, y - 4, 4, 9, 0xe8b68b)
+                box(x + 6, y - (throwing ? 13 : 4), 4, 10, 0xe8b68b)
+                box(x - 6, y + 7, 5, stride ? 5 : 8, 0xe6e5d3); box(x + 1, y + 7, 5, stride ? 10 : 8, 0xe6e5d3)
+                box(x - 8, y + (stride ? 11 : 15), 7, 3, 0x14283f); box(x + 1, y + (stride ? 17 : 15), 7, 3, 0x14283f)
+            }
+            box(0, 0, 320, 220, 0x326b4d)
+            for row in 0..<9 { box(0, Double(row * 25), 320, 12, row.isMultiple(of: 2) ? 0x377654 : 0x326b4d) }
+            // Fence, seating, nets and equipment give the drill a distinct place.
+            box(0, 0, 320, 23, 0x132b40)
+            for col in 0..<32 { box(Double(col * 11), 5, 6, 4, col.isMultiple(of: 3) ? 0x8fa59c : 0x385465); box(Double(col * 11 + 3), 13, 6, 4, 0x526e77) }
+            box(0, 23, 320, 10, 0x184a42); box(0, 23, 320, 2, 0xe1c06a)
+            for col in 0..<17 { box(Double(col * 20), 26, 2, 7, 0x73918a) }
+            for row in 0..<6 { line(CGPoint(x: 8, y: 45 + row * 9), CGPoint(x: 44, y: 45 + row * 9), 0x71998a, 1) }
+            for col in 0..<5 { line(CGPoint(x: 8 + col * 9, y: 45), CGPoint(x: 8 + col * 9, y: 90), 0x71998a, 1) }
+            box(284, 45, 22, 6, 0x9b7347); box(286, 51, 3, 7, 0x604e38); box(301, 51, 3, 7, 0x604e38)
+            for col in 0..<3 { box(286 + Double(col * 7), 42, 4, 3, 0xf0e6ca) }
+            if trait == .cheetah {
+                box(16, 100, 288, 93, 0x9e7751)
+                for row in 0..<3 { line(CGPoint(x: 16, y: 111 + row * 31), CGPoint(x: 304, y: 111 + row * 31), 0xe4d8b0) }
+                for y in stride(from: 100, to: 193, by: 10) {
+                    for col in 0..<2 { box(280 + Double(col * 5), Double(y), 5, 5, (y / 10 + col).isMultiple(of: 2) ? 0xf1e8cd : 0x17344e) }
+                }
+                let runner = 36 + min(1, Double(steps) / 16) * 226
+                for index in 0..<min(steps, 16) { box(29 + Double(index * 14), index.isMultiple(of: 2) ? 161 : 170, 5, 3, 0xd9bb87) }
+                athlete(runner, 143, 0x214e72, steps.isMultiple(of: 2) && moving)
+                athlete(302, 81, 0x685a51)
+            } else {
+                let bases = [4, 1, 2, 3, 4].map { point(TrainingRules.basePoint($0)) }
+                var dirt = Path(); dirt.addLines(bases); dirt.closeSubpath()
+                context.fill(dirt, with: .color(Color(hex: 0x9b724a)))
+                context.stroke(dirt, with: .color(Color(hex: 0xf0e4c6)), lineWidth: 2)
+                for base in 1...4 { let p = point(TrainingRules.basePoint(base)); box(p.x - 4, p.y - 4, 8, 8, 0xf0e4c6) }
+                let t = point(target)
+                context.stroke(Path(CGRect(x: t.x - 12, y: t.y - 9, width: 24, height: 18)), with: .color(GameTheme.gold), lineWidth: 2)
+                if trait == .strongArm {
+                    let origin = point(TrainingTarget(x: 0.5, y: 0.63)), end = point(endpoint)
+                    athlete(t.x + 8, t.y - 10, 0x96574a)
+                    athlete(origin.x, origin.y + 5, 0x214e72, false, moving && motion < 0.2)
+                    for fraction in stride(from: 0.15, through: 1.0, by: 0.15) {
+                        box(origin.x + (end.x - origin.x) * fraction, origin.y + (end.y - origin.y) * fraction, 2, 2, 0xceba72)
+                    }
+                    if moving || success != nil {
+                        let phase = max(0, min(1, (motion - 0.18) / 0.82))
+                        let hand = CGPoint(x: origin.x + 10, y: origin.y - 7)
+                        let x = hand.x + (end.x - hand.x) * phase
+                        let y = hand.y + (end.y - hand.y) * phase - sin(phase * .pi) * 22
+                        box(x - 2, y - 2, 5, 5, 0xfff6d5)
+                    }
+                } else {
+                    let p = point(player)
+                    athlete(p.x, p.y, 0x214e72)
+                    box(p.x + 8, p.y - (moving ? 13 : 3), 8, 7, 0xc99759)
+                    let height = moving || success != nil ? (1 - motion) * 65 : 65
+                    box(t.x - 2, t.y - height - sin(motion * .pi) * 30, 5, 5, 0xfff5d4)
+                    line(CGPoint(x: t.x, y: t.y - height + 9), CGPoint(x: t.x, y: t.y - 6), 0xc1c99c, 1)
+                }
+                if let success { context.stroke(Path(CGRect(x: t.x - 17, y: t.y - 14, width: 34, height: 28)), with: .color(success ? GameTheme.growth : GameTheme.gold), lineWidth: 3) }
+            }
+            for x in [60.0, 265] { box(x, 193, 7, 7, 0xd3ab5b); box(x + 2, 188, 3, 5, 0xe8c56f) }
+        }.drawingGroup().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+    }
+}
+
+private struct TraitDrillExperience: View {
+    let trait: PlayerTrait
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @State private var scores: [Int] = []
+    @State private var selectedBase = 1
+    @State private var angle = 0.0
+    @State private var force = 51.0
+    @State private var x = 0.5
+    @State private var y = 0.66
+    @State private var running = false
+    @State private var startedAt = Date()
+    @State private var steps = 0
+    @State private var lastFoot = 0
+    @State private var feedback: String?
+    @State private var pendingScore = 0
+    private var finished: Bool { scores.count == 5 }
+    private var averageScore: Int { Int((Double(scores.reduce(0) { $0 + $1 }) / 5.0).rounded()) }
+    private var attemptIndex: Int { min(4, max(0, scores.count - (feedback == nil ? 0 : 1))) }
+    private var targetBase: Int { [1, 2, 3, 2, 1][attemptIndex] }
+    private var target: TrainingTarget { trait == .safeHands ? TrainingTarget(x: [0.68, 0.3, 0.62, 0.4, 0.52][attemptIndex], y: 0.48) : TrainingRules.basePoint(targetBase) }
+    private var endpoint: TrainingTarget { TrainingRules.throwEndpoint(angle: angle, force: force) }
+    private var targetText: String { trait == .strongArm ? "목표 \(targetBase)루 · 베이스 선택 + 정확한 송구" : trait == .cheetah ? "4초 / 교대 16걸음 목표" : "금색 낙하지점으로 이동 · 포구" }
+    private func submit() {
+        guard !running, feedback == nil, !finished else { return }
+        pendingScore = trait == .strongArm
+            ? (selectedBase == targetBase ? Int((max(0, 1 - hypot(endpoint.x - target.x, endpoint.y - target.y) / 0.3) * 100).rounded()) : 0)
+            : Int((max(0, 1 - hypot(x - target.x, y - target.y) / 0.55) * 100).rounded())
+        startedAt = Date(); running = true
+    }
+    private func step(_ foot: Int) {
+        guard feedback == nil, !finished else { return }
+        guard foot != lastFoot else { return }
+        if !running { startedAt = Date(); running = true }
+        lastFoot = foot; steps += 1
+    }
+    private func resolve() {
+        let score = trait == .cheetah ? min(100, Int((Double(steps) / 16 * 100).rounded())) : pendingScore
+        scores.append(score); running = false
+        feedback = score >= 90 ? "GREAT · 정확한 동작!" : score >= 60 ? "GOOD · 조금 더 정확하게" : "RETRY · \(trait == .strongArm ? "베이스와 방향·힘을 확인하세요" : trait == .cheetah ? "좌·우를 더 빠르게 교대하세요" : "낙하지점에 더 가까이 이동하세요")"
+    }
+    private var controls: some View {
+        VStack(spacing: 10) {
+            if trait == .strongArm {
+                HStack { ForEach(1...3, id: \.self) { base in
+                    Button("\(base)루") { selectedBase = base }.buttonStyle(GameButtonStyle(secondary: selectedBase == base, onBoard: true))
+                        .accessibilityIdentifier("traitDrillBase-\(base)")
+                } }
+                HStack {
+                    TrainingAdjustment(label: "방향", value: $angle, range: 0...360, suffix: "°", identifier: "traitDrillAngle")
+                    TrainingAdjustment(label: "힘", value: $force, range: 8...100, suffix: "%", identifier: "traitDrillForce")
+                }
+            } else if trait == .safeHands {
+                HStack { ForEach(["←", "↑", "↓", "→"], id: \.self) { direction in
+                    Button(direction) {
+                        if direction == "←" { x = max(0.1, x - 0.05) }; if direction == "→" { x = min(0.9, x + 0.05) }
+                        if direction == "↑" { y = max(0.2, y - 0.05) }; if direction == "↓" { y = min(0.9, y + 0.05) }
+                    }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true))
+                        .accessibilityLabel(["←": "왼쪽", "↑": "위", "↓": "아래", "→": "오른쪽"][direction]!)
+                        .accessibilityIdentifier("traitDrillMove-" + direction)
+                } }
+            }
+        }.disabled(running || feedback != nil || finished)
+    }
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("체험 모드 · 점수만 표시 / 실제 진척·피로는 그대로").font(.caption).foregroundStyle(GameTheme.gold)
+                    Text(targetText).font(.subheadline.bold()).accessibilityIdentifier("traitDrillTarget")
+                    HStack(spacing: 5) { ForEach(0..<5) { index in
+                        VStack(spacing: 2) { Text("\(index + 1)회").font(.caption); Text(index < scores.count ? "\(scores[index])" : "·").font(.subheadline.monospaced().bold()) }
+                            .frame(maxWidth: .infinity, minHeight: 44).background(GameTheme.boardPanel)
+                            .overlay(Rectangle().strokeBorder(index == attemptIndex ? GameTheme.gold : GameTheme.boardLine))
+                    } }.accessibilityElement(children: .combine).accessibilityIdentifier("traitDrillScores")
+                    TimelineView(.animation(minimumInterval: reduced ? 0.1 : 1.0 / 30, paused: !running)) { time in
+                        let elapsed = max(0, time.date.timeIntervalSince(startedAt))
+                        let remaining: Double = running ? max(0, 4.0 - elapsed) : (feedback == nil ? 4.0 : 0.0)
+                        let seconds = remaining.formatted(.number.precision(.fractionLength(1)))
+                        VStack(spacing: 4) {
+                            TraitTrainingArena(trait: trait, target: target, player: TrainingTarget(x: x, y: y), endpoint: endpoint,
+                                               motion: running ? (reduced ? 1 : min(1, elapsed / 0.9)) : (feedback == nil ? 0 : 1), steps: steps,
+                                               moving: running, success: feedback == nil ? nil : scores.last.map { $0 >= 90 })
+                                .frame(height: typeSize.isAccessibilitySize ? 210 : max(170, min(260, geometry.size.height - (trait == .strongArm ? 420 : 340))))
+                                .contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
+                                    guard trait != .cheetah, !running, feedback == nil else { return }
+                                    let reserve: CGFloat = trait == .strongArm ? 420 : 340
+                                    let height = typeSize.isAccessibilitySize ? 210 : max(170, min(260, geometry.size.height - reserve))
+                                    let pointX = event.location.x / max(1, geometry.size.width - 24)
+                                    let pointY = event.location.y / height
+                                    if trait == .safeHands {
+                                        x = min(0.9, max(0.1, pointX)); y = min(0.9, max(0.2, pointY))
+                                    } else {
+                                        let dx = pointX - 0.5, dy = pointY - 0.63
+                                        angle = (atan2(dy, dx) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+                                        force = min(100, max(8, hypot(dx, dy) / 0.55 * 100))
+                                    }
+                                }, including: trait != .cheetah && !typeSize.isAccessibilitySize && !running && feedback == nil ? .all : .none)
+                                .accessibilityElement(children: .ignore).accessibilityLabel("훈련장 · " + trait.drillInstruction)
+                                .accessibilityIdentifier("traitDrillArena")
+                            if trait == .cheetah {
+                                Text("\(steps)걸음 · 남은 \(seconds)초")
+                                    .font(.subheadline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("traitDrillSteps")
                             }
-                            HStack { ForEach(1...5, id: \.self) { index in
-                                Text("\(index)회\n·").font(.subheadline.monospaced()).frame(maxWidth: .infinity, minHeight: 48)
-                                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine))
-                            } }.accessibilityLabel("훈련 5회 점수 기록 영역")
-                            Text("완료: 진척 저장 · 피로 +6 · 오늘 행동 사용\n습득 후: 보유 목록에 추가 · 다음 날 준비 전 활성화")
-                                .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-                            Button("훈련 선택으로 돌아가기") { showDrill = false }
-                                .buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("acquisitionCloseDrill")
-                        }.padding(12)
-                    }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
-                        .navigationTitle("과제 구성 시안").navigationBarTitleDisplayMode(.inline)
-                }.preferredColorScheme(.dark)
+                        }
+                    }
+                    Text(typeSize.isAccessibilitySize && trait != .cheetah ? (trait == .strongArm ? "아래 방향·힘 버튼으로 조절한 뒤 송구하세요." : "아래 이동 버튼으로 낙하지점에 접근한 뒤 포구하세요.") : trait.drillInstruction)
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    controls
+                    if let feedback {
+                        Text(feedback).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("traitDrillFeedback")
+                        if finished {
+                            Text("5회 평균 \(averageScore)점 · 체험 완료")
+                                .font(.headline).accessibilityIdentifier("traitDrillResult")
+                            Text("실제 저장 연결 후 이 결과로 특성 진척이 증가합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        } else {
+                            Button("다음 시도 · \(scores.count + 1)/5") { self.feedback = nil; steps = 0; lastFoot = 0 }
+                                .buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("traitDrillNext")
+                        }
+                    } else if trait == .cheetah {
+                        HStack {
+                            Button("왼발") { step(1) }.accessibilityIdentifier("traitDrillLeft")
+                            Button("오른발") { step(2) }.accessibilityIdentifier("traitDrillRight")
+                        }.buttonStyle(GameButtonStyle(onBoard: true))
+                    } else {
+                        Button(running ? "플레이 중…" : trait == .strongArm ? "송구!" : "글러브 내밀기") { submit() }
+                            .buttonStyle(GameButtonStyle(onBoard: true)).disabled(running).accessibilityIdentifier("traitDrillSubmit")
+                    }
+                    if finished {
+                        Button("훈련 선택으로 돌아가기") { dismiss() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("traitDrillFinish")
+                    }
+                }.padding(12)
+            }
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).preferredColorScheme(.dark)
+            .navigationTitle(trait.drillTitle).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                Button("닫기") { dismiss() }.accessibilityIdentifier("acquisitionCloseDrill")
+            } }
+            .task(id: running) {
+                guard running else { return }
+                do { try await Task.sleep(for: .seconds(trait == .cheetah ? 4 : reduced ? 0.1 : 0.9)) } catch { return }
+                guard !Task.isCancelled, running else { return }; resolve()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { running = false; steps = 0; lastFoot = 0 }
             }
     }
 }

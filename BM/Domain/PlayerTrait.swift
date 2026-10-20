@@ -6,9 +6,9 @@ enum PlayerTrait: String, Codable, CaseIterable, Identifiable {
     var label: String { switch self { case .strongArm: "강견"; case .cheetah: "치타"; case .safeHands: "안정 포구" } }
     var effect: String {
         switch self {
-        case .strongArm: "내 송구 비행 속도 +5%"
-        case .cheetah: "내 주루·수비 출발 지연 −8%"
-        case .safeHands: "내 땅볼·낙구 공 확보 시간 −10%"
+        case .strongArm: "강한 송구로 주자의 진루를 막습니다. 송구 속도 +5%"
+        case .cheetah: "빠른 첫발로 주루와 수비에서 먼저 움직입니다. 출발 지연 −8%"
+        case .safeHands: "타구를 안정적으로 처리해 다음 플레이로 연결합니다. 공 확보 시간 −10%"
         }
     }
     var condition: String { switch self { case .strongArm: "송구 60 이상"; case .cheetah: "스피드 60 이상"; case .safeHands: "수비 50 이상" } }
