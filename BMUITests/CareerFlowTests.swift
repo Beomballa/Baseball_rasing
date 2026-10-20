@@ -190,6 +190,27 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","오늘 행동 미사용"),object:app.staticTexts["calendarAction"])],timeout:5),.completed)
     }
 
+    @MainActor private func chooseArchetype(_ app: XCUIApplication, pitcher: Bool) {
+        let options = pitcher ? ["control", "stuff", "endurance"] : ["contact", "onBase", "slugger"]
+        let labels = pitcher ? ["제구형", "구위형", "지구력형"] : ["컨택형", "출루형", "장타형"]
+        for (code,label) in zip(options,labels) {
+            reveal(app.buttons["archetype-" + code],in:app); app.buttons["archetype-" + code].tap()
+            XCTAssertTrue(app.staticTexts["archetypePreviewTitle"].label.contains(label))
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Pitcher archetype preview" : "Batter archetype preview"; shot.lifetime = .keepAlways; add(shot)
+    }
+    @MainActor private func checkAbilities(_ app: XCUIApplication, pitcher: Bool) {
+        XCTAssertTrue(app.staticTexts["homeArchetype"].waitForExistence(timeout:5))
+        XCTAssertEqual(app.staticTexts["homeArchetype"].label,pitcher ? "지구력형" : "장타형")
+        let values = pitcher ? [("homeVelocity","52"),("homeControl","54"),("homeStuff","53"),("homeStamina","65"),("homeBreaking","49.8"),("homeMental","55")] : [("homeMental","55")]
+        for (identifier,value) in values {
+            let row = app.descendants(matching:.any).matching(identifier:identifier).firstMatch
+            reveal(row,in:app); XCTAssertTrue(row.exists); XCTAssertTrue(row.label.contains(value),row.label)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Pitcher ability home" : "Batter ability home"; shot.lifetime = .keepAlways; add(shot)
+        for _ in 0..<5 { app.swipeDown() }
+    }
+
     @MainActor func testCreateBothRolesRelaunchAndEnterSpriteKit() throws {
         let app = XCUIApplication()
         app.launch()
@@ -201,13 +222,15 @@ final class CareerFlowTests: XCTestCase {
         app.buttons["schoolPicker"].tap()
         app.buttons["hs-ref-001"].tap()
         let creationShot = XCTAttachment(screenshot: app.screenshot()); creationShot.name = "Player creation"; creationShot.lifetime = .keepAlways; add(creationShot)
-        app.swipeUp(); app.swipeUp()
+        chooseArchetype(app,pitcher:false)
         let start = app.buttons["createPlayer"]
+        reveal(start,in:app)
         XCTAssertTrue(start.waitForExistence(timeout: 3)); start.tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["homeSchool"].label.contains("경기고"))
         XCTAssertEqual(app.staticTexts["calendarDate"].label, "2026-04-01")
         XCTAssertTrue(app.staticTexts["homeAge"].label.contains("16세 / 고1"))
+        checkAbilities(app,pitcher:false)
         reveal(app.buttons["restToday"], in: app)
         train(app, pitcher: false)
         reveal(app.buttons["restToday"], in: app)
@@ -287,10 +310,12 @@ final class CareerFlowTests: XCTestCase {
         if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
         app.segmentedControls["throwingHandPicker"].buttons["좌투"].tap()
         app.buttons["randomSchool"].tap()
-        app.swipeUp(); app.swipeUp(); app.buttons["createPlayer"].tap()
+        chooseArchetype(app,pitcher:true)
+        reveal(app.buttons["createPlayer"],in:app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("LeftPitcher"))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "좌투")).firstMatch.exists)
+        checkAbilities(app,pitcher:true)
         let homeShot = XCTAttachment(screenshot: app.screenshot()); homeShot.name = "Pitcher saved home"; homeShot.lifetime = .keepAlways; add(homeShot)
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
@@ -298,6 +323,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.segmentedControls["homeRolePicker"].exists)
         app.segmentedControls["homeRolePicker"].buttons["투수 · LeftPitcher"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("LeftPitcher"))
+        checkAbilities(app,pitcher:true)
         for _ in 0..<5 { app.swipeDown() }
         train(app, pitcher: true)
         reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()

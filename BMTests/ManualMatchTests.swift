@@ -14,7 +14,7 @@ import SwiftData
     }
     private func fixture(in context: ModelContext, role: PlayerRole = .batter) throws -> (CareerPlayer, CareerCalendarState, CareerMatchRecord) {
         var draft = PlayerDraft(); draft.name = "직접조작"; draft.schoolID = "hs-ref-001"; draft.role = role
-        let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
+        let player = try LegacyPlayerFixture.create(draft, schools: SchoolCatalog.load(), in: context)
         let calendar = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
         try CalendarProgression.rest(player: player, state: calendar, revision: calendar.revision, in: context)
         let record = try CareerMatchStore.start(player: player, state: calendar, in: context)

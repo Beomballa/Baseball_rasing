@@ -6,7 +6,7 @@ import SwiftData
     private func setup(role: PlayerRole = .batter, date: String = "2026-04-01", in context: ModelContext) throws -> (CareerPlayer, CareerCalendarState) {
         var draft = PlayerDraft(); draft.name = role == .batter ? "경기타자" : "경기투수"
         draft.schoolID = "hs-ref-001"; draft.role = role; draft.throwingHand = .left
-        let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
+        let player = try LegacyPlayerFixture.create(draft, schools: SchoolCatalog.load(), in: context)
         player.gameDate = date
         try context.save()
         let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })

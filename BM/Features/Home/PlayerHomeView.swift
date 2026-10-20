@@ -11,6 +11,8 @@ struct PlayerHomeView: View {
     let create: () -> Void
     let play: () -> Void
     @Query(sort: \CareerMatchRecord.gameDate, order: .reverse) private var gameRecords: [CareerMatchRecord]
+    @Query private var abilityProfiles: [PlayerAbilities]
+    private var abilities: PlayerAbilities? { abilityProfiles.first { $0.playerID == player.id } }
 
     @Query(sort: \CareerTrainingRecord.gameDate, order: .reverse) private var trainingRecords: [CareerTrainingRecord]
     private var todayTraining: CareerTrainingRecord? { trainingRecords.first { $0.playerID == player.id && $0.gameDate == player.gameDate } }
@@ -33,6 +35,10 @@ struct PlayerHomeView: View {
                             Text(player.schoolName).fontWeight(.semibold).accessibilityIdentifier("homeSchool")
                             Text("\(player.role.label) · \(player.roleDetail) · \(age)세 / \(SeasonSchedule.academicStatus(age: age))")
                                 .font(.subheadline).foregroundStyle(GameTheme.muted).accessibilityIdentifier("homeAge")
+                            if let abilities {
+                                Text(abilities.label).font(.caption.bold()).foregroundStyle(GameTheme.green)
+                                    .accessibilityIdentifier("homeArchetype")
+                            }
                         }
                         Spacer(minLength: 0)
                     }
@@ -98,11 +104,27 @@ struct PlayerHomeView: View {
                         StatRow(name: "컨택", value: player.contact)
                         StatRow(name: "파워", value: player.power)
                         StatRow(name: "선구안", value: player.discipline)
+                        if let abilities { StatRow(name: "멘탈", value: abilities.mental).accessibilityIdentifier("homeMental") }
                     } else {
                         ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
                             StatRow(name: pitch.name, value: pitch.mastery)
                         }
                     }
+                }
+                if player.role == .pitcher, let abilities {
+                    GamePanel(title: "투수 능력치 · 0~100점") {
+                        if let velocity = abilities.velocity { StatRow(name: "구속 능력", value: velocity).accessibilityIdentifier("homeVelocity") }
+                        if let control = abilities.control { StatRow(name: "제구", value: control).accessibilityIdentifier("homeControl") }
+                        if let stuff = abilities.stuff { StatRow(name: "구위", value: stuff).accessibilityIdentifier("homeStuff") }
+                        if let stamina = abilities.stamina { StatRow(name: "지구력", value: stamina).accessibilityIdentifier("homeStamina") }
+                        StatRow(name: "변화구", value: PlayerInitialValues.breakingRating(Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) })))
+                            .accessibilityIdentifier("homeBreaking")
+                        StatRow(name: "멘탈", value: abilities.mental).accessibilityIdentifier("homeMental")
+                        Text("변화구는 포심을 제외한 상위 2종의 숙련도 기준입니다.").font(.caption).foregroundStyle(GameTheme.muted)
+                    }
+                }
+                if abilities == nil {
+                    Text("확장 능력치 정보를 불러오지 못했습니다. 앱을 다시 열어 주세요.").font(.caption).foregroundStyle(GameTheme.muted)
                 }
                 GamePanel(title: "주루 · 수비") {
                     StatRow(name: "스피드", value: player.speed).accessibilityIdentifier("homeSpeed")

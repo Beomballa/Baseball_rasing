@@ -79,7 +79,18 @@ import SwiftData
         XCTAssertEqual(player.startAge, 16)
         XCTAssertEqual(player.gameDate, "2026-04-01")
         XCTAssertEqual(player.fatigue, 52)
-        XCTAssertEqual(player.pitches.sorted { $0.order < $1.order }.map(\.mastery), [72,65,48,35])
+        XCTAssertEqual(player.pitches.sorted { $0.order < $1.order }.map(\.mastery), [62,55,42,35])
         XCTAssertFalse(reopened.mainContext.autosaveEnabled)
+    }
+}
+
+// Preserve explicit demo fixtures for old training/match regression and migration tests.
+@MainActor enum LegacyPlayerFixture {
+    static func create(_ draft: PlayerDraft, schools: [School], in context: ModelContext) throws -> CareerPlayer {
+        let player = CareerPlayer(draft: draft, school: try XCTUnwrap(schools.first { $0.id == draft.schoolID }))
+        context.insert(player)
+        context.insert(CareerCalendarState(player: player, schools: schools, legacySave: false))
+        try context.save()
+        return player
     }
 }

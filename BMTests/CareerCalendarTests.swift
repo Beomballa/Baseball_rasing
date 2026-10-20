@@ -367,7 +367,7 @@ import SwiftData
         let state = try XCTUnwrap(reopened.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == pitcher.id })
         XCTAssertEqual(pitcher.gameDate, "2026-04-04")
         XCTAssertEqual(pitcher.fatigue, 46)
-        XCTAssertEqual(pitcher.pitches.sorted { $0.order < $1.order }.map(\.mastery), [72, 65, 48, 35])
+        XCTAssertEqual(pitcher.pitches.sorted { $0.order < $1.order }.map(\.mastery), [62, 55, 42, 35])
         let retry = try await CalendarProgression.advanceOffDays(player: pitcher, state: state, in: reopened.mainContext)
         XCTAssertEqual(retry.days, 3)
         XCTAssertEqual(retry.restDays, 3)

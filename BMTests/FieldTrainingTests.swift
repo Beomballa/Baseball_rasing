@@ -5,7 +5,7 @@ import SwiftData
 @MainActor final class FieldTrainingTests: XCTestCase {
     private func setup(_ context: ModelContext, role: PlayerRole = .batter, date: String = "2026-04-01") throws -> (CareerPlayer, CareerCalendarState) {
         var draft = PlayerDraft(); draft.name = "필드훈련"; draft.schoolID = "hs-ref-001"; draft.role = role
-        let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
+        let player = try LegacyPlayerFixture.create(draft, schools: SchoolCatalog.load(), in: context)
         player.gameDate = date; try context.save()
         return (player, try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first))
     }

@@ -64,7 +64,36 @@ struct PlayerCreationView: View {
                     Button("학교 무작위 선택") { draft.schoolID = schools.randomElement()?.id ?? "" }
                         .buttonStyle(GameButtonStyle(secondary: true)).accessibilityIdentifier("randomSchool")
                 }
-                GamePanel(title: "03  도트 외형") {
+                GamePanel(title: "03  선수 유형") {
+                    HStack(spacing: 8) {
+                        ForEach(PlayerArchetype.choices(for: draft.role)) { archetype in
+                            Button(archetype.label) { draft.archetype = archetype }
+                                .buttonStyle(GameButtonStyle(secondary: draft.selectedArchetype != archetype))
+                                .accessibilityIdentifier("archetype-" + archetype.rawValue)
+                                .accessibilityAddTraits(draft.selectedArchetype == archetype ? .isSelected : [])
+                        }
+                    }
+                    Text("\(draft.selectedArchetype.label) · \(draft.role == .batter ? "타격·주루·수비·멘탈 합계 388" : "투구 원본 4종 합계 224")")
+                        .font(.caption.bold()).accessibilityIdentifier("archetypePreviewTitle")
+                    let values = draft.selectedArchetype.values
+                    if draft.role == .batter {
+                        StatRow(name: "컨택", value: values.contact)
+                        StatRow(name: "파워", value: values.power)
+                        StatRow(name: "선구안", value: values.discipline)
+                    } else {
+                        StatRow(name: "구속 능력", value: values.velocity ?? 0)
+                        StatRow(name: "제구", value: values.control ?? 0)
+                        StatRow(name: "구위", value: values.stuff ?? 0)
+                        StatRow(name: "지구력", value: values.stamina ?? 0)
+                    }
+                    StatRow(name: "스피드", value: values.speed)
+                    StatRow(name: "수비", value: values.defense)
+                    StatRow(name: "송구", value: values.arm)
+                    StatRow(name: "멘탈", value: values.mental)
+                    Text(draft.role == .batter ? "유형은 시작 능력치만 바꿉니다. 성장 배율과 상한은 같습니다." : "구속 능력은 0~100점 기준 · 초기 구종 숙련 62 / 55 / 42 / 35")
+                        .font(.caption).foregroundStyle(GameTheme.muted)
+                }
+                GamePanel(title: "04  도트 외형") {
                     palette("피부", selection: $draft.appearance.skin, colors: PlayerAppearance.skinColors)
                     palette("머리색", selection: $draft.appearance.hair, colors: PlayerAppearance.hairColors)
                     palette("유니폼", selection: $draft.appearance.kit, colors: PlayerAppearance.kitColors)
@@ -96,6 +125,7 @@ struct PlayerCreationView: View {
             SchoolPicker(schools: schools, selected: $draft.schoolID)
         }
         .onAppear { if let role = availableRoles.first, !availableRoles.contains(draft.role) { draft.role = role } }
+        .onChange(of: draft.role) { _, role in draft.archetype = .initial(for: role) }
     }
 
     private func palette(_ title: String, selection: Binding<Int>, colors: [Int]) -> some View {

@@ -3,7 +3,7 @@ import SwiftData
 
 @MainActor enum CareerStore {
     static func makeContainer(url: URL? = nil, inMemory: Bool = false) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: CareerSchemaV4.self)
+        let schema = Schema(versionedSchema: CareerSchemaV5.self)
         let configuration: ModelConfiguration
         if let url {
             configuration = ModelConfiguration("Career", schema: schema, url: url, cloudKitDatabase: .none)
@@ -15,6 +15,7 @@ import SwiftData
                                            configurations: [configuration])
         container.mainContext.autosaveEnabled = false
         try addMissingCalendars(in: container.mainContext)
+        try PlayerAbilityStore.addMissing(in: container.mainContext)
         return container
     }
 
@@ -33,16 +34,20 @@ import SwiftData
         } catch { context.rollback(); throw error }
     }
 
-    static func create(_ draft: PlayerDraft, schools: [School], in context: ModelContext) throws -> CareerPlayer {
+    static func create(_ draft: PlayerDraft, schools: [School], in context: ModelContext,
+                       save: CalendarProgression.Save = { try $0.save() }) throws -> CareerPlayer {
         try draft.validate(schools: schools)
         let role = draft.role.rawValue
         let request = FetchDescriptor<CareerPlayer>(predicate: #Predicate { $0.roleRaw == role })
         guard try context.fetchCount(request) == 0 else { throw CreationError.roleAlreadyExists }
         guard let school = schools.first(where: { $0.id == draft.schoolID }) else { throw CreationError.invalidSchool }
         let player = CareerPlayer(draft: draft, school: school)
+        let abilities = try PlayerAbilities(player: player, archetype: draft.selectedArchetype)
+        PlayerAbilityStore.apply(draft.selectedArchetype.values, to: player)
         context.insert(player)
+        context.insert(abilities)
         context.insert(CareerCalendarState(player: player, schools: schools, legacySave: false))
-        do { try context.save() } catch { context.rollback(); throw error }
+        do { try save(context) } catch { context.rollback(); throw error }
         return player
     }
 }
