@@ -8,7 +8,9 @@ struct CareerCalendarPanel: View {
     let schools: [School]
     let transition: CareerTransition
     @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var showSchedule = false
+    @State private var showHelp = false
     @State private var confirmBirthday = false
     @State private var errorMessage: String?
     @State private var summary = ""
@@ -50,8 +52,8 @@ struct CareerCalendarPanel: View {
             Text("일정을 불러오지 못했습니다").font(.headline).accessibilityIdentifier("scheduleLookupError")
             Text(message).font(.caption)
             Text("일정 확인 전까지 행동·날짜 진행이 잠깁니다. 기존 저장 데이터는 유지합니다.")
-                .font(.caption).foregroundStyle(GameTheme.muted)
-            Button("다시 확인") { scheduleRetry += 1 }.buttonStyle(GameButtonStyle(secondary: true))
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Button("다시 확인") { scheduleRetry += 1 }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true))
                 .accessibilityIdentifier("retrySchedule")
         }.id(scheduleRetry)
     }
@@ -60,53 +62,65 @@ struct CareerCalendarPanel: View {
         let status = CalendarScheduleStatus(player: player, state: state)
         let schedule = status.schedule
         let today = schedule?.today
+        let nextTeam = schedule?.upcoming.first { $0.date.description > player.gameDate }
+        let nextAppearance = schedule?.upcoming.first { $0.date.description > player.gameDate && $0.isAppearance(for: player.role) }
         let savedGame = today.flatMap { fixture in gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id } }
         let gameCompleted = savedGame?.completed == true && (try? savedGame?.snapshot()) != nil
-        return GamePanel(title: "오늘 일정") {
-            HStack {
+        return GamePanel(title: "오늘 일정", onBoard: true) {
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            layout {
                 Text(player.gameDate).monospacedDigit().bold().accessibilityIdentifier("calendarDate")
-                Spacer()
+                if !typeSize.isAccessibilitySize { Spacer() }
                 Text(trainingPending ? "훈련 진행 중 · 이어하기" : hasAction ? (trainedToday ? "오늘 행동 완료 · 훈련" : "오늘 행동 완료 · 휴식") : "오늘 행동 미사용")
                     .font(.caption).accessibilityIdentifier("calendarAction")
             }
+            HStack {
+                Text("피로 \(player.fatigue) / 100").font(.subheadline.monospaced().bold()).accessibilityIdentifier("homeFatigue")
+                Spacer()
+                Text(player.fatigue >= 70 ? "회복 필요" : player.fatigue >= 40 ? "피로 주의" : "양호").font(.caption).foregroundStyle(GameTheme.gold)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(GameTheme.board)
+                    Rectangle().fill(GameTheme.gold).frame(width: max(0, geometry.size.width) * Double(min(100, max(0, player.fatigue))) / 100)
+                }.overlay(Rectangle().strokeBorder(GameTheme.boardLine))
+            }.frame(height: 7).accessibilityHidden(true)
             if let message = status.errorMessage {
                 scheduleError(message)
             } else {
                 if let today {
-                    Text("\(today.number) / 30차전 · \(today.isAppearance(for: player.role) ? (player.role == .pitcher ? "선발 등판 예정" : "출전 예정") : "비등판 · 팀 경기 예정")")
+                    Text("\(today.number) / 30차전 · \(gameCompleted ? "경기 종료" : today.isAppearance(for: player.role) ? (player.role == .pitcher ? "선발 등판 예정" : "출전 예정") : "비등판 · 팀 경기 예정")")
                         .font(.headline).accessibilityIdentifier("todaySchedule")
-                    Text(detail(today)).font(.subheadline)
+                    Text(detail(today)).font(.caption).foregroundStyle(GameTheme.boardMuted)
                     Text(gameCompleted ? "경기 결과 저장 완료 · 다음 날 진행 가능" : "경기일 · 경기 완료 후 다음 날 진행 가능")
-                        .font(.caption).foregroundStyle(GameTheme.muted).accessibilityIdentifier("fixtureGate")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("fixtureGate")
                 } else {
                     Text("비경기일 · 훈련 / 휴식 준비").font(.headline).accessibilityIdentifier("todaySchedule")
                 }
-                if let next = schedule?.upcoming.first(where: { $0.date.description > player.gameDate }) {
+                if let next = nextTeam, next.id != nextAppearance?.id {
                     Text("다음 팀 경기  \(detail(next))").font(.caption)
                 }
-                if let next = schedule?.upcoming.first(where: { $0.isAppearance(for: player.role) }) {
+                if let next = nextAppearance {
                     Text("\(player.role == .pitcher ? "다음 선발" : "다음 출전")  \(detail(next))").font(.caption)
                         .accessibilityIdentifier("nextAppearance")
                 } else {
-                    Text("고교 일정 이후에는 진로·소속 확정 후 공식 일정을 연결합니다.")
-                        .font(.caption).foregroundStyle(GameTheme.muted)
+                    Text("이번 연간 일정의 다음 출전이 없습니다.")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
                 }
             }
-            Button("연간 30경기 일정 보기") { showSchedule = true }
-                .font(.subheadline.bold()).accessibilityIdentifier("showSeasonSchedule")
-            HStack {
+            layout {
                 Button(hasAction ? (trainedToday ? "오늘 행동 완료" : "휴식 완료") : "오늘 휴식 −\(DailyRecovery.rest)") {
                     run {
                         try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context)
                         summary = "오늘 휴식 저장 · 다음 날 수면 회복 −\(DailyRecovery.sleep)"
                     }
-                }.buttonStyle(GameButtonStyle(secondary: true)).disabled(hasAction || trainingPending || advancing || schedule == nil)
+                }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).disabled(hasAction || trainingPending || advancing || schedule == nil)
                     .accessibilityIdentifier("restToday")
-                Button("다음 날") { nextDay() }.buttonStyle(GameButtonStyle())
+                Button("다음 날") { nextDay() }.buttonStyle(GameButtonStyle(onBoard: true))
                     .disabled(trainingPending || !hasAction || (today != nil && !gameCompleted) || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
             }
             if advancing {
-                Button("묶음 진행 중지") { transition.requestCancel() }.buttonStyle(GameButtonStyle(secondary: true))
+                Button("묶음 진행 중지") { transition.requestCancel() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true))
             } else {
                 Button("다음 일정까지 · 회복 우선") {
                     transition.perform(date: player.gameDate, label: "다음 일정까지 · 회복 우선", reduced: reduced, cancellable: true) {
@@ -124,11 +138,22 @@ struct CareerCalendarPanel: View {
                             errorMessage = failure.localizedDescription
                         } catch { errorMessage = error.localizedDescription }
                     }
-                }.buttonStyle(GameButtonStyle(secondary: true)).disabled(trainingPending || today != nil || schedule == nil)
+                }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).disabled(trainingPending || today != nil || schedule == nil)
                     .accessibilityIdentifier("advanceOffDays")
             }
-            Text("최대 30일 · 매일 저장 · 경기일/나이 변경 전에 정지\n완료한 경기일은 다음 날 버튼으로 진행합니다.")
-                .font(.caption).foregroundStyle(GameTheme.muted)
+            layout {
+                Button("연간 30경기 일정 보기") { showSchedule = true }
+                    .font(.caption.bold()).frame(minHeight: 44).accessibilityIdentifier("showSeasonSchedule")
+                if !typeSize.isAccessibilitySize { Spacer() }
+                Button(showHelp ? "안내 닫기" : "진행 안내") { showHelp.toggle() }.font(.caption).frame(minHeight: 44)
+            }.foregroundStyle(GameTheme.gold)
+            if showHelp {
+                Text("하루에 훈련 또는 휴식 1회 · 수면 회복 −\(DailyRecovery.sleep)\n묶음 진행은 최대 30일 · 매일 저장 · 경기일/나이 변경 전에 정지합니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                if state.legacySave {
+                    Text("기존 저장 유지 · 저장 날짜를 나이 진행 기준일로 사용합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }
+            }
             if !summary.isEmpty {
                 Text(summary).font(.caption).accessibilityIdentifier("calendarSummary")
             }
@@ -152,15 +177,15 @@ struct CareerCalendarPanel: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("\(fixture.number)차전 · \(detail(fixture))").font(.subheadline.bold())
                                     Text(fixture.isAppearance(for: player.role) ? "\(player.role == .pitcher ? "선발 등판" : "출전") 예정" : "비등판 · 팀 경기")
-                                        .font(.caption).foregroundStyle(GameTheme.muted)
-                                }.listRowBackground(GameTheme.paper)
+                                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                                }.listRowBackground(GameTheme.boardPanel)
                             }
                         }
                     }
-                }.scrollContentBackground(.hidden).background(GameTheme.paper)
+                }.scrollContentBackground(.hidden).background(GameTheme.board)
                     .navigationTitle("연간 일정").navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showSchedule = false } } }
-            }.tint(GameTheme.navy)
+            }.tint(GameTheme.gold).foregroundStyle(GameTheme.boardInk).environment(\.colorScheme, .dark)
         }
     }
 }

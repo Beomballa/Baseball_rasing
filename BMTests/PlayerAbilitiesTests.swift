@@ -450,3 +450,54 @@ extension RawTrainingTests {
         XCTAssertEqual(player.gameDate,"2026-04-02")
     }
 }
+
+extension PlayerAbilitiesTests {
+    func testHomeGraphsSeparateOriginalsAndDerivedAxesWithoutChangingSavedValues() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        for type in [PlayerArchetype.slugger, .endurance] {
+            let player = try CareerStore.create(draft(type), schools: SchoolCatalog.load(), in: context)
+            let abilities = try profile(player, context), initialPayload = abilities.initialValues
+            let before = preserved(player)
+            let first = HomeAbilitySummary(player: player, abilities: abilities)
+            XCTAssertEqual(first.axes.count, 6)
+            XCTAssertTrue(first.hasInitialValues)
+            XCTAssertTrue(first.axes.allSatisfy { $0.growth == 0 })
+            XCTAssertEqual(first.originals.count, type.role == .batter ? 7 : 8)
+            XCTAssertEqual(preserved(player), before)
+            if type.role == .batter {
+                XCTAssertEqual(try XCTUnwrap(first.axes.first { $0.id == "homeFieldComposite" }).current, 57.8, accuracy: 0.000001)
+                player.defense += 1; player.arm += 2
+                let changed = HomeAbilitySummary(player: player, abilities: abilities)
+                XCTAssertEqual(try XCTUnwrap(changed.axes.first { $0.id == "homeFieldComposite" }?.growth), 1.3, accuracy: 0.000001)
+                XCTAssertFalse(changed.originals.contains { $0.id == "homeFieldComposite" })
+            } else {
+                XCTAssertEqual(try XCTUnwrap(first.axes.first { $0.id == "homeBreaking" }).current, 49.8, accuracy: 0.000001)
+                let slider = try XCTUnwrap(player.pitches.first { $0.code == "slider" }); slider.mastery += 0.0123
+                let changed = HomeAbilitySummary(player: player, abilities: abilities)
+                XCTAssertEqual(try XCTUnwrap(changed.axes.first { $0.id == "homeBreaking" }?.growth), 0.00738, accuracy: 0.000001)
+                XCTAssertEqual(try XCTUnwrap(changed.pitches.first { $0.id == "slider" }?.growth), 0.0123, accuracy: 0.000001)
+                XCTAssertFalse(changed.originals.contains { $0.id == "homeBreaking" })
+                XCTAssertEqual(changed.pitches.map(\.id), ["four-seam", "slider", "changeup", "fork"])
+            }
+            XCTAssertEqual(abilities.initialValues, initialPayload)
+        }
+    }
+    func testHomeGraphDoesNotInventLegacyOrUnreadableInitialValues() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let player = try LegacyPlayerFixture.create(draft(.control), schools: SchoolCatalog.load(), in: context)
+        try PlayerAbilityStore.addMissing(in: context)
+        let abilities = try profile(player, context), before = preserved(player)
+        for payload in [nil, Data("invalid".utf8)] as [Data?] {
+            abilities.initialValues = payload
+            let summary = HomeAbilitySummary(player: player, abilities: abilities)
+            XCTAssertFalse(summary.hasInitialValues)
+            XCTAssertEqual(summary.axes.count, 6)
+            XCTAssertTrue((summary.axes + summary.originals + summary.pitches).allSatisfy { $0.initial == nil && $0.growth == nil })
+            XCTAssertEqual(abilities.initialValues, payload)
+            XCTAssertEqual(preserved(player), before)
+        }
+        let missing = HomeAbilitySummary(player: player, abilities: nil)
+        XCTAssertNotEqual(missing.axes.count, 6)
+        XCTAssertFalse(missing.axes.contains { $0.id == "homeMental" })
+    }
+}

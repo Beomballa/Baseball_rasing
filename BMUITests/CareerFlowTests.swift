@@ -4,6 +4,12 @@ final class CareerFlowTests: XCTestCase {
     @MainActor private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         for _ in 0..<8 {
             if element.isHittable { return }
+            if element.exists {
+                let frame = element.frame
+                if !frame.isEmpty && frame.maxY < app.windows.firstMatch.frame.midY {
+                    app.swipeDown(); continue
+                }
+            }
             app.swipeUp()
         }
         XCTAssertTrue(element.isHittable)
@@ -55,6 +61,7 @@ final class CareerFlowTests: XCTestCase {
                 XCTAssertFalse(app.buttons["advanceDay"].isEnabled)
                 reveal(app.staticTexts["traitLocked"], in: app)
                 XCTAssertTrue(app.staticTexts["traitLocked"].exists)
+                expandHomeDetails("traitDetails", in: app)
                 XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "traitToggle-")).firstMatch.isEnabled)
                 for _ in 0..<5 { app.swipeDown() }
                 reveal(app.buttons["openTraining"], in: app)
@@ -234,6 +241,7 @@ final class CareerFlowTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         reveal(app.staticTexts["homeTrainingGrowth"], in: app)
         XCTAssertTrue(app.staticTexts["homeTrainingGrowth"].label.contains(kind))
+        expandHomeDetails("homeAbilityDetails", in: app)
         let identifier = ["구속":"homeVelocity", "제구":"homeControl", "구위":"homeStuff", "지구력":"homeStamina", "멘탈":"homeMental"][kind]!
         let row = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
         reveal(row, in: app)
@@ -249,7 +257,14 @@ final class CareerFlowTests: XCTestCase {
         }
     }
 
+    @MainActor private func expandHomeDetails(_ identifier: String, in app: XCUIApplication) {
+        let button = app.buttons[identifier]
+        reveal(button, in: app)
+        if button.value as? String == "접힘" { button.tap() }
+    }
+
     @MainActor private func checkTraitManagement(_ app: XCUIApplication, pitcher: Bool) {
+        expandHomeDetails("traitDetails", in: app)
         let count = app.staticTexts["traitActiveCount"]
         reveal(count, in: app); XCTAssertEqual(count.label, "활성 1 / 3")
         let buttons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "traitToggle-"))
@@ -262,10 +277,11 @@ final class CareerFlowTests: XCTestCase {
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         if pitcher {
-            reveal(app.segmentedControls["homeRolePicker"], in: app)
-            app.segmentedControls["homeRolePicker"].buttons["투수 · LeftPitcher"].tap()
+            reveal(app.buttons["homeRole-pitcher"], in: app)
+            app.buttons["homeRole-pitcher"].tap()
         }
         for _ in 0..<5 { app.swipeDown() }
+        expandHomeDetails("traitDetails", in: app)
         reveal(count, in: app); XCTAssertEqual(count.label, "활성 0 / 3")
         reveal(app.buttons[id], in: app); app.buttons[id].tap()
         XCTAssertEqual(count.label, "활성 1 / 3")
@@ -288,6 +304,7 @@ final class CareerFlowTests: XCTestCase {
         for _ in 0..<5 { app.swipeDown() }
         XCTAssertTrue(app.staticTexts["homeArchetype"].waitForExistence(timeout:5))
         XCTAssertEqual(app.staticTexts["homeArchetype"].label,pitcher ? "지구력형" : "장타형")
+        expandHomeDetails("homeAbilityDetails", in: app)
         let values = pitcher ? [("homeVelocity","52"),("homeControl","54"),("homeStuff","53"),("homeStamina","65"),("homeBreaking","49.8"),("homeMental","55")] : [("homeMental","55")]
         for (identifier,value) in values {
             let row = app.descendants(matching:.any).matching(identifier:identifier).firstMatch
@@ -408,9 +425,9 @@ final class CareerFlowTests: XCTestCase {
         let homeShot = XCTAttachment(screenshot: app.screenshot()); homeShot.name = "Pitcher saved home"; homeShot.lifetime = .keepAlways; add(homeShot)
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
-        reveal(app.segmentedControls["homeRolePicker"], in: app)
-        XCTAssertTrue(app.segmentedControls["homeRolePicker"].exists)
-        app.segmentedControls["homeRolePicker"].buttons["투수 · LeftPitcher"].tap()
+        reveal(app.buttons["homeRole-pitcher"], in: app)
+        XCTAssertTrue(app.buttons["homeRole-pitcher"].exists)
+        app.buttons["homeRole-pitcher"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("LeftPitcher"))
         checkAbilities(app,pitcher:true)
         for _ in 0..<5 { app.swipeDown() }
@@ -438,5 +455,68 @@ final class CareerFlowTests: XCTestCase {
         for kind in ["구속", "제구", "구위", "지구력", "멘탈"] {
             trainRaw(app,kind:kind,pitcher:true,nextDay:kind != "멘탈")
         }
+    }
+}
+
+extension CareerFlowTests {
+    @MainActor private func createDashboardSample(_ app: XCUIApplication, name: String) {
+        let field = app.textFields["playerName"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText(name)
+        if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
+        reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
+        reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+    }
+    @MainActor func testHomeDashboardBothRolesAndLargeText() throws {
+        let app = XCUIApplication(); app.launch()
+        if app.textFields["playerName"].waitForExistence(timeout: 2) { createDashboardSample(app, name: "HomeBatter") }
+        if !app.buttons["homeRole-pitcher"].exists {
+            reveal(app.buttons["createOtherRole"], in: app); app.buttons["createOtherRole"].tap()
+            createDashboardSample(app, name: "HomePitcher")
+        }
+        var savedDates = [String: String](), savedFatigue = [String: String]()
+        for role in ["batter", "pitcher"] {
+            reveal(app.buttons["homeRole-" + role], in: app); app.buttons["homeRole-" + role].tap()
+            let window = app.windows.firstMatch.frame
+            for id in ["openTraining", "restToday", "advanceDay"] {
+                let button = app.buttons[id]
+                XCTAssertTrue(button.isHittable, id)
+                XCTAssertGreaterThanOrEqual(button.frame.minX, window.minX)
+                XCTAssertLessThanOrEqual(button.frame.maxX, window.maxX)
+                XCTAssertLessThanOrEqual(button.frame.maxY, window.maxY)
+            }
+            savedDates[role] = app.staticTexts["calendarDate"].label
+            savedFatigue[role] = app.staticTexts["homeFatigue"].label
+            let first = XCTAttachment(screenshot: app.screenshot()); first.name = "Native home top " + role; first.lifetime = .keepAlways; add(first)
+            reveal(app.buttons["homeAbilityDetails"], in: app)
+            XCTAssertEqual(app.buttons["homeAbilityDetails"].value as? String, "접힘")
+            let graph = XCTAttachment(screenshot: app.screenshot()); graph.name = "Native home graph " + role; graph.lifetime = .keepAlways; add(graph)
+            expandHomeDetails("homeAbilityDetails", in: app)
+            let value = app.descendants(matching: .any).matching(identifier: role == "batter" ? "homeContact" : "homeVelocity").firstMatch
+            reveal(value, in: app); XCTAssertTrue(value.exists)
+            reveal(app.buttons["homeAbilityDetails"], in: app); app.buttons["homeAbilityDetails"].tap()
+            reveal(app.buttons["traitDetails"], in: app)
+            XCTAssertEqual(app.buttons["traitDetails"].value as? String, "접힘")
+            expandHomeDetails("traitDetails", in: app)
+            XCTAssertEqual(app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "traitCard-")).count, 3)
+            XCTAssertEqual(app.staticTexts["calendarDate"].label, savedDates[role])
+            XCTAssertEqual(app.staticTexts["homeFatigue"].label, savedFatigue[role])
+        }
+        app.terminate()
+        app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        for role in ["batter", "pitcher"] {
+            reveal(app.buttons["homeRole-" + role], in: app); app.buttons["homeRole-" + role].tap()
+            let value = app.descendants(matching: .any).matching(identifier: role == "batter" ? "homeContact" : "homeVelocity").firstMatch
+            reveal(value, in: app); XCTAssertTrue(value.isHittable)
+            let window = app.windows.firstMatch.frame
+            XCTAssertGreaterThanOrEqual(value.frame.minX, window.minX)
+            XCTAssertLessThanOrEqual(value.frame.maxX, window.maxX)
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Native home large text " + role; shot.lifetime = .keepAlways; add(shot)
+            XCTAssertEqual(app.staticTexts["calendarDate"].label, savedDates[role])
+            XCTAssertEqual(app.staticTexts["homeFatigue"].label, savedFatigue[role])
+        }
+        app.terminate(); app.launchArguments = []; app.launch()
     }
 }
