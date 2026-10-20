@@ -66,6 +66,8 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         // Non-appearance team games are only simulated after explicit confirmation, not on screen entry.
         match.controlVersion = 2
         match.trainingEffectsVersion = 1
+        match.fieldStats = MatchFieldStats(speed: player.speed, defense: player.defense, arm: player.arm,
+                                          position: player.role == .pitcher ? "P" : player.positionRaw)
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"

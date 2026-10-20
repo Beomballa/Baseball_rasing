@@ -175,6 +175,12 @@ import SwiftData
         case .discipline: return TrainingInput(calledStrike: ManualMatchRules.isStrike(x: target.x, y: target.y))
         case .contact: return TrainingInput(x: target.x, y: target.y, timing: 0.82)
         case .pitch: return TrainingInput(release: 0.68)
+        case .speed: return TrainingInput(footfalls: (0..<16).map { $0.isMultiple(of: 2) ? .left : .right })
+        case .defense: return TrainingInput(x: target.x, y: target.y)
+        case .arm:
+            let base = TrainingRules.throwBase(training.scores.count), target = TrainingRules.basePoint(TrainingRules.throwBase(training.scores.count))
+            let angle = atan2(target.y - 0.63, target.x - 0.5) * 180 / .pi
+            return TrainingInput(force: hypot(target.x - 0.5, target.y - 0.63) / 0.55 * 100, angle: angle < 0 ? angle + 360 : angle, base: base)
         }
     }
     func testPowerGeometryAndDisciplineClassificationUseDifferentInputs() throws {

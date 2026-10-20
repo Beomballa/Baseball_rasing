@@ -1,11 +1,14 @@
 import Foundation
 
 enum TrainingKind: String, Codable, CaseIterable {
-    case contact, power, discipline, pitch
+    case contact, power, discipline, pitch, speed, defense, arm
+    var isField: Bool { [.speed, .defense, .arm].contains(self) }
     var label: String {
-        switch self { case .contact: "컨택"; case .power: "파워"; case .discipline: "선구안"; case .pitch: "구종" }
+        switch self { case .contact: "컨택"; case .power: "파워"; case .discipline: "선구안"; case .pitch: "구종"; case .speed: "스피드"; case .defense: "수비"; case .arm: "송구" }
     }
 }
+
+enum SprintFoot: String, Codable { case left, right }
 
 struct TrainingInput: Codable, Equatable {
     var x = 0.5
@@ -15,6 +18,8 @@ struct TrainingInput: Codable, Equatable {
     var force: Double?
     var angle: Double?
     var calledStrike: Bool?
+    var footfalls: [SprintFoot]?
+    var base: Int?
 }
 
 struct TrainingTarget: Codable, Equatable {
@@ -63,7 +68,24 @@ struct CareerTraining: Codable, Equatable {
         let numbers = [input.x, input.y] + [input.timing, input.release].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { throw TrainingError.invalidInput }
         let score: Double
+        guard selectedKind == .speed || input.footfalls == nil,
+              selectedKind == .arm || input.base == nil else { throw TrainingError.invalidInput }
         switch selectedKind {
+        case .speed:
+            guard input.timing == nil, input.release == nil, input.force == nil, input.angle == nil, input.calledStrike == nil,
+                  let footfalls = input.footfalls else { throw TrainingError.invalidInput }
+            score = min(100, Double(TrainingRules.steps(footfalls)) / 16 * 100)
+        case .defense:
+            guard input.timing == nil, input.release == nil, input.force == nil, input.angle == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
+            let target = targets[scores.count]
+            score = max(0, 1 - hypot(input.x - target.x, input.y - target.y) / 0.55) * 100
+        case .arm:
+            guard input.timing == nil, input.release == nil, input.calledStrike == nil,
+                  let base = input.base, (1...4).contains(base), let force = input.force, let angle = input.angle,
+                  force.isFinite, angle.isFinite, (8...100).contains(force), (0...360).contains(angle) else { throw TrainingError.invalidInput }
+            let endpoint = TrainingRules.throwEndpoint(angle: angle, force: force)
+            let target = TrainingRules.basePoint(TrainingRules.throwBase(scores.count))
+            score = base == TrainingRules.throwBase(scores.count) ? max(0, 1 - hypot(endpoint.x - target.x, endpoint.y - target.y) / 0.3) * 100 : 0
         case .power:
             guard role == "batter", input.timing == nil, input.release == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
             if input.force == nil && input.angle == nil { score = 0 }
@@ -96,6 +118,24 @@ struct CareerTraining: Codable, Equatable {
 }
 
 enum TrainingRules {
+    static func steps(_ feet: [SprintFoot]) -> Int {
+        var last: SprintFoot?, count = 0
+        for foot in feet where foot != last { count += 1; last = foot }
+        return count
+    }
+    static func throwBase(_ round: Int) -> Int { [1, 2, 4, 3, 2][round] }
+    static func basePoint(_ base: Int) -> TrainingTarget {
+        switch base {
+        case 1: TrainingTarget(x: 0.78, y: 0.63)
+        case 2: TrainingTarget(x: 0.5, y: 0.34)
+        case 3: TrainingTarget(x: 0.22, y: 0.63)
+        default: TrainingTarget(x: 0.5, y: 0.9)
+        }
+    }
+    static func throwEndpoint(angle: Double, force: Double) -> TrainingTarget {
+        TrainingTarget(x: 0.5 + cos(angle * .pi / 180) * force / 100 * 0.55,
+                       y: 0.63 + sin(angle * .pi / 180) * force / 100 * 0.55)
+    }
     static func powerTarget(_ round: Int) -> Double { [90, 105, 80, 115, 95][round] }
     static func distance(force: Double, angle: Double) -> Double { force * 1.35 * sin(2 * angle * .pi / 180) }
     static func round(_ value: Double) -> Double { (value * 10_000).rounded() / 10_000 }
@@ -131,7 +171,7 @@ enum TrainingError: LocalizedError {
         case .stale: "훈련 날짜나 선수 상태가 바뀌었습니다. 저장된 훈련을 다시 열어 주세요."
         case .finished: "이미 결과가 저장된 훈련입니다. 보상을 다시 지급하지 않습니다."
         case .invalidRecord: "훈련 기록을 읽을 수 없습니다. 기존 저장은 유지합니다."
-        case .limit: "이미 최대 능력치입니다. 다른 구종이나 휴식을 선택해 주세요."
+        case .limit: "이미 최대 능력치입니다. 다른 능력치·구종이나 휴식을 선택해 주세요."
         }
     }
 }

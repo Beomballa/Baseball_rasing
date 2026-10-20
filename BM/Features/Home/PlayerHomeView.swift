@@ -50,7 +50,7 @@ struct PlayerHomeView: View {
                         CareerTrainingView(player: player, calendar: calendar)
                     } label: {
                         Text(todayTraining.map { $0.completed ? "오늘 훈련 결과" : "훈련 이어하기 · \((try? $0.snapshot().scores.count) ?? 0)/5" }
-                             ?? (player.role == .batter ? "타자 능력 훈련" : "구종 훈련"))
+                             ?? (player.role == .batter ? "타격 · 주루 · 수비 훈련" : "구종 · 주루 · 수비 훈련"))
                     }.buttonStyle(GameButtonStyle()).accessibilityIdentifier("openTraining")
                         .disabled(calendar.hasAction(on: player.gameDate) && todayTraining == nil)
                     if let latest = trainingRecords.first(where: { $0.playerID == player.id && $0.completed }),
@@ -105,9 +105,9 @@ struct PlayerHomeView: View {
                     }
                 }
                 GamePanel(title: "주루 · 수비") {
-                    StatRow(name: "스피드", value: player.speed)
-                    StatRow(name: "수비", value: player.defense)
-                    StatRow(name: "송구", value: player.arm)
+                    StatRow(name: "스피드", value: player.speed).accessibilityIdentifier("homeSpeed")
+                    StatRow(name: "수비", value: player.defense).accessibilityIdentifier("homeDefense")
+                    StatRow(name: "송구", value: player.arm).accessibilityIdentifier("homeArm")
                 }
                 Button("연습장 입장", action: play).buttonStyle(GameButtonStyle())
                     .accessibilityIdentifier("openMatch")

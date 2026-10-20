@@ -125,6 +125,59 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "오늘 행동 미사용"), object: app.staticTexts["calendarAction"])], timeout: 5), .completed)
     }
 
+    @MainActor private func trainField(_ app: XCUIApplication, kind: String, pitcher: Bool = false) {
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        let category = app.segmentedControls["trainingCategoryPicker"]
+        XCTAssertTrue(category.waitForExistence(timeout: 3)); category.buttons["주루·수비"].tap()
+        app.segmentedControls["trainingKindPicker"].buttons[kind].tap()
+        app.buttons["startTraining"].tap()
+        let action = app.buttons["trainingAttempt"]
+        XCTAssertTrue(action.waitForExistence(timeout: 3)); XCTAssertTrue(action.isHittable)
+        let field = app.otherElements["trainingField"].firstMatch
+        XCTAssertLessThanOrEqual(field.frame.maxX, app.windows.firstMatch.frame.maxX)
+        XCTAssertGreaterThanOrEqual(field.frame.minX, app.windows.firstMatch.frame.minX)
+        XCTAssertLessThanOrEqual(action.frame.maxY, app.windows.firstMatch.frame.maxY)
+        if kind == "스피드" {
+            action.tap(); app.buttons["sprintLeft"].tap()
+            app.terminate(); app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            reveal(app.buttons["openTraining"], in: app)
+            XCTAssertTrue(app.buttons["openTraining"].label.contains("0/5")); app.buttons["openTraining"].tap()
+        } else if kind == "수비" {
+            let board=app.otherElements["trainingField"].firstMatch
+            board.coordinate(withNormalizedOffset:CGVector(dx:0.3,dy:0.3)).tap()
+        } else {
+            app.buttons["throwAngleUp"].tap(); app.buttons["throwForceUp"].tap()
+        }
+        let shot=XCTAttachment(screenshot:app.screenshot());shot.name=(pitcher ? "Pitcher " : "")+kind+" training";shot.lifetime = .keepAlways;add(shot)
+        for round in 0..<5 {
+            if kind == "스피드" {
+                app.buttons["trainingAttempt"].tap()
+                if round==0 { app.buttons["sprintLeft"].tap(); app.buttons["sprintRight"].tap() }
+                if round < 4 {
+                    XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"enabled == true"),object:app.buttons["trainingAttempt"])],timeout:7),.completed)
+                } else { XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:7)) }
+            } else {
+                if kind == "송구" { app.segmentedControls["throwBasePicker"].buttons[["1루","2루","홈","3루","2루"][round]].tap() }
+                app.buttons["trainingAttempt"].tap()
+            }
+        }
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:5))
+        let result=app.staticTexts["trainingGrowth"].label
+        let saved=XCTAttachment(screenshot:app.screenshot());saved.name=(pitcher ? "Pitcher " : "")+kind+" growth";saved.lifetime = .keepAlways;add(saved)
+        app.navigationBars.buttons.element(boundBy:0).tap()
+        reveal(app.staticTexts["homeTrainingGrowth"],in:app)
+        XCTAssertTrue(app.staticTexts["homeTrainingGrowth"].label.contains(kind))
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["openTraining"],in:app);app.buttons["openTraining"].tap()
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:3));XCTAssertEqual(app.staticTexts["trainingGrowth"].label,result)
+        app.navigationBars.buttons.element(boundBy:0).tap()
+        reveal(app.buttons["restToday"],in:app);XCTAssertFalse(app.buttons["restToday"].isEnabled)
+        XCTAssertTrue(app.buttons["advanceDay"].isEnabled);app.buttons["advanceDay"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","오늘 행동 미사용"),object:app.staticTexts["calendarAction"])],timeout:5),.completed)
+    }
+
     @MainActor func testCreateBothRolesRelaunchAndEnterSpriteKit() throws {
         let app = XCUIApplication()
         app.launch()
@@ -212,6 +265,9 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 미사용")
         trainAbility(app, power: true)
         trainAbility(app, power: false)
+        trainField(app,kind:"스피드")
+        trainField(app,kind:"수비")
+        trainField(app,kind:"송구")
         reveal(app.buttons["createOtherRole"], in: app)
         app.buttons["createOtherRole"].tap()
         let pitcherName = app.textFields["playerName"]
@@ -249,5 +305,8 @@ final class CareerFlowTests: XCTestCase {
         reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
         for _ in 0..<5 { app.swipeDown() }
         reveal(app.buttons["advanceDay"], in: app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled)
+        app.buttons["advanceDay"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","오늘 행동 미사용"),object:app.staticTexts["calendarAction"])],timeout:5),.completed)
+        trainField(app,kind:"송구",pitcher:true)
     }
 }

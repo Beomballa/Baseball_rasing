@@ -198,6 +198,11 @@ struct CareerGameView: View {
                     ? "\(match.line.atBats)타수 \(match.line.hits)안타 · HR \(match.line.homeRuns) · BB \(match.line.walks) · K \(match.line.strikeouts)"
                     : "\(match.line.pitchingOuts / 3).\(match.line.pitchingOuts % 3)이닝 · \(match.line.pitches)구 · K \(match.line.pitchingStrikeouts) · 실점 \(match.line.runsAllowed)") : "비등판 · 개인 기록/피로 변화 없음")
                 Text("피로 \(record.fatigueBefore) → \(record.fatigueAfter)")
+                if let play = match.lastFieldPlay {
+                    Text("최근 내 \(play.ownDefense ? "수비" : "주루") · 1루 \(play.safe ? "세이프" : "아웃")")
+                    Text("주자 \(play.runnerTime, specifier: "%.2f")초 / 송구 \(play.ballTime, specifier: "%.2f")초").font(.caption)
+                        .accessibilityIdentifier("gameFieldResult")
+                }
                 Text("홈에서 다음 날로 진행할 수 있습니다.").font(.caption)
             }.foregroundStyle(GameTheme.navy)
             Button("선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("gameReturnHome")

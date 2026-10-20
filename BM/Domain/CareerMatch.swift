@@ -28,6 +28,8 @@ struct CareerMatch: Codable, Equatable {
     var appliedFatigueCost: Int { Int(((fatigueCost * 10_000).rounded() / 10_000).rounded(.up)) }
     var message = "경기 시작"
     var completed = false
+    var fieldStats: MatchFieldStats?
+    var lastFieldPlay: MatchFieldPlay?
     var trainingEffectsVersion: Int?
     var controlVersion: Int?
     var lastManual: ManualMatchResult?
@@ -162,7 +164,22 @@ struct CareerMatch: Codable, Equatable {
                                        x: x, y: y, speed: plan.speed, outcome: message, pitchCode: pitcher ? pitchCode : "four-seam")
     }
 
-    private mutating func endPlate(_ result: String, batter: Bool, pitcher: Bool) {
+    private mutating func endPlate(_ initial: String, batter: Bool, pitcher: Bool) {
+        var result = initial
+        if let stats = fieldStats, stats.version == 1, appearance, ["안타", "범타"].contains(result), batter || !offense {
+            let positions = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]
+            let fielder = positions[Int(roll() * 9)]
+            let ownDefense = !offense && stats.position == fielder
+            if batter || ownDefense {
+                let chase = 3 + roll() * 14, distance = 10 + roll() * 30
+                let play = MatchFieldRules.firstBase(runnerSpeed: batter ? stats.speed : 60,
+                                                    fielderSpeed: ownDefense ? stats.speed : 60,
+                                                    defense: ownDefense ? stats.defense : 60,
+                                                    arm: ownDefense ? stats.arm : 60,
+                                                    chase: chase, distance: distance, ownDefense: ownDefense)
+                lastFieldPlay = play; result = play.safe ? "안타" : "범타"
+            }
+        }
         message = result
         var runs = 0
         if batter {

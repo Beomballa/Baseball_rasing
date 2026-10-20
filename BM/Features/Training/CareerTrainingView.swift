@@ -12,6 +12,11 @@ struct CareerTrainingView: View {
     @State private var training: CareerTraining?
     @State private var code = ""
     @State private var kind = TrainingKind.contact
+    @State private var fieldTraining = false
+    @State private var footfalls: [SprintFoot] = []
+    @State private var throwAngle = 0.0
+    @State private var throwForce = 50.0
+    @State private var throwBase = 1
     @State private var force = 70.0
     @State private var angle = 35.0
     @State private var judging = false
@@ -25,9 +30,9 @@ struct CareerTrainingView: View {
     @State private var retryRevision: Int?
 
     private var isPitcher: Bool { player.role == .pitcher }
-    private var selectedKind: TrainingKind { training?.selectedKind ?? (isPitcher ? .pitch : kind) }
+    private var selectedKind: TrainingKind { training?.selectedKind ?? (fieldTraining ? kind : isPitcher ? .pitch : kind) }
     private var title: String { selectedKind.label + " 훈련" }
-    private var pitchName: String { player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? selectedKind.label }
+    private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? "구종") : selectedKind.label }
     private func load() {
         do {
             record = try CareerTrainingStore.record(player: player, in: context)
@@ -37,12 +42,17 @@ struct CareerTrainingView: View {
     }
     private func start() {
         do {
-            record = try CareerTrainingStore.start(player: player, state: calendar, pitchCode: isPitcher ? code : nil, kind: selectedKind, in: context)
+            record = try CareerTrainingStore.start(player: player, state: calendar, pitchCode: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
             training = try record?.snapshot()
         } catch { errorMessage = error.localizedDescription }
     }
     private func beginAttempt() {
         guard let training, !training.completed, retryInput == nil else { return }
+        if selectedKind == .speed {
+            footfalls = []
+            clock.start(windup: 0, duration: 4) { submit(TrainingInput(footfalls: footfalls)) }
+            return
+        }
         if selectedKind == .discipline { judging = true; return }
         scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role)
         scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: training.targets[training.scores.count].x,
@@ -62,7 +72,7 @@ struct CareerTrainingView: View {
         do {
             try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: revision, input: input, in: context)
             training = try record.snapshot()
-            if let force = input.force, let angle = input.angle { lastDistance = TrainingRules.distance(force: force, angle: angle) }
+            if selectedKind == .power, let force = input.force, let angle = input.angle { lastDistance = TrainingRules.distance(force: force, angle: angle) }
             retryInput = nil; retryRevision = nil; errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
@@ -79,21 +89,31 @@ struct CareerTrainingView: View {
                 if let training, training.completed {
                     result(training)
                 } else {
-                    if isPitcher {
+                    if training == nil {
+                        Picker("훈련 분야", selection: Binding(get: { fieldTraining }, set: {
+                            fieldTraining = $0; kind = $0 ? .speed : .contact
+                        })) {
+                            Text(isPitcher ? "구종" : "타격").tag(false)
+                            Text("주루·수비").tag(true)
+                        }.pickerStyle(.segmented).environment(\.colorScheme, .dark).accessibilityIdentifier("trainingCategoryPicker")
+                    }
+                    if isPitcher && !fieldTraining && training == nil || selectedKind == .pitch {
                         if training == nil {
                             Picker("훈련할 구종", selection: $code) {
                                 ForEach(player.pitches.sorted { $0.order < $1.order }) { Text("\($0.name) · \($0.mastery, specifier: "%.1f")").tag($0.code) }
                             }.pickerStyle(.menu).tint(GameTheme.gold).accessibilityIdentifier("trainingPitchPicker")
                         } else { Text(pitchName).foregroundStyle(GameTheme.gold).bold() }
                     }
-                    if !isPitcher, training == nil {
+                    if (!isPitcher || fieldTraining), training == nil {
                         Picker("훈련 능력치", selection: $kind) {
-                            ForEach([TrainingKind.contact, .power, .discipline], id: \.self) { Text($0.label).tag($0) }
-                        }.pickerStyle(.segmented).accessibilityIdentifier("trainingKindPicker")
+                            ForEach(fieldTraining ? [TrainingKind.speed, .defense, .arm] : [TrainingKind.contact, .power, .discipline], id: \.self) { Text($0.label).tag($0) }
+                        }.pickerStyle(.segmented).environment(\.colorScheme, .dark).accessibilityIdentifier("trainingKindPicker")
                     }
-                    arena(height: MatchPresentation.fieldSize(available: CGSize(width: geometry.size.width - 32, height: geometry.size.height - (selectedKind == .power ? 100 : selectedKind == .discipline ? 50 : 0)), role: player.role).height)
+                    arena(height: MatchPresentation.fieldSize(available: CGSize(width: geometry.size.width - 32, height: geometry.size.height - (selectedKind == .arm ? 175 : selectedKind == .speed || selectedKind == .power ? 100 : selectedKind == .discipline ? 50 : 0)), role: selectedKind.isField ? .batter : player.role).height)
                     if let training {
-                        if selectedKind == .power {
+                        if selectedKind.isField {
+                            fieldControls(training).disabled(retryInput != nil)
+                        } else if selectedKind == .power {
                             powerControls(training)
                         } else if selectedKind == .discipline {
                             Text(judging ? "존 안이면 스트라이크 · 밖이면 볼" : "공 보기를 누르고 존 안팎을 판단하세요").font(.caption)
@@ -110,7 +130,14 @@ struct CareerTrainingView: View {
                                     .background(index < training.scores.count ? GameTheme.green : Color(hex: 0x203e57))
                             }
                         }.accessibilityIdentifier("trainingScores")
-                        if selectedKind == .discipline {
+                        if selectedKind.isField {
+                            Button(selectedKind == .speed ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .defense ? "포구!" : "송구!") {
+                                if selectedKind == .speed { beginAttempt() }
+                                else if selectedKind == .defense { submit(TrainingInput(x: x, y: y)) }
+                                else { submit(TrainingInput(force: throwForce, angle: throwAngle, base: throwBase)) }
+                            }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(retryInput != nil || clock.running)
+                                .accessibilityIdentifier("trainingAttempt")
+                        } else if selectedKind == .discipline {
                             if judging {
                                 HStack {
                                     Button("볼") { submit(TrainingInput(calledStrike: false)) }
@@ -163,7 +190,11 @@ struct CareerTrainingView: View {
     }
     private func arena(height: CGFloat) -> some View {
         ZStack {
-            SpriteView(scene: scene).allowsHitTesting(false)
+            if selectedKind.isField {
+                FieldTrainingBoard(kind: selectedKind, target: training.flatMap { $0.completed ? nil : $0.targets[$0.scores.count] },
+                                   base: training.map { $0.completed ? 1 : TrainingRules.throwBase($0.scores.count) } ?? 1,
+                                   angle: throwAngle, force: throwForce, steps: TrainingRules.steps(footfalls), x: $x, y: $y, locked: retryInput != nil)
+            } else { SpriteView(scene: scene).allowsHitTesting(false) }
             if selectedKind == .contact, let training, !training.completed {
                 let target = training.targets[training.scores.count]
                 ZStack {
@@ -201,11 +232,11 @@ struct CareerTrainingView: View {
                     }
                 }.padding(8)
             }
-            if isPitcher {
+            if selectedKind == .pitch {
                 MatchGrip(code: training?.pitchCode ?? code, hand: player.throwingHandRaw)
                     .frame(width: 74, height: 74).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
-        }.frame(width: height * (isPitcher ? 1219.0 / 1290 : 1), height: height).clipped()
+        }.frame(width: height * (isPitcher && !selectedKind.isField ? 1219.0 / 1290 : 1), height: height).clipped()
             .overlay(Rectangle().strokeBorder(GameTheme.gold.opacity(0.5), lineWidth: 2))
             .accessibilityElement(children: .contain).accessibilityIdentifier("trainingField")
     }
@@ -216,18 +247,33 @@ struct CareerTrainingView: View {
         }.disabled(retryInput != nil)
     }
     private func adjustment(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String, identifier: String) -> some View {
-        VStack(spacing: 6) {
-            Text("\(label) \(Int(value.wrappedValue))\(suffix)").font(.caption.bold()).monospacedDigit()
-            HStack(spacing: 8) {
-                Button("−") { value.wrappedValue = max(range.lowerBound, value.wrappedValue - 5) }
-                    .accessibilityLabel(label + " 줄이기").accessibilityIdentifier(identifier + "Down")
-                    .disabled(value.wrappedValue <= range.lowerBound)
-                Button("+") { value.wrappedValue = min(range.upperBound, value.wrappedValue + 5) }
-                    .accessibilityLabel(label + " 늘리기").accessibilityIdentifier(identifier + "Up")
-                    .disabled(value.wrappedValue >= range.upperBound)
-            }.buttonStyle(MatchPixelButtonStyle())
+        TrainingAdjustment(label: label, value: value, range: range, suffix: suffix, identifier: identifier)
+    }
+    private func step(_ foot: SprintFoot) {
+        guard clock.running, clock.phase < 1, footfalls.last != foot else { return }
+        footfalls.append(foot)
+    }
+    @ViewBuilder private func fieldControls(_ training: CareerTraining) -> some View {
+        if selectedKind == .speed {
+            HStack {
+                Button("왼발") { step(.left) }.accessibilityIdentifier("sprintLeft")
+                Button("오른발") { step(.right) }.accessibilityIdentifier("sprintRight")
+            }.buttonStyle(MatchPixelButtonStyle()).disabled(!clock.running)
+            ProgressView(value: clock.phase).tint(GameTheme.gold).accessibilityLabel("4초 달리기 진행")
+        } else if selectedKind == .defense {
+            Text("노란 낙하지점으로 선수를 옮겨 포구").font(.caption)
+        } else {
+            Text("목표 \(TrainingRules.throwBase(training.scores.count) == 4 ? "홈" : "\(TrainingRules.throwBase(training.scores.count))루")").font(.caption.bold())
+            Picker("송구 베이스", selection: $throwBase) {
+                ForEach(1...4, id: \.self) { Text($0 == 4 ? "홈" : "\($0)루").tag($0) }
+            }.pickerStyle(.segmented).environment(\.colorScheme, .dark).accessibilityIdentifier("throwBasePicker")
+            HStack(spacing: 16) {
+                adjustment("방향", value: $throwAngle, range: 0...360, suffix: "°", identifier: "throwAngle")
+                adjustment("강도", value: $throwForce, range: 8...100, suffix: "%", identifier: "throwForce")
+            }.disabled(retryInput != nil)
         }
     }
+
     private func result(_ value: CareerTraining) -> some View {
         VStack(spacing: 20) {
             PixelPlayer(appearance: player.appearance).frame(width: 64, height: 88)
