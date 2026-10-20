@@ -16,20 +16,20 @@ enum CareerSchemaV5: VersionedSchema {
         var stuff: Double?
         var stamina: Double?
 
-        init(player: CareerPlayer, archetype: PlayerArchetype?) throws {
+        init(player: CareerPlayer, archetype: PlayerArchetype?, customValues: PlayerInitialValues? = nil) throws {
             playerID = player.id
-            archetypeRaw = archetype?.rawValue
-            productionPresetVersion = archetype == nil ? "legacyDemo" : PlayerArchetype.presetVersion
-            initialValues = try archetype.map { try JSONEncoder().encode($0.values) }
+            archetypeRaw = customValues == nil ? archetype?.rawValue : "custom"
+            productionPresetVersion = customValues != nil ? "custom-v1" : archetype == nil ? "legacyDemo" : PlayerArchetype.presetVersion
+            initialValues = try (customValues ?? archetype?.values).map { try JSONEncoder().encode($0) }
             // A legacy save gets explicit missing-field defaults, never a reconstructed initial profile.
-            let values = (archetype ?? PlayerArchetype.initial(for: player.role)).values
+            let values = customValues ?? (archetype ?? PlayerArchetype.initial(for: player.role)).values
             mental = values.mental
             velocity = player.role == .pitcher ? values.velocity : nil
             control = player.role == .pitcher ? values.control : nil
             stuff = player.role == .pitcher ? values.stuff : nil
             stamina = player.role == .pitcher ? values.stamina : nil
         }
-        var label: String { archetypeRaw.flatMap(PlayerArchetype.init(rawValue:))?.label ?? "기존 시연 선수" }
+        var label: String { archetypeRaw == "custom" ? "사용자 지정" : archetypeRaw.flatMap(PlayerArchetype.init(rawValue:))?.label ?? "기존 시연 선수" }
     }
 }
 

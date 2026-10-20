@@ -43,8 +43,9 @@ import SwiftData
         guard try context.fetchCount(request) == 0 else { throw CreationError.roleAlreadyExists }
         guard let school = schools.first(where: { $0.id == draft.schoolID }) else { throw CreationError.invalidSchool }
         let player = CareerPlayer(draft: draft, school: school)
-        let abilities = try PlayerAbilities(player: player, archetype: draft.selectedArchetype)
-        PlayerAbilityStore.apply(draft.selectedArchetype.values, to: player)
+        let values = draft.initialValues
+        let abilities = try PlayerAbilities(player: player, archetype: draft.selectedArchetype, customValues: draft.isCustom ? values : nil)
+        PlayerAbilityStore.apply(values, to: player)
         let traits = try PlayerTraits(playerID: player.id,
             loadout: TraitLoadout.initial(speed: player.speed, defense: player.defense, arm: player.arm), source: "initial-v1")
         context.insert(player)

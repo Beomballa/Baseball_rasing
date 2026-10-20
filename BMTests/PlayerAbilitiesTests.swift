@@ -29,6 +29,69 @@ import SwiftData
             [$0.code, $0.name, String($0.mastery), String($0.order)]
         }
     }
+    func testCustomAllocationBudgetBoundsAndRoleValidation() throws {
+        for role in PlayerRole.allCases {
+            var allocation = PlayerStatAllocation(role: role, base: PlayerArchetype.initial(for: role).values)
+            XCTAssertTrue(allocation.isValid); XCTAssertEqual(allocation.budget, role == .batter ? 388 : 459)
+            XCTAssertEqual(allocation.points.count, role == .batter ? 7 : 8)
+            let kind: TrainingKind = role == .batter ? .contact : .velocity
+            XCTAssertFalse(allocation.canAdjust(kind, by: 1)); allocation.adjust(kind, by: -1)
+            XCTAssertEqual(allocation.remaining, 1); XCTAssertFalse(allocation.isValid)
+            allocation.adjust(.mental, by: 1); XCTAssertTrue(allocation.isValid)
+            let before = allocation; allocation.adjust(kind, by: 2); XCTAssertEqual(allocation, before)
+            allocation.points[kind] = -1; XCTAssertFalse(allocation.isValid)
+            allocation.points[kind] = 101; XCTAssertFalse(allocation.isValid)
+            allocation.points[.pitch] = 1; XCTAssertFalse(allocation.isValid)
+        }
+    }
+    func testCustomCreationSavesExactValuesAndInitialSnapshotOnDisk() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("custom.store")
+        var expected: [UUID: PlayerInitialValues] = [:]
+        try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url)
+            let context = container.mainContext
+            defer { withExtendedLifetime(container) {} }
+            for role in PlayerRole.allCases {
+                var value = PlayerDraft(); value.role = role; value.name = "사용자지정"; value.schoolID = "hs-ref-001"
+                value.isCustom = true; value.allocation = PlayerStatAllocation(role: role, base: value.selectedArchetype.values)
+                value.allocation?.adjust(role == .batter ? .contact : .velocity, by: -1); value.allocation?.adjust(.mental, by: 1)
+                let player = try CareerStore.create(value, schools: SchoolCatalog.load(), in: context)
+                expected[player.id] = value.initialValues
+            }
+        }
+        let reopened = try CareerStore.makeContainer(url: url)
+        let context = reopened.mainContext
+        defer { withExtendedLifetime(reopened) {} }
+        for player in try context.fetch(FetchDescriptor<CareerPlayer>()) {
+            let saved = try profile(player, context), value = try XCTUnwrap(expected[player.id])
+            XCTAssertEqual(saved.archetypeRaw, "custom"); XCTAssertEqual(saved.label, "사용자 지정")
+            XCTAssertEqual(saved.productionPresetVersion, "custom-v1")
+            XCTAssertEqual(try JSONDecoder().decode(PlayerInitialValues.self, from: XCTUnwrap(saved.initialValues)), value)
+            XCTAssertEqual(saved.mental, value.mental); XCTAssertEqual(saved.velocity, value.velocity)
+            XCTAssertEqual([player.speed, player.defense, player.arm], [value.speed, value.defense, value.arm])
+        }
+    }
+    func testIncompleteCustomAllocationRejectsAndSaveFailureRollsBack() throws {
+        enum Injected: Error { case failure }
+        let container = try CareerStore.makeContainer(inMemory: true)
+        let context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
+        var value = PlayerDraft(); value.name = "커스텀"; value.schoolID = "hs-ref-001"; value.isCustom = true
+        XCTAssertThrowsError(try CareerStore.create(value, schools: SchoolCatalog.load(), in: context))
+        value.allocation = PlayerStatAllocation(role: .batter, base: value.selectedArchetype.values)
+        value.allocation?.adjust(.power, by: -1)
+        XCTAssertThrowsError(try CareerStore.create(value, schools: SchoolCatalog.load(), in: context))
+        value.allocation?.adjust(.power, by: 1)
+        XCTAssertThrowsError(try CareerStore.create(value, schools: SchoolCatalog.load(), in: context, save: { _ in throw Injected.failure }))
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPlayer>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<PlayerAbilities>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<PlayerTraits>()), 0)
+        XCTAssertFalse(context.hasChanges)
+    }
+
     func testSixPresetsMatchFrozenBudgetsAndRoleDefaults() throws {
         let batterExpected: [[Double]] = [[62,46,54,62,55,54,55],[50,65,50,50,56,62,55],[56,46,65,60,53,53,55]]
         for (type, expected) in zip(PlayerArchetype.choices(for: .batter), batterExpected) {

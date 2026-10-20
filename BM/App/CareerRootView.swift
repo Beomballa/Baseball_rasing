@@ -10,6 +10,8 @@ struct CareerRootView: View {
     @Query private var calendars: [CareerCalendarState]
     @State private var selectedID: UUID?
     @State private var showCreation = false
+    @State private var initialRegistering = false
+    @State private var sheetRegistering = false
     @State private var path: [UUID] = []
 
     private var selected: CareerPlayer? { players.first(where: { $0.id == selectedID }) ?? players.first }
@@ -17,7 +19,7 @@ struct CareerRootView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if let player = selected {
+                if let player = selected, !initialRegistering {
                     PlayerHomeView(player: player, players: players,
                                    calendar: calendars.first { $0.playerID == player.id }, schools: schools, transition: transition,
                                    select: { selectedID = $0 }, create: { showCreation = true },
@@ -27,7 +29,7 @@ struct CareerRootView: View {
                                        }
                                    })
                 } else {
-                    PlayerCreationView(schools: schools, availableRoles: PlayerRole.allCases) { selectedID = $0 }
+                    PlayerCreationView(schools: schools, availableRoles: PlayerRole.allCases, onSaving: { initialRegistering = $0 }) { selectedID = $0 }
                 }
             }
             .navigationDestination(for: UUID.self) { id in
@@ -39,8 +41,8 @@ struct CareerRootView: View {
                 NavigationStack {
                     PlayerCreationView(schools: schools, availableRoles: PlayerRole.allCases.filter { role in
                         !players.contains(where: { $0.role == role })
-                    }) { id in selectedID = id; showCreation = false }
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { showCreation = false } } }
+                    }, onSaving: { sheetRegistering = $0 }) { id in selectedID = id; showCreation = false }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { showCreation = false }.disabled(sheetRegistering) } }
                 }
             }
         }

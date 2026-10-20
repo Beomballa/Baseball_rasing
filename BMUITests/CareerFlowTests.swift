@@ -603,6 +603,46 @@ extension CareerFlowTests {
         }
     }
 
+    @MainActor func testCustomCreationBothRolesAndRegistration() throws {
+        let app = XCUIApplication(); app.launch()
+        for pitcher in [false, true] {
+            if pitcher {
+                app.terminate(); app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+                XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+                reveal(app.buttons["createOtherRole"], in: app); app.buttons["createOtherRole"].tap()
+            }
+            let name = app.textFields["playerName"]; XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText(pitcher ? "CustomPitch" : "CustomBat")
+            if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
+            reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
+            reveal(app.buttons["archetype-custom"], in: app); app.buttons["archetype-custom"].tap()
+            XCTAssertTrue(app.buttons["archetype-custom"].isSelected)
+            let kind = pitcher ? "velocity" : "contact"
+            let minus = app.buttons["allocation-" + kind + "-minus"]
+            reveal(minus, in: app); minus.tap()
+            reveal(app.staticTexts["allocationRemaining"], in: app)
+            XCTAssertEqual(app.staticTexts["allocationRemaining"].label, pitcher ? "남은 1 / 459점" : "남은 1 / 388점")
+            reveal(app.buttons["createPlayer"], in: app); XCTAssertFalse(app.buttons["createPlayer"].isEnabled)
+            let mental = app.buttons["allocation-mental-plus"]; reveal(mental, in: app); mental.tap()
+            XCTAssertFalse(mental.isEnabled)
+            reveal(app.staticTexts["allocationRemaining"], in: app)
+            XCTAssertEqual(app.staticTexts["allocationRemaining"].label, pitcher ? "남은 0 / 459점" : "남은 0 / 388점")
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Custom pitcher allocation large" : "Custom batter allocation"; shot.lifetime = .keepAlways; add(shot)
+            reveal(app.buttons["createPlayer"], in: app); XCTAssertTrue(app.buttons["createPlayer"].isEnabled); app.buttons["createPlayer"].tap()
+            // Successful persistence is followed by a short presentation-only registration state.
+            let registered = app.descendants(matching: .any).matching(identifier: "creationRegistered").firstMatch
+            XCTAssertTrue(registered.exists)
+            let registration = XCTAttachment(screenshot: app.screenshot()); registration.name = pitcher ? "Pitcher registration" : "Batter registration"; registration.lifetime = .keepAlways; add(registration)
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            reveal(app.staticTexts["homeArchetype"], in: app); XCTAssertEqual(app.staticTexts["homeArchetype"].label, "사용자 지정")
+            app.terminate(); app.launchArguments = []; app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+            if role.exists { reveal(role, in: app); role.tap() }
+            reveal(app.staticTexts["homeArchetype"], in: app); XCTAssertEqual(app.staticTexts["homeArchetype"].label, "사용자 지정")
+            reveal(app.staticTexts["homePlayerName"], in: app)
+        }
+    }
+
     @MainActor func testCreationBoardSelectionsAndPersistence() throws {
         let app = XCUIApplication(); app.launch()
         XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 10))

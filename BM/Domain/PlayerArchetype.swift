@@ -54,3 +54,42 @@ struct PlayerInitialValues: Codable, Equatable {
         return values.count == 1 ? first : first * 0.6 + values[1] * 0.4
     }
 }
+
+struct PlayerStatAllocation: Equatable {
+    let role: PlayerRole
+    var points: [TrainingKind: Int]
+    static func kinds(for role: PlayerRole) -> [TrainingKind] {
+        (role == .batter ? [.contact, .power, .discipline] : [.velocity, .control, .stuff, .stamina]) + [.speed, .defense, .arm, .mental]
+    }
+    var budget: Int { role == .batter ? 388 : 459 }
+    var remaining: Int { budget - points.values.reduce(0, +) }
+    var isValid: Bool {
+        Set(points.keys) == Set(Self.kinds(for: role)) && points.values.allSatisfy { (0...100).contains($0) } && remaining == 0
+    }
+    init(role: PlayerRole, base: PlayerInitialValues) {
+        self.role = role
+        let values: [TrainingKind: Double] = [.contact: base.contact, .power: base.power, .discipline: base.discipline,
+            .speed: base.speed, .defense: base.defense, .arm: base.arm, .mental: base.mental,
+            .velocity: base.velocity ?? 0, .control: base.control ?? 0, .stuff: base.stuff ?? 0, .stamina: base.stamina ?? 0]
+        points = Dictionary(uniqueKeysWithValues: Self.kinds(for: role).map { ($0, Int(values[$0] ?? 0)) })
+    }
+    func canAdjust(_ kind: TrainingKind, by amount: Int) -> Bool {
+        guard let current = points[kind], (amount == -1 || amount == 1) else { return false }
+        return (0...100).contains(current + amount) && (amount < 0 || remaining > 0)
+    }
+    mutating func adjust(_ kind: TrainingKind, by amount: Int) {
+        guard canAdjust(kind, by: amount) else { return }
+        points[kind, default: 0] += amount
+    }
+    var values: PlayerInitialValues {
+        let base = PlayerArchetype.initial(for: role).values
+        func value(_ kind: TrainingKind) -> Double { Double(points[kind] ?? 0) }
+        var result = PlayerInitialValues(contact: role == .batter ? value(.contact) : base.contact,
+            power: role == .batter ? value(.power) : base.power, discipline: role == .batter ? value(.discipline) : base.discipline,
+            speed: value(.speed), defense: value(.defense), arm: value(.arm), mental: value(.mental),
+            velocity: role == .pitcher ? value(.velocity) : nil, control: role == .pitcher ? value(.control) : nil,
+            stuff: role == .pitcher ? value(.stuff) : nil, stamina: role == .pitcher ? value(.stamina) : nil)
+        result.pitches = base.pitches
+        return result
+    }
+}

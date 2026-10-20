@@ -50,6 +50,9 @@ struct PlayerDraft {
     var role: PlayerRole = .batter
     var archetype: PlayerArchetype?
     var selectedArchetype: PlayerArchetype { archetype ?? .initial(for: role) }
+    var isCustom = false
+    var allocation: PlayerStatAllocation?
+    var initialValues: PlayerInitialValues { isCustom ? allocation?.values ?? selectedArchetype.values : selectedArchetype.values }
     var schoolID = ""
     var position: FieldPosition = .center
     var throwingHand: ThrowingHand = .right
@@ -66,11 +69,14 @@ struct PlayerDraft {
         guard schools.contains(where: { $0.id == schoolID }) else { throw CreationError.invalidSchool }
         guard appearance.isValid else { throw CreationError.invalidAppearance }
         guard selectedArchetype.role == role else { throw CreationError.invalidArchetype }
+        if isCustom {
+            guard let allocation, allocation.role == role, allocation.isValid else { throw CreationError.invalidAllocation }
+        }
     }
 }
 
 enum CreationError: LocalizedError {
-    case invalidName, invalidNumber, invalidSchool, invalidAppearance, invalidArchetype, roleAlreadyExists
+    case invalidName, invalidNumber, invalidSchool, invalidAppearance, invalidArchetype, invalidAllocation, roleAlreadyExists
     var errorDescription: String? {
         switch self {
         case .invalidName: "이름은 공백만 입력할 수 없으며 1~12자로 입력해 주세요."
@@ -78,6 +84,7 @@ enum CreationError: LocalizedError {
         case .invalidSchool: "소속 학교를 선택해 주세요."
         case .invalidAppearance: "외형 선택을 다시 확인해 주세요."
         case .invalidArchetype: "선수 역할에 맞는 유형을 선택해 주세요."
+        case .invalidAllocation: "사용자 지정 능력치를 0~100 범위에서 남은 포인트 없이 배분해 주세요."
         case .roleAlreadyExists: "이미 해당 역할의 선수가 있습니다. 홈에서 확인해 주세요."
         }
     }
