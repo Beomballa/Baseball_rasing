@@ -655,6 +655,87 @@ extension CareerFlowTests {
         }
     }
 
+    @MainActor func testPositionTrainingPreviewHomeNavigationKeepsDailyAction() throws {
+        let app = XCUIApplication(); app.launch()
+        if !app.staticTexts["homePlayerName"].waitForExistence(timeout: 4) { createDashboardSample(app, name: "Position QA") }
+        let action = app.staticTexts["calendarAction"]; reveal(action, in: app)
+        let before = action.label
+        let link = app.buttons["openPositionPreview"]; reveal(link, in: app); link.tap()
+        XCTAssertTrue(app.staticTexts["positionPreviewNotice"].waitForExistence(timeout: 3))
+        app.buttons["positionSelect-C"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        reveal(action, in: app); XCTAssertEqual(action.label, before)
+        XCTAssertTrue(app.staticTexts["homePlayerName"].exists)
+    }
+
+    @MainActor func testPositionTrainingPreviewSelectionStatesAndScenes() throws {
+        let app = XCUIApplication(); app.launchArguments = ["-position-training-preview"]; app.launch()
+        XCTAssertTrue(app.staticTexts["positionPreviewNotice"].waitForExistence(timeout: 5))
+        let progress = app.staticTexts["positionProgress"]
+        let window = app.windows.firstMatch.frame
+        for (code, task) in [("C", "블로킹"), ("1B", "베이스 커버"), ("2B", "병살 연결"), ("3B", "강습 타구"),
+                             ("SS", "백핸드"), ("LF", "낙하지점"), ("CF", "타구 추적"), ("RF", "3루 송구")] {
+            let selection = app.buttons["positionSelect-" + code]
+            XCTAssertTrue(selection.isHittable); selection.tap()
+            XCTAssertTrue(selection.isSelected)
+            XCTAssertTrue(app.staticTexts["positionTask"].label.contains(task))
+            XCTAssertEqual(progress.label, "잔여 XP 36.0 / 100.0")
+            let action = app.buttons["positionStartPreview"]
+            XCTAssertTrue(action.isHittable)
+            XCTAssertGreaterThanOrEqual(selection.frame.minX, window.minX)
+            XCTAssertLessThanOrEqual(selection.frame.maxX, window.maxX)
+            XCTAssertLessThanOrEqual(action.frame.maxY, window.maxY)
+        }
+        let main = XCTAttachment(screenshot: app.screenshot()); main.name = "Position overview RF"; main.lifetime = .keepAlways; add(main)
+        app.buttons["positionStartPreview"].tap()
+        XCTAssertTrue(app.otherElements["positionDrillField"].waitForExistence(timeout: 3))
+        app.buttons["positionPhase-1"].tap()
+        XCTAssertTrue(app.staticTexts["positionDrillFeedback"].label.contains("포구"))
+        app.buttons["positionPhase-2"].tap()
+        XCTAssertTrue(app.staticTexts["positionDrillFeedback"].label.contains("3루"))
+        let scene = XCTAttachment(screenshot: app.screenshot()); scene.name = "Position RF throw scene"; scene.lifetime = .keepAlways; add(scene)
+        let close = app.buttons["positionCloseDrill"]; reveal(close, in: app); close.tap()
+        XCTAssertEqual(progress.label, "잔여 XP 36.0 / 100.0")
+        for (state, enabled) in [("오늘 행동 완료", false), ("이어하기", true), ("최대 숙련", false)] {
+            app.buttons["positionSampleState"].tap(); app.buttons[state].tap()
+            XCTAssertEqual(app.buttons["positionStartPreview"].isEnabled, enabled)
+            if state == "이어하기" {
+                XCTAssertFalse(app.buttons["positionSelect-SS"].isEnabled)
+                XCTAssertTrue(app.staticTexts["positionState"].label.contains("2 / 5"))
+            }
+            if state == "최대 숙련" { XCTAssertTrue(app.staticTexts["positionMastery"].label.contains("100.0")) }
+        }
+        app.buttons["positionSampleState"].tap(); app.buttons["조회 오류"].tap()
+        XCTAssertFalse(progress.exists); XCTAssertTrue(app.buttons["positionRetry"].isHittable)
+        app.buttons["positionRetry"].tap(); XCTAssertEqual(progress.label, "잔여 XP 36.0 / 100.0")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["positionPreviewNotice"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["positionSelect-SS"].isSelected)
+        XCTAssertEqual(progress.label, "잔여 XP 36.0 / 100.0")
+    }
+
+    @MainActor func testPositionTrainingPreviewLargeTextAccess() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-position-training-preview", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["positionPreviewNotice"].waitForExistence(timeout: 5))
+        let position = app.buttons["positionSelect-CF"]; reveal(position, in: app); position.tap()
+        let progress = app.staticTexts["positionProgress"]; reveal(progress, in: app)
+        XCTAssertEqual(progress.label, "잔여 XP 36.0 / 100.0")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Position large progress"; shot.lifetime = .keepAlways; add(shot)
+        let action = app.buttons["positionStartPreview"]; reveal(action, in: app)
+        XCTAssertGreaterThanOrEqual(action.frame.minX, app.windows.firstMatch.frame.minX)
+        XCTAssertLessThanOrEqual(action.frame.maxX, app.windows.firstMatch.frame.maxX)
+        action.tap()
+        let phase = app.buttons["positionPhase-2"]; reveal(phase, in: app); phase.tap()
+        let feedback = app.staticTexts["positionDrillFeedback"]; reveal(feedback, in: app)
+        XCTAssertTrue(feedback.label.contains("중계수"))
+        let close = app.buttons["positionCloseDrill"]; reveal(close, in: app)
+        let drillShot = XCTAttachment(screenshot: app.screenshot()); drillShot.name = "Position large scene"; drillShot.lifetime = .keepAlways; add(drillShot)
+        close.tap()
+        reveal(progress, in: app); XCTAssertEqual(progress.label, "잔여 XP 36.0 / 100.0")
+    }
+
     @MainActor func testTraitAcquisitionPreviewStatesAndLayout() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-trait-acquisition-preview"]

@@ -95,6 +95,10 @@ struct PlayerHomeView: View {
                 }
                 recentGames
                 GamePanel(title: "커리어 메뉴", onBoard: true) {
+                    #if DEBUG
+                    NavigationLink("포지션 훈련 · 화면 미리보기") { PositionTrainingPreview() }
+                        .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openPositionPreview")
+                    #endif
                     Button("연습장 입장", action: play).buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openMatch")
                     Text("연습 장면은 공식 기록·능력·피로에 반영되지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     if players.count < PlayerRole.allCases.count {
