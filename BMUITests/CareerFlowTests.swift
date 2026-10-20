@@ -322,7 +322,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 10))
         name.tap(); name.typeText("NativeBatter")
         if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
-        app.buttons["schoolPicker"].tap()
+        reveal(app.buttons["schoolPicker"], in: app); app.buttons["schoolPicker"].tap()
         app.buttons["hs-ref-001"].tap()
         let creationShot = XCTAttachment(screenshot: app.screenshot()); creationShot.name = "Player creation"; creationShot.lifetime = .keepAlways; add(creationShot)
         chooseArchetype(app,pitcher:false)
@@ -413,8 +413,8 @@ final class CareerFlowTests: XCTestCase {
         let pitcherName = app.textFields["playerName"]
         XCTAssertTrue(pitcherName.waitForExistence(timeout: 5)); pitcherName.tap(); pitcherName.typeText("LeftPitcher")
         if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
-        app.segmentedControls["throwingHandPicker"].buttons["좌투"].tap()
-        app.buttons["randomSchool"].tap()
+        app.buttons["hand-left"].tap()
+        reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
         chooseArchetype(app,pitcher:true)
         reveal(app.buttons["createPlayer"],in:app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
@@ -459,6 +459,85 @@ final class CareerFlowTests: XCTestCase {
 }
 
 extension CareerFlowTests {
+    @MainActor func testCreationBoardSelectionsAndPersistence() throws {
+        let app = XCUIApplication(); app.launch()
+        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 10))
+        let top = XCTAttachment(screenshot: app.screenshot()); top.name = "Creation batter board"; top.lifetime = .keepAlways; add(top)
+        app.buttons["role-pitcher"].tap()
+        XCTAssertTrue(app.buttons["hand-right"].isSelected)
+        XCTAssertFalse(app.buttons["position-SS"].exists)
+        app.buttons["role-batter"].tap()
+        XCTAssertTrue(app.buttons["position-CF"].isSelected)
+        reveal(app.buttons["schoolPicker"], in: app); app.buttons["schoolPicker"].tap()
+        XCTAssertTrue(app.textFields["schoolSearch"].waitForExistence(timeout: 3))
+        app.buttons["닫기"].tap()
+        XCTAssertTrue(app.buttons["schoolPicker"].waitForExistence(timeout: 3))
+        reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
+        reveal(app.staticTexts["creationError"], in: app)
+        XCTAssertTrue(app.staticTexts["creationError"].exists)
+        reveal(app.textFields["playerName"], in: app)
+        app.textFields["playerName"].tap(); app.textFields["playerName"].typeText("BoardBatter")
+        XCTAssertFalse(app.staticTexts["creationError"].exists)
+        app.buttons["입력 완료"].tap()
+        let number = app.textFields["jerseyNumber"]; number.doubleTap(); number.typeText("27"); XCTAssertEqual(number.value as? String, "27")
+        app.buttons["입력 완료"].tap()
+        reveal(app.buttons["position-SS"], in: app); app.buttons["position-SS"].tap()
+        XCTAssertTrue(app.buttons["position-SS"].isSelected)
+        reveal(app.buttons["schoolPicker"], in: app); app.buttons["schoolPicker"].tap()
+        let search = app.textFields["schoolSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 3)); search.tap(); search.typeText("zzzz")
+        XCTAssertTrue(app.staticTexts["schoolSearchEmpty"].waitForExistence(timeout: 3))
+        app.buttons["검색 지우기"].tap(); app.buttons["검색 완료"].tap()
+        let schools = XCTAttachment(screenshot: app.screenshot()); schools.name = "Creation school board"; schools.lifetime = .keepAlways; add(schools)
+        XCTAssertTrue(app.buttons["hs-ref-001"].waitForExistence(timeout: 3)); app.buttons["hs-ref-001"].tap()
+        reveal(app.buttons["archetype-slugger"], in: app); app.buttons["archetype-slugger"].tap()
+        XCTAssertTrue(app.staticTexts["archetypePreviewTitle"].label.contains("장타형"))
+        for label in ["피부 4", "머리색 3", "유니폼 5"] {
+            reveal(app.buttons[label], in: app); app.buttons[label].tap(); XCTAssertTrue(app.buttons[label].isSelected)
+        }
+        for id in ["hairStyle-2", "expression-2"] { reveal(app.buttons[id], in: app); app.buttons[id].tap(); XCTAssertTrue(app.buttons[id].isSelected) }
+        let appearance = XCTAttachment(screenshot: app.screenshot()); appearance.name = "Creation appearance board"; appearance.lifetime = .keepAlways; add(appearance)
+        reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["homePlayerName"].label, "BoardBatter  #27")
+        XCTAssertTrue(app.staticTexts["homeSchool"].label.contains("경기고"))
+        XCTAssertTrue(app.staticTexts["homeAge"].label.contains("유격수"))
+        XCTAssertTrue(app.staticTexts["homeArchetype"].label.contains("장타형"))
+        let day = app.staticTexts["calendarDate"].label, fatigue = app.staticTexts["homeFatigue"].label
+        reveal(app.buttons["createOtherRole"], in: app); app.buttons["createOtherRole"].tap()
+        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["role-batter"].exists)
+        app.buttons["닫기"].tap()
+        XCTAssertEqual(app.staticTexts["calendarDate"].label, day)
+        XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
+        app.terminate(); app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        reveal(app.buttons["createOtherRole"], in: app); app.buttons["createOtherRole"].tap()
+        let pitcherName = app.textFields["playerName"]
+        XCTAssertTrue(pitcherName.waitForExistence(timeout: 3)); pitcherName.tap(); pitcherName.typeText("BoardPitcher"); app.buttons["입력 완료"].tap()
+        reveal(app.buttons["hand-left"], in: app); app.buttons["hand-left"].tap()
+        XCTAssertTrue(app.buttons["hand-left"].isSelected)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(app.buttons["hand-left"].frame.minX, window.minX)
+        XCTAssertLessThanOrEqual(app.buttons["hand-left"].frame.maxX, window.maxX)
+        let large = XCTAttachment(screenshot: app.screenshot()); large.name = "Creation pitcher large text"; large.lifetime = .keepAlways; add(large)
+        reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
+        reveal(app.buttons["archetype-endurance"], in: app); app.buttons["archetype-endurance"].tap()
+        XCTAssertTrue(app.buttons["archetype-endurance"].isSelected)
+        reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("BoardPitcher"))
+        XCTAssertTrue(app.staticTexts["homeArchetype"].label.contains("지구력형"))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "좌투")).firstMatch.exists)
+        app.terminate(); app.launchArguments = []; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        reveal(app.buttons["homeRole-batter"], in: app); app.buttons["homeRole-batter"].tap()
+        XCTAssertEqual(app.staticTexts["homePlayerName"].label, "BoardBatter  #27")
+        XCTAssertEqual(app.staticTexts["calendarDate"].label, day)
+        XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
+        XCTAssertFalse(app.buttons["createOtherRole"].exists)
+    }
+
     @MainActor private func createDashboardSample(_ app: XCUIApplication, name: String) {
         let field = app.textFields["playerName"]
         XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText(name)

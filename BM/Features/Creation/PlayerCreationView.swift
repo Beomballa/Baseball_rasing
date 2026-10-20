@@ -6,6 +6,7 @@ struct PlayerCreationView: View {
     let availableRoles: [PlayerRole]
     let onCreated: (UUID) -> Void
     @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var draft = PlayerDraft()
     @State private var errorMessage: String?
     @State private var showSchools = false
@@ -15,110 +16,149 @@ struct PlayerCreationView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                HStack(spacing: 16) {
-                    PixelPlayer(appearance: draft.appearance).frame(width: 72, height: 96)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("나의 첫 시즌").font(.title2.bold())
-                        Text("16세 · 고1에서 시작").font(.subheadline).foregroundStyle(GameTheme.muted)
-                        Text("선수 생성").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.green)
+                HStack(alignment: .center, spacing: 12) {
+                    PixelPlayer(appearance: draft.appearance).frame(width: 48, height: 64)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("NEW CAREER · 16세 고1").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                        Text(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "나의 첫 시즌" : draft.name)
+                            .font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
+                        Text("\(selectedSchool?.name ?? "학교 미선택") · \(draft.role.label)")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Text("#\(draft.jerseyNumber) · \(draft.role == .batter ? draft.position.label : draft.throwingHand.label)")
+                            .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                     }
-                    Spacer()
-                }.padding(16).background(GameTheme.gold.opacity(0.25))
+                    Spacer(minLength: 0)
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(GameTheme.boardPanel)
+                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+                    .accessibilityElement(children: .combine).accessibilityIdentifier("creationPreview")
 
-                GamePanel(title: "01  선수 정보") {
-                    TextField("선수 이름 · 최대 12자", text: $draft.name)
+                GamePanel(title: "01  선수 정보", onBoard: true) {
+                    Text("선수 이름 · 1~12자").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    TextField("선수 이름", text: $draft.name, prompt: Text("선수 이름").foregroundStyle(GameTheme.boardMuted))
                         .textContentType(.name).focused($focusedField, equals: .name)
-                        .accessibilityIdentifier("playerName")
-                        .padding(12).background(GameTheme.paper)
+                        .accessibilityLabel("선수 이름").accessibilityIdentifier("playerName")
+                        .padding(12).background(GameTheme.board)
+                        .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
                     HStack {
                         Text("등번호")
-                        TextField("0~99", text: $draft.jerseyNumber)
+                        TextField("0~99", text: $draft.jerseyNumber, prompt: Text("0~99").foregroundStyle(GameTheme.boardMuted))
                             .keyboardType(.numberPad).focused($focusedField, equals: .number)
-                            .accessibilityIdentifier("jerseyNumber")
-                            .multilineTextAlignment(.trailing).padding(12).background(GameTheme.paper)
+                            .accessibilityLabel("등번호").accessibilityIdentifier("jerseyNumber")
+                            .multilineTextAlignment(.trailing).padding(12).background(GameTheme.board)
+                            .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
                     }
-                    Picker("역할", selection: $draft.role) {
-                        ForEach(availableRoles) { Text($0.label).tag($0) }
-                    }.pickerStyle(.segmented).accessibilityIdentifier("rolePicker")
-                    if draft.role == .batter {
-                        Picker("주 포지션", selection: $draft.position) {
-                            ForEach(FieldPosition.allCases) { Text($0.label).tag($0) }
-                        }.accessibilityIdentifier("positionPicker")
-                    } else {
-                        Picker("투구 손", selection: $draft.throwingHand) {
-                            ForEach(ThrowingHand.allCases) { Text($0.label).tag($0) }
-                        }.pickerStyle(.segmented).accessibilityIdentifier("throwingHandPicker")
+                    Text("나의 플레이").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    LazyVGrid(columns: choiceColumns, spacing: 8) {
+                        ForEach(availableRoles) { role in
+                            choice(role.label, selected: draft.role == role, id: "role-" + role.rawValue) {
+                                focusedField = nil; draft.role = role
+                            }
+                        }
+                    }
+                    Text(draft.role == .batter ? "주 포지션" : "투구 손")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    LazyVGrid(columns: choiceColumns, spacing: 8) {
+                        if draft.role == .batter {
+                            ForEach(FieldPosition.allCases) { position in
+                                choice(position.label, selected: draft.position == position, id: "position-" + position.rawValue) {
+                                    focusedField = nil; draft.position = position
+                                }
+                            }
+                        } else {
+                            ForEach(ThrowingHand.allCases) { hand in
+                                choice(hand.label, selected: draft.throwingHand == hand, id: "hand-" + hand.rawValue) {
+                                    focusedField = nil; draft.throwingHand = hand
+                                }
+                            }
+                        }
                     }
                 }
-                GamePanel(title: "02  소속 학교") {
+                GamePanel(title: "02  소속 학교", onBoard: true) {
                     Button { focusedField = nil; showSchools = true } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(schools.first(where: { $0.id == draft.schoolID })?.name ?? "학교 선택")
+                                Text(selectedSchool?.name ?? "학교 선택")
                                     .fontWeight(.bold)
                                 Text("검증된 고교 50곳").font(.caption)
                             }
-                            Spacer(); Text("선택 ›")
+                            if !dynamicTypeSize.isAccessibilitySize { Spacer(); Text("선택 ›") }
                         }.frame(minHeight: 48)
-                    }.accessibilityIdentifier("schoolPicker")
+                    }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("schoolPicker")
                     Button("학교 무작위 선택") { draft.schoolID = schools.randomElement()?.id ?? "" }
-                        .buttonStyle(GameButtonStyle(secondary: true)).accessibilityIdentifier("randomSchool")
+                        .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("randomSchool")
                 }
-                GamePanel(title: "03  선수 유형") {
-                    HStack(spacing: 8) {
+                GamePanel(title: "03  선수 유형", onBoard: true) {
+                    LazyVGrid(columns: choiceColumns, spacing: 8) {
                         ForEach(PlayerArchetype.choices(for: draft.role)) { archetype in
-                            Button(archetype.label) { draft.archetype = archetype }
-                                .buttonStyle(GameButtonStyle(secondary: draft.selectedArchetype != archetype))
-                                .accessibilityIdentifier("archetype-" + archetype.rawValue)
-                                .accessibilityAddTraits(draft.selectedArchetype == archetype ? .isSelected : [])
+                            choice(archetype.label, selected: draft.selectedArchetype == archetype, id: "archetype-" + archetype.rawValue) {
+                                draft.archetype = archetype
+                            }
                         }
                     }
                     Text("\(draft.selectedArchetype.label) · \(draft.role == .batter ? "타격·주루·수비·멘탈 합계 388" : "투구 원본 4종 합계 224")")
                         .font(.caption.bold()).accessibilityIdentifier("archetypePreviewTitle")
                     let values = draft.selectedArchetype.values
                     if draft.role == .batter {
-                        StatRow(name: "컨택", value: values.contact)
-                        StatRow(name: "파워", value: values.power)
-                        StatRow(name: "선구안", value: values.discipline)
+                        CreationStatRow(name: "컨택", value: values.contact)
+                        CreationStatRow(name: "파워", value: values.power)
+                        CreationStatRow(name: "선구안", value: values.discipline)
                     } else {
-                        StatRow(name: "구속 능력", value: values.velocity ?? 0)
-                        StatRow(name: "제구", value: values.control ?? 0)
-                        StatRow(name: "구위", value: values.stuff ?? 0)
-                        StatRow(name: "지구력", value: values.stamina ?? 0)
+                        CreationStatRow(name: "구속 능력", value: values.velocity ?? 0)
+                        CreationStatRow(name: "제구", value: values.control ?? 0)
+                        CreationStatRow(name: "구위", value: values.stuff ?? 0)
+                        CreationStatRow(name: "지구력", value: values.stamina ?? 0)
                     }
-                    StatRow(name: "스피드", value: values.speed)
-                    StatRow(name: "수비", value: values.defense)
-                    StatRow(name: "송구", value: values.arm)
-                    StatRow(name: "멘탈", value: values.mental)
+                    CreationStatRow(name: "스피드", value: values.speed)
+                    CreationStatRow(name: "수비", value: values.defense)
+                    CreationStatRow(name: "송구", value: values.arm)
+                    CreationStatRow(name: "멘탈", value: values.mental)
                     Text(draft.role == .batter ? "유형은 시작 능력치만 바꿉니다. 성장 배율과 상한은 같습니다." : "구속 능력은 0~100점 기준 · 초기 구종 숙련 62 / 55 / 42 / 35")
-                        .font(.caption).foregroundStyle(GameTheme.muted)
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
                 }
-                GamePanel(title: "04  도트 외형") {
+                GamePanel(title: "04  도트 외형", onBoard: true) {
                     palette("피부", selection: $draft.appearance.skin, colors: PlayerAppearance.skinColors)
                     palette("머리색", selection: $draft.appearance.hair, colors: PlayerAppearance.hairColors)
                     palette("유니폼", selection: $draft.appearance.kit, colors: PlayerAppearance.kitColors)
-                    Picker("머리 모양", selection: $draft.appearance.hairStyle) {
-                        Text("짧은 머리").tag(0); Text("옆가르마").tag(1); Text("곱슬머리").tag(2)
+                    Text("머리 모양").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    LazyVGrid(columns: choiceColumns, spacing: 8) {
+                        ForEach(Array(["짧은 머리", "옆가르마", "곱슬머리"].enumerated()), id: \.offset) { index, label in
+                            choice(label, selected: draft.appearance.hairStyle == index, id: "hairStyle-\(index)") { draft.appearance.hairStyle = index }
+                        }
                     }
-                    Picker("표정", selection: $draft.appearance.expression) {
-                        Text("기본").tag(0); Text("집중").tag(1); Text("미소").tag(2)
+                    Text("표정").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    LazyVGrid(columns: choiceColumns, spacing: 8) {
+                        ForEach(Array(["기본", "집중", "미소"].enumerated()), id: \.offset) { index, label in
+                            choice(label, selected: draft.appearance.expression == index, id: "expression-\(index)") { draft.appearance.expression = index }
+                        }
                     }
+                    HStack(spacing: 12) {
+                        PixelPlayer(appearance: draft.appearance).frame(width: 48, height: 64).accessibilityHidden(true)
+                        Text("피부 \(draft.appearance.skin + 1) · 머리색 \(draft.appearance.hair + 1) · 유니폼 \(draft.appearance.kit + 1)")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                            .accessibilityIdentifier("appearanceSummary")
+                    }
+
                 }
                 if let errorMessage {
-                    Text(errorMessage).foregroundStyle(.red).font(.subheadline)
+                    Text(errorMessage).foregroundStyle(Color(hex: 0xffb4a8)).font(.subheadline)
                         .accessibilityIdentifier("creationError")
                 }
-                Button("커리어 시작", action: save).buttonStyle(GameButtonStyle())
+                Button("커리어 시작", action: save).buttonStyle(GameButtonStyle(onBoard: true))
                     .accessibilityIdentifier("createPlayer")
                 Text("이 기기에 저장됩니다 · 역할별 선수 1명\n학교명은 참조 정보이며 공식 로고·유니폼은 사용하지 않습니다.")
-                    .font(.caption).foregroundStyle(GameTheme.muted).multilineTextAlignment(.center)
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted).multilineTextAlignment(.center)
             }.padding(16)
         }
-        .background(GameTheme.paper).foregroundStyle(GameTheme.navy)
+        .background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+        .tint(GameTheme.gold).preferredColorScheme(.dark)
+        .toolbarBackground(GameTheme.boardPanel, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .navigationTitle("선수 생성").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if focusedField != nil {
-                ToolbarItem(placement: .topBarTrailing) { Button("입력 완료") { focusedField = nil } }
+                ToolbarItem(placement: .topBarTrailing) { Button("입력 완료") { focusedField = nil }.foregroundStyle(GameTheme.gold) }
             }
         }
         .sheet(isPresented: $showSchools) {
@@ -126,18 +166,42 @@ struct PlayerCreationView: View {
         }
         .onAppear { if let role = availableRoles.first, !availableRoles.contains(draft.role) { draft.role = role } }
         .onChange(of: draft.role) { _, role in draft.archetype = .initial(for: role) }
+        .onChange(of: draft.name) { _, _ in errorMessage = nil }
+        .onChange(of: draft.jerseyNumber) { _, _ in errorMessage = nil }
+        .onChange(of: draft.schoolID) { _, _ in errorMessage = nil }
+    }
+
+    private var selectedSchool: School? { schools.first { $0.id == draft.schoolID } }
+    private var choiceColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 8), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
+    }
+
+    private func choice(_ title: String, selected: Bool, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(selected ? "■" : "□").foregroundStyle(selected ? GameTheme.gold : GameTheme.boardMuted).accessibilityHidden(true)
+                Text(title).fixedSize(horizontal: false, vertical: true)
+            }.padding(.vertical, 6)
+        }
+        .buttonStyle(GameButtonStyle(secondary: !selected, onBoard: true))
+        .overlay(Rectangle().strokeBorder(selected ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2).allowsHitTesting(false))
+        .accessibilityLabel(title).accessibilityIdentifier(id)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func palette(_ title: String, selection: Binding<Int>, colors: [Int]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.subheadline)
-            HStack(spacing: 0) {
+            Text("\(title) · \(selection.wrappedValue + 1)").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: dynamicTypeSize.isAccessibilitySize ? 3 : 6), spacing: 6) {
                 ForEach(colors.indices, id: \.self) { index in
                     Button { selection.wrappedValue = index } label: {
-                        Rectangle().fill(Color(hex: colors[index])).frame(width: 28, height: 28)
-                            .overlay(Rectangle().strokeBorder(selection.wrappedValue == index ? GameTheme.gold : .clear, lineWidth: 4))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }.accessibilityLabel("\(title) \(index + 1)")
+                        VStack(spacing: 3) {
+                            Rectangle().fill(Color(hex: colors[index])).frame(height: 24)
+                            Text("\(index + 1)").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.boardInk)
+                        }.padding(5).frame(minHeight: 48)
+                            .background(GameTheme.board)
+                            .overlay(Rectangle().strokeBorder(selection.wrappedValue == index ? GameTheme.gold : GameTheme.boardLine, lineWidth: selection.wrappedValue == index ? 3 : 1))
+                    }.buttonStyle(.plain).accessibilityLabel("\(title) \(index + 1)")
                         .accessibilityAddTraits(selection.wrappedValue == index ? .isSelected : [])
                 }
             }
@@ -158,22 +222,72 @@ private struct SchoolPicker: View {
     @Binding var selected: String
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
+    @FocusState private var searchFocused: Bool
     private var filtered: [School] {
         search.isEmpty ? schools : schools.filter { $0.name.contains(search) || $0.region.contains(search) }
     }
     var body: some View {
         NavigationStack {
-            List(filtered) { school in
-                Button { selected = school.id; dismiss() } label: {
-                    HStack {
-                        Text(school.name); Spacer(); Text(school.region).foregroundStyle(.secondary)
-                        if selected == school.id { Image(systemName: "checkmark").accessibilityLabel("선택됨") }
-                    }.frame(minHeight: 44)
-                }.accessibilityIdentifier(school.id)
-            }
-            .searchable(text: $search, prompt: "학교 또는 지역")
+            VStack(spacing: 12) {
+                HStack {
+                    TextField("학교 또는 지역 검색", text: $search, prompt: Text("학교 또는 지역 검색").foregroundStyle(GameTheme.boardMuted))
+                        .focused($searchFocused).submitLabel(.search)
+                        .onSubmit { searchFocused = false }
+                        .accessibilityLabel("학교 또는 지역 검색").accessibilityIdentifier("schoolSearch")
+                    if !search.isEmpty {
+                        Button("지우기") { search = "" }.accessibilityLabel("검색 지우기")
+                    }
+                }.padding(12).background(GameTheme.boardPanel)
+                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+                    .padding(.horizontal, 16)
+                Text("고교 \(filtered.count)곳 · 학교를 선택하세요")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                List(filtered) { school in
+                    Button { searchFocused = false; selected = school.id; dismiss() } label: {
+                        HStack(spacing: 8) {
+                            Text(school.name).fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            Text(school.region).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                            Text(selected == school.id ? "■" : "□").foregroundStyle(GameTheme.gold).accessibilityHidden(true)
+                        }.frame(minHeight: 44).contentShape(Rectangle())
+                    }.foregroundStyle(GameTheme.boardInk).accessibilityIdentifier(school.id)
+                        .accessibilityAddTraits(selected == school.id ? .isSelected : [])
+                        .listRowBackground(GameTheme.boardPanel).listRowSeparatorTint(GameTheme.boardLine)
+                }.listStyle(.plain).padding(.horizontal, 16)
+                    .scrollContentBackground(.hidden).scrollDismissesKeyboard(.interactively)
+                    .overlay { if filtered.isEmpty { Text("검색 결과가 없습니다").foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("schoolSearchEmpty") } }
+            }.padding(.top, 12).background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+            .preferredColorScheme(.dark).tint(GameTheme.gold)
+            .toolbarBackground(GameTheme.boardPanel, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationTitle("소속 학교").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("닫기") { searchFocused = false; dismiss() }.foregroundStyle(GameTheme.gold) }
+                if searchFocused {
+                    ToolbarItem(placement: .topBarTrailing) { Button("검색 완료") { searchFocused = false }.foregroundStyle(GameTheme.gold) }
+                }
+            }
         }
+    }
+}
+
+private struct CreationStatRow: View {
+    let name: String
+    let value: Double
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(name)
+                Spacer(minLength: 8)
+                Text(value.formatted(.number.precision(.fractionLength(1)))).monospacedDigit().foregroundStyle(GameTheme.growth)
+            }.font(.subheadline)
+            GeometryReader { proxy in
+                Rectangle().fill(GameTheme.board)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(GameTheme.growth).frame(width: proxy.size.width * min(100, max(0, value)) / 100)
+                    }
+            }.frame(height: dynamicTypeSize.isAccessibilitySize ? 8 : 5).accessibilityHidden(true)
+        }.accessibilityElement(children: .combine)
     }
 }
