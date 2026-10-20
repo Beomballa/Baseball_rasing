@@ -9,6 +9,8 @@
 !/BM/**/
 !/BM/**/*.swift
 !/BM/Resources/schools.json
+# Bundled game art copied from the established prototype; no QA/user images.
+!/BM/Resources/MatchArt/
 !/BMTests/
 /BMTests/**
 !/BMTests/**/
@@ -83,3 +85,13 @@
 /DerivedData/
 /build/
 /.build/
+
+!/BM/Resources/MatchArt/batter-actions.png
+!/BM/Resources/MatchArt/grip-fastball.png
+!/BM/Resources/MatchArt/grip-changeup.png
+!/BM/Resources/MatchArt/batter-view-clean.png
+!/BM/Resources/MatchArt/grips-extra.png
+!/BM/Resources/MatchArt/grip-slider.png
+!/BM/Resources/MatchArt/pitcher-delivery-v2.png
+!/BM/Resources/MatchArt/stadium-clean.png
+!/BM/Resources/MatchArt/catcher-parts.png

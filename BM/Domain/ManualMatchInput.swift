@@ -25,6 +25,7 @@ struct ManualMatchResult: Codable, Equatable {
     let y: Double
     let speed: Int
     var outcome: String
+    var pitchCode: String? = nil
 }
 
 struct MatchDelivery: Equatable {

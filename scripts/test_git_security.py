@@ -8,12 +8,20 @@ import tempfile
 import unittest
 
 from check_commit_message import valid_subject
-from check_staged import allowed_path, content_issues
+from check_staged import allowed_path, content_issues, blob_issues, ART_HASHES
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class GitPrivacyTests(unittest.TestCase):
+    def test_only_reviewed_game_art_is_allowed(self):
+        for path in ART_HASHES:
+            self.assertTrue(allowed_path(path))
+            self.assertEqual(blob_issues(path, (ROOT / path).read_bytes()), [])
+            self.assertEqual(blob_issues(path, b"unreviewed"), ["unreviewed-game-art"])
+        self.assertFalse(allowed_path("BM/Resources/MatchArt/private.png"))
+        self.assertFalse(allowed_path("qa/screenshot.png"))
+
     def test_required_source_paths_only(self):
         for path in ["BM/App/BMApp.swift", "BMTests/CareerStoreTests.swift", "BM/Resources/schools.json",
                      "BM.xcodeproj/project.pbxproj", ".githooks/pre-commit"]:

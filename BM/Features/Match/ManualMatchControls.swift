@@ -11,16 +11,16 @@ struct MatchTimingGauge: View {
             Text(label).font(.caption.bold())
             GeometryReader { size in
                 ZStack(alignment: .leading) {
-                    Rectangle().fill(GameTheme.navy.opacity(0.15))
-                    Rectangle().fill(GameTheme.green.opacity(0.5))
+                    Rectangle().fill(Color(hex: 0x5b5034))
+                    Rectangle().fill(Color(hex: 0x73b890))
                         .frame(width: size.size.width * good * 2).offset(x: size.size.width * (center - good))
                     Rectangle().fill(GameTheme.gold)
                         .frame(width: size.size.width * perfect * 2).offset(x: size.size.width * (center - perfect))
-                    Rectangle().fill(GameTheme.navy).frame(width: 4)
+                    Rectangle().fill(Color(hex: 0xfff4ce)).frame(width: 4)
                         .offset(x: max(0, size.size.width - 4) * phase)
                 }
             }.frame(height: 22)
-                .overlay(Rectangle().strokeBorder(GameTheme.navy, lineWidth: 2))
+                .overlay(Rectangle().strokeBorder(Color(hex: 0x9fb7bf), lineWidth: 2))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label + " · 초록 구간 GOOD, 노란 구간 PERFECT")
@@ -34,8 +34,8 @@ struct BattingAimZone: View {
     var body: some View {
         GeometryReader { size in
             ZStack {
-                Rectangle().fill(GameTheme.paper.opacity(0.25))
-                Rectangle().strokeBorder(GameTheme.navy, lineWidth: 2)
+                Rectangle().fill(GameTheme.paper.opacity(0.08))
+                Rectangle().strokeBorder(Color(hex: 0x9fb7bf), lineWidth: 2)
                     .frame(width: size.size.width * 0.6, height: size.size.height * 0.6)
                 Path { path in
                     for part in [0.4, 0.6] {
@@ -44,7 +44,7 @@ struct BattingAimZone: View {
                         path.move(to: CGPoint(x: size.size.width * 0.2, y: size.size.height * part))
                         path.addLine(to: CGPoint(x: size.size.width * 0.8, y: size.size.height * part))
                     }
-                }.stroke(GameTheme.navy.opacity(0.4), lineWidth: 1)
+                }.stroke(Color(hex: 0xf3edcf).opacity(0.4), lineWidth: 1)
                 Rectangle().strokeBorder(GameTheme.gold, lineWidth: 3).frame(width: 16, height: 16)
                     .position(x: size.size.width * x, y: size.size.height * y)
             }

@@ -1,4 +1,5 @@
 import XCTest
+import SpriteKit
 import SwiftData
 @testable import BM
 
@@ -219,5 +220,80 @@ import SwiftData
         clock.stop()
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(count, 1); XCTAssertFalse(clock.running)
+    }
+}
+
+@MainActor final class MatchPresentationTests: XCTestCase {
+    func testContactUsesTheSwingAndBuntAtlasBarrels() {
+        let swing = MatchPresentation.batContact(action: "swing")
+        let bunt = MatchPresentation.batContact(action: "bunt")
+        XCTAssertEqual(swing.x, 0.510859375, accuracy: 0.000001)
+        XCTAssertEqual(swing.y, 0.66763671875, accuracy: 0.000001)
+        XCTAssertEqual(bunt.x, 0.49875, accuracy: 0.000001)
+        XCTAssertEqual(bunt.y, 0.6807421875, accuracy: 0.000001)
+    }
+
+    func testVisualFlightKeepsSavedEndpointAndMirrorsOnlyHorizontalBreak() {
+        let size = CGSize(width: 320, height: 320), start = CGPoint(x: 160, y: 220), end = CGPoint(x: 160, y: 80)
+        for role in PlayerRole.allCases {
+            for code in ["four-seam", "slider", "changeup", "fork"] {
+                for hand in ["left", "right"] {
+                    XCTAssertEqual(MatchBallPath.point(from: start, to: end, size: size, role: role, hand: hand, code: code, progress: 0), start)
+                    XCTAssertEqual(MatchBallPath.point(from: start, to: end, size: size, role: role, hand: hand, code: code, progress: 1), end)
+                }
+            }
+            let right = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "right", code: "slider", progress: 0.5)
+            let left = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "left", code: "slider", progress: 0.5)
+            XCTAssertEqual(right.x + left.x, 320, accuracy: 0.0001)
+            XCTAssertEqual(right.y, left.y)
+            var previous = start
+            for step in 1...100 {
+                let point = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "right", code: "fork", progress: Double(step) / 100)
+                XCTAssertLessThan(point.y, previous.y)
+                previous = point
+            }
+        }
+    }
+
+    func testFieldFitsCompactAndTallPhonesWithoutStretching() {
+        for available in [CGSize(width: 304, height: 480), CGSize(width: 359, height: 560), CGSize(width: 386, height: 730)] {
+            for role in PlayerRole.allCases {
+                let field = MatchPresentation.fieldSize(available: available, role: role)
+                XCTAssertLessThanOrEqual(field.width, available.width)
+                XCTAssertLessThanOrEqual(field.height + 310, available.height)
+                XCTAssertEqual(field.width / field.height, role == .batter ? 1 : 1219.0 / 1290, accuracy: 0.0001)
+            }
+        }
+    }
+    func testOnlyNewPitchJudgmentsRequestCountPulse() {
+        for value in ["볼", "볼넷"] { XCTAssertEqual(MatchPresentation.countPulse(value), "B") }
+        for value in ["루킹 스트라이크", "헛스윙", "삼진"] { XCTAssertEqual(MatchPresentation.countPulse(value), "S") }
+        for value in ["안타", "홈런", "범타"] { XCTAssertNil(MatchPresentation.countPulse(value)) }
+        XCTAssertNil(MatchPresentation.countPulse(nil))
+    }
+    func testSavedPitchNameSurvivesSelectionAndLegacyResultDecodes() throws {
+        let result = ManualMatchResult(action: "pitch", quality: 1, grade: "GOOD", x: 0.5, y: 0.5, speed: 132, outcome: "볼", pitchCode: "slider")
+        let data = try JSONEncoder().encode(result)
+        XCTAssertEqual(MatchPresentation.pitchName(try JSONDecoder().decode(ManualMatchResult.self, from: data)), "슬라이더")
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "pitchCode")
+        let restored = try JSONDecoder().decode(ManualMatchResult.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(restored.pitchCode)
+        XCTAssertEqual(MatchPresentation.pitchName(restored), "구종 미기록")
+        XCTAssertEqual(MatchPresentation.pitchName(nil), "투구 대기")
+    }
+    func testAllBundledAtlasFramesAndSceneArtLoad() throws {
+        for name in MatchArt.names { XCTAssertNotNil(MatchArt.image(name), name) }
+        for name in ["pitcher-delivery-v2", "batter-actions"] {
+            for i in 0..<6 { XCTAssertNotNil(MatchArt.cell(name, column: i % 3, row: i / 3, columns: 3, rows: 2)) }
+        }
+        let scene = BallparkScene(size: CGSize(width: 320, height: 400))
+        scene.configure(hand: "left", kit: 0, role: .batter)
+        XCTAssertEqual(scene.size, CGSize(width: 320, height: 320))
+        XCTAssertTrue(scene.demonstrate(reduceMotion: true))
+        scene.cancelDelivery()
+        scene.configure(hand: "left", kit: 0, role: .pitcher)
+        XCTAssertTrue(scene.demonstrate(reduceMotion: false, pitchCode: "slider"))
+        scene.cancelDelivery()
     }
 }

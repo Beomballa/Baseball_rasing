@@ -9,6 +9,25 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(element.isHittable)
     }
 
+    @MainActor private func assertArenaFits(_ app: XCUIApplication, button: String, ratio: CGFloat) {
+        let field = app.otherElements["careerMatchField"]
+        let board = app.otherElements["matchScoreboard"]
+        let control = app.buttons[button]
+        XCTAssertTrue(control.isHittable)
+        let window = app.windows.firstMatch.frame
+        for element in [field, board, control] {
+            XCTAssertTrue(element.exists)
+            XCTAssertGreaterThanOrEqual(element.frame.minX, window.minX)
+            XCTAssertLessThanOrEqual(element.frame.maxX, window.maxX)
+            XCTAssertGreaterThanOrEqual(element.frame.minY, window.minY)
+            XCTAssertLessThanOrEqual(element.frame.maxY, window.maxY)
+        }
+        XCTAssertEqual(field.frame.width / field.frame.height, ratio, accuracy: 0.02)
+    }
+    @MainActor private func waitForEnabled(_ button: XCUIElement) {
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)], timeout: 5), .completed)
+    }
+
     @MainActor func testCreateBothRolesRelaunchAndEnterSpriteKit() throws {
         let app = XCUIApplication()
         app.launch()
@@ -56,6 +75,7 @@ final class CareerFlowTests: XCTestCase {
         reveal(app.buttons["openCareerGame"], in: app)
         app.buttons["openCareerGame"].tap()
         XCTAssertTrue(app.buttons["gameInput-watch"].waitForExistence(timeout: 5))
+        assertArenaFits(app, button: "requestGamePitch", ratio: 1)
         let gameShot = XCTAttachment(screenshot: app.screenshot()); gameShot.name = "Native batter game"; gameShot.lifetime = .keepAlways; add(gameShot)
         let aim = app.otherElements["battingAimZone"]
         XCTAssertTrue(aim.exists)
@@ -67,6 +87,7 @@ final class CareerFlowTests: XCTestCase {
         let take = NSPredicate(format: "label CONTAINS %@", "지켜보기")
         expectation(for: take, evaluatedWith: app.staticTexts["careerGameMessage"])
         waitForExpectations(timeout: 5)
+        waitForEnabled(app.buttons["requestGamePitch"])
         app.buttons["requestGamePitch"].tap()
         XCTAssertTrue(app.buttons["gameHit"].waitForExistence(timeout: 2))
         app.buttons["gameHit"].tap()
@@ -113,12 +134,15 @@ final class CareerFlowTests: XCTestCase {
         reveal(app.buttons["restToday"], in: app); app.buttons["restToday"].tap()
         reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
+        assertArenaFits(app, button: "gamePitch", ratio: 1219.0 / 1290)
+        XCTAssertTrue(app.otherElements["pitchingTargetZone"].exists)
         let pitchShot = XCTAttachment(screenshot: app.screenshot()); pitchShot.name = "Native pitcher game"; pitchShot.lifetime = .keepAlways; add(pitchShot)
         app.buttons["gamePitch"].tap()
         XCTAssertTrue(app.buttons["gameRelease"].waitForExistence(timeout: 2))
         XCTAssertFalse(app.buttons["gameAutomatic"].isEnabled)
         app.buttons["gameRelease"].tap()
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 3))
+        waitForEnabled(app.buttons["gameAutomatic"])
         reveal(app.buttons["gameAutomatic"], in: app); app.buttons["gameAutomatic"].tap()
         app.buttons["진행하고 결과 저장"].tap()
         XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))

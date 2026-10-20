@@ -153,7 +153,7 @@ struct CareerMatch: Codable, Equatable {
         if strikes >= 3 { endPlate("삼진", batter: !pitcher, pitcher: pitcher) }
         else if balls >= 4 { endPlate("볼넷", batter: !pitcher, pitcher: pitcher) }
         lastManual = ManualMatchResult(action: input.rawValue, quality: quality, grade: grade,
-                                       x: x, y: y, speed: plan.speed, outcome: message)
+                                       x: x, y: y, speed: plan.speed, outcome: message, pitchCode: pitcher ? pitchCode : "four-seam")
     }
 
     private mutating func endPlate(_ result: String, batter: Bool, pitcher: Bool) {

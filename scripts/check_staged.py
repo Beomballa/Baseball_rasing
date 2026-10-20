@@ -2,6 +2,7 @@
 """Inspect staged blobs, including forced additions; never print matched values."""
 from pathlib import PurePosixPath
 import re
+import hashlib
 import subprocess
 import sys
 
@@ -12,6 +13,8 @@ EXACT_PATHS = {
     ".githooks/pre-commit", ".githooks/commit-msg",
     "scripts/check_staged.py", "scripts/check_commit_message.py", "scripts/test_git_security.py",
 }
+ART_HASHES = {'BM/Resources/MatchArt/batter-actions.png': '0b354869384a10785639dda556adebf9f11a587b73b0be31d80456e5d57310cf', 'BM/Resources/MatchArt/batter-view-clean.png': 'b2fcd03304f72554e80c34510dc7d4b3920e70c389ef9c4c8a6cc145b6bcddff', 'BM/Resources/MatchArt/catcher-parts.png': '6692da8e7cce7aacad190d561c202216772e5b00eaabb3694e951d849e5f60b9', 'BM/Resources/MatchArt/grip-changeup.png': 'f5bbbe6e35cb8d2334faf6741e4d4a6481ce4b65c8e6a28475a44ea0dcdf8e31', 'BM/Resources/MatchArt/grip-fastball.png': '0bba0ab9e03bf7e9c692067a1300233c464f6dfc0acea063a4bbf6a382e2286c', 'BM/Resources/MatchArt/grip-slider.png': '96c9d030c8e829abdd27ed85a175f3ef4035d619340f518738c1f5e9dc72455f', 'BM/Resources/MatchArt/grips-extra.png': '951a93adcff9fc9ed2dbc11a77754957ee077745709f552b6001ca23f91ada7d', 'BM/Resources/MatchArt/pitcher-delivery-v2.png': '10d16f1abb936751dbcb3ddaf428331062547b7fad5e983273920219e49d67dc', 'BM/Resources/MatchArt/stadium-clean.png': '5c977592c6d8caa69a567ecdd86dffdaf1d56eef858bb49571adbb0e82a392fb'}
+
 BLOCKED_PARTS = {"secrets", "credentials", ".ssh", ".aws", ".idea", ".vscode", "xcuserdata", "__pycache__", "generated"}
 PATTERNS = [
     ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----")),
@@ -31,7 +34,7 @@ def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):
         return False
-    if path in EXACT_PATHS:
+    if path in EXACT_PATHS or path in ART_HASHES:
         return True
     return (len(parts) > 1 and parts[0] in {"BM", "BMTests", "BMUITests"}
             and not any(part.startswith(".") for part in parts[1:-1])
@@ -46,6 +49,12 @@ def content_issues(data: bytes) -> list[str]:
     except UnicodeDecodeError:
         return ["non-utf8-content"]
     return [label for label, pattern in PATTERNS if pattern.search(text)]
+
+
+def blob_issues(path: str, data: bytes) -> list[str]:
+    if path in ART_HASHES:
+        return [] if hashlib.sha256(data).hexdigest() == ART_HASHES[path] else ["unreviewed-game-art"]
+    return content_issues(data)
 
 
 def git(*args: str) -> bytes:
@@ -66,7 +75,7 @@ def main() -> int:
         if mode not in {b"100644", b"100755"}:
             failures.append((path, "non-regular-file"))
             continue
-        for issue in content_issues(git("cat-file", "blob", ":" + path)):
+        for issue in blob_issues(path, git("cat-file", "blob", ":" + path)):
             failures.append((path, issue))
     # A local-only .gitconfig value keeps personal email out of commit metadata.
     for kind in ["AUTHOR", "COMMITTER"]:
