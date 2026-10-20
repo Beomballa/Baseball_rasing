@@ -202,6 +202,10 @@ struct CareerGameView: View {
                     Text("최근 내 \(play.ownDefense ? "수비" : "주루") · 1루 \(play.safe ? "세이프" : "아웃")")
                     Text("주자 \(play.runnerTime, specifier: "%.2f")초 / 송구 \(play.ballTime, specifier: "%.2f")초").font(.caption)
                         .accessibilityIdentifier("gameFieldResult")
+                    if let traits = play.appliedTraits, !traits.isEmpty {
+                        Text("이번 경합 특성 · " + traits.map(\.label).joined(separator: " · ")).font(.caption)
+                            .accessibilityIdentifier("gameFieldTraits")
+                    }
                 }
                 Text("홈에서 다음 날로 진행할 수 있습니다.").font(.caption)
             }.foregroundStyle(GameTheme.navy)

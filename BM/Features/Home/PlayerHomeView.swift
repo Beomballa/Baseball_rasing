@@ -131,6 +131,7 @@ struct PlayerHomeView: View {
                     StatRow(name: "수비", value: player.defense).accessibilityIdentifier("homeDefense")
                     StatRow(name: "송구", value: player.arm).accessibilityIdentifier("homeArm")
                 }
+                TraitManagementPanel(player: player, calendar: calendar)
                 Button("연습장 입장", action: play).buttonStyle(GameButtonStyle())
                     .accessibilityIdentifier("openMatch")
                 Text("경기장 연결 단계 · 연습 장면은 기록에 반영되지 않습니다.")

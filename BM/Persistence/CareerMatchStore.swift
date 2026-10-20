@@ -31,6 +31,9 @@ enum CareerSchemaV3: VersionedSchema {
         func snapshot() throws -> CareerMatch {
             guard ["native-match-v1", "native-match-v2"].contains(rulesVersion), let match = try? JSONDecoder().decode(CareerMatch.self, from: payload),
                   match.completed == completed, match.appearance == appearance else { throw MatchError.invalidRecord }
+            if let stats = match.fieldStats, stats.version == 2 {
+                guard let active = stats.activeTraits, TraitLoadout.valid(active) else { throw MatchError.invalidRecord }
+            }
             return match
         }
     }
@@ -77,6 +80,11 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         match.trainingEffectsVersion = 1
         match.fieldStats = MatchFieldStats(speed: player.speed, defense: player.defense, arm: player.arm,
                                           position: player.role == .pitcher ? "P" : player.positionRaw)
+        if context.container.schema.entities.contains(where: { $0.name == "PlayerTraits" }),
+           let traits = try PlayerTraitStore.profile(playerID: player.id, in: context) {
+            match.fieldStats?.version = 2
+            match.fieldStats?.activeTraits = try traits.snapshot().active
+        }
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"

@@ -53,6 +53,9 @@ final class CareerFlowTests: XCTestCase {
                 XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
                 reveal(app.buttons["restToday"], in: app); XCTAssertFalse(app.buttons["restToday"].isEnabled)
                 XCTAssertFalse(app.buttons["advanceDay"].isEnabled)
+                reveal(app.staticTexts["traitLocked"], in: app)
+                XCTAssertTrue(app.staticTexts["traitLocked"].exists)
+                XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "traitToggle-")).firstMatch.isEnabled)
                 for _ in 0..<5 { app.swipeDown() }
                 reveal(app.buttons["openTraining"], in: app)
                 XCTAssertTrue(app.buttons["openTraining"].label.contains("2/5")); app.buttons["openTraining"].tap()
@@ -246,6 +249,32 @@ final class CareerFlowTests: XCTestCase {
         }
     }
 
+    @MainActor private func checkTraitManagement(_ app: XCUIApplication, pitcher: Bool) {
+        let count = app.staticTexts["traitActiveCount"]
+        reveal(count, in: app); XCTAssertEqual(count.label, "활성 1 / 3")
+        let buttons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "traitToggle-"))
+        XCTAssertEqual(buttons.count, 1)
+        let id = buttons.firstMatch.identifier
+        let button = app.buttons[id]
+        reveal(button, in: app); XCTAssertTrue(button.isEnabled); button.tap()
+        XCTAssertEqual(count.label, "활성 0 / 3")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Pitcher trait management" : "Batter trait management"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        if pitcher {
+            reveal(app.segmentedControls["homeRolePicker"], in: app)
+            app.segmentedControls["homeRolePicker"].buttons["투수 · LeftPitcher"].tap()
+        }
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(count, in: app); XCTAssertEqual(count.label, "활성 0 / 3")
+        reveal(app.buttons[id], in: app); app.buttons[id].tap()
+        XCTAssertEqual(count.label, "활성 1 / 3")
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.staticTexts["calendarAction"], in: app)
+        XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 미사용")
+        for _ in 0..<5 { app.swipeDown() }
+    }
+
     @MainActor private func chooseArchetype(_ app: XCUIApplication, pitcher: Bool) {
         let options = pitcher ? ["control", "stuff", "endurance"] : ["contact", "onBase", "slugger"]
         let labels = pitcher ? ["제구형", "구위형", "지구력형"] : ["컨택형", "출루형", "장타형"]
@@ -256,6 +285,7 @@ final class CareerFlowTests: XCTestCase {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Pitcher archetype preview" : "Batter archetype preview"; shot.lifetime = .keepAlways; add(shot)
     }
     @MainActor private func checkAbilities(_ app: XCUIApplication, pitcher: Bool) {
+        for _ in 0..<5 { app.swipeDown() }
         XCTAssertTrue(app.staticTexts["homeArchetype"].waitForExistence(timeout:5))
         XCTAssertEqual(app.staticTexts["homeArchetype"].label,pitcher ? "지구력형" : "장타형")
         let values = pitcher ? [("homeVelocity","52"),("homeControl","54"),("homeStuff","53"),("homeStamina","65"),("homeBreaking","49.8"),("homeMental","55")] : [("homeMental","55")]
@@ -287,6 +317,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["calendarDate"].label, "2026-04-01")
         XCTAssertTrue(app.staticTexts["homeAge"].label.contains("16세 / 고1"))
         checkAbilities(app,pitcher:false)
+        checkTraitManagement(app,pitcher:false)
         reveal(app.buttons["restToday"], in: app)
         train(app, pitcher: false)
         reveal(app.buttons["restToday"], in: app)
@@ -373,6 +404,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("LeftPitcher"))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "좌투")).firstMatch.exists)
         checkAbilities(app,pitcher:true)
+        checkTraitManagement(app,pitcher:true)
         let homeShot = XCTAttachment(screenshot: app.screenshot()); homeShot.name = "Pitcher saved home"; homeShot.lifetime = .keepAlways; add(homeShot)
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
