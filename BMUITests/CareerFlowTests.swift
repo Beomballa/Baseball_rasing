@@ -46,6 +46,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertLessThanOrEqual(field.frame.maxX, window.maxX)
         XCTAssertLessThanOrEqual(button.frame.maxY, window.maxY)
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Pitch training" : "Contact training"; shot.lifetime = .keepAlways; add(shot)
+        var previousBreakdown = ""
         for index in 0..<5 {
             if index == 2 && !pitcher {
                 app.terminate(); app.launch()
@@ -55,11 +56,22 @@ final class CareerFlowTests: XCTestCase {
                 for _ in 0..<5 { app.swipeDown() }
                 reveal(app.buttons["openTraining"], in: app)
                 XCTAssertTrue(app.buttons["openTraining"].label.contains("2/5")); app.buttons["openTraining"].tap()
+                XCTAssertEqual(app.staticTexts["contactScoreBreakdown"].label, previousBreakdown)
             }
             let startAttempt = app.buttons.containing(NSPredicate(format: "identifier == %@ AND label == %@", "trainingAttempt", "\(index + 1)번째 시도 시작")).firstMatch
             XCTAssertTrue(startAttempt.waitForExistence(timeout: 3)); startAttempt.tap()
             let hit = app.buttons.containing(NSPredicate(format: "identifier == %@ AND label == %@", "trainingAttempt", pitcher ? "던지기!" : "타격!")).firstMatch
             XCTAssertTrue(hit.waitForExistence(timeout: 2)); hit.tap()
+            if !pitcher {
+                XCTAssertTrue(app.staticTexts["contactScoreBreakdown"].waitForExistence(timeout:3))
+                previousBreakdown = app.staticTexts["contactScoreBreakdown"].label
+                XCTAssertTrue(previousBreakdown.contains("조준")); XCTAssertTrue(previousBreakdown.contains("타이밍"))
+                XCTAssertTrue(app.staticTexts["contactTotalScore"].exists)
+                if index < 4 { XCTAssertTrue(app.buttons["trainingAttempt"].isHittable) }
+                if index == 0 {
+                    let feedback = XCTAttachment(screenshot: app.screenshot()); feedback.name = "Contact score breakdown"; feedback.lifetime = .keepAlways; add(feedback)
+                }
+            }
         }
         XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         let result = app.staticTexts["trainingGrowth"].label

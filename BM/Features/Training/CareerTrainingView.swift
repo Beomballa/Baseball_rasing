@@ -109,7 +109,7 @@ struct CareerTrainingView: View {
                             ForEach(fieldTraining ? [TrainingKind.speed, .defense, .arm] : [TrainingKind.contact, .power, .discipline], id: \.self) { Text($0.label).tag($0) }
                         }.pickerStyle(.segmented).environment(\.colorScheme, .dark).accessibilityIdentifier("trainingKindPicker")
                     }
-                    arena(height: MatchPresentation.fieldSize(available: CGSize(width: geometry.size.width - 32, height: geometry.size.height - (selectedKind == .arm ? 175 : selectedKind == .speed || selectedKind == .power ? 100 : selectedKind == .discipline ? 50 : 0)), role: selectedKind.isField ? .batter : player.role).height)
+                    arena(height: MatchPresentation.fieldSize(available: CGSize(width: geometry.size.width - 32, height: geometry.size.height - (selectedKind == .arm ? 175 : selectedKind == .contact && training?.lastContact != nil ? 110 : selectedKind == .speed || selectedKind == .power ? 100 : selectedKind == .discipline ? 50 : 0)), role: selectedKind.isField ? .batter : player.role).height)
                     if let training {
                         if selectedKind.isField {
                             fieldControls(training).disabled(retryInput != nil)
@@ -120,9 +120,10 @@ struct CareerTrainingView: View {
                         } else {
                             MatchTimingGauge(phase: clock.phase, center: isPitcher ? ManualMatchRules.releaseCenter : MatchDelivery.contactPhase,
                                              good: isPitcher ? ManualMatchRules.goodWidth(mastery: training.before) : ManualMatchRules.timingWidth(contact: training.before),
-                                             perfect: isPitcher ? ManualMatchRules.perfectWidth(mastery: training.before) : 0.025,
-                                             label: isPitcher ? "릴리스 · 노란 구간에 맞춰 던지기" : "컨택 · 목표를 조준하고 타격")
+                                             perfect: isPitcher ? ManualMatchRules.perfectWidth(mastery: training.before) : TrainingRules.contactPerfectWidth,
+                                             label: isPitcher ? "릴리스 · 노란 구간에 맞춰 던지기" : "조준 65% + 타이밍 35% · 노란 구간은 타이밍 100점")
                         }
+                        if let result = training.lastContact { ContactTrainingFeedback(result: result) }
                         HStack(spacing: 6) {
                             ForEach(0..<5, id: \.self) { index in
                                 Text(index < training.scores.count ? "\(training.scores[index])" : "·")
@@ -204,6 +205,9 @@ struct CareerTrainingView: View {
                             .position(x: geometry.size.width * target.x, y: geometry.size.height * target.y)
                     }.allowsHitTesting(false).accessibilityHidden(true)
                 }.frame(width: height * 0.55, height: height * 0.55)
+                Text("초록 목표에 노란 조준점을 맞추세요")
+                    .font(.caption.bold()).padding(6).background(GameTheme.navy)
+                    .frame(maxHeight: .infinity, alignment: .top).padding(6).allowsHitTesting(false)
             }
             if selectedKind == .discipline, let training, !training.completed {
                 GeometryReader { geometry in
@@ -279,6 +283,7 @@ struct CareerTrainingView: View {
             PixelPlayer(appearance: player.appearance).frame(width: 64, height: 88)
             Text("TRAINING CLEAR").font(.title2.monospaced().bold()).foregroundStyle(GameTheme.gold)
             Text("\(pitchName) · 평균 \(value.average, specifier: "%.1f")점")
+            if let result = value.lastContact { ContactTrainingFeedback(result: result) }
             Text("\(value.before, specifier: "%.1f") → \(value.after, specifier: "%.1f")")
                 .font(.largeTitle.monospaced().bold()).accessibilityIdentifier("trainingGrowth")
             Text("성장 +\(value.gain, specifier: "%.1f") · 피로 \(value.fatigue) → \(min(100, value.fatigue + 6))")
@@ -286,5 +291,32 @@ struct CareerTrainingView: View {
                 .accessibilityIdentifier("trainingCompleted")
             Text("위의 뒤로 버튼으로 선수 홈에 돌아갈 수 있습니다.").font(.caption)
         }.frame(maxWidth: .infinity).padding(.vertical, 20)
+    }
+}
+
+private struct ContactTrainingFeedback: View {
+    let result: ContactTrainingResult
+    var body: some View {
+        HStack(spacing: 12) {
+            Canvas { context, size in
+                let target = CGPoint(x: result.target.x * size.width, y: result.target.y * size.height)
+                let aim = CGPoint(x: result.aim.x * size.width, y: result.aim.y * size.height)
+                var line = Path(); line.move(to: target); line.addLine(to: aim)
+                context.stroke(line, with: .color(GameTheme.paper.opacity(0.5)), lineWidth: 1)
+                context.stroke(Path(CGRect(x: target.x - 6, y: target.y - 6, width: 12, height: 12)), with: .color(Color(hex: 0x82e6b2)), lineWidth: 2)
+                context.stroke(Path(CGRect(x: aim.x - 3, y: aim.y - 3, width: 6, height: 6)), with: .color(GameTheme.gold), lineWidth: 2)
+            }.frame(width: 70, height: 70).clipped().background(GameTheme.navy)
+                .overlay(Rectangle().strokeBorder(GameTheme.paper.opacity(0.4)))
+                .accessibilityLabel("초록 목표와 노란 조준 위치 비교")
+            VStack(alignment: .leading, spacing: 4) {
+                Text(result.didSwing ? "직전 시도 · 초록 목표 / 노란 조준" : "직전 시도 · 무입력 0점").font(.caption2)
+                Text("조준 \(result.positionScore)점 · 타이밍 \(result.timingScore)점")
+                    .font(.caption.bold()).accessibilityIdentifier("contactScoreBreakdown")
+                Text("종합 \(result.total)점 · 조준 65% + 타이밍 35%")
+                    .font(.caption.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contactTotalScore")
+            }
+            Spacer(minLength: 0)
+        }.padding(8).background(Color(hex: 0x203e57))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("contactFeedback")
     }
 }

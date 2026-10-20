@@ -27,6 +27,15 @@ struct TrainingTarget: Codable, Equatable {
     let y: Double
 }
 
+struct ContactTrainingResult: Codable, Equatable {
+    let target: TrainingTarget
+    let aim: TrainingTarget
+    let didSwing: Bool
+    let positionScore: Int
+    let timingScore: Int
+    var total: Int { Int((Double(positionScore) * 0.65 + Double(timingScore) * 0.35).rounded()) }
+}
+
 struct CareerTraining: Codable, Equatable {
     let playerID: UUID
     let date: String
@@ -39,6 +48,7 @@ struct CareerTraining: Codable, Equatable {
     let age: Int
     let targets: [TrainingTarget]
     var scores: [Int] = []
+    var lastContact: ContactTrainingResult?
     var calendarRevision: Int
     var completed: Bool { scores.count == 5 }
     var average: Double { scores.isEmpty ? 0 : Double(scores.reduce(0, +)) / Double(scores.count) }
@@ -106,18 +116,28 @@ struct CareerTraining: Codable, Equatable {
         case .contact:
             guard input.force == nil, input.angle == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
             guard role == "batter", input.release == nil else { throw TrainingError.invalidInput }
-            if let timing = input.timing {
-                let target = targets[scores.count]
-                let position = max(0, 1 - hypot(input.x - target.x, input.y - target.y) / ManualMatchRules.contactRadius(contact: before))
-                let time = max(0, 1 - abs(timing - MatchDelivery.contactPhase) / ManualMatchRules.timingWidth(contact: before))
-                score = (position * 0.65 + time * 0.35) * 100
-            } else { score = 0 }
+            let result = TrainingRules.contactResult(input: input, target: targets[scores.count], contact: before)
+            lastContact = result
+            score = Double(result.total)
         }
         scores.append(Int(score.rounded()))
     }
 }
 
 enum TrainingRules {
+    static let contactPerfectWidth = 0.025
+    static func contactResult(input: TrainingInput, target: TrainingTarget, contact: Double) -> ContactTrainingResult {
+        let aim = TrainingTarget(x: input.x, y: input.y)
+        guard let timing = input.timing else {
+            return ContactTrainingResult(target: target, aim: aim, didSwing: false, positionScore: 0, timingScore: 0)
+        }
+        let position = max(0, 1 - hypot(input.x - target.x, input.y - target.y) / ManualMatchRules.contactRadius(contact: contact))
+        // The visible yellow PERFECT band is a full-score plateau, not just its center.
+        let error = max(0, abs(timing - MatchDelivery.contactPhase) - contactPerfectWidth)
+        let time = max(0, 1 - error / (ManualMatchRules.timingWidth(contact: contact) - contactPerfectWidth))
+        return ContactTrainingResult(target: target, aim: aim, didSwing: true,
+                                     positionScore: Int((position * 100).rounded()), timingScore: Int((time * 100).rounded()))
+    }
     static func steps(_ feet: [SprintFoot]) -> Int {
         var last: SprintFoot?, count = 0
         for foot in feet where foot != last { count += 1; last = foot }

@@ -326,4 +326,78 @@ import SwiftData
         XCTAssertGreaterThan(highHomeRuns, 0)
     }
 
+    func testContactYellowBandHasFullTimingScoreAcrossLevels() {
+        let target = TrainingTarget(x: 0.5, y: 0.5)
+        for contact in [0.0,35,65,100] {
+            for step in 0...100 {
+                let timing = MatchDelivery.contactPhase - TrainingRules.contactPerfectWidth + Double(step) / 100 * TrainingRules.contactPerfectWidth * 2
+                let result = TrainingRules.contactResult(input: TrainingInput(x: 0.5, y: 0.5, timing: timing), target: target, contact: contact)
+                XCTAssertEqual(result.positionScore, 100); XCTAssertEqual(result.timingScore, 100); XCTAssertEqual(result.total, 100)
+            }
+            for sign in [-1.0,1] {
+                let outside = TrainingRules.contactResult(input: TrainingInput(timing: MatchDelivery.contactPhase + sign * 0.04), target: target, contact: contact)
+                let edge = TrainingRules.contactResult(input: TrainingInput(timing: MatchDelivery.contactPhase + sign * ManualMatchRules.timingWidth(contact: contact)), target: target, contact: contact)
+                XCTAssertLessThan(outside.timingScore,100); XCTAssertGreaterThan(outside.timingScore,0); XCTAssertEqual(edge.timingScore,0)
+            }
+        }
+    }
+    func testContactBreakdownExplainsLowCombinedScoreAndNoInput() throws {
+        let target = TrainingTarget(x:0.5,y:0.5)
+        let miss = TrainingRules.contactResult(input:TrainingInput(x:0.8,y:0.5,timing:0.845),target:target,contact:65)
+        XCTAssertEqual(miss.positionScore,0);XCTAssertEqual(miss.timingScore,100);XCTAssertEqual(miss.total,35)
+        let near = TrainingRules.contactResult(input:TrainingInput(x:0.50198,y:0.5,timing:0.82),target:target,contact:65)
+        XCTAssertEqual(near.positionScore,99);XCTAssertEqual(near.total,99)
+        let noInput = TrainingRules.contactResult(input:TrainingInput(),target:target,contact:65)
+        XCTAssertFalse(noInput.didSwing);XCTAssertEqual(noInput.total,0)
+        var training = CareerTraining(playerID:UUID(),date:"2026-04-02",role:"batter",pitchCode:nil,before:65,fatigue:24,age:16,calendarRevision:1)
+        try training.attempt(TrainingInput())
+        XCTAssertEqual(training.scores,[0]);XCTAssertEqual(training.lastContact?.total,0)
+    }
+    func testContactLegacyScoresRemainAndOnlyNextAttemptUsesNewBreakdown() throws {
+        var training = CareerTraining(playerID:UUID(),date:"2026-04-02",role:"batter",pitchCode:nil,before:65,fatigue:24,age:16,calendarRevision:1)
+        training.scores=[27,35]
+        var object=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(training)) as? [String:Any]);object.removeValue(forKey:"lastContact")
+        let payload=try JSONSerialization.data(withJSONObject:object)
+        var restored=try JSONDecoder().decode(CareerTraining.self,from:payload)
+        XCTAssertNil(restored.lastContact);XCTAssertEqual(restored.scores,[27,35])
+        let target=restored.targets[2]
+        try restored.attempt(TrainingInput(x:target.x,y:target.y,timing:0.845))
+        XCTAssertEqual(restored.scores,[27,35,100]);XCTAssertEqual(restored.lastContact?.total,100)
+        XCTAssertEqual(try JSONDecoder().decode(CareerTraining.self,from:JSONEncoder().encode(restored)),restored)
+    }
+    func testContactFeedbackDiskResumeAndFailedFinalSavePreserveOneReward() throws {
+        enum Injected:Error {case failure}
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let url=directory.appendingPathComponent("contact.store")
+        let feedback = try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+            let (player,state)=try setup(context,date:"2026-04-02")
+            let record=try CareerTrainingStore.start(player:player,state:state,in:context)
+            for _ in 0..<2 {try attempt(player,state,record,context)}
+            return try XCTUnwrap(record.snapshot().lastContact)
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+            let player=try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first),state=try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let record=try CareerTrainingStore.start(player:player,state:state,in:context)
+            XCTAssertEqual(try record.snapshot().lastContact,feedback)
+            for _ in 0..<2 {try attempt(player,state,record,context)}
+            let payload=record.payload,rev=record.revision,training=try record.snapshot(),target=training.targets[4]
+            let input=TrainingInput(x:target.x,y:target.y,timing:0.845)
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player:player,state:state,record:record,revision:rev,input:input,in:context,save:{_ in throw Injected.failure}))
+            XCTAssertEqual(record.payload,payload);XCTAssertEqual(player.contact,65);XCTAssertEqual(player.fatigue,24)
+            try CareerTrainingStore.attempt(player:player,state:state,record:record,revision:rev,input:input,in:context)
+            XCTAssertEqual(try record.snapshot().scores,[100,100,100,100,100]);XCTAssertEqual(player.contact,65.2028)
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player:player,state:state,record:record,revision:rev,input:input,in:context))
+            XCTAssertEqual(player.fatigue,30)
+        }
+        let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+        let player=try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first),state=try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let record=try CareerTrainingStore.start(player:player,state:state,in:context)
+        XCTAssertTrue(record.completed);XCTAssertEqual(try record.snapshot().lastContact?.timingScore,100)
+        XCTAssertEqual(player.contact,65.2028);XCTAssertEqual(player.fatigue,30)
+    }
+
 }
