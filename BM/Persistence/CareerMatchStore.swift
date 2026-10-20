@@ -57,6 +57,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
                       save: CalendarProgression.Save = { try $0.save() }) throws -> CareerMatchRecord {
         let fixture = try today(player: player, state: state)
         if let saved = try record(player: player, fixture: fixture, in: context) { _ = try saved.snapshot(); return saved }
+        try CareerTrainingStore.requireNoPending(player: player, in: context)
         guard state.hasAction(on: player.gameDate) else { throw MatchError.preparation }
         let seed = (player.id.uuidString + fixture.id).utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         var match = CareerMatch(random: seed, isHome: fixture.homeID == player.schoolID, role: player.roleRaw,

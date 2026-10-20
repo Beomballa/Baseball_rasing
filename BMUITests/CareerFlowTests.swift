@@ -28,6 +28,53 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)], timeout: 5), .completed)
     }
 
+    @MainActor private func train(_ app: XCUIApplication, pitcher: Bool) {
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 5))
+        if pitcher {
+            app.buttons["trainingPitchPicker"].tap()
+            let slider = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "슬라이더")).firstMatch
+            XCTAssertTrue(slider.waitForExistence(timeout: 3)); slider.tap()
+        }
+        app.buttons["startTraining"].tap()
+        let field = app.otherElements["trainingField"].firstMatch
+        let button = app.buttons["trainingAttempt"]
+        XCTAssertTrue(button.waitForExistence(timeout: 3))
+        XCTAssertTrue(button.isHittable)
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(field.exists)
+        XCTAssertLessThanOrEqual(field.frame.maxX, window.maxX)
+        XCTAssertLessThanOrEqual(button.frame.maxY, window.maxY)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Pitch training" : "Contact training"; shot.lifetime = .keepAlways; add(shot)
+        for index in 0..<5 {
+            if index == 2 && !pitcher {
+                app.terminate(); app.launch()
+                XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+                reveal(app.buttons["restToday"], in: app); XCTAssertFalse(app.buttons["restToday"].isEnabled)
+                XCTAssertFalse(app.buttons["advanceDay"].isEnabled)
+                for _ in 0..<5 { app.swipeDown() }
+                reveal(app.buttons["openTraining"], in: app)
+                XCTAssertTrue(app.buttons["openTraining"].label.contains("2/5")); app.buttons["openTraining"].tap()
+            }
+            let startAttempt = app.buttons.containing(NSPredicate(format: "identifier == %@ AND label == %@", "trainingAttempt", "\(index + 1)번째 시도 시작")).firstMatch
+            XCTAssertTrue(startAttempt.waitForExistence(timeout: 3)); startAttempt.tap()
+            let hit = app.buttons.containing(NSPredicate(format: "identifier == %@ AND label == %@", "trainingAttempt", pitcher ? "던지기!" : "타격!")).firstMatch
+            XCTAssertTrue(hit.waitForExistence(timeout: 2)); hit.tap()
+        }
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        let result = app.staticTexts["trainingGrowth"].label
+        let resultShot = XCTAttachment(screenshot: app.screenshot()); resultShot.name = pitcher ? "Pitch growth saved" : "Contact growth saved"; resultShot.lifetime = .keepAlways; add(resultShot)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        reveal(app.staticTexts["homeTrainingGrowth"], in: app)
+        XCTAssertTrue(app.staticTexts["homeTrainingGrowth"].exists)
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.staticTexts["trainingGrowth"].label, result)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        for _ in 0..<5 { app.swipeDown() }
+    }
+
     @MainActor func testCreateBothRolesRelaunchAndEnterSpriteKit() throws {
         let app = XCUIApplication()
         app.launch()
@@ -47,7 +94,8 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["calendarDate"].label, "2026-04-01")
         XCTAssertTrue(app.staticTexts["homeAge"].label.contains("16세 / 고1"))
         reveal(app.buttons["restToday"], in: app)
-        app.buttons["restToday"].tap()
+        train(app, pitcher: false)
+        reveal(app.buttons["restToday"], in: app)
         XCTAssertFalse(app.buttons["restToday"].isEnabled)
         XCTAssertFalse(app.buttons["advanceDay"].isEnabled)
         XCTAssertFalse(app.buttons["advanceOffDays"].isEnabled)
@@ -60,8 +108,8 @@ final class CareerFlowTests: XCTestCase {
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("NativeBatter"))
-        XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 6 / 100")
-        XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 완료 · 휴식")
+        XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 30 / 100")
+        XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 완료 · 훈련")
         XCTAssertTrue(app.staticTexts["fixtureGate"].exists)
         let calendarShot = XCTAttachment(screenshot: app.screenshot()); calendarShot.name = "Calendar and persisted rest"; calendarShot.lifetime = .keepAlways; add(calendarShot)
         reveal(app.buttons["openMatch"], in: app)
@@ -131,7 +179,7 @@ final class CareerFlowTests: XCTestCase {
         app.segmentedControls["homeRolePicker"].buttons["투수 · LeftPitcher"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("LeftPitcher"))
         for _ in 0..<5 { app.swipeDown() }
-        reveal(app.buttons["restToday"], in: app); app.buttons["restToday"].tap()
+        train(app, pitcher: true)
         reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
         assertArenaFits(app, button: "gamePitch", ratio: 1219.0 / 1290)

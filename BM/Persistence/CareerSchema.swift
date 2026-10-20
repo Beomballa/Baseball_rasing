@@ -84,9 +84,10 @@ enum CareerSchemaV1: VersionedSchema {
 typealias CareerPlayer = CareerSchemaV1.Player
 
 enum CareerMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [CareerSchemaV1.self, CareerSchemaV2.self, CareerSchemaV3.self] }
+    static var schemas: [any VersionedSchema.Type] { [CareerSchemaV1.self, CareerSchemaV2.self, CareerSchemaV3.self, CareerSchemaV4.self] }
     static var stages: [MigrationStage] {
         [.lightweight(fromVersion: CareerSchemaV1.self, toVersion: CareerSchemaV2.self),
-         .lightweight(fromVersion: CareerSchemaV2.self, toVersion: CareerSchemaV3.self)]
+         .lightweight(fromVersion: CareerSchemaV2.self, toVersion: CareerSchemaV3.self),
+         .lightweight(fromVersion: CareerSchemaV3.self, toVersion: CareerSchemaV4.self)]
     }
 }

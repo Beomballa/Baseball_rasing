@@ -41,6 +41,7 @@ struct CalendarAdvanceFailure: LocalizedError {
 
     static func rest(player: CareerPlayer, state: CareerCalendarState, revision: Int, in context: ModelContext, save: Save = { try $0.save() }) throws {
         try validate(player, state, revision: revision)
+        try CareerTrainingStore.requireNoPending(player: player, in: context)
         guard !state.hasAction(on: player.gameDate) else { throw CalendarError.actionUsed }
         player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest)
         state.actionDate = player.gameDate
@@ -63,6 +64,7 @@ struct CalendarAdvanceFailure: LocalizedError {
                            automaticRest: Bool = false, confirmAnniversary: Bool = false,
                            in context: ModelContext, save: Save = { try $0.save() }) throws {
         try validate(player, state, revision: revision)
+        try CareerTrainingStore.requireNoPending(player: player, in: context)
         if try hasGameToday(player: player, state: state) {
             let fixture = try CareerMatchStore.today(player: player, state: state)
             guard try CareerMatchStore.isCompleted(player: player, fixture: fixture, in: context) else { throw CalendarError.fixturePending }
