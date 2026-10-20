@@ -27,6 +27,7 @@ struct FieldTrainingBoard: View {
     let angle: Double
     let force: Double
     let steps: Int
+    let appearance: PlayerAppearance
     @Binding var x: Double
     @Binding var y: Double
     let locked: Bool
@@ -55,13 +56,13 @@ struct FieldTrainingBoard: View {
                     }
                 }
                 if kind == .defense {
-                    PixelPlayer(appearance: PlayerAppearance()).frame(width: 24, height: 34)
+                    PixelPlayer(appearance: appearance).frame(width: 24, height: 34)
                         .position(x: geometry.size.width * x, y: geometry.size.height * y).allowsHitTesting(false)
                 } else if kind == .speed {
                     VStack {
                         Text("16 STEP / 4 SEC").font(.caption.monospaced().bold())
                         Spacer()
-                        PixelPlayer(appearance: PlayerAppearance()).frame(width: 40, height: 55)
+                        PixelPlayer(appearance: appearance).frame(width: 40, height: 55)
                             .offset(x: min(1, Double(steps) / 16) * geometry.size.width * 0.45 - geometry.size.width * 0.22)
                         Spacer()
                         Text("\(steps)걸음").font(.title2.monospaced().bold()).accessibilityIdentifier("sprintSteps")
@@ -70,7 +71,7 @@ struct FieldTrainingBoard: View {
             }.contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
                 guard kind == .defense, !locked else { return }
                 x = min(1, max(0, event.location.x / geometry.size.width)); y = min(1, max(0, event.location.y / geometry.size.height))
-            })
+            }, including: kind == .defense && !locked ? .all : .none)
         }.clipped().overlay(Rectangle().strokeBorder(GameTheme.gold.opacity(0.5), lineWidth: 2))
             .accessibilityElement(children: .contain).accessibilityIdentifier("fieldTrainingBoard")
             .accessibilityAction(named: "왼쪽") { if kind == .defense && !locked { x = max(0, x - 0.05) } }
@@ -82,9 +83,11 @@ struct FieldTrainingBoard: View {
 
 
 struct RawTrainingBoard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let kind: TrainingKind
     let training: CareerTraining?
     let steps: Int
+    let appearance: PlayerAppearance
     @Binding var x: Double
     @Binding var y: Double
     let locked: Bool
@@ -93,7 +96,7 @@ struct RawTrainingBoard: View {
             ZStack {
                 if kind == .stamina {
                     FieldTrainingBoard(kind: .speed, target: nil, base: 1, angle: 0, force: 0,
-                                       steps: steps, x: $x, y: $y, locked: locked)
+                                       steps: steps, appearance: appearance, x: $x, y: $y, locked: locked)
                 } else {
                     Rectangle().fill(Color(hex: 0x2b684b))
                     // Pixel lanes connect the controls to a practice field rather than a settings form.
@@ -113,22 +116,23 @@ struct RawTrainingBoard: View {
                             }.frame(width: geometry.size.width * 0.8, height: geometry.size.height * 0.8)
                         } else if kind == .mental {
                             VStack(spacing: 18) {
-                                PixelPlayer(appearance: PlayerAppearance()).frame(width: 48, height: 66)
-                                Text(RawTrainingRules.question(targets: training.targets, round: training.scores.count).prompt)
-                                    .font(.headline).multilineTextAlignment(.center)
-                            }.padding(20).accessibilityIdentifier("mentalScenario")
+                                PixelPlayer(appearance: appearance).frame(width: 48, height: 66)
+                                Text("SITUATION \(training.scores.count + 1)/5").font(.caption.monospaced().bold())
+                            }.padding(12)
                         } else {
                             let goal = RawTrainingRules.goal(kind: kind, target: target)
                             VStack(spacing: 18) {
                                 Text(kind == .stuff ? "SPIN LAB" : "POWER THROW").font(.title2.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                                PixelPlayer(appearance: PlayerAppearance()).frame(width: 48, height: 66)
-                                Text("목표 \(Int(goal.force))% · \(Int(goal.angle))°").font(.headline.monospaced()).accessibilityIdentifier("rawTrainingTarget")
+                                PixelPlayer(appearance: appearance).frame(width: 48, height: 66)
+                                if !dynamicTypeSize.isAccessibilitySize {
+                                    Text("목표 \(Int(goal.force))% · \(Int(goal.angle))°").font(.headline.monospaced()).accessibilityIdentifier("rawTrainingTarget")
+                                }
                                 Text(kind == .stuff ? "목표 회전 방향과 강도를 맞추세요" : "목표 힘과 발사 방향을 맞추세요").font(.caption)
                             }.padding(12)
                         }
                     } else {
                         VStack(spacing: 16) {
-                            PixelPlayer(appearance: PlayerAppearance()).frame(width: 48, height: 66)
+                            PixelPlayer(appearance: appearance).frame(width: 48, height: 66)
                             Text(kind.label + " TRAINING").font(.headline.monospaced()).foregroundStyle(GameTheme.gold)
                         }
                     }
