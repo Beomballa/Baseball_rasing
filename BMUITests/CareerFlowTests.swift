@@ -605,6 +605,43 @@ extension CareerFlowTests {
         }
     }
 
+    @MainActor func testTraitAcquisitionPreviewStatesAndLayout() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-trait-acquisition-preview"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["acquisitionPreviewNotice"].waitForExistence(timeout: 5))
+        for (id, label) in [("strong-arm", "송구 60"), ("cheetah", "스피드 60"), ("safe-hands", "수비 50")] {
+            app.buttons["acquisitionTrait-" + id].tap()
+            XCTAssertTrue(app.staticTexts["acquisitionCondition"].label.contains(label))
+            XCTAssertEqual(app.staticTexts["acquisitionProgress"].label, "36.8 / 100.0")
+            let button = app.buttons["acquisitionStartPreview"]
+            XCTAssertTrue(button.isHittable)
+            XCTAssertLessThanOrEqual(button.frame.maxY, app.windows.firstMatch.frame.maxY)
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Acquisition " + id; shot.lifetime = .keepAlways; add(shot)
+        }
+        app.buttons["acquisitionStartPreview"].tap()
+        XCTAssertTrue(app.buttons["acquisitionCloseDrill"].waitForExistence(timeout: 3))
+        app.buttons["acquisitionCloseDrill"].tap()
+        for (state, progress, enabled) in [("조건 미달", "36.8 / 100.0", false), ("습득 직전", "99.4 / 100.0", true), ("보유", "100.0 / 100.0", false), ("오늘 행동 완료", "36.8 / 100.0", false)] {
+            app.buttons["acquisitionSampleState"].tap()
+            app.buttons[state].tap()
+            XCTAssertEqual(app.staticTexts["acquisitionProgress"].label, progress)
+            XCTAssertEqual(app.buttons["acquisitionStartPreview"].isEnabled, enabled)
+        }
+        let locked = XCTAttachment(screenshot: app.screenshot()); locked.name = "Acquisition locked"; locked.lifetime = .keepAlways; add(locked)
+        app.terminate()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        reveal(app.staticTexts["acquisitionProgress"], in: app)
+        XCTAssertEqual(app.staticTexts["acquisitionProgress"].label, "36.8 / 100.0")
+        let progressShot = XCTAttachment(screenshot: app.screenshot()); progressShot.name = "Acquisition large progress"; progressShot.lifetime = .keepAlways; add(progressShot)
+        let action = app.buttons["acquisitionStartPreview"]
+        reveal(action, in: app)
+        XCTAssertGreaterThanOrEqual(action.frame.minX, app.windows.firstMatch.frame.minX)
+        XCTAssertLessThanOrEqual(action.frame.maxX, app.windows.firstMatch.frame.maxX)
+        let large = XCTAttachment(screenshot: app.screenshot()); large.name = "Acquisition large"; large.lifetime = .keepAlways; add(large)
+    }
+
     @MainActor func testTraitDetailBothRolesPersistenceAndLocks() throws {
         let app = XCUIApplication(); app.launch()
         for pitcher in [false, true] {

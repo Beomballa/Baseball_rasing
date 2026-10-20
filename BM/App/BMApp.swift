@@ -3,7 +3,15 @@ import SwiftData
 
 @main struct BMApp: App {
     var body: some Scene {
-        WindowGroup { AppBootstrapView() }
+        WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-trait-acquisition-preview") {
+                NavigationStack { TraitAcquisitionPreview() }
+            } else { AppBootstrapView() }
+            #else
+            AppBootstrapView()
+            #endif
+        }
     }
 }
 
