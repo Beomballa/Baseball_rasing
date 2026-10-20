@@ -31,8 +31,11 @@ enum CareerSchemaV3: VersionedSchema {
         func snapshot() throws -> CareerMatch {
             guard ["native-match-v1", "native-match-v2"].contains(rulesVersion), let match = try? JSONDecoder().decode(CareerMatch.self, from: payload),
                   match.completed == completed, match.appearance == appearance else { throw MatchError.invalidRecord }
-            if let stats = match.fieldStats, stats.version == 2 {
+            if let stats = match.fieldStats, [2, 3].contains(stats.version) {
                 guard let active = stats.activeTraits, TraitLoadout.valid(active) else { throw MatchError.invalidRecord }
+                if stats.version == 3 {
+                    guard let mastery = stats.positionMastery, mastery.isFinite, (0...100).contains(mastery), FieldPosition(rawValue: stats.position) != nil else { throw MatchError.invalidRecord }
+                }
             }
             return match
         }
@@ -84,6 +87,14 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
            let traits = try PlayerTraitStore.profile(playerID: player.id, in: context) {
             match.fieldStats?.version = 2
             match.fieldStats?.activeTraits = try traits.snapshot().active
+        }
+        if player.role == .batter, context.container.schema.entities.contains(where: { $0.name == "PlayerPositions" }) {
+            guard let position = FieldPosition(rawValue: player.positionRaw),
+                  let profile = try PlayerPositionStore.profile(playerID: player.id, in: context) else { throw TrainingError.invalidRecord }
+            match.fieldStats?.version = 3
+            let active = match.fieldStats?.activeTraits ?? []
+            match.fieldStats?.activeTraits = active
+            match.fieldStats?.positionMastery = try profile.snapshot().skill(position).mastery
         }
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)

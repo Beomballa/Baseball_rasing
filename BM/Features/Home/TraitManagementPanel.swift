@@ -289,6 +289,9 @@ struct CareerTrainingDestination: View {
     @Query private var records: [CareerTrainingRecord]
     var body: some View {
         if let record = records.first(where: { $0.playerID == player.id && $0.gameDate == player.gameDate }),
+           (try? record.snapshot().position) != nil {
+            PositionTrainingView(player: player, calendar: calendar)
+        } else if let record = records.first(where: { $0.playerID == player.id && $0.gameDate == player.gameDate }),
            let training = try? record.snapshot(), let trait = training.trait {
             TraitTrainingLiveView(player: player, calendar: calendar, initialTrait: trait)
         } else { CareerTrainingView(player: player, calendar: calendar) }

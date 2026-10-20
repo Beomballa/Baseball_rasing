@@ -249,6 +249,9 @@ struct CareerGameView: View {
                         .font(.headline).foregroundStyle(GameTheme.gold)
                     Text("\(play.ownDefense ? "상대 주자" : "내 주자") \(play.runnerTime, specifier: "%.2f")초 / 공 \(play.ballTime, specifier: "%.2f")초")
                         .font(.caption.monospaced()).accessibilityIdentifier("gameFieldResult")
+                    if let delay = play.positionDelay {
+                        Text("위치 적응 준비 \(delay, specifier: "%.3f")초").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
                     ForEach(summary.appliedTraits) { trait in
                         HStack(alignment: .top, spacing: 8) {
                             TraitPixelIcon(trait: trait).frame(width: 28, height: 28).accessibilityHidden(true)

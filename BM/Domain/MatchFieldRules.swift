@@ -7,6 +7,7 @@ struct MatchFieldStats: Codable, Equatable {
     let arm: Double
     let position: String
     var activeTraits: [PlayerTrait]?
+    var positionMastery: Double?
 }
 
 struct MatchFieldPlay: Codable, Equatable {
@@ -14,6 +15,7 @@ struct MatchFieldPlay: Codable, Equatable {
     let ballTime: Double
     let ownDefense: Bool
     var appliedTraits: [PlayerTrait]?
+    var positionDelay: Double?
     var safe: Bool { runnerTime <= ballTime }
 }
 
@@ -31,6 +33,12 @@ enum MatchFieldRules {
 
 
 extension MatchFieldRules {
+    static func applyingPosition(_ play: MatchFieldPlay, mastery: Double) -> MatchFieldPlay {
+        guard play.ownDefense else { return play }
+        let delay = 0.25 * (1 - min(100, max(0, mastery)) / 100)
+        return MatchFieldPlay(runnerTime: play.runnerTime, ballTime: play.ballTime + delay, ownDefense: true,
+                              appliedTraits: play.appliedTraits, positionDelay: delay)
+    }
     static func firstBaseV2(runnerSpeed: Double, fielderSpeed: Double, defense: Double, arm: Double,
                             chase: Double, distance: Double, ownDefense: Bool, active: [PlayerTrait]) -> MatchFieldPlay {
         func stat(_ value: Double) -> Double { max(0, min(100, value)) }

@@ -6,7 +6,7 @@ enum PlayerRole: String, Codable, CaseIterable, Identifiable {
     var label: String { self == .batter ? "타자" : "투수" }
 }
 
-enum FieldPosition: String, CaseIterable, Identifiable {
+enum FieldPosition: String, Codable, CaseIterable, Identifiable {
     case catcher = "C", first = "1B", second = "2B", third = "3B", shortstop = "SS", left = "LF", center = "CF", right = "RF"
     var id: String { rawValue }
     var label: String {

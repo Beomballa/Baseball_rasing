@@ -51,6 +51,9 @@ struct CareerTraining: Codable, Equatable {
     let kind: TrainingKind?
     var trait: PlayerTrait?
     var traitRevision: Int?
+    var position: FieldPosition?
+    var positionRevision: Int?
+    var positionXP: Double?
     var selectedKind: TrainingKind { kind ?? (pitchCode == nil ? .contact : .pitch) }
     let before: Double
     let fatigue: Int
@@ -61,22 +64,29 @@ struct CareerTraining: Codable, Equatable {
     var calendarRevision: Int
     var completed: Bool { scores.count == 5 }
     var average: Double { scores.isEmpty ? 0 : Double(scores.reduce(0, +)) / Double(scores.count) }
-    var after: Double { completed ? (trait == nil ? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil) : TrainingRules.traitGrowth(before: before, score: average.rounded(), fatigue: fatigue, age: age)) : before }
+    var positionGainXP: Double { completed && position != nil ? PositionTrainingRules.gainedXP(mastery: before, score: average.rounded(), fatigue: fatigue, age: age) : 0 }
+    var positionAfter: PositionSkill { PositionTrainingRules.adding(positionGainXP, to: PositionSkill(mastery: before, xp: positionXP ?? 0)) }
+    var after: Double { position != nil ? positionAfter.mastery : completed ? (trait == nil ? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil) : TrainingRules.traitGrowth(before: before, score: average.rounded(), fatigue: fatigue, age: age)) : before }
     var gain: Double { TrainingRules.round(after - before) }
-    var title: String { (trait?.label ?? selectedKind.label) + " 훈련" }
+    var title: String { (position?.label ?? trait?.label ?? selectedKind.label) + " 훈련" }
     func throwBase(_ round: Int) -> Int { trait == nil ? TrainingRules.throwBase(round) : [1, 2, 3, 2, 1][round] }
 
-    init(playerID: UUID, date: String, role: String, pitchCode: String?, before: Double, fatigue: Int, age: Int, calendarRevision: Int, kind: TrainingKind? = nil) {
+    init(playerID: UUID, date: String, role: String, pitchCode: String?, before: Double, fatigue: Int, age: Int, calendarRevision: Int, kind: TrainingKind? = nil, position: FieldPosition? = nil) {
         self.playerID = playerID; self.date = date; self.role = role; self.pitchCode = pitchCode
         self.kind = kind
+        self.position = position
         self.before = before; self.fatigue = fatigue; self.age = age; self.calendarRevision = calendarRevision
-        var seed = (playerID.uuidString + date + (kind?.rawValue ?? pitchCode ?? "contact")).utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+        var seed = (playerID.uuidString + date + (kind?.rawValue ?? pitchCode ?? "contact") + (position?.rawValue ?? "")).utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         func roll() -> Double { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Double(seed >> 11) / 9007199254740992 }
         var inZone = [true, true, true, false, false]
         if kind == .discipline {
             for index in stride(from: 4, through: 1, by: -1) { inZone.swapAt(index, Int(roll() * Double(index + 1))) }
         }
         targets = (0..<5).map { index in
+            if let position {
+                let origin = PositionTrainingRules.origin(position)
+                return TrainingTarget(x: origin.x + (roll() - 0.5) * 0.18, y: origin.y + (roll() - 0.5) * 0.1)
+            }
             if kind == .discipline && !inZone[index] {
                 return TrainingTarget(x: roll() < 0.5 ? 0.08 : 0.92, y: 0.1 + roll() * 0.8)
             }
@@ -87,6 +97,11 @@ struct CareerTraining: Codable, Equatable {
         guard !completed else { throw TrainingError.finished }
         let numbers = [input.x, input.y] + [input.timing, input.release].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { throw TrainingError.invalidInput }
+        if let position {
+            guard role == "batter", selectedKind == .defense, trait == nil, pitchCode == nil else { throw TrainingError.invalidInput }
+            scores.append(try PositionTrainingRules.score(position: position, target: targets[scores.count], input: input))
+            return
+        }
         let score: Double
         guard selectedKind.allows(role), selectedKind == .mental || input.choice == nil,
               [.speed, .stamina].contains(selectedKind) || input.footfalls == nil,

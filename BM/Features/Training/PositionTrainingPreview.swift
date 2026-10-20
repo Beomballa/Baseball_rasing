@@ -148,7 +148,9 @@ struct PositionTrainingPreview: View {
     }
 }
 
-private extension FieldPosition {
+#endif
+
+extension FieldPosition {
     var fieldPoint: CGPoint {
         switch self {
         case .catcher: CGPoint(x: 0.5, y: 0.87)
@@ -184,6 +186,7 @@ private extension FieldPosition {
     }
 }
 
+#if DEBUG
 private struct PositionDrillPreview: View {
     let position: FieldPosition
     let resumed: Bool
@@ -238,10 +241,17 @@ private struct PositionDrillPreview: View {
     }
 }
 
-private struct PositionPracticeField: View {
+#endif
+
+struct PositionPracticeField: View {
     let position: FieldPosition
     let phase: Int
     let overview: Bool
+    var appearance = PlayerAppearance()
+    var location: TrainingTarget? = nil
+    var target: TrainingTarget? = nil
+    var endpoint: TrainingTarget? = nil
+    var motion: Double = 1
     var body: some View {
         Canvas { context, size in
             context.scaleBy(x: size.width / 320, y: size.height / 220)
@@ -255,9 +265,9 @@ private struct PositionPracticeField: View {
             func point(_ value: CGPoint) -> CGPoint { CGPoint(x: value.x * 320, y: value.y * 220) }
             func player(_ p: CGPoint, selected: Bool, receiving: Bool = false) {
                 box(p.x - 8, p.y + 10, 16, 3, 0x26523d)
-                box(p.x - 5, p.y - 17, 10, 4, 0x14283f)
-                box(p.x - 4, p.y - 13, 8, 7, 0xe0ae7e)
-                box(p.x - 5, p.y - 6, 10, 11, selected ? 0xecc66b : 0xd8e2d0)
+                box(p.x - 5, p.y - 17, 10, 4, selected ? PlayerAppearance.hairColors[appearance.hair] : 0x14283f)
+                box(p.x - 4, p.y - 13, 8, 7, selected ? PlayerAppearance.skinColors[appearance.skin] : 0xe0ae7e)
+                box(p.x - 5, p.y - 6, 10, 11, selected ? PlayerAppearance.kitColors[appearance.kit] : 0xd8e2d0)
                 box(p.x - 5, p.y + 5, 4, 6, 0xf0eddb); box(p.x + 1, p.y + 5, 4, 6, 0xf0eddb)
                 box(p.x - 7, p.y + 11, 6, 2, 0x14283f); box(p.x + 1, p.y + 11, 6, 2, 0x14283f)
                 box(p.x + 5, p.y - (receiving ? 12 : 3), 7, 7, 0xb98248)
@@ -277,10 +287,10 @@ private struct PositionPracticeField: View {
             for x in [12.0, 294] { box(x, 194, 14, 4, 0x9c7246); box(x + 2, 198, 2, 6, 0x594c3e) }
             if !overview {
                 let origin = point(position.fieldPoint)
-                let catchPoint = CGPoint(x: min(278, max(42, origin.x + (position == .first ? -6 : 18))), y: min(184, origin.y + 8))
-                let destination = point(position.throwPoint)
+                let catchPoint = target.map { CGPoint(x: $0.x * 320, y: $0.y * 220) } ?? CGPoint(x: min(278, max(42, origin.x + (position == .first ? -6 : 18))), y: min(184, origin.y + 8))
+                let destination = endpoint.map { CGPoint(x: $0.x * 320, y: $0.y * 220) } ?? point(position.throwPoint)
                 for field in FieldPosition.allCases where field != position { player(point(field.fieldPoint), selected: false) }
-                let p = phase == 0 ? origin : catchPoint
+                let p = location.map { CGPoint(x: $0.x * 320, y: $0.y * 220) } ?? (phase == 0 ? origin : catchPoint)
                 context.stroke(Path(CGRect(x: catchPoint.x - 13, y: catchPoint.y - 9, width: 26, height: 18)), with: .color(GameTheme.gold), lineWidth: 2)
                 if phase == 0 {
                     line(home, catchPoint, 0xecc66b, width: 1)
@@ -291,14 +301,16 @@ private struct PositionPracticeField: View {
                         let t = Double(step) / 8
                         box(catchPoint.x + (destination.x - catchPoint.x) * t, catchPoint.y + (destination.y - catchPoint.y) * t, 3, 2, 0xecc66b)
                     }
-                    box(destination.x - 2, destination.y - 8, 5, 5, 0xfff5d4)
+                    let flight = position == .first && location != nil ? 1 - motion : motion
+                    box(p.x + (destination.x - p.x) * flight - 2, p.y + (destination.y - p.y) * flight - sin(flight * .pi) * 20 - 8, 5, 5, 0xfff5d4)
                     context.stroke(Path(CGRect(x: destination.x - 13, y: destination.y - 12, width: 26, height: 24)), with: .color(GameTheme.growth), lineWidth: 2)
                 }
                 player(p, selected: true, receiving: phase > 0)
             }
-        }.drawingGroup().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+        }.drawingGroup().clipped().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
     }
 }
 
+#if DEBUG
 #Preview("포지션 훈련 시안") { NavigationStack { PositionTrainingPreview() } }
 #endif

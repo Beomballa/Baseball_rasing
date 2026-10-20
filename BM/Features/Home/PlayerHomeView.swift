@@ -86,13 +86,19 @@ struct PlayerHomeView: View {
                 }
                 if let latest = trainingRecords.first(where: { $0.playerID == player.id && $0.completed }), let result = try? latest.snapshot() {
                     GamePanel(title: "최근 훈련 성장", onBoard: true) {
-                        let name = result.trait?.label ?? result.pitchCode.flatMap { code in player.pitches.first { $0.code == code }?.name } ?? result.selectedKind.label
+                        let name = result.position?.label ?? result.trait?.label ?? result.pitchCode.flatMap { code in player.pitches.first { $0.code == code }?.name } ?? result.selectedKind.label
                         Text("\(latest.gameDate) · \(name)  \(result.before, specifier: "%.1f") → \(result.after, specifier: "%.1f")")
                             .font(.subheadline.bold()).accessibilityIdentifier("homeTrainingGrowth")
-                        Text("\(result.trait == nil ? "성장" : "진척") +\(result.gain, specifier: "%.1f") · 평균 \(result.average, specifier: "%.1f")점 · \(result.trait == nil ? "다음 새 경기 반영" : "습득 후 직접 활성화")")
-                            .font(.caption).foregroundStyle(GameTheme.growth)
+                        if result.position != nil {
+                            Text("XP +\(result.positionGainXP, specifier: "%.1f") · 잔여 \(result.positionAfter.xp, specifier: "%.1f") / 100 · 다음 새 경기 반영")
+                                .font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homePositionTrainingGrowth")
+                        } else {
+                            Text("\(result.trait == nil ? "성장" : "진척") +\(result.gain, specifier: "%.1f") · 평균 \(result.average, specifier: "%.1f")점 · \(result.trait == nil ? "다음 새 경기 반영" : "습득 후 직접 활성화")")
+                                .font(.caption).foregroundStyle(GameTheme.growth)
+                        }
                     }
                 }
+                PositionHomePanel(player: player, calendar: calendar)
                 recentGames
                 GamePanel(title: "커리어 메뉴", onBoard: true) {
                     #if DEBUG

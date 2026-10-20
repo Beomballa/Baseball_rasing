@@ -187,14 +187,14 @@ struct CareerMatch: Codable, Equatable {
 
     private mutating func endPlate(_ initial: String, batter: Bool, pitcher: Bool) {
         var result = initial
-        if let stats = fieldStats, [1, 2].contains(stats.version), appearance, ["안타", "범타"].contains(result), batter || !offense {
+        if let stats = fieldStats, [1, 2, 3].contains(stats.version), appearance, ["안타", "범타"].contains(result), batter || !offense {
             let positions = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]
             let fielder = positions[Int(roll() * 9)]
             let ownDefense = !offense && stats.position == fielder
             if batter || ownDefense {
                 let chase = 3 + roll() * 14, distance = 10 + roll() * 30
-                let play: MatchFieldPlay
-                if stats.version == 2 {
+                var play: MatchFieldPlay
+                if stats.version >= 2 {
                     play = MatchFieldRules.firstBaseV2(runnerSpeed: batter ? stats.speed : 60, fielderSpeed: ownDefense ? stats.speed : 60,
                         defense: ownDefense ? stats.defense : 60, arm: ownDefense ? stats.arm : 60, chase: chase, distance: distance,
                         ownDefense: ownDefense, active: stats.activeTraits ?? [])
@@ -205,6 +205,7 @@ struct CareerMatch: Codable, Equatable {
                                                     arm: ownDefense ? stats.arm : 60,
                                                     chase: chase, distance: distance, ownDefense: ownDefense)
                 }
+                if stats.version == 3, let mastery = stats.positionMastery { play = MatchFieldRules.applyingPosition(play, mastery: mastery) }
                 lastFieldPlay = play; result = play.safe ? "안타" : "범타"
             }
         }

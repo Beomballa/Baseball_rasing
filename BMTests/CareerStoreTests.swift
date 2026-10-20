@@ -91,6 +91,9 @@ import SwiftData
         context.insert(player)
         context.insert(CareerCalendarState(player: player, schools: schools, legacySave: false))
         try context.save()
+        if context.container.schema.entities.contains(where: { $0.name == "PlayerPositions" }) {
+            try PlayerPositionStore.addMissing(in: context)
+        }
         return player
     }
 }

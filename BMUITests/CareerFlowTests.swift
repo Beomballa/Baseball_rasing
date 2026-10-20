@@ -655,6 +655,61 @@ extension CareerFlowTests {
         }
     }
 
+    @MainActor func testNativePositionTrainingResumeXPAndRewardOnce() throws {
+        let app = XCUIApplication(); app.launch()
+        createDashboardSample(app, name: "PositionB")
+        let date = app.staticTexts["calendarDate"].label
+        let fatigue = try XCTUnwrap(Int(app.staticTexts["homeFatigue"].label.split(separator: " ")[1]))
+        let entry = app.buttons["openPositionTraining"]; reveal(entry, in: app); entry.tap()
+        XCTAssertTrue(app.buttons["startPositionTraining"].waitForExistence(timeout: 5))
+        for code in ["C", "1B", "2B", "3B", "SS", "LF", "RF", "CF"] { app.buttons["livePosition-" + code].tap() }
+        XCTAssertTrue(app.staticTexts["livePositionMastery"].label.contains("60.0"))
+        let ready = XCTAttachment(screenshot: app.screenshot()); ready.name = "Native position ready"; ready.lifetime = .keepAlways; add(ready)
+        app.buttons["startPositionTraining"].tap()
+        func attempt() {
+            let catchButton = app.buttons["positionCatch"]; reveal(catchButton, in: app); catchButton.tap()
+            let base = app.buttons["positionBase-2"]; reveal(base, in: app); base.tap()
+            let throwing = app.buttons["positionThrow"]; reveal(throwing, in: app); throwing.tap()
+            XCTAssertTrue(app.staticTexts["positionFeedback"].waitForExistence(timeout: 5))
+        }
+        attempt(); app.buttons["positionNextAttempt"].tap(); attempt()
+        XCTAssertEqual(app.staticTexts["positionAttemptCount"].label, "2 / 5")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        reveal(app.buttons["restToday"], in: app); XCTAssertFalse(app.buttons["restToday"].isEnabled)
+        XCTAssertFalse(app.buttons["advanceDay"].isEnabled)
+        reveal(app.buttons["openTraining"], in: app); XCTAssertTrue(app.buttons["openTraining"].label.contains("2/5")); app.buttons["openTraining"].tap()
+        XCTAssertTrue(app.buttons["positionCatch"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["positionAttemptCount"].label, "2 / 5")
+        for index in 0..<3 { attempt(); if index < 2 { app.buttons["positionNextAttempt"].tap() } }
+        let gain = app.staticTexts["positionXPGain"].label, result = app.staticTexts["positionGrowth"].label
+        XCTAssertTrue(gain.contains("XP +")); XCTAssertFalse(gain.contains("XP +0.0"))
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Native position result"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["calendarDate"].label, date)
+        XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 \(min(100, fatigue + 6)) / 100")
+        XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 완료 · 훈련")
+        reveal(app.staticTexts["homePositionTrainingGrowth"], in: app)
+        XCTAssertTrue(app.staticTexts["homePositionTrainingGrowth"].label.contains("XP +"))
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        XCTAssertTrue(app.staticTexts["positionXPGain"].waitForExistence(timeout: 5)); XCTAssertEqual(app.staticTexts["positionGrowth"].label, result)
+        app.terminate(); app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        let growth = app.staticTexts["positionGrowth"]; reveal(growth, in: app); XCTAssertEqual(growth.label, result)
+        let close = app.buttons["closePositionTraining"]; reveal(close, in: app); XCTAssertTrue(close.isHittable)
+        let large = XCTAttachment(screenshot: app.screenshot()); large.name = "Native position result large"; large.lifetime = .keepAlways; add(large)
+        app.terminate(); app.launchArguments = []; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 \(min(100, fatigue + 6)) / 100")
+        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        let automatic = app.buttons["gameAutomatic"]; reveal(automatic, in: app); automatic.tap(); app.buttons["진행하고 결과 저장"].tap()
+        XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 6))
+        reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
+        reveal(app.buttons["advanceDay"], in: app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled)
+    }
+
     @MainActor func testPositionTrainingPreviewHomeNavigationKeepsDailyAction() throws {
         let app = XCUIApplication(); app.launch()
         if !app.staticTexts["homePlayerName"].waitForExistence(timeout: 4) { createDashboardSample(app, name: "Position QA") }
