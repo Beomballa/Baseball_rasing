@@ -3,6 +3,7 @@ import Foundation
 enum PlayerTrait: String, Codable, CaseIterable, Identifiable {
     case strongArm = "strong-arm", cheetah, safeHands = "safe-hands"
     var id: String { rawValue }
+    var trainingKind: TrainingKind { switch self { case .strongArm: .arm; case .cheetah: .speed; case .safeHands: .defense } }
     var label: String { switch self { case .strongArm: "강견"; case .cheetah: "치타"; case .safeHands: "안정 포구" } }
     var effect: String {
         switch self {
@@ -18,10 +19,26 @@ enum PlayerTrait: String, Codable, CaseIterable, Identifiable {
 }
 
 struct TraitLoadout: Codable, Equatable {
-    let owned: [PlayerTrait]
+    var owned: [PlayerTrait]
     var active: [PlayerTrait]
+    var progress: [String: Double]
+    init(owned: [PlayerTrait], active: [PlayerTrait], progress: [String: Double] = [:]) {
+        self.owned = owned; self.active = active; self.progress = progress
+    }
+    private enum CodingKeys: String, CodingKey { case owned, active, progress }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        owned = try values.decode([PlayerTrait].self, forKey: .owned)
+        active = try values.decode([PlayerTrait].self, forKey: .active)
+        progress = try values.decodeIfPresent([String: Double].self, forKey: .progress) ?? [:]
+    }
+    func trainingProgress(_ trait: PlayerTrait) -> Double { owned.contains(trait) ? 100 : progress[trait.rawValue] ?? 0 }
     func validate() throws {
-        guard Self.valid(owned), Self.valid(active), active.allSatisfy(owned.contains) else { throw TraitError.invalidRecord }
+        guard Self.valid(owned), Self.valid(active), active.allSatisfy(owned.contains),
+              progress.allSatisfy({ key, value in
+                  guard let trait = PlayerTrait(rawValue: key) else { return false }
+                  return value.isFinite && (0...100).contains(value) && (owned.contains(trait) ? value == 100 : value < 100)
+              }) else { throw TraitError.invalidRecord }
     }
     static func valid(_ list: [PlayerTrait]) -> Bool { list.count <= 3 && Set(list).count == list.count }
     static func initial(speed: Double, defense: Double, arm: Double, choose: (Int) -> Int = { Int.random(in: 0..<$0) }) throws -> Self {

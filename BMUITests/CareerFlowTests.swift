@@ -605,6 +605,56 @@ extension CareerFlowTests {
         }
     }
 
+    @MainActor func testNativeTraitTrainingBothRolesResumeAndRewardOnce() throws {
+        let app = XCUIApplication(); app.launch()
+        for pitcher in [false, true] {
+            if pitcher { reveal(app.buttons["createOtherRole"], in: app); app.buttons["createOtherRole"].tap() }
+            createDashboardSample(app, name: pitcher ? "NativeTraitP" : "NativeTraitB")
+            let date = app.staticTexts["calendarDate"].label
+            let fatigue = try XCTUnwrap(Int(app.staticTexts["homeFatigue"].label.split(separator: " ")[1]))
+            expandHomeDetails("traitDetails", in: app)
+            var chosen = ""
+            for id in ["strong-arm", "cheetah", "safe-hands"] {
+                let button = app.buttons["traitTraining-" + id]
+                if button.exists { reveal(button, in: app); if button.isEnabled { chosen = id; button.tap(); break } }
+            }
+            XCTAssertFalse(chosen.isEmpty)
+            XCTAssertTrue(app.buttons["startTraitTraining"].waitForExistence(timeout: 5))
+            app.buttons["startTraitTraining"].tap()
+            func attempt() {
+                if chosen == "cheetah" { app.buttons["traitDrillLeft"].tap(); app.buttons["traitDrillRight"].tap() }
+                else { app.buttons["traitDrillSubmit"].tap() }
+                XCTAssertTrue(app.staticTexts["traitDrillFeedback"].waitForExistence(timeout: 7))
+            }
+            XCTAssertTrue(app.staticTexts["traitAttemptCount"].waitForExistence(timeout: 5))
+            attempt(); app.buttons["traitDrillNext"].tap(); attempt()
+            XCTAssertEqual(app.staticTexts["traitAttemptCount"].label, "2 / 5")
+            app.terminate(); app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            if pitcher { app.buttons["homeRole-pitcher"].tap() }
+            reveal(app.buttons["openTraining"], in: app); XCTAssertTrue(app.buttons["openTraining"].label.contains("2/5")); app.buttons["openTraining"].tap()
+            XCTAssertTrue(app.staticTexts["traitAttemptCount"].waitForExistence(timeout: 5))
+            XCTAssertEqual(app.staticTexts["traitAttemptCount"].label, "2 / 5")
+            for index in 0..<3 { attempt(); if index < 2 { app.buttons["traitDrillNext"].tap() } }
+            XCTAssertTrue(app.staticTexts["traitTrainingGrowth"].exists)
+            let growth = app.staticTexts["traitTrainingGrowth"].label
+            XCTAssertFalse(growth.contains("+0.0"))
+            let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = pitcher ? "Native trait pitcher result" : "Native trait batter result"; screenshot.lifetime = .keepAlways; add(screenshot)
+            app.terminate(); app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            if pitcher { app.buttons["homeRole-pitcher"].tap() }
+            XCTAssertEqual(app.staticTexts["calendarDate"].label, date)
+            XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 \(min(100, fatigue + 6)) / 100")
+            XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 완료 · 훈련")
+            reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+            XCTAssertTrue(app.staticTexts["traitTrainingGrowth"].waitForExistence(timeout: 5)); XCTAssertEqual(app.staticTexts["traitTrainingGrowth"].label, growth)
+            app.terminate(); app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            if pitcher { app.buttons["homeRole-pitcher"].tap() }
+            XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 \(min(100, fatigue + 6)) / 100")
+        }
+    }
+
     @MainActor func testTraitAcquisitionPreviewStatesAndLayout() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-trait-acquisition-preview"]

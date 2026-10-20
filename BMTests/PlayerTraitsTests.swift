@@ -3,6 +3,174 @@ import SwiftData
 @testable import BM
 
 @MainActor final class PlayerTraitsTests: XCTestCase {
+    private func traitSetup(_ context: ModelContext, role: PlayerRole = .batter, progress: [String: Double] = [:]) throws -> (CareerPlayer, CareerCalendarState, PlayerTraits) {
+        let (player, state, profile) = try setup(context, role: role)
+        player.gameDate = "2026-04-02"; player.speed = 60; player.arm = 60; player.defense = 60; player.fatigue = 24
+        profile.payload = try JSONEncoder().encode(TraitLoadout(owned: [], active: [], progress: progress))
+        try context.save(); return (player, state, profile)
+    }
+    private func traitInput(_ training: CareerTraining) -> TrainingInput {
+        guard !training.completed else { return TrainingInput() }
+        if training.trait == .cheetah { return TrainingInput(footfalls: (0..<16).map { $0.isMultiple(of: 2) ? .left : .right }) }
+        if training.trait == .safeHands { let t = training.targets[training.scores.count]; return TrainingInput(x: t.x, y: t.y) }
+        let base = training.throwBase(training.scores.count), point = TrainingRules.basePoint(base)
+        let dx = point.x - 0.5, dy = point.y - 0.63
+        return TrainingInput(force: hypot(dx, dy) / 0.55 * 100, angle: (atan2(dy, dx) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360), base: base)
+    }
+    private func traitAttempt(_ player: CareerPlayer, _ state: CareerCalendarState, _ record: CareerTrainingRecord, _ context: ModelContext, save: CalendarProgression.Save = { try $0.save() }) throws {
+        try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: record.revision,
+                                       input: traitInput(record.snapshot()), in: context, save: save)
+    }
+    func testTraitTrainingFiveAttemptsBothRolesAllTraitsOnlyProgressGrows() throws {
+        for role in PlayerRole.allCases { for trait in PlayerTrait.allCases {
+            let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+            let (player, state, profile) = try traitSetup(context, role: role)
+            let ability = try XCTUnwrap(PlayerAbilityStore.profile(playerID: player.id, in: context))
+            let abilities = [ability.mental, ability.velocity, ability.control, ability.stuff, ability.stamina]
+            let originals = [player.contact, player.power, player.discipline, player.speed, player.arm, player.defense]
+            let pitches = player.pitches.sorted { $0.code < $1.code }.map(\.mastery)
+            let record = try CareerTrainingStore.start(player: player, state: state, trait: trait, in: context)
+            XCTAssertEqual(record.rulesVersion, "native-trait-training-v1")
+            for count in 1...5 {
+                try traitAttempt(player, state, record, context)
+                XCTAssertEqual(try record.snapshot().scores.count, count)
+                XCTAssertEqual(try profile.snapshot().trainingProgress(trait), count == 5 ? 4.68 : 0)
+                XCTAssertEqual(player.fatigue, count == 5 ? 30 : 24)
+                XCTAssertEqual(state.hasAction(on: player.gameDate), count == 5)
+            }
+            XCTAssertEqual(try record.snapshot().scores, [100,100,100,100,100])
+            XCTAssertEqual([player.contact, player.power, player.discipline, player.speed, player.arm, player.defense], originals)
+            XCTAssertEqual(player.pitches.sorted { $0.code < $1.code }.map(\.mastery), pitches)
+            XCTAssertEqual([ability.mental, ability.velocity, ability.control, ability.stuff, ability.stamina], abilities)
+            XCTAssertEqual(try profile.snapshot().active, [])
+        } }
+    }
+    func testTraitTrainingFailuresStaleInputAndDailyLocksAreAtomic() throws {
+        enum Injected: Error { case failure }
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player, state, profile) = try traitSetup(context)
+        XCTAssertThrowsError(try CareerTrainingStore.start(player: player, state: state, trait: .strongArm, in: context, save: { _ in throw Injected.failure }))
+        XCTAssertNil(try CareerTrainingStore.record(player: player, in: context)); XCTAssertEqual(state.revision, 0)
+        let record = try CareerTrainingStore.start(player: player, state: state, trait: .strongArm, in: context)
+        XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context))
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context))
+        XCTAssertThrowsError(try PlayerTraitStore.requireEditable(player: player, state: state, in: context))
+        XCTAssertThrowsError(try CareerTrainingStore.start(player: player, state: state, trait: .cheetah, in: context))
+        XCTAssertEqual(try CareerTrainingStore.start(player: player, state: state, kind: .power, in: context).key, record.key)
+        let initial = record.payload
+        XCTAssertThrowsError(try traitAttempt(player, state, record, context, save: { _ in throw Injected.failure }))
+        XCTAssertEqual(record.payload, initial)
+        for _ in 0..<4 { try traitAttempt(player, state, record, context) }
+        let payload = record.payload, revision = record.revision, calendarRevision = state.revision, traitPayload = profile.payload
+        XCTAssertThrowsError(try traitAttempt(player, state, record, context, save: { _ in throw Injected.failure }))
+        XCTAssertEqual(record.payload, payload); XCTAssertEqual(record.revision, revision); XCTAssertEqual(state.revision, calendarRevision)
+        XCTAssertEqual(profile.payload, traitPayload); XCTAssertEqual(player.fatigue, 24); XCTAssertFalse(record.completed)
+        XCTAssertThrowsError(try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: 0, input: traitInput(record.snapshot()), in: context))
+        try traitAttempt(player, state, record, context)
+        let final = record.payload
+        XCTAssertThrowsError(try traitAttempt(player, state, record, context))
+        XCTAssertEqual(record.payload, final); XCTAssertEqual(player.fatigue, 30)
+        XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context))
+    }
+    func testTraitTrainingDiskResumeAcquisitionAndResultReopenOnce() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("trait-training.store")
+        let payload = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            let (player, state, _) = try traitSetup(context, progress: [PlayerTrait.strongArm.rawValue:99.8])
+            let record = try CareerTrainingStore.start(player: player, state: state, trait: .strongArm, in: context)
+            for _ in 0..<2 { try traitAttempt(player, state, record, context) }
+            return record.payload
+        }
+        let finished = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let profile = try XCTUnwrap(PlayerTraitStore.profile(playerID: player.id, in: context))
+            let record = try CareerTrainingStore.start(player: player, state: state, trait: .strongArm, in: context)
+            XCTAssertEqual(record.payload, payload); XCTAssertEqual(try record.snapshot().scores.count, 2)
+            for _ in 0..<2 { try traitAttempt(player, state, record, context) }
+            enum Injected: Error { case failure }
+            let before = record.payload, traitBefore = profile.payload, revisionBefore = profile.revision
+            XCTAssertThrowsError(try traitAttempt(player, state, record, context, save: { _ in throw Injected.failure }))
+            XCTAssertEqual(record.payload, before); XCTAssertEqual(profile.payload, traitBefore); XCTAssertEqual(profile.revision, revisionBefore)
+            XCTAssertEqual(try profile.snapshot().owned, []); XCTAssertEqual(player.fatigue, 24)
+            try traitAttempt(player, state, record, context)
+            XCTAssertEqual(try profile.snapshot().owned, [.strongArm]); XCTAssertEqual(try profile.snapshot().active, [])
+            XCTAssertEqual(try profile.snapshot().trainingProgress(.strongArm), 100)
+            XCTAssertThrowsError(try toggle(.strongArm, player, state, profile, context))
+            return record.payload
+        }
+        let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+        let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let profile = try XCTUnwrap(PlayerTraitStore.profile(playerID: player.id, in: context))
+        let record = try CareerTrainingStore.start(player: player, state: state, trait: .strongArm, in: context)
+        XCTAssertEqual(record.payload, finished); XCTAssertEqual(player.fatigue, 30)
+        XCTAssertThrowsError(try traitAttempt(player, state, record, context)); XCTAssertEqual(player.fatigue, 30)
+        try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context)
+        try toggle(.strongArm, player, state, profile, context)
+        XCTAssertEqual(try profile.snapshot().active, [.strongArm]); XCTAssertEqual(player.fatigue, 26)
+        XCTAssertThrowsError(try CareerTrainingStore.start(player: player, state: state, trait: .strongArm, in: context))
+    }
+    func testTraitTrainingEligibilityRevisionsAndMalformedPayloads() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player, state, profile) = try traitSetup(context)
+        player.arm = 59; try context.save()
+        XCTAssertThrowsError(try CareerTrainingStore.start(player: player, state: state, trait: .strongArm, in: context))
+        player.arm = 60; try context.save()
+        let record = try CareerTrainingStore.start(player: player, state: state, trait: .strongArm, in: context)
+        profile.revision += 1; try context.save()
+        XCTAssertThrowsError(try traitAttempt(player, state, record, context)); XCTAssertEqual(try record.snapshot().scores, [])
+        profile.revision -= 1; try context.save()
+        var value = try record.snapshot(); value.traitRevision = nil
+        record.payload = try JSONEncoder().encode(value)
+        XCTAssertThrowsError(try record.snapshot())
+        for loadout in [TraitLoadout(owned: [], active: [], progress: ["unknown":1]), TraitLoadout(owned: [], active: [], progress: ["cheetah":100]), TraitLoadout(owned: [.cheetah], active: [], progress: ["cheetah":80])] {
+            XCTAssertThrowsError(try loadout.validate())
+        }
+    }
+    func testOldTraitPayloadAndGrowthPrecisionRemainCompatible() throws {
+        let old = Data("{\"owned\":[\"strong-arm\"],\"active\":[]}".utf8)
+        let value = try JSONDecoder().decode(TraitLoadout.self, from: old)
+        try value.validate(); XCTAssertEqual(value.progress, [:]); XCTAssertEqual(value.trainingProgress(.strongArm), 100)
+        XCTAssertEqual(TrainingRules.traitGrowth(before: 0, score: 100, fatigue: 24, age: 16), 4.68)
+        XCTAssertEqual(TrainingRules.traitGrowth(before: 60, score: 50, fatigue: 50, age: 30), 60.6864)
+        XCTAssertEqual(TrainingRules.traitGrowth(before: 99.5, score: 100, fatigue: 90, age: 40), 99.5819)
+        var boundary = CareerTraining(playerID: UUID(), date: "2026-04-02", role: "batter", pitchCode: nil, before: 0, fatigue: 24, age: 16, calendarRevision: 1, kind: .arm)
+        boundary.trait = .strongArm; boundary.traitRevision = 0; boundary.scores = [90,90,90,90,89]
+        XCTAssertEqual(boundary.average, 89.8); XCTAssertEqual(boundary.after, 4.68)
+        boundary.scores = [50,50,50,50,49]; XCTAssertEqual(boundary.after, 3.96)
+        let almost = TrainingRules.traitGrowth(before: 99.94, score: 0, fatigue: 100, age: 41)
+        XCTAssertEqual(almost, 99.982); XCTAssertLessThan(almost, 100)
+        try TraitLoadout(owned: [], active: [], progress: ["cheetah":almost]).validate()
+    }
+    func testExistingV6PayloadAndNormalPendingTrainingSurviveDiskReopen() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("old-v6.store")
+        let old = Data("{\"owned\":[\"strong-arm\"],\"active\":[\"strong-arm\"]}".utf8)
+        let trainingBytes = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            let (player, state, profile) = try traitSetup(context)
+            profile.payload = old; profile.revision = 7; try context.save()
+            let record = try CareerTrainingStore.start(player: player, state: state, kind: .contact, in: context)
+            for _ in 0..<2 { try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: record.revision, input: TrainingInput(timing: 0.82), in: context) }
+            return record.payload
+        }
+        let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+        let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let profile = try XCTUnwrap(PlayerTraitStore.profile(playerID: player.id, in: context))
+        let record = try XCTUnwrap(CareerTrainingStore.record(player: player, in: context))
+        XCTAssertEqual(profile.payload, old); XCTAssertEqual(profile.revision, 7); XCTAssertEqual(record.payload, trainingBytes)
+        XCTAssertNil(try record.snapshot().trait); XCTAssertEqual(try record.snapshot().scores.count, 2)
+        for _ in 0..<3 { try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: record.revision, input: TrainingInput(timing: 0.82), in: context) }
+        XCTAssertTrue(record.completed); XCTAssertEqual(profile.payload, old); XCTAssertEqual(profile.revision, 7)
+    }
     private func setup(_ context: ModelContext, role: PlayerRole = .batter, legacy: Bool = false) throws -> (CareerPlayer, CareerCalendarState, PlayerTraits) {
         var draft=PlayerDraft();draft.name="특성선수";draft.role=role;draft.schoolID="hs-ref-001"
         let player=try legacy ? LegacyPlayerFixture.create(draft,schools:SchoolCatalog.load(),in:context) : CareerStore.create(draft,schools:SchoolCatalog.load(),in:context)

@@ -49,6 +49,8 @@ struct CareerTraining: Codable, Equatable {
     let role: String
     let pitchCode: String?
     let kind: TrainingKind?
+    var trait: PlayerTrait?
+    var traitRevision: Int?
     var selectedKind: TrainingKind { kind ?? (pitchCode == nil ? .contact : .pitch) }
     let before: Double
     let fatigue: Int
@@ -59,9 +61,10 @@ struct CareerTraining: Codable, Equatable {
     var calendarRevision: Int
     var completed: Bool { scores.count == 5 }
     var average: Double { scores.isEmpty ? 0 : Double(scores.reduce(0, +)) / Double(scores.count) }
-    var after: Double { completed ? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil) : before }
+    var after: Double { completed ? (trait == nil ? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil) : TrainingRules.traitGrowth(before: before, score: average.rounded(), fatigue: fatigue, age: age)) : before }
     var gain: Double { TrainingRules.round(after - before) }
-    var title: String { selectedKind.label + " 훈련" }
+    var title: String { (trait?.label ?? selectedKind.label) + " 훈련" }
+    func throwBase(_ round: Int) -> Int { trait == nil ? TrainingRules.throwBase(round) : [1, 2, 3, 2, 1][round] }
 
     init(playerID: UUID, date: String, role: String, pitchCode: String?, before: Double, fatigue: Int, age: Int, calendarRevision: Int, kind: TrainingKind? = nil) {
         self.playerID = playerID; self.date = date; self.role = role; self.pitchCode = pitchCode
@@ -115,8 +118,8 @@ struct CareerTraining: Codable, Equatable {
                   let base = input.base, (1...4).contains(base), let force = input.force, let angle = input.angle,
                   force.isFinite, angle.isFinite, (8...100).contains(force), (0...360).contains(angle) else { throw TrainingError.invalidInput }
             let endpoint = TrainingRules.throwEndpoint(angle: angle, force: force)
-            let target = TrainingRules.basePoint(TrainingRules.throwBase(scores.count))
-            score = base == TrainingRules.throwBase(scores.count) ? max(0, 1 - hypot(endpoint.x - target.x, endpoint.y - target.y) / 0.3) * 100 : 0
+            let target = TrainingRules.basePoint(throwBase(scores.count))
+            score = base == throwBase(scores.count) ? max(0, 1 - hypot(endpoint.x - target.x, endpoint.y - target.y) / 0.3) * 100 : 0
         case .power:
             guard role == "batter", input.timing == nil, input.release == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
             if input.force == nil && input.angle == nil { score = 0 }
@@ -146,6 +149,12 @@ struct CareerTraining: Codable, Equatable {
 }
 
 enum TrainingRules {
+    static func traitGrowth(before: Double, score: Double, fatigue: Int, age: Int) -> Double {
+        let performance = score >= 90 ? 1.3 : score >= 75 ? 1.2 : score >= 50 ? 1.1 : 1
+        let level = before < 50 ? 1.0 : before < 80 ? 0.65 : 0.35
+        let recovery = fatigue <= 40 ? 1.0 : fatigue < 60 ? 0.8 : 0.5
+        return round(min(100, before + 1.2 * performance * level * recovery * ageMultiplier(age)))
+    }
     static let contactPerfectWidth = 0.025
     static func contactResult(input: TrainingInput, target: TrainingTarget, contact: Double) -> ContactTrainingResult {
         let aim = TrainingTarget(x: input.x, y: input.y)
