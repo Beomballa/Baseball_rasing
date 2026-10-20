@@ -28,6 +28,8 @@ final class CareerFlowTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(element.frame.minY, window.minY)
             XCTAssertLessThanOrEqual(element.frame.maxY, window.maxY)
         }
+        XCTAssertEqual(board.frame.minX, control.frame.minX, accuracy: 1)
+        XCTAssertEqual(board.frame.width, control.frame.width, accuracy: 1)
         XCTAssertEqual(field.frame.width / field.frame.height, ratio, accuracy: 0.02)
     }
     @MainActor private func waitForEnabled(_ button: XCUIElement) {
@@ -488,6 +490,76 @@ final class CareerFlowTests: XCTestCase {
 }
 
 extension CareerFlowTests {
+    @MainActor func testMatchBoardBothRolesResumeAndLargeText() throws {
+        let app = XCUIApplication(); app.launch()
+        for pitcher in [false, true] {
+            if pitcher {
+                reveal(app.buttons["createOtherRole"], in: app); app.buttons["createOtherRole"].tap()
+            }
+            let name = app.textFields["playerName"]
+            XCTAssertTrue(name.waitForExistence(timeout: 10)); name.tap(); name.typeText(pitcher ? "BoardPitcher" : "BoardBatter")
+            if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
+            if pitcher { app.buttons["hand-left"].tap() }
+            reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
+            reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            reveal(app.buttons["restToday"], in: app); app.buttons["restToday"].tap()
+            reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+            let primary = pitcher ? "gamePitch" : "requestGamePitch"
+            XCTAssertTrue(app.buttons[primary].waitForExistence(timeout: 5))
+            assertArenaFits(app, button: primary, ratio: pitcher ? 1219.0 / 1290 : 1)
+            let gauge = app.otherElements[pitcher ? "releaseGauge" : "battingTimingGauge"]
+            XCTAssertTrue(gauge.exists)
+            XCTAssertLessThanOrEqual(gauge.frame.maxY, app.windows.firstMatch.frame.maxY)
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Match pitcher board" : "Match batter board"; shot.lifetime = .keepAlways; add(shot)
+            if pitcher {
+                app.buttons["gamePitchPicker"].tap()
+                let slider = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "슬라이더")).firstMatch
+                XCTAssertTrue(slider.waitForExistence(timeout: 3)); slider.tap()
+            }
+            // Cancelling an uncommitted attempt must not consume a pitch or change the persisted count.
+            let count = app.otherElements["careerGameCount"].label
+            app.buttons[primary].tap(); XCTAssertFalse(app.buttons["gameAutomatic"].isEnabled)
+            app.terminate(); app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+            if role.exists { reveal(role, in: app); role.tap() }
+            reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 이어하기"); app.buttons["openCareerGame"].tap()
+            XCTAssertTrue(app.buttons["gameJumpControls"].waitForExistence(timeout: 5))
+            XCTAssertEqual(app.otherElements["careerGameCount"].label, count)
+            app.buttons["gameJumpControls"].tap()
+            XCTAssertTrue(app.buttons[primary].isHittable)
+            let large = XCTAttachment(screenshot: app.screenshot()); large.name = pitcher ? "Match pitcher large text" : "Match batter large text"; large.lifetime = .keepAlways; add(large)
+            app.terminate(); app.launchArguments = []; app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            let restoredRole = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+            if restoredRole.exists { reveal(restoredRole, in: app); restoredRole.tap() }
+            reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+            XCTAssertTrue(app.buttons[primary].waitForExistence(timeout: 5))
+            if pitcher {
+                app.buttons["gamePitch"].tap(); app.buttons["gameRelease"].tap()
+            } else {
+                app.buttons["gameInput-swing"].tap(); app.buttons["requestGamePitch"].tap()
+                let watched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "지켜보기"), object: app.staticTexts["careerGameMessage"])
+                XCTAssertEqual(XCTWaiter.wait(for: [watched], timeout: 5), .completed)
+                waitForEnabled(app.buttons[primary]); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
+            }
+            waitForEnabled(app.buttons["gameAutomatic"])
+            let speed = app.descendants(matching: .any).matching(identifier: "boardPitchSpeed").firstMatch
+            XCTAssertTrue(speed.exists); XCTAssertFalse(speed.label.contains("–––"))
+            app.buttons["gameAutomatic"].tap(); app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
+            reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
+            reveal(app.staticTexts["homeFatigue"], in: app); let fatigue = app.staticTexts["homeFatigue"].label
+            reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 결과"); app.buttons["openCareerGame"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons[primary].exists)
+            reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
+            reveal(app.staticTexts["homeFatigue"], in: app); XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
+            reveal(app.buttons["advanceDay"], in: app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled)
+            reveal(app.staticTexts["homePlayerName"], in: app)
+        }
+    }
+
     @MainActor func testCreationBoardSelectionsAndPersistence() throws {
         let app = XCUIApplication(); app.launch()
         XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 10))

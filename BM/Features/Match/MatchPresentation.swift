@@ -26,9 +26,9 @@ enum MatchPresentation {
         return CGPoint(x: -0.005 + 0.62 * (bunt ? 416 : 426) / 512,
                        y: 0.34 + 0.61 * (1 - feet / 512) + 0.61 * (bunt ? 245 : 266) / 512)
     }
-    static func fieldSize(available: CGSize, role: PlayerRole) -> CGSize {
+    static func fieldSize(available: CGSize, role: PlayerRole, chromeHeight: CGFloat = 310) -> CGSize {
         let ratio: CGFloat = role == .batter ? 1 : 1219 / 1290
-        let height = min(max(150, available.height - 310), max(1, available.width) / ratio)
+        let height = min(max(150, available.height - chromeHeight), max(1, available.width) / ratio)
         return CGSize(width: height * ratio, height: height)
     }
     static func countPulse(_ outcome: String?) -> String? {
@@ -79,45 +79,52 @@ struct MatchScoreStrip: View {
     let pulse: String?
     let pulseAt: Date
     @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.dynamicTypeSize) private var typeSize
     private let ink = Color(hex: 0xeee9cd)
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.2, paused: reduced || pulse == nil)) { timeline in
             let elapsed = timeline.date.timeIntervalSince(pulseAt)
             let blink = !reduced && elapsed >= 0 && elapsed < 1.2 && Int(elapsed / 0.2).isMultiple(of: 2)
-            HStack(spacing: 8) {
-                VStack(spacing: 4) {
-                    Text("\(match.half / 2 + 1) \(match.half % 2 == 0 ? "▲" : "▼")").bold()
-                    Text(pitchCount.map { "P \($0)" } ?? "BAT").font(.system(size: 10, design: .monospaced))
-                }.frame(width: 32)
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            layout {
                 HStack(spacing: 8) {
-                    lamps("B", count: match.balls, total: 3, blink: blink)
-                    lamps("S", count: match.strikes, total: 2, blink: blink)
-                    lamps("O", count: match.outs, total: 2, blink: blink)
-                }.accessibilityElement(children: .ignore)
-                    .accessibilityLabel("B \(match.balls) S \(match.strikes) O \(match.outs)")
-                    .accessibilityIdentifier("careerGameCount")
-                Rectangle().fill(ink.opacity(0.25)).frame(width: 1)
-                VStack(spacing: 2) {
-                    Text(MatchPresentation.pitchName(match.lastManual)).font(.system(size: 12, weight: .bold))
-                        .lineLimit(1).minimumScaleFactor(0.8).accessibilityIdentifier("boardPitchName")
-                    HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(match.lastManual.map { String($0.speed) } ?? "–––").font(.system(size: 23, weight: .bold, design: .monospaced)).foregroundStyle(GameTheme.gold)
-                        Text("km/h").font(.system(size: 9))
-                    }
-                }.frame(maxWidth: .infinity).accessibilityElement(children: .combine).accessibilityIdentifier("boardPitchSpeed")
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("날씨 · 예시").font(.system(size: 9))
-                    Text("맑음 22°C").font(.system(size: 10, weight: .bold))
-                    Text("바람 ↑ 2m/s").font(.system(size: 9))
-                }.accessibilityLabel("예시 날씨 맑음 22도, 외야 방향 바람 초속 2미터")
-            }.foregroundStyle(ink).padding(.horizontal, 8).frame(height: 64)
+                    VStack(spacing: 4) {
+                        Text("\(match.half / 2 + 1) \(match.half % 2 == 0 ? "▲" : "▼")").bold()
+                        Text(pitchCount.map { "P \($0)" } ?? "BAT").font(.system(.caption2, design: .monospaced))
+                    }.frame(minWidth: 32)
+                    HStack(spacing: 8) {
+                        lamps("B", count: match.balls, total: 3, blink: blink)
+                        lamps("S", count: match.strikes, total: 2, blink: blink)
+                        lamps("O", count: match.outs, total: 2, blink: blink)
+                    }.accessibilityElement(children: .ignore)
+                        .accessibilityLabel("B \(match.balls) S \(match.strikes) O \(match.outs)")
+                        .accessibilityIdentifier("careerGameCount")
+                }
+                if !typeSize.isAccessibilitySize { Rectangle().fill(ink.opacity(0.25)).frame(width: 1) }
+                let details = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+                details {
+                    VStack(spacing: 2) {
+                        Text(MatchPresentation.pitchName(match.lastManual)).font(.caption.bold())
+                            .lineLimit(1).minimumScaleFactor(0.8).accessibilityIdentifier("boardPitchName")
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(match.lastManual.map { String($0.speed) } ?? "–––").lineLimit(1).minimumScaleFactor(0.8).font(.system(.title2, design: .monospaced, weight: .bold)).foregroundStyle(GameTheme.gold)
+                            Text("km/h").font(.caption2)
+                        }
+                    }.frame(maxWidth: .infinity).accessibilityElement(children: .combine).accessibilityIdentifier("boardPitchSpeed")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("날씨 · 예시").font(.caption2)
+                        Text("맑음 22°C").font(.caption2.bold())
+                        Text("바람 ↑ 2m/s").font(.caption2)
+                    }.accessibilityLabel("예시 날씨 맑음 22도, 외야 방향 바람 초속 2미터")
+                }
+            }.foregroundStyle(ink).padding(8).frame(maxWidth: .infinity, minHeight: 64)
                 .background(Color(hex: 0x173c32))
                 .overlay(Rectangle().strokeBorder(Color(hex: 0x93a48c), lineWidth: 1))
         }.accessibilityElement(children: .contain).accessibilityIdentifier("matchScoreboard")
     }
     private func lamps(_ label: String, count: Int, total: Int, blink: Bool) -> some View {
         VStack(spacing: 4) {
-            HStack(spacing: 3) { Text(label).font(.system(size: 10)); Text("\(count)").font(.system(size: 19, weight: .bold, design: .monospaced)) }
+            HStack(spacing: 3) { Text(label).font(.caption2); Text("\(count)").font(.system(.headline, design: .monospaced, weight: .bold)) }
             HStack(spacing: 3) {
                 ForEach(0..<total, id: \.self) { i in
                     let confirming = pulse == label && i == (count == 0 ? total - 1 : min(count, total) - 1)

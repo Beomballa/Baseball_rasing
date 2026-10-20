@@ -265,6 +265,19 @@ import SwiftData
             }
         }
     }
+    func testMeasuredMatchChromeKeepsFieldRatioAndAvailableSpace() {
+        for chrome in [CGFloat(260), 340, 420] {
+            for role in PlayerRole.allCases {
+                let size = MatchPresentation.fieldSize(available: CGSize(width: 304, height: 600), role: role, chromeHeight: chrome)
+                XCTAssertLessThanOrEqual(size.width, 304)
+                XCTAssertLessThanOrEqual(size.height + chrome, 600)
+                XCTAssertEqual(size.width / size.height, role == .batter ? 1 : 1219.0 / 1290, accuracy: 0.0001)
+            }
+        }
+        let large = MatchPresentation.fieldSize(available: CGSize(width: 304, height: 480), role: .batter, chromeHeight: 600)
+        XCTAssertEqual(large.height, 150) // Large text uses scrolling instead of distorting the field.
+    }
+
     func testOnlyNewPitchJudgmentsRequestCountPulse() {
         for value in ["볼", "볼넷"] { XCTAssertEqual(MatchPresentation.countPulse(value), "B") }
         for value in ["루킹 스트라이크", "헛스윙", "삼진"] { XCTAssertEqual(MatchPresentation.countPulse(value), "S") }
