@@ -21,6 +21,37 @@ import SwiftData
         return (player, calendar, record)
     }
 
+    func testResultSummaryProjectsSavedBatterMetricsWithoutMutation() {
+        var state = match(); state.completed = true; state.homeScore = 4; state.awayScore = 2
+        state.line = MatchLine(plateAppearances: 5, atBats: 4, hits: 2, homeRuns: 1, walks: 1, strikeouts: 1, rbi: 3)
+        let original = state
+        let summary = MatchResultSummary(match: state, fatigueBefore: 24, fatigueAfter: 28)
+        XCTAssertEqual(summary.outcome, "승리"); XCTAssertEqual(summary.fatigueChange, "+4")
+        XCTAssertEqual(summary.metrics.map(\.value), ["5", "4", "2", "1", "3", "1", "1"])
+        XCTAssertEqual(state, original)
+    }
+    func testResultSummaryPitchingOutsAreBaseThreeAndNoInventedERA() {
+        var state = match(role: .pitcher); state.line.pitchingOuts = 17; state.line.pitches = 92
+        state.line.hitsAllowed = 5; state.line.runsAllowed = 3; state.line.pitchingWalks = 2; state.line.pitchingStrikeouts = 6
+        let summary = MatchResultSummary(match: state, fatigueBefore: 6, fatigueAfter: 37)
+        XCTAssertEqual(summary.metrics.map(\.value), ["5.2", "92", "5", "3", "2", "6"])
+        XCTAssertFalse(summary.metrics.contains { $0.id == "era" })
+    }
+    func testResultSummarySeparatesAbsentLegacyEmptyAndAppliedTraits() {
+        var state = match()
+        XCTAssertTrue(MatchResultSummary(match: state, fatigueBefore: 0, fatigueAfter: 0).traitMessage.contains("경합이 없습니다"))
+        state.lastFieldPlay = MatchFieldPlay(runnerTime: 3, ballTime: 4, ownDefense: false)
+        XCTAssertTrue(MatchResultSummary(match: state, fatigueBefore: 0, fatigueAfter: 0).traitMessage.contains("미기록"))
+        state.lastFieldPlay?.appliedTraits = []
+        XCTAssertTrue(MatchResultSummary(match: state, fatigueBefore: 0, fatigueAfter: 0).traitMessage.contains("특성 없음"))
+        state.lastFieldPlay?.appliedTraits = [.cheetah]
+        let summary = MatchResultSummary(match: state, fatigueBefore: 0, fatigueAfter: 0)
+        XCTAssertEqual(summary.appliedTraits, [.cheetah]); XCTAssertEqual(summary.fatigueChange, "변화 없음")
+        state = CareerMatch(random: 1, isHome: true, role: "pitcher", appearance: false, contact: 60, power: 60, discipline: 60, mastery: [:])
+        let absent = MatchResultSummary(match: state, fatigueBefore: 24, fatigueAfter: 24)
+        XCTAssertTrue(absent.metrics.isEmpty); XCTAssertTrue(absent.traitMessage.contains("비등판"))
+    }
+
     func testDeliveryPreviewDoesNotConsumeRNGAndSpeedChangesFlightTime() throws {
         let state = match(role: .pitcher)
         XCTAssertEqual(state.delivery(pitchCode: "four-seam"), state.delivery(pitchCode: "four-seam"))

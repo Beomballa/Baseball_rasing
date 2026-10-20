@@ -150,3 +150,43 @@ struct MatchGrip: View {
         }
     }
 }
+
+// Read-only projection of the completed ledger; never estimates missing statistics.
+struct MatchResultSummary {
+    struct Metric: Identifiable, Equatable {
+        let id: String
+        let label: String
+        let value: String
+    }
+    let match: CareerMatch
+    let fatigueBefore: Int
+    let fatigueAfter: Int
+    var outcome: String {
+        match.teamScore == match.opponentScore ? "무승부" : (match.teamScore > match.opponentScore ? "승리" : "패배")
+    }
+    var metrics: [Metric] {
+        guard match.appearance else { return [] }
+        let l = match.line
+        let values: [(String, String, String)] = match.role == "pitcher" ? [
+            ("innings", "이닝", "\(l.pitchingOuts / 3).\(l.pitchingOuts % 3)"), ("pitches", "투구 수", "\(l.pitches)"),
+            ("hitsAllowed", "피안타", "\(l.hitsAllowed)"), ("runsAllowed", "실점", "\(l.runsAllowed)"),
+            ("pitchingWalks", "볼넷", "\(l.pitchingWalks)"), ("pitchingStrikeouts", "탈삼진", "\(l.pitchingStrikeouts)")
+        ] : [
+            ("plateAppearances", "타석", "\(l.plateAppearances)"), ("atBats", "타수", "\(l.atBats)"),
+            ("hits", "안타", "\(l.hits)"), ("homeRuns", "홈런", "\(l.homeRuns)"),
+            ("rbi", "타점", "\(l.rbi)"), ("walks", "볼넷", "\(l.walks)"), ("strikeouts", "삼진", "\(l.strikeouts)")
+        ]
+        return values.map { Metric(id: $0.0, label: $0.1, value: $0.2) }
+    }
+    var fatigueChange: String {
+        let delta = fatigueAfter - fatigueBefore
+        return delta == 0 ? "변화 없음" : (delta > 0 ? "+\(delta)" : "\(delta)")
+    }
+    var appliedTraits: [PlayerTrait] { match.lastFieldPlay?.appliedTraits ?? [] }
+    var traitMessage: String {
+        guard match.appearance else { return "비등판 · 개인 특성 적용 기록 없음" }
+        guard let play = match.lastFieldPlay else { return "저장된 개인 주루·수비 경합이 없습니다." }
+        guard play.appliedTraits != nil else { return "이전 기록 · 적용 특성 미기록" }
+        return appliedTraits.isEmpty ? "마지막 개인 경합에 적용된 특성 없음" : "마지막 개인 경합에서 적용"
+    }
+}

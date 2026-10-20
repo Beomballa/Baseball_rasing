@@ -490,6 +490,48 @@ final class CareerFlowTests: XCTestCase {
 }
 
 extension CareerFlowTests {
+    @MainActor private func checkResultBoard(_ app: XCUIApplication, pitcher: Bool) {
+        XCTAssertTrue(app.staticTexts["gameResultSaved"].exists)
+        XCTAssertFalse(app.otherElements["careerMatchField"].exists)
+        XCTAssertFalse(app.otherElements["matchScoreboard"].exists)
+        let metricIDs = pitcher ? ["innings", "pitches", "hitsAllowed", "runsAllowed", "pitchingWalks", "pitchingStrikeouts"]
+            : ["plateAppearances", "atBats", "hits", "homeRuns", "rbi", "walks", "strikeouts"]
+        var values: [String] = []
+        for id in metricIDs {
+            let metric = app.descendants(matching: .any).matching(identifier: "gameResult-" + id).firstMatch
+            reveal(metric, in: app); XCTAssertTrue(metric.exists); values.append(metric.label)
+        }
+        reveal(app.staticTexts["gameResultFatigue"], in: app)
+        let fatigue = app.staticTexts["gameResultFatigue"].label
+        reveal(app.staticTexts["gameResultTraitStatus"], in: app); let traitStatus = app.staticTexts["gameResultTraitStatus"].label
+        let detail = XCTAttachment(screenshot: app.screenshot()); detail.name = pitcher ? "Result pitcher details" : "Result batter details"; detail.lifetime = .keepAlways; add(detail)
+        reveal(app.staticTexts["careerGameFinished"], in: app)
+        let normal = XCTAttachment(screenshot: app.screenshot()); normal.name = pitcher ? "Result pitcher board" : "Result batter board"; normal.lifetime = .keepAlways; add(normal)
+        app.terminate(); app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+        if role.exists { reveal(role, in: app); role.tap() }
+        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
+        for (index, id) in metricIDs.enumerated() {
+            let metric = app.descendants(matching: .any).matching(identifier: "gameResult-" + id).firstMatch
+            reveal(metric, in: app); XCTAssertEqual(metric.label, values[index])
+            XCTAssertGreaterThanOrEqual(metric.frame.minX, app.windows.firstMatch.frame.minX)
+            XCTAssertLessThanOrEqual(metric.frame.maxX, app.windows.firstMatch.frame.maxX)
+        }
+        reveal(app.staticTexts["gameResultFatigue"], in: app); XCTAssertEqual(app.staticTexts["gameResultFatigue"].label, fatigue)
+        reveal(app.staticTexts["gameResultTraitStatus"], in: app); XCTAssertEqual(app.staticTexts["gameResultTraitStatus"].label, traitStatus)
+        reveal(app.buttons["gameReturnHome"], in: app); XCTAssertTrue(app.buttons["gameReturnHome"].isHittable)
+        let large = XCTAttachment(screenshot: app.screenshot()); large.name = pitcher ? "Result pitcher large text" : "Result batter large text"; large.lifetime = .keepAlways; add(large)
+        app.terminate(); app.launchArguments = []; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        let restoredRole = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+        if restoredRole.exists { reveal(restoredRole, in: app); restoredRole.tap() }
+        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
+        reveal(app.staticTexts["gameResultFatigue"], in: app); XCTAssertEqual(app.staticTexts["gameResultFatigue"].label, fatigue)
+    }
+
     @MainActor func testMatchBoardBothRolesResumeAndLargeText() throws {
         let app = XCUIApplication(); app.launch()
         for pitcher in [false, true] {
@@ -549,6 +591,7 @@ extension CareerFlowTests {
             XCTAssertTrue(speed.exists); XCTAssertFalse(speed.label.contains("–––"))
             app.buttons["gameAutomatic"].tap(); app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
+            checkResultBoard(app, pitcher: pitcher)
             reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
             reveal(app.staticTexts["homeFatigue"], in: app); let fatigue = app.staticTexts["homeFatigue"].label
             reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 결과"); app.buttons["openCareerGame"].tap()

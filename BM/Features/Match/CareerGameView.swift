@@ -202,27 +202,67 @@ struct CareerGameView: View {
         }.overlay(Rectangle().strokeBorder(Color(hex: 0x7695a6), lineWidth: 1))
     }
     private func results(_ match: CareerMatch, record: CareerMatchRecord) -> some View {
-        VStack(spacing: 12) {
-            GamePanel(title: "경기 결과 저장 완료") {
-                Text(match.teamScore == match.opponentScore ? "무승부" : (match.teamScore > match.opponentScore ? "승리" : "패배"))
-                    .font(.title2.bold()).accessibilityIdentifier("careerGameFinished")
-                Text(record.appearance ? (player.role == .batter
-                    ? "\(match.line.atBats)타수 \(match.line.hits)안타 · HR \(match.line.homeRuns) · BB \(match.line.walks) · K \(match.line.strikeouts)"
-                    : "\(match.line.pitchingOuts / 3).\(match.line.pitchingOuts % 3)이닝 · \(match.line.pitches)구 · K \(match.line.pitchingStrikeouts) · 실점 \(match.line.runsAllowed)") : "비등판 · 개인 기록/피로 변화 없음")
-                Text("피로 \(record.fatigueBefore) → \(record.fatigueAfter)")
-                if let play = match.lastFieldPlay {
-                    Text("최근 내 \(play.ownDefense ? "수비" : "주루") · 1루 \(play.safe ? "세이프" : "아웃")")
-                    Text("주자 \(play.runnerTime, specifier: "%.2f")초 / 송구 \(play.ballTime, specifier: "%.2f")초").font(.caption)
-                        .accessibilityIdentifier("gameFieldResult")
-                    if let traits = play.appliedTraits, !traits.isEmpty {
-                        Text("이번 경합 특성 · " + traits.map(\.label).joined(separator: " · ")).font(.caption)
-                            .accessibilityIdentifier("gameFieldTraits")
+        let summary = MatchResultSummary(match: match, fatigueBefore: record.fatigueBefore, fatigueAfter: record.fatigueAfter)
+        return VStack(spacing: 10) {
+            GamePanel(title: "FINAL · 팀 경기 결과", onBoard: true) {
+                HStack(spacing: 12) {
+                    PixelPlayer(appearance: player.appearance).frame(width: 36, height: 48).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(summary.outcome).font(.system(.title, design: .monospaced, weight: .heavy))
+                            .foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerGameFinished")
+                        Text("\(player.name) #\(player.jerseyNumber)").font(.subheadline.bold())
                     }
                 }
-                Text("홈에서 다음 날로 진행할 수 있습니다.").font(.caption)
-            }.foregroundStyle(GameTheme.navy)
+                Text("결과 저장 완료").font(.caption.bold()).foregroundStyle(GameTheme.growth)
+                    .accessibilityIdentifier("gameResultSaved")
+            }
+            GamePanel(title: player.role == .batter ? "타자 경기 기록" : "투수 경기 기록", onBoard: true) {
+                if !record.appearance {
+                    Text("비등판 · 팀 경기 결과").font(.headline).accessibilityIdentifier("gameResultNoAppearance")
+                    Text("개인 기록과 피로 변화가 없습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                } else {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 6) {
+                        ForEach(summary.metrics) { metric in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(metric.label).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                                Spacer(minLength: 8)
+                                Text(metric.value).font(.system(.title3, design: .monospaced, weight: .bold))
+                            }.padding(8).background(GameTheme.board)
+                                .accessibilityElement(children: .combine).accessibilityIdentifier("gameResult-" + metric.id)
+                        }
+                    }
+                }
+            }
+            GamePanel(title: "피로 변화", onBoard: true) {
+                let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(spacing: 12))
+                layout {
+                    Text("\(record.fatigueBefore) → \(record.fatigueAfter)")
+                        .font(.system(.title2, design: .monospaced, weight: .bold)).accessibilityIdentifier("gameResultFatigue")
+                    Text(summary.fatigueChange).font(.headline).foregroundStyle(GameTheme.gold)
+                }
+                Text("경기 전 → 경기 후 · 100 기준").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+            GamePanel(title: "적용 특성 · 마지막 개인 경합", onBoard: true) {
+                Text(summary.traitMessage).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("gameResultTraitStatus")
+                if record.appearance, let play = match.lastFieldPlay {
+                    Text("내 \(play.ownDefense ? "수비" : "주루") · 1루 \(play.safe ? "세이프" : "아웃")")
+                        .font(.headline).foregroundStyle(GameTheme.gold)
+                    Text("\(play.ownDefense ? "상대 주자" : "내 주자") \(play.runnerTime, specifier: "%.2f")초 / 공 \(play.ballTime, specifier: "%.2f")초")
+                        .font(.caption.monospaced()).accessibilityIdentifier("gameFieldResult")
+                    ForEach(summary.appliedTraits) { trait in
+                        HStack(alignment: .top, spacing: 8) {
+                            TraitPixelIcon(trait: trait).frame(width: 28, height: 28).accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(trait.label).font(.headline).foregroundStyle(GameTheme.gold)
+                                Text(trait.effect).font(.caption)
+                            }
+                        }.accessibilityElement(children: .combine).accessibilityIdentifier("gameResultTrait-" + trait.rawValue)
+                    }
+                }
+            }
             Button("선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("gameReturnHome")
-        }
+            Text("홈에서 다음 날로 진행할 수 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+        }.accessibilityElement(children: .contain)
     }
     private func measure(_ key: String) -> some View {
         GeometryReader { proxy in
@@ -243,19 +283,22 @@ struct CareerGameView: View {
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("gameJumpControls")
                                 }
                             }.background { measure("header") }
-                            arena(match, field: MatchPresentation.fieldSize(
-                                available: CGSize(width: max(1, geometry.size.width - 16), height: geometry.size.height),
-                                role: player.role, chromeHeight: chromeHeights.values.reduce(0, +) + 28))
-                            VStack(spacing: 6) {
-                                MatchScoreStrip(match: match, pitchCount: player.role == .pitcher ? match.line.pitches : nil, pulse: pulse, pulseAt: pulseAt)
-                                Text(match.lastManual.map { "\($0.grade) · \($0.outcome)" }
-                                     ?? (match.completed ? match.message : player.role == .batter ? "조준 → 투구 요청 → 타격" : "그립 선택 → 투구 준비 → 릴리스"))
-                                    .font(.system(.caption, design: .monospaced, weight: .bold))
-                                    .frame(maxWidth: .infinity, minHeight: 20)
-                                    .accessibilityIdentifier("careerGameMessage")
-                                if match.completed { results(match, record: record) }
-                                else { VStack(spacing: 6) { controls(match) } }
-                            }.id("gameControls").background { measure("controls") }
+                            if match.completed {
+                                results(match, record: record)
+                            } else {
+                                arena(match, field: MatchPresentation.fieldSize(
+                                    available: CGSize(width: max(1, geometry.size.width - 16), height: geometry.size.height),
+                                    role: player.role, chromeHeight: chromeHeights.values.reduce(0, +) + 28))
+                                VStack(spacing: 6) {
+                                    MatchScoreStrip(match: match, pitchCount: player.role == .pitcher ? match.line.pitches : nil, pulse: pulse, pulseAt: pulseAt)
+                                    Text(match.lastManual.map { "\($0.grade) · \($0.outcome)" }
+                                         ?? (match.completed ? match.message : player.role == .batter ? "조준 → 투구 요청 → 타격" : "그립 선택 → 투구 준비 → 릴리스"))
+                                        .font(.system(.caption, design: .monospaced, weight: .bold))
+                                        .frame(maxWidth: .infinity, minHeight: 20)
+                                        .accessibilityIdentifier("careerGameMessage")
+                                    VStack(spacing: 6) { controls(match) }
+                                }.id("gameControls").background { measure("controls") }
+                            }
                         } else {
                             Text(error ?? "경기 불러오는 중")
                             Button("다시 확인") { load() }.buttonStyle(MatchPixelButtonStyle())
