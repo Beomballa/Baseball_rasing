@@ -194,3 +194,259 @@ import SwiftData
         XCTAssertEqual(PlayerInitialValues.breakingRating(["four-seam":100,"fork":35,"slider":55,"changeup":42]),49.8,accuracy:0.00001)
     }
 }
+
+@MainActor final class RawTrainingTests: XCTestCase {
+    private let kinds: [TrainingKind] = [.velocity, .control, .stuff, .stamina, .mental]
+    private func setup(_ context: ModelContext, role: PlayerRole = .pitcher) throws -> (CareerPlayer, CareerCalendarState, PlayerAbilities) {
+        var draft = PlayerDraft(); draft.name = "원본훈련"; draft.schoolID = "hs-ref-001"; draft.role = role
+        let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
+        return (player, try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first),
+                try XCTUnwrap(PlayerAbilityStore.profile(playerID: player.id, in: context)))
+    }
+    private func input(_ training: CareerTraining) -> TrainingInput {
+        let target = training.targets[training.scores.count]
+        switch training.selectedKind {
+        case .control: return TrainingInput(x: target.x, y: target.y)
+        case .stamina: return TrainingInput(footfalls: (0..<16).map { $0.isMultiple(of: 2) ? .left : .right })
+        case .mental: return TrainingInput(choice: RawTrainingRules.question(targets: training.targets, round: training.scores.count).answer)
+        default:
+            let goal = RawTrainingRules.goal(kind: training.selectedKind, target: target)
+            return TrainingInput(force: goal.force, angle: goal.angle)
+        }
+    }
+    private func attempt(_ player: CareerPlayer, _ state: CareerCalendarState, _ record: CareerTrainingRecord, _ context: ModelContext,
+                         save: CalendarProgression.Save = { try $0.save() }) throws {
+        try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: record.revision,
+                                        input: record.completed ? TrainingInput() : input(record.snapshot()), in: context, save: save)
+    }
+    func testRawScoringHasIndependentPerfectPartialWrongAndInvalidInputs() throws {
+        XCTAssertEqual(TrainingKind.stuff.initialDirection, 0)
+        XCTAssertEqual(TrainingKind.velocity.initialDirection, 35)
+        let fixed = TrainingTarget(x: 0.5, y: 0.5)
+        XCTAssertEqual(RawTrainingRules.directionScore(kind: .velocity, target: fixed, force: 75, angle: 35), 100)
+        XCTAssertEqual(RawTrainingRules.directionScore(kind: .velocity, target: fixed, force: 55, angle: 35), 50)
+        XCTAssertEqual(RawTrainingRules.directionScore(kind: .stuff, target: fixed, force: 50, angle: 180), 100)
+        XCTAssertEqual(RawTrainingRules.directionScore(kind: .stuff, target: fixed, force: 50, angle: 0), 0)
+        for kind in kinds {
+            var training = CareerTraining(playerID: UUID(), date: "2026-04-01", role: "pitcher", pitchCode: nil, before: 60, fatigue: 24, age: 16, calendarRevision: 1, kind: kind)
+            XCTAssertThrowsError(try training.attempt(TrainingInput(timing: 0.82)))
+            XCTAssertThrowsError(try training.attempt(TrainingInput(force: .nan, angle: 30)))
+            for _ in 0..<5 { try training.attempt(input(training)) }
+            XCTAssertEqual(training.scores, [100,100,100,100,100]); XCTAssertEqual(training.after, 60.2028)
+        }
+        var mental = CareerTraining(playerID: UUID(), date: "2026-04-01", role: "batter", pitchCode: nil, before: 55, fatigue: 24, age: 16, calendarRevision: 1, kind: .mental)
+        let answer = RawTrainingRules.question(targets: mental.targets, round: 0).answer
+        try mental.attempt(TrainingInput(choice: (answer + 1) % 3)); XCTAssertEqual(mental.scores, [0])
+        XCTAssertThrowsError(try mental.attempt(TrainingInput(choice: 3)))
+        let questions = (0..<5).map { RawTrainingRules.question(targets: mental.targets, round: $0).prompt }
+        XCTAssertEqual(Set(questions).count, 5)
+    }
+    func testAllRawGoalsAndBothRolesMentalGrowOnlyChosenValueAndSnapshotNewMatches() throws {
+        for role in PlayerRole.allCases { for kind in role == .batter ? [.mental] : kinds {
+            let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+            let (player, state, profile) = try setup(context, role: role)
+            let initial = profile.initialValues, fatigue = player.fatigue
+            let before = try kinds.map { role == .batter && $0 != .mental ? nil : try profile.value(for: $0) }
+            let base = [player.contact,player.power,player.discipline,player.speed,player.defense,player.arm]
+            let pitches = Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) })
+            let record = try CareerTrainingStore.start(player: player, state: state, kind: kind, in: context)
+            XCTAssertEqual(record.rulesVersion, "native-training-v4")
+            XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context))
+            XCTAssertThrowsError(try CareerMatchStore.start(player: player, state: state, in: context))
+            for _ in 0..<5 { try attempt(player, state, record, context) }
+            let saved = try record.snapshot()
+            XCTAssertEqual(saved.scores, [100,100,100,100,100]); XCTAssertGreaterThan(saved.after, saved.before)
+            for (index, other) in kinds.enumerated() where before[index] != nil {
+                XCTAssertEqual(try profile.value(for: other), other == kind ? saved.after : before[index])
+            }
+            XCTAssertEqual(base, [player.contact,player.power,player.discipline,player.speed,player.defense,player.arm])
+            XCTAssertEqual(profile.initialValues, initial); XCTAssertEqual(Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code,$0.mastery) }), pitches)
+            XCTAssertEqual(player.fatigue, min(100,fatigue+6)); XCTAssertTrue(state.hasAction(on: player.gameDate))
+            XCTAssertThrowsError(try attempt(player, state, record, context))
+            let result = record.payload
+            XCTAssertEqual(try CareerTrainingStore.start(player: player, state: state, kind: .pitch, in: context).payload, result)
+            let matchRecord = try CareerMatchStore.start(player: player, state: state, in: context)
+            let match = try matchRecord.snapshot(), stats = try XCTUnwrap(match.abilityStats)
+            XCTAssertEqual(stats.mental, profile.mental); XCTAssertEqual(stats.velocity, profile.velocity)
+            XCTAssertEqual(stats.control, profile.control); XCTAssertEqual(stats.stuff, profile.stuff); XCTAssertEqual(stats.stamina, profile.stamina)
+            XCTAssertEqual(stats.fatigue, player.fatigue)
+            profile.mental = 99; try context.save()
+            XCTAssertEqual(try CareerMatchStore.start(player: player,state: state,in: context).payload, matchRecord.payload)
+            XCTAssertEqual(try matchRecord.snapshot().abilityStats, stats)
+        } }
+    }
+    func testRoleRestrictionsAndPitchTrainingDoesNotGrowRawValues() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player,state,profile) = try setup(context,role:.batter)
+        for kind in kinds where kind != .mental { XCTAssertThrowsError(try CareerTrainingStore.start(player:player,state:state,kind:kind,in:context)) }
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerTrainingRecord>()),0); XCTAssertEqual(profile.mental,55)
+        var draft=PlayerDraft();draft.name="구종단독";draft.schoolID="hs-ref-001";draft.role = .pitcher
+        let pitcher=try CareerStore.create(draft,schools:SchoolCatalog.load(),in:context)
+        let calendar=try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first{$0.playerID==pitcher.id})
+        let pitcherProfile=try XCTUnwrap(PlayerAbilityStore.profile(playerID:pitcher.id,in:context)), original=try kinds.map{try pitcherProfile.value(for:$0)}
+        let record=try CareerTrainingStore.start(player:pitcher,state:calendar,pitchCode:"slider",in:context)
+        for _ in 0..<5 {try CareerTrainingStore.attempt(player:pitcher,state:calendar,record:record,revision:record.revision,input:TrainingInput(release:0.68),in:context)}
+        XCTAssertEqual(try kinds.map{try pitcherProfile.value(for:$0)},original)
+        XCTAssertGreaterThan(try XCTUnwrap(pitcher.pitches.first{$0.code=="slider"}).mastery,55)
+    }
+    func testEveryRawTaskResumesFromDiskWithoutRegeneratingOrPayingTwice() throws {
+        for kind in kinds {
+            let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+            defer {try? FileManager.default.removeItem(at:directory)}
+            let url=directory.appendingPathComponent("raw.store")
+            let pending=try autoreleasepool {
+                let container=try CareerStore.makeContainer(url:url), context=container.mainContext
+                let (player,state,_)=try setup(context)
+                let record=try CareerTrainingStore.start(player:player,state:state,kind:kind,in:context)
+                for _ in 0..<2 {try attempt(player,state,record,context)}
+                return record.payload
+            }
+            let completed=try autoreleasepool {
+                let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+                let player=try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first),state=try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let record=try CareerTrainingStore.start(player:player,state:state,kind:.pitch,in:context)
+                XCTAssertEqual(record.payload,pending);XCTAssertEqual(try record.snapshot().selectedKind,kind)
+                for _ in 0..<3 {try attempt(player,state,record,context)}
+                return record.payload
+            }
+            let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+            let player=try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first),state=try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let record=try CareerTrainingStore.start(player:player,state:state,kind:.mental,in:context)
+            XCTAssertEqual(record.payload,completed); XCTAssertTrue(state.hasAction(on:player.gameDate))
+            let value=try XCTUnwrap(PlayerAbilityStore.profile(playerID:player.id,in:context)).value(for:kind)
+            XCTAssertEqual(value,try record.snapshot().after)
+            XCTAssertThrowsError(try attempt(player,state,record,context));XCTAssertEqual(record.payload,completed)
+        }
+    }
+    func testStartIntermediateAndFinalSaveFailuresRollbackAllFiveRewards() throws {
+        enum Failure:Error {case injected}
+        for kind in kinds {
+            let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+            let (player,state,profile)=try setup(context), original=try profile.value(for:kind), initial=profile.initialValues, fatigue=player.fatigue
+            XCTAssertThrowsError(try CareerTrainingStore.start(player:player,state:state,kind:kind,in:context,save:{_ in throw Failure.injected}))
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerTrainingRecord>()),0);XCTAssertFalse(context.hasChanges)
+            let record=try CareerTrainingStore.start(player:player,state:state,kind:kind,in:context)
+            let payload=record.payload, revision=record.revision, calendarRevision=state.revision
+            XCTAssertThrowsError(try attempt(player,state,record,context,save:{_ in throw Failure.injected}))
+            XCTAssertEqual(record.payload,payload);XCTAssertEqual(record.revision,revision);XCTAssertEqual(state.revision,calendarRevision)
+            for _ in 0..<4 {try attempt(player,state,record,context)}
+            let fourth=record.payload
+            XCTAssertThrowsError(try attempt(player,state,record,context,save:{_ in throw Failure.injected}))
+            XCTAssertEqual(record.payload,fourth);XCTAssertFalse(record.completed);XCTAssertFalse(state.hasAction(on:player.gameDate))
+            XCTAssertEqual(try profile.value(for:kind),original);XCTAssertEqual(player.fatigue,fatigue);XCTAssertEqual(profile.initialValues,initial)
+            try attempt(player,state,record,context)
+            XCTAssertTrue(record.completed);XCTAssertEqual(try profile.value(for:kind),try record.snapshot().after)
+        }
+    }
+    func testMatchBalanceUsesIndependentStatsAndPressureOnce() throws {
+        func stats(mental:Double=55,velocity:Double=50,control:Double=50,stuff:Double=50,stamina:Double=60)->MatchAbilityStats {
+            MatchAbilityStats(mental:mental,velocity:velocity,control:control,stuff:stuff,stamina:stamina,fatigue:24)
+        }
+        XCTAssertEqual(stats(velocity:50).speed(code:"four-seam"),140)
+        XCTAssertEqual(stats(velocity:100).speed(code:"slider"),147)
+        XCTAssertLessThan(MatchDelivery(x:0.5,y:0.5,speed:160).duration,MatchDelivery(x:0.5,y:0.5,speed:120).duration)
+        XCTAssertEqual(stats(stamina:100).pitchCost,0.3,accuracy:0.000001);XCTAssertEqual(stats(stamina:0).pitchCost,0.5)
+        XCTAssertEqual(stats(control:0).controlWidth,0.8);XCTAssertEqual(stats(control:100).controlWidth,1.2,accuracy:0.000001)
+        XCTAssertEqual(stats(stuff:100).hitChance(quality:0.5),0.20,accuracy:0.000001)
+        XCTAssertEqual(stats(stuff:0).hitChance(quality:0.5),0.32,accuracy:0.000001)
+        XCTAssertEqual(stats(mental:100).execution(currentFatigue:24,pressure:true),1,accuracy:0.000001)
+        XCTAssertEqual(stats(mental:0).execution(currentFatigue:80,pressure:true),0.736,accuracy:0.000001)
+        var game=CareerMatch(random:42,isHome:true,role:"pitcher",appearance:true,contact:65,power:75,discipline:60,mastery:["four-seam":60])
+        game.controlVersion=2;game.abilityStats=stats(control:100,stamina:100)
+        let before=game.random, plan=game.delivery(pitchCode:"four-seam")
+        XCTAssertEqual(plan.speed,140);XCTAssertEqual(game.random,before)
+        XCTAssertEqual(game.releaseGoodWidth(mastery:60),0.144,accuracy:0.000001)
+        let quality=game.releaseQuality(0.75,mastery:60)
+        XCTAssertEqual(quality,1-0.07/0.288,accuracy:0.000001)
+        let control=game.automaticControl(.pitch,pitchCode:"four-seam")
+        var automatic=game, direct=game
+        try automatic.advance(.pitch,pitchCode:"four-seam")
+        try direct.advance(.pitch,pitchCode:"four-seam",control:control)
+        XCTAssertEqual(automatic,direct);XCTAssertEqual(direct.lastManual?.speed,140)
+        XCTAssertEqual(direct.fatigueCost,0.3,accuracy:0.000001)
+        var legacy=game;legacy.abilityStats=nil
+        XCTAssertEqual(legacy.delivery(pitchCode:"four-seam").speed,145)
+        XCTAssertEqual(legacy.releaseGoodWidth(mastery:60),0.12,accuracy:0.000001)
+        try legacy.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68))
+        XCTAssertEqual(legacy.fatigueCost,0.38,accuracy:0.000001)
+        var batter=CareerMatch(random:42,isHome:true,role:"batter",appearance:true,contact:65,power:75,discipline:60,mastery:[:])
+        batter.abilityStats=stats(mental:0);batter.half=1
+        XCTAssertEqual(batter.executionFactor,1)
+        batter.bases[1]=true;XCTAssertEqual(batter.executionFactor,0.92)
+        batter.abilityStats=stats(mental:100);XCTAssertEqual(batter.executionFactor,1)
+    }
+}
+
+extension RawTrainingTests {
+    func testEachRawAbilityChangesActualPitchAndPressureEvaluation() throws {
+        func game(control:Double=50,stuff:Double=50,stamina:Double=60,mental:Double=55,velocity:Double=50,seed:UInt64=42)->CareerMatch {
+            var game=CareerMatch(random:seed,isHome:true,role:"pitcher",appearance:true,contact:65,power:75,discipline:60,mastery:["four-seam":60])
+            game.controlVersion=2
+            game.abilityStats=MatchAbilityStats(mental:mental,velocity:velocity,control:control,stuff:stuff,stamina:stamina,fatigue:24)
+            return game
+        }
+        var inaccurate=game(control:0), accurate=game(control:100)
+        let target=accurate.delivery(pitchCode:"four-seam")
+        try inaccurate.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.82))
+        try accurate.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.82))
+        XCTAssertGreaterThan(try XCTUnwrap(accurate.lastManual).quality,try XCTUnwrap(inaccurate.lastManual).quality)
+        XCTAssertLessThan(abs(try XCTUnwrap(accurate.lastManual).x-target.x),abs(try XCTUnwrap(inaccurate.lastManual).x-target.x))
+        var weakHits=0, strongHits=0
+        for seed in UInt64(0)..<1000 {
+            var weak=game(stuff:0,seed:seed), strong=game(stuff:100,seed:seed)
+            try weak.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68))
+            try strong.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68))
+            weakHits += weak.line.hitsAllowed;strongHits += strong.line.hitsAllowed
+        }
+        XCTAssertGreaterThan(weakHits,strongHits)
+        var tired=game(stamina:0), enduring=game(stamina:100)
+        try tired.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68))
+        try enduring.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68))
+        XCTAssertEqual(tired.fatigueCost,0.5);XCTAssertEqual(enduring.fatigueCost,0.3)
+        var unsettled=game(mental:0), focused=game(mental:100)
+        unsettled.bases[1]=true;focused.bases[1]=true
+        try unsettled.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.75))
+        try focused.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.75))
+        XCTAssertGreaterThan(try XCTUnwrap(focused.lastManual).quality,try XCTUnwrap(unsettled.lastManual).quality)
+        let slow=game(velocity:50).delivery(pitchCode:"four-seam"), faster=game(velocity:50.2).delivery(pitchCode:"four-seam")
+        XCTAssertEqual(slow.speed,faster.speed);XCTAssertLessThan(faster.duration,slow.duration)
+        XCTAssertEqual(faster.exactSpeed,140.08)
+    }
+    func testNewAbilityMatchDiskResumeAndFinalResultAreAppliedOnce() throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let url=directory.appendingPathComponent("new-match.store")
+        let pending=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+            let (player,state,_)=try setup(context)
+            let training=try CareerTrainingStore.start(player:player,state:state,kind:.mental,in:context)
+            for _ in 0..<5 {try attempt(player,state,training,context)}
+            let record=try CareerMatchStore.start(player:player,state:state,in:context)
+            try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.75),in:context)
+            return try record.snapshot()
+        }
+        let finished=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+            let player=try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first),state=try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let record=try CareerMatchStore.start(player:player,state:state,in:context)
+            XCTAssertEqual(try record.snapshot(),pending)
+            let profile=try XCTUnwrap(PlayerAbilityStore.profile(playerID:player.id,in:context)); profile.stuff=99;try context.save()
+            XCTAssertEqual(try record.snapshot().abilityStats,pending.abilityStats)
+            try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:.automatic,in:context)
+            XCTAssertTrue(record.completed)
+            let fatigue=player.fatigue,payload=record.payload
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:.automatic,in:context))
+            XCTAssertEqual(player.fatigue,fatigue);XCTAssertEqual(record.payload,payload)
+            return (try record.snapshot(),fatigue)
+        }
+        let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+        let player=try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first),state=try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerMatchRecord>()),1)
+        XCTAssertEqual(try CareerMatchStore.start(player:player,state:state,in:context).snapshot(),finished.0)
+        XCTAssertEqual(player.fatigue,finished.1)
+        try CalendarProgression.advanceDay(player:player,state:state,revision:state.revision,in:context)
+        XCTAssertEqual(player.gameDate,"2026-04-02")
+    }
+}

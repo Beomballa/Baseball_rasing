@@ -28,6 +28,7 @@ struct CareerMatch: Codable, Equatable {
     var appliedFatigueCost: Int { Int(((fatigueCost * 10_000).rounded() / 10_000).rounded(.up)) }
     var message = "경기 시작"
     var completed = false
+    var abilityStats: MatchAbilityStats?
     var fieldStats: MatchFieldStats?
     var lastFieldPlay: MatchFieldPlay?
     var trainingEffectsVersion: Int?
@@ -39,6 +40,21 @@ struct CareerMatch: Codable, Equatable {
     var opponentScore: Int { isHome ? awayScore : homeScore }
     var inningLabel: String { completed ? "경기 종료" : "\(half / 2 + 1)회 \(half % 2 == 0 ? "초" : "말")" }
 
+    var executionFactor: Double {
+        guard let stats = abilityStats, stats.version == 1 else { return 1 }
+        let pressure = bases[1] || bases[2] || (half >= 12 && abs(homeScore - awayScore) <= 2)
+        return stats.execution(currentFatigue: min(100, Double(stats.fatigue) + fatigueCost), pressure: pressure)
+    }
+    func releaseGoodWidth(mastery: Double) -> Double {
+        ManualMatchRules.goodWidth(mastery: mastery) * (abilityStats?.controlWidth ?? 1) * executionFactor
+    }
+    func releasePerfectWidth(mastery: Double) -> Double {
+        ManualMatchRules.perfectWidth(mastery: mastery) * (abilityStats?.controlWidth ?? 1) * executionFactor
+    }
+    func releaseQuality(_ phase: Double, mastery: Double) -> Double {
+        max(0, 1 - abs(phase - ManualMatchRules.releaseCenter) / (releaseGoodWidth(mastery: mastery) * 2))
+    }
+
     private mutating func roll() -> Double {
         random = random &* 6364136223846793005 &+ 1442695040888963407
         return Double(random >> 11) / 9007199254740992
@@ -48,9 +64,10 @@ struct CareerMatch: Codable, Equatable {
         var copy = self
         let x = copy.roll(), y = copy.roll()
         let speeds = ["four-seam": 145, "slider": 132, "changeup": 125, "fork": 129]
+        let actualSpeed = role == "pitcher" && abilityStats?.version == 1 ? abilityStats?.speedValue(code: pitchCode ?? "four-seam") : nil
         return MatchDelivery(x: role == "pitcher" ? 0.25 + x * 0.5 : 0.05 + x * 0.9,
                              y: role == "pitcher" ? 0.25 + y * 0.5 : 0.05 + y * 0.9,
-                             speed: speeds[pitchCode ?? "four-seam"] ?? 135)
+                             speed: actualSpeed.map { Int($0.rounded()) } ?? speeds[pitchCode ?? "four-seam"] ?? 135, exactSpeed: actualSpeed)
     }
 
     func automaticControl(_ input: MatchInput, pitchCode: String?) -> ManualMatchInput {
@@ -131,16 +148,20 @@ struct CareerMatch: Codable, Equatable {
         let directionX = roll() < 0.5 ? -1.0 : 1.0
         let directionY = roll() < 0.5 ? -1.0 : 1.0
         let masteryValue = mastery[pitchCode ?? ""] ?? 60
-        let quality = pitcher ? ManualMatchRules.releaseQuality(control.release ?? 0, mastery: masteryValue)
-            : ManualMatchRules.battingQuality(input: control, delivery: plan, contact: contact)
-        let scatter = pitcher ? (1 - quality) * 0.5 : 0
+        let quality = pitcher ? releaseQuality(control.release ?? 0, mastery: masteryValue)
+            : ManualMatchRules.battingQuality(input: control, delivery: plan, contact: contact, execution: executionFactor)
+        let scatter = pitcher ? (1 - quality) * 0.5 * (abilityStats?.scatterScale ?? 1) : 0
         let x = plan.x + directionX * scatter, y = plan.y + directionY * scatter
         let inZone = ManualMatchRules.isStrike(x: x, y: y)
         let releaseError = abs((control.release ?? 0) - ManualMatchRules.releaseCenter)
-        let grade = pitcher ? (releaseError <= ManualMatchRules.perfectWidth(mastery: masteryValue) ? "PERFECT"
-            : releaseError <= ManualMatchRules.goodWidth(mastery: masteryValue) ? "GOOD" : "MISS")
+        let grade = pitcher ? (releaseError <= releasePerfectWidth(mastery: masteryValue) ? "PERFECT"
+            : releaseError <= releaseGoodWidth(mastery: masteryValue) ? "GOOD" : "MISS")
             : input == .watch ? "지켜보기" : quality > 0.7 ? "정타" : quality > 0 ? "컨택" : "헛스윙"
-        if pitcher { line.pitches += 1; fatigueCost += 0.38 }
+        if pitcher {
+            line.pitches += 1
+            if let stats = abilityStats { fatigueCost = TrainingRules.round(fatigueCost + stats.pitchCost) }
+            else { fatigueCost += 0.38 }
+        }
         else if input != .watch { fatigueCost += 1 }
         let swing = pitcher ? (inZone || roll() < 0.22) : input != .watch
         if !swing {
@@ -149,10 +170,10 @@ struct CareerMatch: Codable, Equatable {
         } else if !pitcher && quality == 0 {
             strikes += 1; message = "헛스윙"
         } else {
-            let hitChance = pitcher ? 0.36 - quality * 0.20 : 0.10 + contact * 0.001 + quality * 0.35
+            let hitChance = pitcher ? (abilityStats?.hitChance(quality: quality) ?? (0.36 - quality * 0.20)) : 0.10 + contact * 0.001 + quality * 0.35
             let value = roll()
             if value < hitChance {
-                let homeRun = input != .bunt && roll() < (pitcher ? 0.16 - quality * 0.10 : power / 500 * quality)
+                let homeRun = input != .bunt && roll() < (pitcher ? (abilityStats?.homeRunChance(quality: quality) ?? (0.16 - quality * 0.10)) : power / 500 * quality)
                 endPlate(homeRun ? "홈런" : "안타", batter: !pitcher, pitcher: pitcher)
             } else if !pitcher || value < hitChance + 0.35 {
                 endPlate("범타", batter: !pitcher, pitcher: pitcher)

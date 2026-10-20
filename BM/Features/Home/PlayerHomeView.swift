@@ -56,7 +56,7 @@ struct PlayerHomeView: View {
                         CareerTrainingView(player: player, calendar: calendar)
                     } label: {
                         Text(todayTraining.map { $0.completed ? "오늘 훈련 결과" : "훈련 이어하기 · \((try? $0.snapshot().scores.count) ?? 0)/5" }
-                             ?? (player.role == .batter ? "타격 · 주루 · 수비 훈련" : "구종 · 주루 · 수비 훈련"))
+                             ?? (player.role == .batter ? "타격 · 수비 · 멘탈 훈련" : "투구 · 수비 · 멘탈 훈련"))
                     }.buttonStyle(GameButtonStyle()).accessibilityIdentifier("openTraining")
                         .disabled(calendar.hasAction(on: player.gameDate) && todayTraining == nil)
                     if let latest = trainingRecords.first(where: { $0.playerID == player.id && $0.completed }),

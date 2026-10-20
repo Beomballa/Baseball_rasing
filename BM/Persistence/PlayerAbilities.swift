@@ -36,6 +36,10 @@ enum CareerSchemaV5: VersionedSchema {
 typealias PlayerAbilities = CareerSchemaV5.PlayerAbilities
 
 @MainActor enum PlayerAbilityStore {
+    static func profile(playerID: UUID, in context: ModelContext) throws -> PlayerAbilities? {
+        try context.fetch(FetchDescriptor<PlayerAbilities>(predicate: #Predicate { $0.playerID == playerID })).first
+    }
+
     static func addMissing(in context: ModelContext, save: CalendarProgression.Save = { try $0.save() }) throws {
         let players = try context.fetch(FetchDescriptor<CareerPlayer>())
         let profiles = try context.fetch(FetchDescriptor<PlayerAbilities>())
@@ -54,5 +58,32 @@ typealias PlayerAbilities = CareerSchemaV5.PlayerAbilities
         }
         player.speed = values.speed; player.defense = values.defense; player.arm = values.arm
         for pitch in player.pitches { if let mastery = values.pitches[pitch.code] { pitch.mastery = mastery } }
+    }
+}
+
+
+extension PlayerAbilities {
+    func value(for kind: TrainingKind) throws -> Double {
+        let result: Double?
+        switch kind {
+        case .mental: result = mental
+        case .velocity: result = velocity
+        case .control: result = control
+        case .stuff: result = stuff
+        case .stamina: result = stamina
+        default: throw TrainingError.invalidInput
+        }
+        guard let result, result.isFinite, (0...100).contains(result) else { throw TrainingError.invalidRecord }
+        return result
+    }
+    func grow(_ kind: TrainingKind, to value: Double) throws {
+        switch kind {
+        case .mental: mental = value
+        case .velocity: velocity = value
+        case .control: control = value
+        case .stuff: stuff = value
+        case .stamina: stamina = value
+        default: throw TrainingError.invalidInput
+        }
     }
 }

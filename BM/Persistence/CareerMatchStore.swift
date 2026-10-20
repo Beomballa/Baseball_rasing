@@ -63,6 +63,15 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         var match = CareerMatch(random: seed, isHome: fixture.homeID == player.schoolID, role: player.roleRaw,
                                 appearance: fixture.isAppearance(for: player.role), contact: player.contact, power: player.power,
                                 discipline: player.discipline, mastery: Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }))
+        // Old schema fixtures and saved matches retain their original rules.
+        if context.container.schema.entities.contains(where: { $0.name == "PlayerAbilities" }),
+           let profile = try PlayerAbilityStore.profile(playerID: player.id, in: context) {
+            match.abilityStats = MatchAbilityStats(mental: try profile.value(for: .mental),
+                velocity: player.role == .pitcher ? try profile.value(for: .velocity) : nil,
+                control: player.role == .pitcher ? try profile.value(for: .control) : nil,
+                stuff: player.role == .pitcher ? try profile.value(for: .stuff) : nil,
+                stamina: player.role == .pitcher ? try profile.value(for: .stamina) : nil, fatigue: player.fatigue)
+        }
         // Non-appearance team games are only simulated after explicit confirmation, not on screen entry.
         match.controlVersion = 2
         match.trainingEffectsVersion = 1

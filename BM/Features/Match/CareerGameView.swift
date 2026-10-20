@@ -78,7 +78,7 @@ struct CareerGameView: View {
                     pulse = MatchPresentation.countPulse(result.outcome); pulseAt = Date()
                 }
                 if player.role == .pitcher {
-                    let started = scene.demonstrate(reduceMotion: reduced, flightDuration: 1.35 * 145 / Double(result.speed),
+                    let started = scene.demonstrate(reduceMotion: reduced, flightDuration: previous.delivery(pitchCode: result.pitchCode).duration,
                                           x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
                                           outcome: result.outcome, completion: showResult)
                     if !started { showResult() }
@@ -122,8 +122,8 @@ struct CareerGameView: View {
                 }
                 let mastery = match.mastery[pitchCode] ?? 60
                 MatchTimingGauge(phase: clock.phase, center: ManualMatchRules.releaseCenter,
-                                 good: ManualMatchRules.goodWidth(mastery: mastery),
-                                 perfect: ManualMatchRules.perfectWidth(mastery: mastery), label: "릴리스 · 숙련도 \(mastery.formatted(.number.precision(.fractionLength(1))))")
+                                 good: match.releaseGoodWidth(mastery: mastery),
+                                 perfect: match.releasePerfectWidth(mastery: mastery), label: "릴리스 · 숙련도 \(mastery.formatted(.number.precision(.fractionLength(1))))")
                     .accessibilityIdentifier("releaseGauge")
                 Button(clock.running ? "지금 릴리스" : "투구 준비") {
                     if clock.running { resolve() } else { begin() }
@@ -136,7 +136,7 @@ struct CareerGameView: View {
                     }
                 }
                 MatchTimingGauge(phase: clock.phase, center: MatchDelivery.contactPhase,
-                                 good: ManualMatchRules.timingWidth(contact: match.contact), perfect: 0.025, label: "공 도착 · 노란 구간에 타격")
+                                 good: ManualMatchRules.timingWidth(contact: match.contact) * match.executionFactor, perfect: 0.025, label: "공 도착 · 노란 구간에 타격")
                     .accessibilityIdentifier("battingTimingGauge")
                 Button(clock.running ? (battingAction == .watch ? "공을 지켜보는 중" : "지금 \(battingAction.label)") : "투구 요청") {
                     if clock.running { resolve() } else { begin() }

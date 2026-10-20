@@ -1,10 +1,16 @@
 import Foundation
 
 enum TrainingKind: String, Codable, CaseIterable {
-    case contact, power, discipline, pitch, speed, defense, arm
+    case contact, power, discipline, pitch, speed, defense, arm, velocity, control, stuff, stamina, mental
+    var initialDirection: Double { self == .stuff ? 0 : 35 }
+    var isRaw: Bool { [.velocity, .control, .stuff, .stamina, .mental].contains(self) }
+    func allows(_ role: String) -> Bool {
+        guard ["batter", "pitcher"].contains(role) else { return false }
+        return self == .mental || isField || (role == "pitcher" ? [.pitch, .velocity, .control, .stuff, .stamina].contains(self) : [.contact, .power, .discipline].contains(self))
+    }
     var isField: Bool { [.speed, .defense, .arm].contains(self) }
     var label: String {
-        switch self { case .contact: "컨택"; case .power: "파워"; case .discipline: "선구안"; case .pitch: "구종"; case .speed: "스피드"; case .defense: "수비"; case .arm: "송구" }
+        switch self { case .contact: "컨택"; case .power: "파워"; case .discipline: "선구안"; case .pitch: "구종"; case .speed: "스피드"; case .defense: "수비"; case .arm: "송구"; case .velocity: "구속"; case .control: "제구"; case .stuff: "구위"; case .stamina: "지구력"; case .mental: "멘탈" }
     }
 }
 
@@ -20,6 +26,7 @@ struct TrainingInput: Codable, Equatable {
     var calledStrike: Bool?
     var footfalls: [SprintFoot]?
     var base: Int?
+    var choice: Int?
 }
 
 struct TrainingTarget: Codable, Equatable {
@@ -78,10 +85,24 @@ struct CareerTraining: Codable, Equatable {
         let numbers = [input.x, input.y] + [input.timing, input.release].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { throw TrainingError.invalidInput }
         let score: Double
-        guard selectedKind == .speed || input.footfalls == nil,
+        guard selectedKind.allows(role), selectedKind == .mental || input.choice == nil,
+              [.speed, .stamina].contains(selectedKind) || input.footfalls == nil,
               selectedKind == .arm || input.base == nil else { throw TrainingError.invalidInput }
         switch selectedKind {
-        case .speed:
+        case .mental:
+            guard input.timing == nil, input.release == nil, input.force == nil, input.angle == nil, input.calledStrike == nil,
+                  let choice = input.choice, (0...2).contains(choice) else { throw TrainingError.invalidInput }
+            score = choice == RawTrainingRules.question(targets: targets, round: scores.count).answer ? 100 : 0
+        case .velocity, .stuff:
+            guard input.timing == nil, input.release == nil, input.calledStrike == nil,
+                  let force = input.force, let angle = input.angle, force.isFinite, angle.isFinite,
+                  (0...100).contains(force), (0...360).contains(angle) else { throw TrainingError.invalidInput }
+            score = RawTrainingRules.directionScore(kind: selectedKind, target: targets[scores.count], force: force, angle: angle)
+        case .control:
+            guard input.timing == nil, input.release == nil, input.force == nil, input.angle == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
+            let target = targets[scores.count]
+            score = max(0, 1 - hypot(input.x - target.x, input.y - target.y) / 0.3) * 100
+        case .speed, .stamina:
             guard input.timing == nil, input.release == nil, input.force == nil, input.angle == nil, input.calledStrike == nil,
                   let footfalls = input.footfalls else { throw TrainingError.invalidInput }
             score = min(100, Double(TrainingRules.steps(footfalls)) / 16 * 100)
@@ -193,5 +214,36 @@ enum TrainingError: LocalizedError {
         case .invalidRecord: "훈련 기록을 읽을 수 없습니다. 기존 저장은 유지합니다."
         case .limit: "이미 최대 능력치입니다. 다른 능력치·구종이나 휴식을 선택해 주세요."
         }
+    }
+}
+
+
+struct MentalTrainingQuestion {
+    let prompt: String
+    let choices: [String]
+    let answer: Int
+}
+
+enum RawTrainingRules {
+    static let questions = [
+        MentalTrainingQuestion(prompt: "실책 직후, 다음 플레이를 앞두고 있다", choices: ["호흡을 고르고 다음 공에 집중", "지난 실수를 계속 복기", "급하게 만회하려고 서두르기"], answer: 0),
+        MentalTrainingQuestion(prompt: "접전 후반, 관중의 야유가 들린다", choices: ["관중에게 반응하기", "내 루틴과 다음 작전에 집중", "계획 없이 빠르게 진행"], answer: 1),
+        MentalTrainingQuestion(prompt: "몸이 무겁고 통증이 느껴진다", choices: ["무조건 참고 강행", "숨기고 개인 훈련 추가", "코치에게 알리고 상태 확인"], answer: 2),
+        MentalTrainingQuestion(prompt: "판정이 아쉽지만 경기는 계속된다", choices: ["확인 후 다음 플레이 준비", "항의 생각에 머무르기", "다음 공을 무조건 강공"], answer: 0),
+        MentalTrainingQuestion(prompt: "득점권 위기, 동료가 작전을 제안한다", choices: ["혼자 감으로 결정", "작전을 확인하고 호흡 정리", "준비 없이 바로 시작"], answer: 1)
+    ]
+    // Saved targets fix the question order and controls across resume/retry.
+    static func question(targets: [TrainingTarget], round: Int) -> MentalTrainingQuestion {
+        questions[(Int(targets[0].x * 100) + round) % questions.count]
+    }
+    static func goal(kind: TrainingKind, target: TrainingTarget) -> (force: Double, angle: Double) {
+        if kind == .velocity { return (60 + (target.x * 6).rounded() * 5, 15 + (target.y * 8).rounded() * 5) }
+        return ((target.y * 10).rounded() * 10, (target.x * 12).rounded() * 30)
+    }
+    static func directionScore(kind: TrainingKind, target: TrainingTarget, force: Double, angle: Double) -> Double {
+        let goal = goal(kind: kind, target: target)
+        let difference = abs(angle - goal.angle).truncatingRemainder(dividingBy: 360)
+        let error = min(difference, 360 - difference)
+        return max(0, 1 - max(abs(force - goal.force) / 40, error / (kind == .velocity ? 35 : 90))) * 100
     }
 }

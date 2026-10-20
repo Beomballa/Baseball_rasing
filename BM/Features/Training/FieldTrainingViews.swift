@@ -6,13 +6,14 @@ struct TrainingAdjustment: View {
     let range: ClosedRange<Double>
     let suffix: String
     let identifier: String
+    var step: Double = 5
     var body: some View {
         VStack(spacing: 6) {
             Text("\(label) \(Int(value))\(suffix)").font(.caption.bold()).monospacedDigit()
             HStack(spacing: 8) {
-                Button("−") { value = max(range.lowerBound, value - 5) }
+                Button("−") { value = max(range.lowerBound, value - step) }
                     .accessibilityLabel(label + " 줄이기").accessibilityIdentifier(identifier + "Down").disabled(value <= range.lowerBound)
-                Button("+") { value = min(range.upperBound, value + 5) }
+                Button("+") { value = min(range.upperBound, value + step) }
                     .accessibilityLabel(label + " 늘리기").accessibilityIdentifier(identifier + "Up").disabled(value >= range.upperBound)
             }.buttonStyle(MatchPixelButtonStyle())
         }
@@ -76,5 +77,63 @@ struct FieldTrainingBoard: View {
             .accessibilityAction(named: "오른쪽") { if kind == .defense && !locked { x = min(1, x + 0.05) } }
             .accessibilityAction(named: "위") { if kind == .defense && !locked { y = max(0, y - 0.05) } }
             .accessibilityAction(named: "아래") { if kind == .defense && !locked { y = min(1, y + 0.05) } }
+    }
+}
+
+
+struct RawTrainingBoard: View {
+    let kind: TrainingKind
+    let training: CareerTraining?
+    let steps: Int
+    @Binding var x: Double
+    @Binding var y: Double
+    let locked: Bool
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                if kind == .stamina {
+                    FieldTrainingBoard(kind: .speed, target: nil, base: 1, angle: 0, force: 0,
+                                       steps: steps, x: $x, y: $y, locked: locked)
+                } else {
+                    Rectangle().fill(Color(hex: 0x2b684b))
+                    // Pixel lanes connect the controls to a practice field rather than a settings form.
+                    Canvas { context, size in
+                        for row in stride(from: 0, to: Int(size.height), by: 24) {
+                            context.fill(Path(CGRect(x: 0, y: row, width: Int(size.width), height: 1)), with: .color(GameTheme.paper.opacity(0.12)))
+                        }
+                    }.allowsHitTesting(false)
+                    if let training, !training.completed {
+                        let target = training.targets[training.scores.count]
+                        if kind == .control {
+                            ZStack {
+                                BattingAimZone(x: $x, y: $y, locked: locked)
+                                Rectangle().strokeBorder(Color(hex: 0x82e6b2), lineWidth: 3).frame(width: 20, height: 20)
+                                    .position(x: geometry.size.width * 0.8 * target.x, y: geometry.size.height * 0.8 * target.y)
+                                    .allowsHitTesting(false)
+                            }.frame(width: geometry.size.width * 0.8, height: geometry.size.height * 0.8)
+                        } else if kind == .mental {
+                            VStack(spacing: 18) {
+                                PixelPlayer(appearance: PlayerAppearance()).frame(width: 48, height: 66)
+                                Text(RawTrainingRules.question(targets: training.targets, round: training.scores.count).prompt)
+                                    .font(.headline).multilineTextAlignment(.center)
+                            }.padding(20).accessibilityIdentifier("mentalScenario")
+                        } else {
+                            let goal = RawTrainingRules.goal(kind: kind, target: target)
+                            VStack(spacing: 18) {
+                                Text(kind == .stuff ? "SPIN LAB" : "POWER THROW").font(.title2.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                                PixelPlayer(appearance: PlayerAppearance()).frame(width: 48, height: 66)
+                                Text("목표 \(Int(goal.force))% · \(Int(goal.angle))°").font(.headline.monospaced()).accessibilityIdentifier("rawTrainingTarget")
+                                Text(kind == .stuff ? "목표 회전 방향과 강도를 맞추세요" : "목표 힘과 발사 방향을 맞추세요").font(.caption)
+                            }.padding(12)
+                        }
+                    } else {
+                        VStack(spacing: 16) {
+                            PixelPlayer(appearance: PlayerAppearance()).frame(width: 48, height: 66)
+                            Text(kind.label + " TRAINING").font(.headline.monospaced()).foregroundStyle(GameTheme.gold)
+                        }
+                    }
+                }
+            }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("rawTrainingBoard")
     }
 }

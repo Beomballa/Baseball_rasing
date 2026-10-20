@@ -190,6 +190,62 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","오늘 행동 미사용"),object:app.staticTexts["calendarAction"])],timeout:5),.completed)
     }
 
+    @MainActor private func trainRaw(_ app: XCUIApplication, kind: String, pitcher: Bool, nextDay: Bool = true) {
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        app.segmentedControls["trainingCategoryPicker"].buttons[pitcher ? "투구·멘탈" : "멘탈"].tap()
+        app.segmentedControls["trainingKindPicker"].buttons[kind].tap()
+        app.buttons["startTraining"].tap()
+        let action = app.buttons[kind == "멘탈" ? "mentalChoice-0" : "trainingAttempt"]
+        XCTAssertTrue(action.waitForExistence(timeout: 3)); XCTAssertTrue(action.isHittable)
+        let field = app.otherElements["trainingField"].firstMatch, window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(field.frame.minX, window.minX); XCTAssertLessThanOrEqual(field.frame.maxX, window.maxX)
+        XCTAssertLessThanOrEqual(action.frame.maxY, window.maxY)
+        if kind == "멘탈" { XCTAssertLessThanOrEqual(app.buttons["mentalChoice-2"].frame.maxY, window.maxY) }
+        if kind == "구속" || kind == "구위" { app.buttons["rawForceUp"].tap(); app.buttons["rawAngleUp"].tap() }
+        if kind == "제구" { field.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.4)).tap() }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = (pitcher ? "Pitcher " : "Batter ") + kind + " raw training"; shot.lifetime = .keepAlways; add(shot)
+        for round in 0..<5 {
+            if !pitcher && round == 2 {
+                let scenario = app.otherElements["mentalScenario"].label
+                app.terminate(); app.launch()
+                XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+                reveal(app.buttons["openTraining"], in: app)
+                XCTAssertTrue(app.buttons["openTraining"].label.contains("2/5")); app.buttons["openTraining"].tap()
+                XCTAssertEqual(app.otherElements["mentalScenario"].label, scenario)
+            }
+            if kind == "멘탈" { app.buttons["mentalChoice-0"].tap() }
+            else {
+                app.buttons["trainingAttempt"].tap()
+                if kind == "지구력" {
+                    app.buttons["sprintLeft"].tap(); app.buttons["sprintRight"].tap()
+                    if round < 4 {
+                        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["trainingAttempt"])], timeout: 7), .completed)
+                    } else { XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 7)) }
+                }
+            }
+        }
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        let saved = app.staticTexts["trainingGrowth"].label
+        let result = XCTAttachment(screenshot: app.screenshot()); result.name = kind + " raw growth saved"; result.lifetime = .keepAlways; add(result)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        reveal(app.staticTexts["homeTrainingGrowth"], in: app)
+        XCTAssertTrue(app.staticTexts["homeTrainingGrowth"].label.contains(kind))
+        let identifier = ["구속":"homeVelocity", "제구":"homeControl", "구위":"homeStuff", "지구력":"homeStamina", "멘탈":"homeMental"][kind]!
+        let row = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        reveal(row, in: app)
+        XCTAssertTrue(row.label.contains(saved.components(separatedBy: "→").last!.trimmingCharacters(in: .whitespaces)))
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3)); XCTAssertEqual(app.staticTexts["trainingGrowth"].label, saved)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        reveal(app.buttons["restToday"], in: app); XCTAssertFalse(app.buttons["restToday"].isEnabled)
+        if nextDay {
+            XCTAssertTrue(app.buttons["advanceDay"].isEnabled); app.buttons["advanceDay"].tap()
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "오늘 행동 미사용"), object: app.staticTexts["calendarAction"])], timeout: 5), .completed)
+        }
+    }
+
     @MainActor private func chooseArchetype(_ app: XCUIApplication, pitcher: Bool) {
         let options = pitcher ? ["control", "stuff", "endurance"] : ["contact", "onBase", "slugger"]
         let labels = pitcher ? ["제구형", "구위형", "지구력형"] : ["컨택형", "출루형", "장타형"]
@@ -303,6 +359,7 @@ final class CareerFlowTests: XCTestCase {
         trainField(app,kind:"스피드")
         trainField(app,kind:"수비")
         trainField(app,kind:"송구")
+        trainRaw(app, kind:"멘탈", pitcher:false, nextDay:false)
         reveal(app.buttons["createOtherRole"], in: app)
         app.buttons["createOtherRole"].tap()
         let pitcherName = app.textFields["playerName"]
@@ -346,5 +403,8 @@ final class CareerFlowTests: XCTestCase {
         app.buttons["advanceDay"].tap()
         XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","오늘 행동 미사용"),object:app.staticTexts["calendarAction"])],timeout:5),.completed)
         trainField(app,kind:"송구",pitcher:true)
+        for kind in ["구속", "제구", "구위", "지구력", "멘탈"] {
+            trainRaw(app,kind:kind,pitcher:true,nextDay:kind != "멘탈")
+        }
     }
 }
