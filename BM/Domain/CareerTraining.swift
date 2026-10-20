@@ -1,10 +1,20 @@
 import Foundation
 
+enum TrainingKind: String, Codable, CaseIterable {
+    case contact, power, discipline, pitch
+    var label: String {
+        switch self { case .contact: "컨택"; case .power: "파워"; case .discipline: "선구안"; case .pitch: "구종" }
+    }
+}
+
 struct TrainingInput: Codable, Equatable {
     var x = 0.5
     var y = 0.5
     var timing: Double?
     var release: Double?
+    var force: Double?
+    var angle: Double?
+    var calledStrike: Bool?
 }
 
 struct TrainingTarget: Codable, Equatable {
@@ -17,6 +27,8 @@ struct CareerTraining: Codable, Equatable {
     let date: String
     let role: String
     let pitchCode: String?
+    let kind: TrainingKind?
+    var selectedKind: TrainingKind { kind ?? (pitchCode == nil ? .contact : .pitch) }
     let before: Double
     let fatigue: Int
     let age: Int
@@ -27,24 +39,50 @@ struct CareerTraining: Codable, Equatable {
     var average: Double { scores.isEmpty ? 0 : Double(scores.reduce(0, +)) / Double(scores.count) }
     var after: Double { completed ? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil) : before }
     var gain: Double { TrainingRules.round(after - before) }
-    var title: String { pitchCode == nil ? "컨택 훈련" : "구종 훈련" }
+    var title: String { selectedKind.label + " 훈련" }
 
-    init(playerID: UUID, date: String, role: String, pitchCode: String?, before: Double, fatigue: Int, age: Int, calendarRevision: Int) {
+    init(playerID: UUID, date: String, role: String, pitchCode: String?, before: Double, fatigue: Int, age: Int, calendarRevision: Int, kind: TrainingKind? = nil) {
         self.playerID = playerID; self.date = date; self.role = role; self.pitchCode = pitchCode
+        self.kind = kind
         self.before = before; self.fatigue = fatigue; self.age = age; self.calendarRevision = calendarRevision
-        var seed = (playerID.uuidString + date + (pitchCode ?? "contact")).utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+        var seed = (playerID.uuidString + date + (kind?.rawValue ?? pitchCode ?? "contact")).utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         func roll() -> Double { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Double(seed >> 11) / 9007199254740992 }
-        targets = (0..<5).map { _ in TrainingTarget(x: 0.25 + roll() * 0.5, y: 0.25 + roll() * 0.5) }
+        var inZone = [true, true, true, false, false]
+        if kind == .discipline {
+            for index in stride(from: 4, through: 1, by: -1) { inZone.swapAt(index, Int(roll() * Double(index + 1))) }
+        }
+        targets = (0..<5).map { index in
+            if kind == .discipline && !inZone[index] {
+                return TrainingTarget(x: roll() < 0.5 ? 0.08 : 0.92, y: 0.1 + roll() * 0.8)
+            }
+            return TrainingTarget(x: 0.25 + roll() * 0.5, y: 0.25 + roll() * 0.5)
+        }
     }
     mutating func attempt(_ input: TrainingInput) throws {
         guard !completed else { throw TrainingError.finished }
         let numbers = [input.x, input.y] + [input.timing, input.release].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { throw TrainingError.invalidInput }
         let score: Double
-        if pitchCode != nil {
+        switch selectedKind {
+        case .power:
+            guard role == "batter", input.timing == nil, input.release == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
+            if input.force == nil && input.angle == nil { score = 0 }
+            else {
+                guard let force = input.force, let angle = input.angle, force.isFinite, angle.isFinite,
+                      (0...100).contains(force), (15...55).contains(angle) else { throw TrainingError.invalidInput }
+                let target = TrainingRules.powerTarget(scores.count)
+                score = max(0, 1 - abs(TrainingRules.distance(force: force, angle: angle) - target) / (target * 0.35)) * 100
+            }
+        case .discipline:
+            guard role == "batter", input.timing == nil, input.release == nil, input.force == nil, input.angle == nil else { throw TrainingError.invalidInput }
+            let target = targets[scores.count]
+            score = input.calledStrike == ManualMatchRules.isStrike(x: target.x, y: target.y) ? 100 : 0
+        case .pitch:
+            guard input.force == nil, input.angle == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
             guard role == "pitcher", input.timing == nil, let release = input.release else { throw TrainingError.invalidInput }
             score = ManualMatchRules.releaseQuality(release, mastery: before) * 100
-        } else {
+        case .contact:
+            guard input.force == nil, input.angle == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
             guard role == "batter", input.release == nil else { throw TrainingError.invalidInput }
             if let timing = input.timing {
                 let target = targets[scores.count]
@@ -58,6 +96,8 @@ struct CareerTraining: Codable, Equatable {
 }
 
 enum TrainingRules {
+    static func powerTarget(_ round: Int) -> Double { [90, 105, 80, 115, 95][round] }
+    static func distance(force: Double, angle: Double) -> Double { force * 1.35 * sin(2 * angle * .pi / 180) }
     static func round(_ value: Double) -> Double { (value * 10_000).rounded() / 10_000 }
     static func ageMultiplier(_ age: Int) -> Double {
         switch age {

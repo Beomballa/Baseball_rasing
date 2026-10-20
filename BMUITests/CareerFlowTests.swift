@@ -75,6 +75,56 @@ final class CareerFlowTests: XCTestCase {
         for _ in 0..<5 { app.swipeDown() }
     }
 
+    @MainActor private func trainAbility(_ app: XCUIApplication, power: Bool) {
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        let picker = app.segmentedControls["trainingKindPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 3)); picker.buttons[power ? "파워" : "선구안"].tap()
+        app.buttons["startTraining"].tap()
+        let field = app.otherElements["trainingField"].firstMatch
+        let action = app.buttons["trainingAttempt"]
+        XCTAssertTrue(action.waitForExistence(timeout: 3)); XCTAssertTrue(action.isHittable)
+        XCTAssertGreaterThanOrEqual(field.frame.minX, app.windows.firstMatch.frame.minX)
+        XCTAssertLessThanOrEqual(field.frame.maxX, app.windows.firstMatch.frame.maxX)
+        XCTAssertLessThanOrEqual(action.frame.maxY, app.windows.firstMatch.frame.maxY)
+        if power {
+            app.buttons["powerForceUp"].tap(); app.buttons["powerAngleUp"].tap()
+        } else {
+            action.tap()
+            XCTAssertTrue(app.buttons["trainingCallStrike"].waitForExistence(timeout: 3))
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = power ? "Power training" : "Discipline training"; shot.lifetime = .keepAlways; add(shot)
+        for index in 0..<5 {
+            if power && index == 2 {
+                app.terminate(); app.launch()
+                XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+                reveal(app.buttons["openTraining"], in: app)
+                XCTAssertTrue(app.buttons["openTraining"].label.contains("2/5")); app.buttons["openTraining"].tap()
+                XCTAssertFalse(app.segmentedControls["trainingKindPicker"].exists)
+            }
+            if power { app.buttons["trainingAttempt"].tap() }
+            else {
+                if index > 0 { app.buttons["trainingAttempt"].tap() }
+                app.buttons["trainingCallStrike"].tap()
+            }
+        }
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        let saved = app.staticTexts["trainingGrowth"].label
+        let result = XCTAttachment(screenshot: app.screenshot()); result.name = power ? "Power growth saved" : "Discipline growth saved"; result.lifetime = .keepAlways; add(result)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        reveal(app.staticTexts["homeTrainingGrowth"], in: app)
+        XCTAssertTrue(app.staticTexts["homeTrainingGrowth"].label.contains(power ? "파워" : "선구안"))
+        for _ in 0..<5 { app.swipeDown() }
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.staticTexts["trainingGrowth"].label, saved)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        reveal(app.buttons["restToday"], in: app); XCTAssertFalse(app.buttons["restToday"].isEnabled)
+        XCTAssertTrue(app.buttons["advanceDay"].isEnabled)
+        app.buttons["advanceDay"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "오늘 행동 미사용"), object: app.staticTexts["calendarAction"])], timeout: 5), .completed)
+    }
+
     @MainActor func testCreateBothRolesRelaunchAndEnterSpriteKit() throws {
         let app = XCUIApplication()
         app.launch()
@@ -160,6 +210,8 @@ final class CareerFlowTests: XCTestCase {
         expectation(for: predicate, evaluatedWith: newDate)
         waitForExpectations(timeout: 5)
         XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 미사용")
+        trainAbility(app, power: true)
+        trainAbility(app, power: false)
         reveal(app.buttons["createOtherRole"], in: app)
         app.buttons["createOtherRole"].tap()
         let pitcherName = app.textFields["playerName"]

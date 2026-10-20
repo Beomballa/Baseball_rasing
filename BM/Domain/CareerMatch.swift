@@ -28,6 +28,7 @@ struct CareerMatch: Codable, Equatable {
     var appliedFatigueCost: Int { Int(((fatigueCost * 10_000).rounded() / 10_000).rounded(.up)) }
     var message = "경기 시작"
     var completed = false
+    var trainingEffectsVersion: Int?
     var controlVersion: Int?
     var lastManual: ManualMatchResult?
     var offense: Bool { (half % 2 == 1) == isHome }
@@ -55,6 +56,11 @@ struct CareerMatch: Codable, Equatable {
         if role == "pitcher" {
             let spread = 0.9 - (mastery[pitchCode ?? ""] ?? 60) * 0.004
             return ManualMatchInput(release: min(1, max(0, 0.68 + (ball.y - 0.5) * spread)))
+        }
+        if trainingEffectsVersion == 1, input == .swing, !ManualMatchRules.isStrike(x: ball.x, y: ball.y) {
+            var sample = self
+            _ = sample.roll(); _ = sample.roll()
+            if sample.roll() < max(0, min(100, discipline)) / 100 { return ManualMatchInput() }
         }
         let spread = 1 - contact * 0.007
         return ManualMatchInput(x: min(1, max(0, ball.x + (ball.y - 0.5) * spread)), y: ball.y,
@@ -203,7 +209,7 @@ enum MatchError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noFixture: "오늘 진행할 경기가 없습니다."
-        case .preparation: "경기 전에 오늘의 휴식을 먼저 마쳐 주세요."
+        case .preparation: "경기 전에 오늘의 훈련 또는 휴식을 먼저 마쳐 주세요."
         case .invalidInput: "현재 역할과 보유 구종에 맞는 입력을 선택해 주세요."
         case .finished: "이미 종료한 경기입니다. 결과를 다시 반영하지 않습니다."
         case .stale: "경기 상태가 변경됐습니다. 화면을 다시 열어 주세요."

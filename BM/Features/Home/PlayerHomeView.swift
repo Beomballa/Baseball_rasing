@@ -50,13 +50,13 @@ struct PlayerHomeView: View {
                         CareerTrainingView(player: player, calendar: calendar)
                     } label: {
                         Text(todayTraining.map { $0.completed ? "오늘 훈련 결과" : "훈련 이어하기 · \((try? $0.snapshot().scores.count) ?? 0)/5" }
-                             ?? (player.role == .batter ? "컨택 훈련" : "구종 훈련"))
+                             ?? (player.role == .batter ? "타자 능력 훈련" : "구종 훈련"))
                     }.buttonStyle(GameButtonStyle()).accessibilityIdentifier("openTraining")
                         .disabled(calendar.hasAction(on: player.gameDate) && todayTraining == nil)
                     if let latest = trainingRecords.first(where: { $0.playerID == player.id && $0.completed }),
                        let result = try? latest.snapshot() {
                         GamePanel(title: "최근 훈련 성장") {
-                            let name = result.pitchCode.flatMap { code in player.pitches.first { $0.code == code }?.name } ?? "컨택"
+                            let name = result.pitchCode.flatMap { code in player.pitches.first { $0.code == code }?.name } ?? result.selectedKind.label
                             Text("\(latest.gameDate) · \(name)  \(result.before, specifier: "%.1f") → \(result.after, specifier: "%.1f")")
                                 .bold().accessibilityIdentifier("homeTrainingGrowth")
                             Text("성장 +\(result.gain, specifier: "%.1f") · 평균 \(result.average, specifier: "%.1f")점 · 다음 경기 반영")

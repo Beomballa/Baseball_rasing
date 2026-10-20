@@ -65,6 +65,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
                                 discipline: player.discipline, mastery: Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }))
         // Non-appearance team games are only simulated after explicit confirmation, not on screen entry.
         match.controlVersion = 2
+        match.trainingEffectsVersion = 1
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"
