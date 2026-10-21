@@ -782,6 +782,19 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["gameDetailedFieldSummary"].label.contains("중계"))
             let relaySettled=XCTAttachment(screenshot:app.screenshot());relaySettled.name=pitcher ? "Relay pitcher settled":"Relay batter settled";relaySettled.lifetime = .keepAlways;add(relaySettled)
             reveal(dpMetric,in:app);XCTAssertEqual(dpMetric.label,dpValue)
+            let errorMetric=app.descendants(matching:.any).matching(identifier:"gameResult-teamErrors").firstMatch
+            reveal(errorMetric,in:app);XCTAssertTrue(errorMetric.exists);let errorValue=errorMetric.label
+            let errorButton=app.buttons["replayMisplay"]
+            reveal(errorButton,in:app);XCTAssertTrue(errorButton.exists);errorButton.tap()
+            XCTAssertTrue(app.staticTexts["fieldReplayMisplayTimes"].exists)
+            XCTAssertTrue(app.staticTexts["fieldReplayMisplayScoring"].exists)
+            reveal(app.staticTexts["fieldReplayPhase"],in:app)
+            let errorMoving=XCTAttachment(screenshot:app.screenshot());errorMoving.name=pitcher ? "Misplay pitcher moving":"Misplay batter moving";errorMoving.lifetime = .keepAlways;add(errorMoving)
+            waitForEnabled(errorButton,timeout:9)
+            let errorSummary=app.staticTexts["gameDetailedFieldSummary"].label
+            XCTAssertTrue(errorSummary.contains("실책") || errorSummary.contains("악송구"))
+            let errorSettled=XCTAttachment(screenshot:app.screenshot());errorSettled.name=pitcher ? "Misplay pitcher settled":"Misplay batter settled";errorSettled.lifetime = .keepAlways;add(errorSettled)
+            reveal(errorMetric,in:app);XCTAssertEqual(errorMetric.label,errorValue)
             var positionGrowth = ""
             if !pitcher {
                 reveal(app.staticTexts["gamePositionGrowth"], in: app)
@@ -800,6 +813,8 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons[primary].exists)
             let savedDP=app.descendants(matching:.any).matching(identifier:"gameResult-doublePlays").firstMatch
             reveal(savedDP,in:app);XCTAssertEqual(savedDP.label,dpValue)
+            let savedErrors=app.descendants(matching:.any).matching(identifier:"gameResult-teamErrors").firstMatch
+            reveal(savedErrors,in:app);XCTAssertEqual(savedErrors.label,errorValue)
             reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
             reveal(app.staticTexts["homeFatigue"], in: app); XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
             reveal(app.buttons["advanceDay"], in: app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled)

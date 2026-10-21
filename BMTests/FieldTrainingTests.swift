@@ -591,4 +591,108 @@ import SwiftUI
         XCTAssertEqual(p,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
     }
 
+    private func misplay(_ clean:MatchDetailedPlay,stage:Int,position:String="SS",defense:Double=60,arm:Double=60) -> MatchDetailedPlay {
+        var draws=Array(repeating:0.999999,count:7);draws[stage]=0
+        return FieldMisplayRules.applying(to:clean,stats:MatchFieldStats(version:3,speed:60,defense:defense,arm:arm,position:position,activeTraits:[],positionMastery:100),defending:true,draws:draws)
+    }
+    func testMisplayProbabilityUsesDefenseArmAndSafeHandsIndependently() throws {
+        XCTAssertEqual(FieldMisplayRules.probability(kind:.fielding,defense:60,arm:0,distance:0,traits:[]),0.0148,accuracy:1e-12)
+        XCTAssertEqual(FieldMisplayRules.probability(kind:.throwing,defense:0,arm:60,distance:90,traits:[]),0.0274,accuracy:1e-12)
+        XCTAssertLessThan(FieldMisplayRules.probability(kind:.fielding,defense:100,arm:0,distance:0,traits:[]),FieldMisplayRules.probability(kind:.fielding,defense:0,arm:100,distance:0,traits:[]))
+        XCTAssertLessThan(FieldMisplayRules.probability(kind:.throwing,defense:0,arm:100,distance:70,traits:[]),FieldMisplayRules.probability(kind:.throwing,defense:100,arm:0,distance:70,traits:[]))
+        XCTAssertEqual(FieldMisplayRules.probability(kind:.fielding,defense:60,arm:0,distance:0,traits:[.safeHands]),0.0148*0.7,accuracy:1e-12)
+        let clean=doublePlay();var draws=Array(repeating:0.999999,count:7);draws[0]=0.01
+        func apply(_ defense:Double) -> MatchDetailedPlay {FieldMisplayRules.applying(to:clean,stats:MatchFieldStats(speed:60,defense:defense,arm:60,position:"SS"),defending:true,draws:draws)}
+        XCTAssertNotNil(apply(0).misplay);XCTAssertNil(apply(100).misplay)
+    }
+    func testDroppedFlyRemovesCatchForcesLoadedRunnersWithoutHitRBIOrSacrifice() throws {
+        for outs in [0,2] {
+            let clean=fly(outs:outs,before:[FieldRunnerProfile(speed:60),FieldRunnerProfile(speed:60),FieldRunnerProfile(speed:60)])
+            let p=misplay(clean,stage:0,position:"CF"),e=try XCTUnwrap(p.misplay)
+            XCTAssertEqual(e.kind,.fielding);XCTAssertEqual(p.outsAdded,0);XCTAssertEqual(p.hitBases,0)
+            XCTAssertTrue(e.reachedOnError);XCTAssertFalse(p.sacrificeFly);XCTAssertEqual(p.rbi,0)
+            XCTAssertTrue(p.afterRunners.allSatisfy {$0 != nil});XCTAssertEqual(p.runs,1)
+            XCTAssertTrue(p.xpPlay.safe);XCTAssertEqual(p.xpPlay.failedFielding,true);try p.validate()
+        }
+    }
+    func testBadThrowPreservesOrdinaryHitAndSeparatesExtraBases() throws {
+        let clean=DetailedFieldRules.resolve(half:0,order:0,landing:FieldPoint(x:-45,y:90),flight:2,runners:[nil,nil,nil],batter:FieldRunnerProfile(speed:100),outs:0,stats:nil,defending:false,ownBatter:true,doublePlayEnabled:true,groundBall:false,relayEnabled:true)
+        let p=misplay(clean,stage:1,position:"LF"),e=try XCTUnwrap(p.misplay)
+        XCTAssertEqual(e.kind,.throwing);XCTAssertEqual(p.hitBases,clean.hitBases);XCTAssertGreaterThan(p.hitBases,0)
+        XCTAssertFalse(e.reachedOnError);XCTAssertFalse(e.extraBases.isEmpty);XCTAssertEqual(p.rbi,min(clean.rbi,p.runs));try p.validate()
+    }
+    func testPivotBadThrowKeepsSecondBaseOutAndOnlyOneXPEvent() throws {
+        let clean=doublePlay(position:"2B",outs:1),p=misplay(clean,stage:5,position:"2B"),e=try XCTUnwrap(p.misplay)
+        XCTAssertEqual(p.outsAdded,1);XCTAssertEqual(p.runners.first {$0.from == 1}?.out,true)
+        XCTAssertEqual(p.runners.first {$0.from == 0}?.out,false);XCTAssertNil(p.secondThrow)
+        XCTAssertEqual(p.hitBases,0);XCTAssertEqual(p.rbi,0);XCTAssertTrue(e.ownError)
+        XCTAssertTrue(p.ownParticipation);XCTAssertTrue(p.xpPlay.safe);try p.validate()
+    }
+    func testRelayBadThrowKeepsEarlierFlyOutAndDoesNotRewardFailedCutoff() throws {
+        let clean=relayFly(before:[FieldRunnerProfile(speed:60),nil,FieldRunnerProfile(speed:100)])
+        let p=misplay(clean,stage:3,position:"2B"),e=try XCTUnwrap(p.misplay)
+        XCTAssertEqual(p.outsAdded,1);XCTAssertEqual(p.runners.first {$0.from == 0}?.out,true)
+        XCTAssertFalse(e.extraBases.isEmpty);XCTAssertTrue(e.ownError);XCTAssertTrue(p.ownParticipation);XCTAssertTrue(p.xpPlay.safe)
+        XCTAssertEqual(p.rbi,min(clean.rbi,p.runs));try p.validate()
+    }
+    func testMisplayGridKeepsOccupancyPriorOutsAndStoredNodeOrder() throws {
+        var seen=Set<Int>()
+        for mask in 0..<8 {for outs in 0...2 {for x in [-35.0,0,35] {for speed in [20.0,60,100] {
+            let before=(0..<3).map { mask & (1 << $0) == 0 ? nil:FieldRunnerProfile(speed:speed) }
+            let clean=DetailedFieldRules.resolve(half:0,order:0,landing:FieldPoint(x:x,y:35),flight:1,runners:before,batter:FieldRunnerProfile(speed:speed),outs:outs,stats:nil,defending:false,ownBatter:true,doublePlayEnabled:true,groundBall:true,relayEnabled:true)
+            for stage in FieldMisplayRules.opportunities(clean).map(\.stage) {
+                let p=misplay(clean,stage:stage);try p.validate()
+                if let e=p.misplay {seen.insert(e.stage);XCTAssertLessThan(outs+p.outsAdded,3);XCTAssertTrue(e.extraBases.allSatisfy {$0.value > 0 && $0.value <= ($0.key == 0 ? 2:1)})}
+                let occupied=p.runners.filter {!$0.out && (1...3).contains($0.destination)}.map(\.destination)
+                XCTAssertEqual(Set(occupied).count,occupied.count)
+                XCTAssertEqual(p,try JSONDecoder().decode(MatchDetailedPlay.self,from:JSONEncoder().encode(p)))
+            }
+        }}}}
+        XCTAssertTrue(seen.contains(0));XCTAssertTrue(seen.contains(1));XCTAssertTrue(seen.contains(4))
+    }
+    func testMisplayActualEngineBothRolesDirectAutomaticAndRecordCounts() throws {
+        for role in ["batter","pitcher"] {
+            var m=game(42,role:role);m.detailedFieldVersion=5;m.fieldPlays=[];m.runnerProfiles=[nil,nil,nil]
+            var single=m;try m.advance(.automatic)
+            while !single.completed {try single.advance(role == "batter" ? .swing:.pitch,pitchCode:role == "pitcher" ? "four-seam":nil)}
+            XCTAssertEqual(single,m);try m.validateDetailedField()
+            let plays=try XCTUnwrap(m.fieldPlays);XCTAssertTrue(plays.contains {$0.misplay != nil})
+            let summary=MatchResultSummary(match:m,fatigueBefore:0,fatigueAfter:1)
+            XCTAssertEqual(summary.metrics.first {$0.id == "fieldingErrors"}?.value,String(plays.filter {$0.misplay?.ownError == true}.count))
+            XCTAssertEqual(m,try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(m)))
+        }
+    }
+    func testMisplayDrawsReplayExactlyAndHarmlessFumbleDoesNotInventError() throws {
+        let clean=doublePlay(),a=misplay(clean,stage:1),b=misplay(clean,stage:1)
+        XCTAssertEqual(a,b)
+        let ended=relayFly(outs:2),p=misplay(ended,stage:1)
+        XCTAssertNil(p.misplay);XCTAssertEqual(p,ended)
+    }
+    func testMisplayMalformedVersionOrOccupancyFailsWithoutDroppingEvent() throws {
+        var p=misplay(doublePlay(),stage:1);p.version=4;XCTAssertThrowsError(try p.validate())
+        p=misplay(doublePlay(),stage:1);p.runners.append(p.runners[0]);XCTAssertThrowsError(try p.validate())
+        p=misplay(doublePlay(),stage:1);p.runners[0].nodes.append(FieldNode(at:.nan,point:FieldPoint(x:0,y:0)));XCTAssertThrowsError(try p.validate())
+    }
+    func testSavedFieldingAndThrowingErrorBoardsRenderReadOnly() throws {
+        for stage in [0,1] {
+            let p=misplay(doublePlay(),stage:stage),data=try JSONEncoder().encode(p)
+            let renderer=ImageRenderer(content:DetailedFieldReplayBoard(play:p,appearance:PlayerAppearance(),animated:false) {}.frame(width:390,height:320));renderer.scale=2
+            let image=try XCTUnwrap(renderer.uiImage),a=XCTAttachment(image:image)
+            a.name=stage == 0 ? "Fielding error saved board":"Throwing error saved board";a.lifetime = .keepAlways;add(a)
+            XCTAssertEqual(p,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+        }
+    }
+
+    func testMisplayRestartsWaitingCheetahRunnerEarlierWithoutChangingSpeed() throws {
+        func play(_ traits:[PlayerTrait]) -> MatchDetailedPlay {
+            let clean=relayFly(before:[FieldRunnerProfile(speed:60,traits:traits,own:true),nil,FieldRunnerProfile(speed:100)])
+            return misplay(clean,stage:3,position:"2B")
+        }
+        let plain=play([]),fast=play([.cheetah])
+        XCTAssertNotNil(plain.misplay);XCTAssertNotNil(fast.misplay)
+        let a=try XCTUnwrap(plain.runners.first {$0.from == 1}),b=try XCTUnwrap(fast.runners.first {$0.from == 1})
+        XCTAssertEqual(a.profile.speed,b.profile.speed);XCTAssertEqual(a.destination,b.destination)
+        XCTAssertLessThan(b.arrival,a.arrival);try fast.validate()
+    }
+
 }

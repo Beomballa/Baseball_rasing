@@ -17,7 +17,8 @@ struct MatchFieldPlay: Codable, Equatable {
     var appliedTraits: [PlayerTrait]?
     var positionDelay: Double?
     var caughtFly: Bool?
-    var safe: Bool { caughtFly == true ? false : runnerTime <= ballTime }
+    var failedFielding: Bool?
+    var safe: Bool { failedFielding == true ? true : caughtFly == true ? false : runnerTime <= ballTime }
 }
 
 // First-base races only. Existing matches without this snapshot keep their original rules.
@@ -157,14 +158,19 @@ struct MatchDetailedPlay: Codable, Equatable {
     var doublePlayGrounder: Bool?
     var fly: FieldFlyPlay?
     var relay: FieldRelay?
-    var sacrificeFly: Bool { fly?.caught == true && fielder >= 6 && runs > 0 && (outsBefore ?? 2) < 2 }
-    var ownParticipation: Bool { ownDefense || secondThrow?.ownThrower == true || relay?.ownThrower == true }
+    var misplay: FieldMisplay?
+    var sacrificeFly: Bool { if let misplay { return misplay.sacrificeFly }; return fly?.caught == true && fielder >= 6 && runs > 0 && (outsBefore ?? 2) < 2 }
+    var ownParticipation: Bool { if let misplay { return misplay.participation }; return ownDefense || secondThrow?.ownThrower == true || relay?.ownThrower == true }
     var outAt: Double { fly?.caught == true ? controlAt : force ? controlAt : runnerAt ?? controlAt }
-    var decisionAt: Double { secondThrow?.decisionAt ?? (out ? outAt : max(controlAt,runnerAt ?? 0)) }
+    var decisionAt: Double { if misplay != nil { return controlAt }; return secondThrow?.decisionAt ?? (out ? outAt : max(controlAt,runnerAt ?? 0)) }
     var duration: Double { max(decisionAt, runners.map(\.arrival).max() ?? 0) + 0.4 }
-    var rbi: Int { fly?.caught == true ? runs : secondThrow != nil || out && force && targetRunner != 0 ? 0 : runs }
+    var rbi: Int { if let misplay { return misplay.rbi }; return fly?.caught == true ? runs : secondThrow != nil || out && force && targetRunner != 0 ? 0 : runs }
     var eventID: String { "\(half):\(order)" }
     var summary: String {
+        if let misplay {
+            let extra=misplay.extraBases.values.reduce(0,+)
+            return "\(DetailedFieldRules.names[misplay.fielder]) \(misplay.kind == .fielding ? "포구 실책" : "악송구") · \(misplay.reachedOnError ? "실책 출루 · " : "")추가 진루 \(extra)베이스"
+        }
         let route=relay.map { " · \(DetailedFieldRules.names[fielder])→\(DetailedFieldRules.names[$0.fielder]) 중계" } ?? ""
         if let fly,fly.caught {
             let caught="\(DetailedFieldRules.names[fielder]) 뜬공 포구"
@@ -176,6 +182,10 @@ struct MatchDetailedPlay: Codable, Equatable {
         return (fly != nil ? "뜬공 낙하 · " : "") + "\(hit)" + route + " · \(targetBase == 4 ? "홈" : "\(targetBase)루") 송구 · \(targetRunner == nil ? "주자 진루 완료" : out ? "아웃" : "세이프")"
     }
     var xpPlay: MatchFieldPlay {
+        if let misplay {
+            return MatchFieldPlay(runnerTime:misplay.at,ballTime:misplay.recoveredAt,ownDefense:misplay.participation,
+                appliedTraits:misplay.traits,positionDelay:misplay.positionDelay,caughtFly:misplay.success,failedFielding:!misplay.success)
+        }
         if let relay,relay.ownThrower {
             return MatchFieldPlay(runnerTime:runnerAt ?? controlAt,ballTime:controlAt,ownDefense:true,
                 appliedTraits:relay.traits,positionDelay:relay.positionDelay)
@@ -192,7 +202,8 @@ struct MatchDetailedPlay: Codable, Equatable {
                        appliedTraits: appliedTraits, positionDelay: ownDefense ? positionDelay : nil)
     }
     func validate() throws {
-        guard [1,2,3,4].contains(version), (0..<18).contains(half), order >= 0, (0..<9).contains(fielder), (0..<9).contains(receiver),
+        if misplay != nil { try FieldMisplayRules.validate(self);return }
+        guard [1,2,3,4,5].contains(version), (0..<18).contains(half), order >= 0, (0..<9).contains(fielder), (0..<9).contains(receiver),
               fielder != receiver, (1...4).contains(targetBase), (0...2).contains(outsAdded), outsAdded == (out ? 1 : 0) + (secondThrow?.out == true ? 1 : 0) + (fly?.caught == true ? 1 : 0),
               (0...2).contains(hitBases), (0...4).contains(runs), afterRunners.count == 3, fielders.count == 9,
               [flight,pickupAt,releaseAt,ballAt,controlAt,positionDelay].allSatisfy({ $0.isFinite && $0 >= 0 }),
@@ -243,7 +254,7 @@ struct MatchDetailedPlay: Codable, Equatable {
             }
         }
         if let relay {
-            guard version == 4,(6...8).contains(fielder),[3,5].contains(relay.fielder),relay.fielder != receiver,
+            guard version >= 4,(6...8).contains(fielder),[3,5].contains(relay.fielder),relay.fielder != receiver,
                   secondThrow == nil,!(ownDefense && relay.ownThrower),
                   [relay.readyAt,relay.receiveAt,relay.releaseAt,relay.directAt,relay.positionDelay].allSatisfy({ $0.isFinite && $0 >= 0 }),
                   relay.point.x.isFinite,relay.point.y.isFinite,releaseAt <= relay.receiveAt,
@@ -485,7 +496,7 @@ enum DetailedFieldRules {
 extension CareerMatch {
     func validateDetailedField() throws {
         if let version=detailedFieldVersion {
-            guard [1,2,3,4].contains(version), let plays=fieldPlays, let runners=runnerProfiles,runners.count == 3,
+            guard [1,2,3,4,5].contains(version), let plays=fieldPlays, let runners=runnerProfiles,runners.count == 3,
                   runners.map({ $0 != nil }) == bases,Set(plays.map(\.eventID)).count == plays.count else { throw MatchError.invalidRecord }
             for runner in runners.compactMap({ $0 }) {
                 guard runner.speed.isFinite,(0...100).contains(runner.speed),TraitLoadout.valid(runner.traits) else { throw MatchError.invalidRecord }
@@ -582,5 +593,197 @@ extension DetailedFieldRules {
             targetBase:plan.base,targetRunner:chosen?.from,force:false,out:tagOut,runnerAt:chosen?.at,
             runners:runners,ball:ball,fielders:fielders,afterRunners:after,runs:runs,outsAdded:added,hitBases:0,
             outsBefore:outs,doublePlayGrounder:false,fly:FieldFlyPlay(caught:true,reachAt:reachAt),relay:chosen == nil ? nil:plan.relay)
+    }
+}
+
+enum FieldMisplayKind: String, Codable { case fielding, throwing }
+struct FieldMisplay: Codable, Equatable {
+    let kind: FieldMisplayKind
+    let stage: Int
+    let fielder: Int
+    let at: Double
+    let scatteredAt: Double
+    let recoveredAt: Double
+    let loosePoint: FieldPoint
+    let recoverer: Int
+    let chance: Double
+    let draw: Double
+    let ownError: Bool
+    let ownFielder: Int?
+    let participation: Bool
+    let success: Bool
+    let traits: [PlayerTrait]
+    let positionDelay: Double
+    let reachedOnError: Bool
+    let sacrificeFly: Bool
+    let rbi: Int
+    let ordinaryHitBases: Int
+    let ordinaryRuns: Int
+    let ordinaryRBI: Int
+    let ordinarySacrificeFly: Bool
+    let ordinaryOuts: Int
+    let ordinaryDestinations: [Int:Int]
+    let extraBases: [Int:Int]
+}
+
+enum FieldMisplayRules {
+    struct Opportunity {
+        let stage: Int, fielder: Int
+        let kind: FieldMisplayKind
+        let at: Double
+        let target: FieldPoint
+    }
+    static func probability(kind:FieldMisplayKind,defense:Double,arm:Double,distance:Double,traits:[PlayerTrait]) -> Double {
+        if kind == .fielding {
+            return (0.002+pow(1-DetailedFieldRules.clamp(defense)/100,2)*0.08)*(traits.contains(.safeHands) ? 0.7:1)
+        }
+        return min(0.12,0.003+pow(1-DetailedFieldRules.clamp(arm)/100,2)*0.09+max(0,distance-40)*0.0002)
+    }
+    static func opportunities(_ p:MatchDetailedPlay) -> [Opportunity] {
+        var result=[Opportunity(stage:0,fielder:p.fielder,kind:.fielding,at:p.pickupAt,target:p.landing)]
+        guard p.ball.count > 2 else { return result }
+        result.append(Opportunity(stage:1,fielder:p.fielder,kind:.throwing,at:p.releaseAt,target:p.relay?.point ?? DetailedFieldRules.bases[p.targetBase]))
+        if let relay=p.relay {
+            result.append(Opportunity(stage:2,fielder:relay.fielder,kind:.fielding,at:relay.receiveAt,target:relay.point))
+            result.append(Opportunity(stage:3,fielder:relay.fielder,kind:.throwing,at:relay.releaseAt,target:DetailedFieldRules.bases[p.targetBase]))
+        }
+        result.append(Opportunity(stage:4,fielder:p.receiver,kind:.fielding,at:p.ballAt,target:DetailedFieldRules.bases[p.targetBase]))
+        if let second=p.secondThrow {
+            result.append(Opportunity(stage:5,fielder:p.receiver,kind:.throwing,at:second.releaseAt,target:DetailedFieldRules.bases[1]))
+            result.append(Opportunity(stage:6,fielder:second.receiver,kind:.fielding,at:second.ballAt,target:DetailedFieldRules.bases[1]))
+        }
+        return result.sorted { $0.at == $1.at ? $0.stage < $1.stage : $0.at < $1.at }
+    }
+    static func applying(to clean:MatchDetailedPlay,stats:MatchFieldStats?,defending:Bool,draws:[Double]) -> MatchDetailedPlay {
+        precondition(draws.count == 7 && draws.allSatisfy { $0.isFinite && (0..<1).contains($0) })
+        let own=defending ? DetailedFieldRules.names.firstIndex(of:stats?.position ?? "") : nil
+        let skills=DetailedFieldRules.names.indices.map { index -> DetailedFieldRules.Skill in
+            guard index == own,let stats else {return DetailedFieldRules.Skill()}
+            return DetailedFieldRules.Skill(speed:DetailedFieldRules.clamp(stats.speed),defense:DetailedFieldRules.clamp(stats.defense),arm:DetailedFieldRules.clamp(stats.arm),traits:stats.activeTraits ?? [],positionDelay:stats.positionMastery.map { 0.25*(1-DetailedFieldRules.clamp($0)/100) } ?? 0)
+        }
+        for event in opportunities(clean) {
+            let skill=skills[event.fielder],start=FieldNode.sample(clean.ball,at:event.at)
+            let chance=probability(kind:event.kind,defense:skill.defense,arm:skill.arm,distance:start.distance(to:event.target),traits:skill.traits)
+            guard draws[event.stage] < chance else {continue}
+            if let result=resolve(clean,event:event,skills:skills,own:own,chance:chance,draw:draws[event.stage]) { return result }
+        }
+        return clean
+    }
+    private static func resolve(_ clean:MatchDetailedPlay,event:Opportunity,skills:[DetailedFieldRules.Skill],own:Int?,chance:Double,draw:Double) -> MatchDetailedPlay? {
+        let bases=DetailedFieldRules.bases,at=event.at
+        let positions=clean.fielders.map { FieldNode.sample($0,at:at) }
+        let start=FieldNode.sample(clean.ball,at:at),sign=event.target.x >= 0 ? 1.0:-1.0
+        let loose=FieldPoint(x:max(-58,min(58,event.target.x+sign*(event.kind == .throwing ? 9:4))),y:max(-3,min(105,event.target.y+(event.kind == .throwing ? 7:-3))))
+        let scatter=at+(event.kind == .throwing ? start.distance(to:loose)/skills[event.fielder].throwVelocity:0.25)
+        func recovery(_ i:Int) -> Double { skills[i].reaction+positions[i].distance(to:loose)/skills[i].velocity+skills[i].pickup+0.35 }
+        let recoverer=positions.indices.min { recovery($0) < recovery($1) }!,recovered=scatter+recovery(recoverer)
+        let retired=clean.runners.filter { $0.out && ($0.retiredAt ?? clean.outAt) < at }
+        let priorOuts=retired.count
+        guard (clean.outsBefore ?? 0)+priorOuts < 3 else {return nil}
+        let batterRevived=clean.runners.contains { $0.from == 0 && $0.out } && !retired.contains { $0.from == 0 }
+        var result:[DetailedRunner]=[],occupiedLimit=4
+        let ordinary=Dictionary(uniqueKeysWithValues:clean.runners.map { ($0.from,$0.destination) })
+        var extras:[Int:Int]=[:]
+        for r in clean.runners.sorted(by:{ $0.from > $1.from }) {
+            if retired.contains(where:{ $0.from == r.from }) {result.append(r);continue}
+            if r.destination == 4 && !r.out && r.arrival <= at {result.append(r);continue}
+            let current=FieldNode.sample(r.nodes,at:at)
+            var passed=r.from
+            if r.destination > r.from {
+                for b in (r.from+1)...r.destination where (r.arrival(at:b) ?? .infinity) <= at {passed=b}
+            }
+            let maxBase=min(4,occupiedLimit,min(4,max(r.from == 0 ? 1:r.from,r.destination)+1))
+            let forced=batterRevived && (r.from == 0 || (1...r.from).allSatisfy { from in clean.runners.contains { $0.from == from } })
+            let guaranteed=min(maxBase,max(forced ? r.from+1 : r.from == 0 ? 1:r.from,r.destination))
+            let speed=5.5+DetailedFieldRules.clamp(r.profile.speed)*0.035
+            var nodes=r.nodes.filter { $0.at < at };nodes.append(FieldNode(at:at,point:current))
+            let moving=current.distance(to:FieldNode.sample(r.nodes,at:max(0,at-0.05))) > 0.001
+            let restart=moving ? 0:(0.18+(100-DetailedFieldRules.clamp(r.profile.speed))*0.002)*(r.profile.traits.contains(.cheetah) ? 0.92:1)
+            var destination=passed,time=at+restart,point=current
+            if restart > 0 {nodes.append(FieldNode(at:time,point:current))}
+            if maxBase > passed {
+                for b in (passed+1)...maxBase {
+                    let arrival=time+point.distance(to:bases[b])/speed
+                    let danger=recovered+skills[recoverer].transfer+loose.distance(to:bases[b])/skills[recoverer].throwVelocity
+                    if b > guaranteed && arrival > danger {break}
+                    destination=b;time=arrival;point=bases[b];nodes.append(FieldNode(at:time,point:point))
+                }
+            }
+            if destination < 4 {occupiedLimit=destination-1}
+            result.append(DetailedRunner(from:r.from,destination:destination,profile:r.profile,nodes:nodes))
+            if destination > r.destination {extras[r.from]=destination-r.destination}
+        }
+        let canceled=clean.outsAdded-priorOuts
+        guard canceled > 0 || !extras.isEmpty else {return nil}
+        var after:[FieldRunnerProfile?]=[nil,nil,nil],runs=0
+        for r in result where !r.out {
+            if r.destination == 4 {runs += 1}
+            else if r.destination > 0 {after[r.destination-1]=r.profile}
+        }
+        let lead=result.filter { !$0.out && $0.destination > 0 }.max { $0.destination < $1.destination }
+        let base=lead?.destination ?? 2
+        let receiver=DetailedFieldRules.names.indices.filter { $0 != recoverer }.min {
+            positions[$0].distance(to:bases[base])/skills[$0].velocity < positions[$1].distance(to:bases[base])/skills[$1].velocity
+        }!
+        let travel=loose.distance(to:bases[base])/skills[recoverer].throwVelocity
+        let cover=at+skills[receiver].reaction+positions[receiver].distance(to:bases[base])/skills[receiver].velocity
+        let release=max(recovered+skills[recoverer].transfer,cover-travel),ballAt=release+travel
+        var ball=clean.ball.filter { $0.at < at };ball.append(FieldNode(at:at,point:start))
+        ball.append(FieldNode(at:scatter,point:loose));ball.append(FieldNode(at:release,point:loose));ball.append(FieldNode(at:ballAt,point:bases[base]))
+        var fielders=clean.fielders.enumerated().map { i,nodes in nodes.filter { $0.at < at }+[FieldNode(at:at,point:positions[i])] }
+        fielders[recoverer].append(FieldNode(at:scatter+skills[recoverer].reaction,point:positions[recoverer]))
+        fielders[recoverer].append(FieldNode(at:recovered-skills[recoverer].pickup-0.35,point:loose))
+        fielders[receiver].append(FieldNode(at:cover,point:bases[base]))
+        let handler=clean.ownDefense && clean.pickupAt <= at
+        let relay=clean.relay?.ownThrower == true && (clean.relay?.receiveAt ?? .infinity) <= at
+        let pivot=clean.secondThrow?.ownThrower == true && clean.controlAt <= at
+        let participant=handler || relay || pivot || own == recoverer
+        let success=own != event.fielder && (handler && clean.fly?.caught == true && clean.flight < at || handler && clean.out && clean.outAt < at)
+        let ownSkill=own.map {skills[$0]}
+        let onError=clean.hitBases == 0 && result.contains { $0.from == 0 && !$0.out && $0.destination > 0 } && canceled > 0
+        let rbi=min(runs,(event.stage == 0 && clean.fly?.caught == true) ? 0:clean.rbi)
+        let error=FieldMisplay(kind:event.kind,stage:event.stage,fielder:event.fielder,at:at,scatteredAt:scatter,recoveredAt:recovered,
+            loosePoint:loose,recoverer:recoverer,chance:chance,draw:draw,ownError:own == event.fielder,ownFielder:own,participation:participant,success:success,
+            traits:ownSkill?.traits ?? result.first(where:{$0.profile.own})?.profile.traits ?? [],positionDelay:ownSkill?.positionDelay ?? 0,reachedOnError:onError,
+            sacrificeFly:clean.sacrificeFly && clean.flight < at,rbi:rbi,ordinaryHitBases:clean.hitBases,ordinaryRuns:clean.runs,ordinaryRBI:clean.rbi,ordinarySacrificeFly:clean.sacrificeFly,
+            ordinaryOuts:clean.outsAdded,ordinaryDestinations:ordinary,extraBases:extras)
+        return MatchDetailedPlay(version:5,half:clean.half,order:clean.order,landing:clean.landing,flight:clean.flight,fielder:clean.fielder,receiver:receiver,
+            ownDefense:clean.ownDefense,ownBatter:clean.ownBatter,appliedTraits:clean.appliedTraits,positionDelay:clean.positionDelay,
+            pickupAt:clean.pickupAt,releaseAt:release,ballAt:ballAt,controlAt:ballAt,targetBase:base,targetRunner:nil,force:false,out:false,runnerAt:nil,
+            runners:result,ball:ball,fielders:fielders,afterRunners:after,runs:runs,outsAdded:priorOuts,hitBases:clean.hitBases,
+            outsBefore:clean.outsBefore,doublePlayGrounder:clean.doublePlayGrounder,fly:clean.fly,misplay:error)
+    }
+    static func validate(_ p:MatchDetailedPlay) throws {
+        guard let e=p.misplay,p.version == 5,(0..<7).contains(e.stage),(0..<9).contains(e.fielder),(0..<9).contains(e.recoverer),
+              (0..<9).contains(p.fielder),(0..<9).contains(p.receiver),(0..<18).contains(p.half),p.order >= 0,
+              let outs=p.outsBefore,(0...2).contains(outs),(0...2).contains(p.outsAdded),outs+p.outsAdded < 3,
+              p.afterRunners.count == 3,p.fielders.count == 9,p.secondThrow == nil,p.relay == nil,!p.out,!p.force,p.targetRunner == nil,p.runnerAt == nil,
+              (0...4).contains(p.runs),(1...4).contains(p.targetBase),(0...2).contains(p.hitBases),p.hitBases == e.ordinaryHitBases,
+              [e.at,e.scatteredAt,e.recoveredAt,e.chance,e.draw,e.positionDelay,p.flight,p.pickupAt,p.releaseAt,p.ballAt,p.controlAt].allSatisfy({$0.isFinite && $0 >= 0}),
+              p.flight <= p.pickupAt,p.pickupAt <= e.at,e.at > 0,e.at <= e.scatteredAt,e.scatteredAt <= e.recoveredAt,e.recoveredAt <= p.releaseAt,p.releaseAt <= p.ballAt,p.controlAt == p.ballAt,
+              [0,2,4,6].contains(e.stage) == (e.kind == .fielding),
+              (0..<1).contains(e.chance),(0..<e.chance).contains(e.draw),TraitLoadout.valid(e.traits),
+              !e.success || e.participation && !e.ownError,
+              e.ownFielder.map({(0..<9).contains($0)}) ?? true,e.ownError == (e.ownFielder == e.fielder),(0...p.runs).contains(e.rbi),
+              p.runners.contains(where:{$0.from == 0}),Set(p.runners.map(\.from)).count == p.runners.count else {throw MatchError.invalidRecord}
+        var after:[FieldRunnerProfile?]=[nil,nil,nil],runs=0,retired=0,expected:[Int:Int]=[:]
+        for r in p.runners {
+            guard (0...3).contains(r.from),(r.from...4).contains(r.destination),r.profile.speed.isFinite,(0...100).contains(r.profile.speed),TraitLoadout.valid(r.profile.traits),let original=e.ordinaryDestinations[r.from],(r.from...4).contains(original) else {throw MatchError.invalidRecord}
+            if r.out {guard let t=r.retiredAt,t.isFinite,t < e.at else {throw MatchError.invalidRecord};retired += 1}
+            else if r.destination == 4 {runs += 1}
+            else {guard r.destination > 0,after[r.destination-1] == nil else {throw MatchError.invalidRecord};after[r.destination-1]=r.profile}
+            if r.destination > original {expected[r.from]=r.destination-original}
+        }
+        guard retired == p.outsAdded,runs == p.runs,after == p.afterRunners,expected == e.extraBases,
+              (0...2).contains(e.ordinaryOuts),e.ordinaryOuts >= p.outsAdded,(0...4).contains(e.ordinaryRuns),(0...e.ordinaryRuns).contains(e.ordinaryRBI),
+              e.rbi == min(p.runs,(e.stage == 0 && p.fly?.caught == true) ? 0:e.ordinaryRBI),
+              e.sacrificeFly == (e.ordinarySacrificeFly && p.flight < e.at),
+              e.reachedOnError == (p.hitBases == 0 && e.ordinaryOuts > p.outsAdded && p.runners.contains(where:{$0.from == 0 && !$0.out && $0.destination > 0})),
+              Set(e.ordinaryDestinations.keys) == Set(p.runners.map(\.from)),
+              e.ordinaryOuts > p.outsAdded || !expected.isEmpty,
+              p.ball.contains(where:{$0.at == e.scatteredAt && $0.point == e.loosePoint}),p.ball.last?.at == p.ballAt,p.ball.last?.point == DetailedFieldRules.bases[p.targetBase] else {throw MatchError.invalidRecord}
+        for nodes in [p.ball]+p.fielders+p.runners.map(\.nodes) {
+            guard !nodes.isEmpty,nodes.allSatisfy({$0.at.isFinite && $0.at >= 0 && $0.point.x.isFinite && $0.point.y.isFinite}),zip(nodes,nodes.dropFirst()).allSatisfy({$0.at <= $1.at}) else {throw MatchError.invalidRecord}
+        }
     }
 }

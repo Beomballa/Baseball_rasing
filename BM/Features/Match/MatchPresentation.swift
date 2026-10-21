@@ -186,6 +186,12 @@ struct MatchResultSummary {
             let count=match.fieldPlays?.filter { $0.ownBatter && $0.sacrificeFly }.count ?? 0
             result.append(Metric(id:"sacrificeFlies",label:"희생플라이",value:String(count)))
         }
+        if match.detailedFieldVersion == 5 {
+            let plays=match.fieldPlays ?? []
+            result.append(Metric(id:"fieldingErrors",label:"내 수비 실책",value:String(plays.filter { $0.misplay?.ownError == true }.count)))
+            result.append(Metric(id:"teamErrors",label:"팀 실책",value:String(plays.filter { $0.misplay != nil && (($0.half % 2 == 1) != match.isHome) }.count)))
+            if match.role == "batter" {result.append(Metric(id:"reachedOnError",label:"실책 출루",value:String(plays.filter { $0.ownBatter && $0.misplay?.reachedOnError == true }.count)))}
+        }
         return result
     }
     var fatigueChange: String {
@@ -359,10 +365,14 @@ struct DetailedFieldReplayBoard: View {
                 : secondActive && time < play.decisionAt ? "2루 아웃 → 1루 경합"
                 : time < play.decisionAt ? "송구 중" : play.summary
             let normalPhase=play.fly?.caught == true ? (time < play.flight ? "뜬공 낙하지점 이동" : time < play.releaseAt ? "포구 아웃 · 태그업 출발" : time < play.decisionAt ? "태그업 · 송구 경합" : play.summary) : groundPhase
-            let phase=play.relay.map { relay in
+            let routePhase=play.relay.map { relay in
                 time < play.releaseAt ? normalPhase : time < relay.receiveAt ? "외야수 → \(DetailedFieldRules.names[relay.fielder]) 중계 송구"
                     : time < relay.releaseAt ? "중계 포구 → 재송구 준비" : time < play.decisionAt ? "중계 야수 → 베이스 경합" : play.summary
             } ?? normalPhase
+            let phase=play.misplay.map { error in
+                time < error.at ? "타구 처리 중" : time < error.scatteredAt ? (error.kind == .fielding ? "공 놓침 · 포구 실책" : "악송구 · 공이 빗나갑니다")
+                    : time < error.recoveredAt ? "공 회수 중 · 주자 추가 진루" : time < play.ballAt ? "수습 송구" : play.summary
+            } ?? routePhase
             VStack(spacing:4) {
                 Text(phase)
                     .font(.system(.caption,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
@@ -400,7 +410,7 @@ struct DetailedFieldReplayBoard: View {
                     }
                     for index in play.fielders.indices {
                         let nodes=play.fielders[index],p=FieldNode.sample(nodes,at:time)
-                        actor(p,own:play.ownDefense && index==play.fielder || second?.ownThrower == true && index==play.receiver || play.relay?.ownThrower == true && index==play.relay?.fielder,runner:false,moving:p.distance(to:FieldNode.sample(nodes,at:time+0.06)) > 0.001)
+                        actor(p,own:play.ownDefense && index==play.fielder || second?.ownThrower == true && index==play.receiver || play.relay?.ownThrower == true && index==play.relay?.fielder || play.misplay?.ownFielder == index,runner:false,moving:p.distance(to:FieldNode.sample(nodes,at:time+0.06)) > 0.001)
                     }
                     for runner in play.runners {
                         actor(FieldNode.sample(runner.nodes,at:time),own:runner.profile.own,runner:true,moving:FieldNode.sample(runner.nodes,at:time).distance(to:FieldNode.sample(runner.nodes,at:time+0.06)) > 0.001,out:runner.out && time >= (runner.retiredAt ?? play.decisionAt))
@@ -416,25 +426,37 @@ struct DetailedFieldReplayBoard: View {
                         let b=point(DetailedFieldRules.bases[base])
                         context.draw(Text(out ? "OUT" : "SAFE").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(out ? Color(hex:0xff9d83) : GameTheme.growth),at:CGPoint(x:b.x,y:b.y-18))
                     }
-                    if play.fly?.caught == true,time>=play.flight {
+                    if play.fly?.caught == true,time>=play.flight,play.misplay.map({$0.at > play.flight}) ?? true {
                         let p=point(play.landing)
                         context.draw(Text("CATCH · OUT").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(GameTheme.gold),at:CGPoint(x:min(size.width-60,max(60,p.x+(p.x > size.width/2 ? -60:60))),y:max(12,p.y-20)))
+                    }
+                    if let error=play.misplay,time >= error.at {
+                        let p=point(error.loosePoint)
+                        context.draw(Text(error.kind == .fielding ? "ERROR" : "WILD THROW").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(Color(hex:0xff9d83)),at:CGPoint(x:min(size.width-55,max(55,p.x)),y:max(14,p.y-18)))
+                        for runner in play.runners where !runner.out && runner.destination > runner.from && time >= runner.arrival { call(runner.destination == 4 ? 0:runner.destination,false) }
+                        for runner in play.runners where runner.out && runner.from > 0 && time >= (runner.retiredAt ?? 0) {call(runner.destination,true)}
                     }
                     if second != nil,time>=play.controlAt { call(2,true) }
                     if time>=play.decisionAt,play.targetRunner != nil { call(second != nil ? 1 : play.targetBase,second?.out ?? play.out) }
 
                 }.accessibilityLabel("도트 수비 주루 재생 · " + play.summary).accessibilityIdentifier("fieldReplayCanvas")
+                if let error=play.misplay {
+                    Text("실책 \(error.at,specifier:"%.2f")초 → 회수 \(error.recoveredAt,specifier:"%.2f")초 · 추가 \(error.extraBases.values.reduce(0,+))베이스")
+                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayMisplayTimes")
+                    Text(error.reachedOnError ? "실책 출루 · 안타 제외" : "정상 타격 기록 유지 · 실책 추가 진루 분리")
+                        .font(.caption2).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayMisplayScoring")
+                }
                 if let relay=play.relay {
                     Text("중계 \(DetailedFieldRules.names[relay.fielder]) · 수신 \(relay.receiveAt,specifier:"%.2f")초 / 재송구 \(relay.releaseAt,specifier:"%.2f")초")
                         .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayRelayTimes")
                     Text("직접 \(relay.directAt,specifier:"%.2f")초 → 중계 \(play.controlAt,specifier:"%.2f")초")
                         .font(.caption2.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayRouteComparison")
                 }
-                if let fly=play.fly {
+                if let fly=play.fly,play.misplay == nil {
                     Text("공 낙하 \(play.flight,specifier:"%.2f")초 / 포구 준비 \(fly.reachAt,specifier:"%.2f")초 · \(fly.caught ? "포구 성공" : "낙하 후 처리")")
                         .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayCatchTimes")
                 }
-                if play.fly?.caught != true || play.targetRunner != nil {
+                if play.misplay == nil && (play.fly?.caught != true || play.targetRunner != nil) {
                 Text("\(play.targetBase == 4 ? "홈" : "\(play.targetBase)루") · 공 \(play.controlAt,specifier:"%.2f")초 / 주자 \(play.runnerAt.map { String(format:"%.2f초",$0) } ?? "진루 완료")")
                     .font(.caption2.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayTimes")
                 }
