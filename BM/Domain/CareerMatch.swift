@@ -32,6 +32,9 @@ struct CareerMatch: Codable, Equatable {
     var fieldStats: MatchFieldStats?
     var lastFieldPlay: MatchFieldPlay?
     var positionExperience: MatchPositionExperience?
+    var detailedFieldVersion: Int?
+    var fieldPlays: [MatchDetailedPlay]?
+    var runnerProfiles: [FieldRunnerProfile?]?
     var trainingEffectsVersion: Int?
     var controlVersion: Int?
     var lastManual: ManualMatchResult?
@@ -133,9 +136,9 @@ struct CareerMatch: Codable, Equatable {
             let value = roll()
             if value < hitChance {
                 let homeRun = input != .bunt && roll() < (personalBatter ? power / 500 : 0.12)
-                endPlate(homeRun ? "홈런" : "안타", batter: personalBatter, pitcher: personalPitcher)
+                endPlate(homeRun ? "홈런" : "안타", batter: personalBatter, pitcher: personalPitcher, bunt:input == .bunt)
             } else if value < hitChance + 0.35 {
-                endPlate("범타", batter: personalBatter, pitcher: personalPitcher)
+                endPlate("범타", batter: personalBatter, pitcher: personalPitcher, bunt:input == .bunt)
             } else { strikes += 1; message = "헛스윙" }
         }
         if strikes >= 3 { endPlate("삼진", batter: personalBatter, pitcher: personalPitcher) }
@@ -175,9 +178,9 @@ struct CareerMatch: Codable, Equatable {
             let value = roll()
             if value < hitChance {
                 let homeRun = input != .bunt && roll() < (pitcher ? (abilityStats?.homeRunChance(quality: quality) ?? (0.16 - quality * 0.10)) : power / 500 * quality)
-                endPlate(homeRun ? "홈런" : "안타", batter: !pitcher, pitcher: pitcher)
+                endPlate(homeRun ? "홈런" : "안타", batter: !pitcher, pitcher: pitcher, bunt:input == .bunt)
             } else if !pitcher || value < hitChance + 0.35 {
-                endPlate("범타", batter: !pitcher, pitcher: pitcher)
+                endPlate("범타", batter: !pitcher, pitcher: pitcher, bunt:input == .bunt)
             } else { strikes += 1; message = "헛스윙" }
         }
         if strikes >= 3 { endPlate("삼진", batter: !pitcher, pitcher: pitcher) }
@@ -186,9 +189,28 @@ struct CareerMatch: Codable, Equatable {
                                        x: x, y: y, speed: plan.speed, outcome: message, pitchCode: pitcher ? pitchCode : "four-seam")
     }
 
-    private mutating func endPlate(_ initial: String, batter: Bool, pitcher: Bool) {
+    private mutating func endPlate(_ initial: String, batter: Bool, pitcher: Bool, bunt:Bool=false) {
         var result = initial
-        if let stats = fieldStats, [1, 2, 3].contains(stats.version), appearance, ["안타", "범타"].contains(result), batter || !offense {
+        var detailed: MatchDetailedPlay?
+        let newRunner = FieldRunnerProfile(speed:batter ? fieldStats?.speed ?? 60 : 60,
+            traits:batter ? (fieldStats?.activeTraits ?? []).filter { $0 == .cheetah } : [],own:batter)
+        if detailedFieldVersion == 1, ["안타","범타"].contains(initial) {
+            let depth = bunt ? 3 + roll()*13 : initial == "안타" ? 40 + roll() * 45 : 5 + roll() * 36
+            let landing = FieldPoint(x:(roll()-0.5)*depth*1.5,y:depth)
+            let flight = DetailedFieldRules.bases[0].distance(to:landing)/(initial == "안타" ? 28 : 20)
+            let play = DetailedFieldRules.resolve(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
+                runners:runnerProfiles ?? bases.map { $0 ? FieldRunnerProfile(speed:60) : nil },batter:newRunner,outs:outs,
+                stats:fieldStats,defending:!offense && appearance,ownBatter:batter)
+            detailed=play;fieldPlays?.append(play)
+            if play.ownDefense || batter {
+                lastFieldPlay=play.xpPlay
+                if play.ownDefense,role == "batter",positionExperience != nil {
+                    positionExperience?.events.append(MatchPositionEvent(half:half,order:isHome ? awayOrder : homeOrder,play:play.xpPlay))
+                }
+            }
+            result=play.hitBases == 2 ? "2루타" : play.hitBases == 1 ? "안타" : play.out ? "범타" : "야수 선택"
+        }
+        if detailedFieldVersion == nil, let stats = fieldStats, [1, 2, 3].contains(stats.version), appearance, ["안타", "범타"].contains(result), batter || !offense {
             let positions = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]
             let fielder = positions[Int(roll() * 9)]
             let ownDefense = !offense && stats.position == fielder
@@ -213,19 +235,28 @@ struct CareerMatch: Codable, Equatable {
                 lastFieldPlay = play; result = play.safe ? "안타" : "범타"
             }
         }
-        message = result
+        message = detailed?.summary ?? result
         var runs = 0
         if batter {
             line.plateAppearances += 1
             if result != "볼넷" { line.atBats += 1 }
-            if result == "안타" || result == "홈런" { line.hits += 1 }
+            if result == "안타" || result == "2루타" || result == "홈런" { line.hits += 1 }
             if result == "홈런" { line.homeRuns += 1 }
             if result == "볼넷" { line.walks += 1 }
             if result == "삼진" { line.strikeouts += 1 }
         }
-        if result == "홈런" { runs = bases.filter { $0 }.count + 1; bases = [false, false, false] }
+        if let detailed {
+            runs=detailed.runs;outs += detailed.outsAdded
+            if pitcher { line.pitchingOuts += detailed.outsAdded }
+            runnerProfiles=detailed.afterRunners;bases=detailed.afterRunners.map { $0 != nil }
+        }
+        else if result == "홈런" { runs = bases.filter { $0 }.count + 1; bases = [false, false, false];runnerProfiles=runnerProfiles.map { _ in [nil,nil,nil] } }
         else if result == "안타" { runs = bases[2] ? 1 : 0; bases = [true, bases[0], bases[1]] }
         else if result == "볼넷" {
+            if var profiles=runnerProfiles {
+                if bases[0] { if bases[1] { profiles[2]=profiles[1] }; profiles[1]=profiles[0] }
+                profiles[0]=newRunner;runnerProfiles=profiles
+            }
             if bases[0] {
                 if bases[1] { if bases[2] { runs = 1 }; bases[2] = true }
                 bases[1] = true
@@ -237,17 +268,18 @@ struct CareerMatch: Codable, Equatable {
         }
         if pitcher {
             line.runsAllowed += runs
-            if result == "안타" || result == "홈런" { line.hitsAllowed += 1 }
+            if result == "안타" || result == "2루타" || result == "홈런" { line.hitsAllowed += 1 }
             if result == "삼진" { line.pitchingStrikeouts += 1 }
             if result == "볼넷" { line.pitchingWalks += 1 }
         }
-        if batter { line.rbi += runs }
+        // A run on a force third-out is already excluded by the shared field timeline.
+        if batter { line.rbi += detailed?.rbi ?? runs }
         if half % 2 == 0 { awayScore += runs; awayOrder += 1 }
         else { homeScore += runs; homeOrder += 1 }
         balls = 0; strikes = 0
         if half == 17 && homeScore > awayScore { completed = true }
         if outs == 3 {
-            half += 1; outs = 0; bases = [false, false, false]
+            half += 1; outs = 0; bases = [false, false, false];runnerProfiles=runnerProfiles.map { _ in [nil,nil,nil] }
             if half == 17 && homeScore > awayScore { completed = true }
             if half == 18 { completed = true }
         }

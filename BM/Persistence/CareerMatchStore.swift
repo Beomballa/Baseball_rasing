@@ -37,6 +37,7 @@ enum CareerSchemaV3: VersionedSchema {
                     guard let mastery = stats.positionMastery, mastery.isFinite, (0...100).contains(mastery), FieldPosition(rawValue: stats.position) != nil else { throw MatchError.invalidRecord }
                 }
             }
+            try match.validateDetailedField()
             try match.positionExperience?.validate(match: match)
             return match
         }
@@ -100,6 +101,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             match.positionExperience = MatchPositionExperience(position: position, before: skill,
                 profileRevision: profile.revision, age: try state.age(of: player), fatigue: player.fatigue)
         }
+        match.detailedFieldVersion=1;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"
@@ -127,6 +129,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             try loadout.validate()
             if experience.after != experience.before { positionReward = (profile, loadout) }
         }
+        try match.validateDetailedField()
         try match.positionExperience?.validate(match: match)
         let payload = try JSONEncoder().encode(match)
         let positionPayload = try positionReward.map { try JSONEncoder().encode($0.1) }

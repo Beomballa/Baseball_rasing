@@ -328,3 +328,76 @@ struct MatchResultSummary {
         }
     }
 }
+
+struct DetailedFieldReplayBoard: View {
+    let play: MatchDetailedPlay
+    let appearance: PlayerAppearance
+    var animated = true
+    let complete: @MainActor () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @State private var start = Date()
+    private var seconds: Double { reduced || !animated ? 0.25 : min(6,play.duration) }
+    var body: some View {
+        TimelineView(.animation(minimumInterval:1.0/30,paused:reduced || !animated)) { timeline in
+            let fraction = reduced || !animated ? 1 : min(1,max(0,timeline.date.timeIntervalSince(start)/seconds))
+            let time = fraction*play.duration
+            VStack(spacing:4) {
+                Text(time < play.pickupAt ? "\(DetailedFieldRules.names[play.fielder]) 타구 접근" : time < play.releaseAt ? "포구 → \(play.targetBase == 4 ? "홈" : "\(play.targetBase)루") 송구 준비" : time < play.decisionAt ? "송구 중" : play.summary)
+                    .font(.system(.caption,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
+                    .accessibilityIdentifier("fieldReplayPhase")
+                Canvas { context,size in
+                    func point(_ p:FieldPoint) -> CGPoint { CGPoint(x:size.width*(0.5+p.x/130),y:size.height*(0.94-p.y/115)) }
+                    func path(_ points:[FieldPoint],closed:Bool=false) -> Path {
+                        Path { p in
+                            guard let first=points.first else { return };p.move(to:point(first))
+                            for next in points.dropFirst() { p.addLine(to:point(next)) };if closed {p.closeSubpath()}
+                        }
+                    }
+                    context.fill(Path(CGRect(origin:.zero,size:size)),with:.color(Color(hex:0x205b43)))
+                    let turf=[FieldPoint(x:0,y:0),FieldPoint(x:60,y:60),FieldPoint(x:45,y:99),FieldPoint(x:0,y:108),FieldPoint(x:-45,y:99),FieldPoint(x:-60,y:60)]
+                    context.stroke(path(turf,closed:true),with:.color(GameTheme.gold),lineWidth:3)
+                    context.fill(path(DetailedFieldRules.bases,closed:true),with:.color(Color(hex:0x9a8054)))
+                    context.stroke(path(DetailedFieldRules.bases,closed:true),with:.color(Color(hex:0xe7e4cf)),lineWidth:1)
+                    for base in 0..<4 {
+                        let b=point(DetailedFieldRules.bases[base]);let w=max(4,size.width*0.018)
+                        context.fill(Path(CGRect(x:b.x-w/2,y:b.y-w/2,width:w,height:w)),with:.color(base==play.targetBase && time>=play.pickupAt ? GameTheme.gold : .white))
+                    }
+                    func actor(_ at:FieldPoint,own:Bool,runner:Bool,moving:Bool,out:Bool=false) {
+                        let c=point(at),u=max(1,floor(size.width/180))
+                        let step=moving ? (Int(time*8)%2==0 ? u : -u) : 0
+                        let shirt=own ? PlayerAppearance.kitColors[appearance.kit] : runner ? 0xe4c370 : 0x294c77
+                        func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
+                            context.fill(Path(CGRect(x:c.x+x*u,y:c.y+y*u,width:w*u,height:h*u)),with:.color(Color(hex:hex).opacity(out ? 0.4 : 1)))
+                        }
+                        box(-2,-9,4,3,own ? PlayerAppearance.skinColors[appearance.skin] : 0xefbe91)
+                        box(-3,-10,6,2,own ? PlayerAppearance.hairColors[appearance.hair] : 0x162e48)
+                        box(-3,-6,6,5,shirt);box(-4,-5,1,3,0xefbe91);box(3,-5,1,3,0xefbe91)
+                        box(-3,-1,2,3,0xe6eadb);box(1,-1,2,3,0xe6eadb)
+                        box(-3,2+step/u,2,1,0x102a3f);box(1,2-step/u,2,1,0x102a3f)
+                        if own {box(-1,-5,2,2,0xf4f0db)}
+                    }
+                    for index in play.fielders.indices {
+                        let nodes=play.fielders[index],p=FieldNode.sample(nodes,at:time)
+                        actor(p,own:play.ownDefense && index==play.fielder,runner:false,moving:nodes.contains { $0.at > time })
+                    }
+                    for runner in play.runners {
+                        actor(FieldNode.sample(runner.nodes,at:time),own:runner.profile.own,runner:true,moving:time<runner.arrival,out:runner.out && time>=play.decisionAt)
+                    }
+                    let ball=point(FieldNode.sample(play.ball,at:time)),w=max(3,size.width*0.012)
+                    context.fill(Path(CGRect(x:ball.x-w/2,y:ball.y-w/2,width:w,height:w)),with:.color(.white))
+                    if time>=play.decisionAt,play.targetRunner != nil {
+                        let b=point(DetailedFieldRules.bases[play.targetBase])
+                        context.draw(Text(play.out ? "OUT" : "SAFE").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(play.out ? Color(hex:0xff9d83) : GameTheme.growth),at:CGPoint(x:b.x,y:b.y-18))
+                    }
+                }.accessibilityLabel("도트 수비 주루 재생 · " + play.summary).accessibilityIdentifier("fieldReplayCanvas")
+                Text("\(play.targetBase == 4 ? "홈" : "\(play.targetBase)루") · 공 \(play.controlAt,specifier:"%.2f")초 / 주자 \(play.runnerAt.map { String(format:"%.2f초",$0) } ?? "진루 완료")")
+                    .font(.caption2.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayTimes")
+            }.padding(6).background(GameTheme.board)
+        }
+        .task(id:play.eventID) {
+            start=Date()
+            do { try await Task.sleep(for:.seconds(seconds+0.5)) } catch { return }
+            if !Task.isCancelled { complete() }
+        }
+    }
+}

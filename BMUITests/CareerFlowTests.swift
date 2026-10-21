@@ -158,8 +158,8 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(board.frame.width, control.frame.width, accuracy: 1)
         XCTAssertEqual(field.frame.width / field.frame.height, ratio, accuracy: 0.02)
     }
-    @MainActor private func waitForEnabled(_ button: XCUIElement) {
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)], timeout: 5), .completed)
+    @MainActor private func waitForEnabled(_ button: XCUIElement, timeout:TimeInterval = 5) {
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)], timeout: timeout), .completed)
     }
 
     @MainActor private func checkLargeTraining(_ app: XCUIApplication, name: String, pitcher: Bool = false, actionID: String = "trainingAttempt") {
@@ -723,16 +723,25 @@ extension CareerFlowTests {
                 let watched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "지켜보기"), object: app.staticTexts["careerGameMessage"])
                 XCTAssertEqual(XCTWaiter.wait(for: [watched], timeout: 5), .completed)
                 app.buttons["gameInput-bunt"].tap()
-                waitForEnabled(app.buttons[primary]); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
+                waitForEnabled(app.buttons[primary],timeout:10); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
                 let bunt = XCTAttachment(screenshot: app.screenshot()); bunt.name = "Personal batter bunt saved number"; bunt.lifetime = .keepAlways; add(bunt)
-                waitForEnabled(app.buttons[primary]); app.buttons["gameInput-swing"].tap(); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
+                waitForEnabled(app.buttons[primary],timeout:10); app.buttons["gameInput-swing"].tap(); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
             }
-            waitForEnabled(app.buttons["gameAutomatic"])
+            waitForEnabled(app.buttons["gameAutomatic"],timeout:10)
             let speed = app.descendants(matching: .any).matching(identifier: "boardPitchSpeed").firstMatch
             XCTAssertTrue(speed.exists); XCTAssertFalse(speed.label.contains("–––"))
             app.buttons["gameAutomatic"].tap(); app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
             checkResultBoard(app, pitcher: pitcher)
+            reveal(app.buttons["replayResultFieldPlay"], in:app)
+            let fieldSummary=app.staticTexts["gameDetailedFieldSummary"].label
+            XCTAssertFalse(fieldSummary.isEmpty)
+            app.buttons["replayResultFieldPlay"].tap()
+            XCTAssertTrue(app.otherElements["fieldReplayCanvas"].exists)
+            let movingField=XCTAttachment(screenshot:app.screenshot());movingField.name=pitcher ? "Detailed pitcher field moving" : "Detailed batter field moving";movingField.lifetime = .keepAlways;add(movingField)
+            waitForEnabled(app.buttons["replayResultFieldPlay"],timeout:9)
+            XCTAssertEqual(app.staticTexts["gameDetailedFieldSummary"].label,fieldSummary)
+            let settledField=XCTAttachment(screenshot:app.screenshot());settledField.name=pitcher ? "Detailed pitcher field settled" : "Detailed batter field settled";settledField.lifetime = .keepAlways;add(settledField)
             var positionGrowth = ""
             if !pitcher {
                 reveal(app.staticTexts["gamePositionGrowth"], in: app)

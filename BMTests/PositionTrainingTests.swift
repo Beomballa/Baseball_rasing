@@ -362,4 +362,39 @@ import SwiftData
         ledger.events=[];ledger.version=99;game.positionExperience=ledger;r.payload=try JSONEncoder().encode(game);try c.save()
         XCTAssertThrowsError(try r.snapshot())
     }
+    func testDetailedV55DiskResumeKeepsOriginalPayloadAndBasicRules() throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:directory)}
+        let url=directory.appendingPathComponent("legacy-v55.store")
+        let original=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (p,s,r,_)=try gameReady(c)
+            var legacy=try r.snapshot();legacy.detailedFieldVersion=nil;legacy.fieldPlays=nil;legacy.runnerProfiles=nil
+            r.payload=try JSONEncoder().encode(legacy);try c.save()
+            return (r.payload,p.pitches.map(\.mastery),s.revision)
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let r=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertEqual(r.payload,original.0);XCTAssertEqual(p.pitches.map(\.mastery),original.1);XCTAssertEqual(s.revision,original.2)
+            var expected=try r.snapshot();try expected.advance(.automatic)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            XCTAssertEqual(try r.snapshot(),expected);XCTAssertNil(try r.snapshot().fieldPlays)
+            let saved=r.payload,profile=try XCTUnwrap(PlayerPositionStore.profile(playerID:p.id,in:c)),xp=profile.payload
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,saved)
+            XCTAssertEqual(profile.payload,xp)
+        }
+    }
+    func testDetailedDamagedLedgerFailsWithoutSavingOrResettingOtherData() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        let (p,s,r,profile)=try gameReady(c)
+        var match=try r.snapshot();match.fieldPlays=nil;r.payload=try JSONEncoder().encode(match);try c.save()
+        let raw=r.payload,xp=profile.payload,fatigue=p.fatigue,revision=s.revision
+        XCTAssertThrowsError(try CareerMatchStore.start(player:p,state:s,in:c))
+        XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+        XCTAssertEqual(r.payload,raw);XCTAssertEqual(profile.payload,xp);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+        match.fieldPlays=[];match.runnerProfiles=[FieldRunnerProfile(speed:.nan),nil,nil]
+        XCTAssertThrowsError(try match.validateDetailedField())
+    }
 }
