@@ -1402,3 +1402,68 @@ extension CareerFlowTests {
         app.terminate(); app.launchArguments = []; app.launch()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testAnnualLeagueBothRolesActualResultsDateAdvanceAndReload() throws {
+        let app=XCUIApplication();app.launch()
+        for pitcher in [false,true] {
+            if pitcher {reveal(app.buttons["createOtherRole"],in:app);app.buttons["createOtherRole"].tap()}
+            createDashboardSample(app,name:pitcher ? "LeaguePitch":"LeagueBat")
+            reveal(app.buttons["openAnnualLeague"],in:app);app.buttons["openAnnualLeague"].tap()
+            XCTAssertTrue(app.staticTexts["leagueProgress"].waitForExistence(timeout:5))
+            XCTAssertTrue(app.staticTexts["leagueProgress"].label.contains("완료 0 / 대상 90"))
+            let own=app.descendants(matching:.any).matching(identifier:"leagueOwnStanding").firstMatch
+            XCTAssertTrue(own.label.contains("0경기"));XCTAssertTrue(app.staticTexts["leagueEmpty"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:5));app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
+            reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
+            reveal(app.staticTexts["homeLeagueRecord"],in:app)
+            let home=app.staticTexts["homeLeagueRecord"].label;XCTAssertTrue(home.contains("1경기"))
+            app.buttons["openAnnualLeague"].tap()
+            XCTAssertTrue(app.staticTexts["leagueProgress"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["leagueProgress"].label.contains("완료 1 / 대상 90"))
+            let actual=app.descendants(matching:.any).matching(identifier:"leagueOwnStanding").firstMatch.label
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "League pitcher actual result":"League batter actual result";shot.lifetime = .keepAlways;add(shot)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            app.terminate();app.launch()
+            selectLeagueRole(app,pitcher:pitcher)
+            XCTAssertEqual(app.staticTexts["calendarDate"].label,"2026-04-01")
+            reveal(app.staticTexts["homeLeagueRecord"],in:app);XCTAssertEqual(app.staticTexts["homeLeagueRecord"].label,home)
+            reveal(app.buttons["advanceDay"],in:app);app.buttons["advanceDay"].tap()
+            let changed=XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","2026-04-02"),object:app.staticTexts["calendarDate"])
+            XCTAssertEqual(XCTWaiter.wait(for:[changed],timeout:5),.completed)
+            let fatigue=app.staticTexts["homeFatigue"].label
+            reveal(app.buttons["openAnnualLeague"],in:app);app.buttons["openAnnualLeague"].tap()
+            XCTAssertTrue(app.staticTexts["leagueProgress"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["leagueProgress"].label.contains("완료 3 / 대상 90"))
+            let afterOwn=app.descendants(matching:.any).matching(identifier:"leagueOwnStanding").firstMatch.label
+            XCTAssertEqual(afterOwn.components(separatedBy:" · ").first,actual.components(separatedBy:" · ").first)
+            XCTAssertEqual(Array(afterOwn.components(separatedBy:" · ").suffix(2)),Array(actual.components(separatedBy:" · ").suffix(2)))
+            let rows=app.descendants(matching:.any).matching(NSPredicate(format:"identifier BEGINSWITH %@","leagueStanding-")).allElementsBoundByIndex
+            XCTAssertEqual(rows.count,5)
+            for row in rows {XCTAssertGreaterThanOrEqual(row.frame.minX,0);XCTAssertLessThanOrEqual(row.frame.maxX,app.windows.firstMatch.frame.maxX)}
+            let after=XCTAttachment(screenshot:app.screenshot());after.name=pitcher ? "League pitcher other teams completed":"League batter other teams completed";after.lifetime = .keepAlways;add(after)
+            app.terminate();app.launchArguments=["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+            selectLeagueRole(app,pitcher:pitcher)
+            reveal(app.buttons["openAnnualLeague"],in:app);app.buttons["openAnnualLeague"].tap()
+            XCTAssertTrue(app.staticTexts["leagueProgress"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["leagueProgress"].label.contains("완료 3 / 대상 90"))
+            let largeOwn=app.descendants(matching:.any).matching(identifier:"leagueOwnStanding").firstMatch
+            reveal(largeOwn,in:app);XCTAssertEqual(largeOwn.label,afterOwn)
+            let large=XCTAttachment(screenshot:app.screenshot());large.name=pitcher ? "League pitcher accessibility text":"League batter accessibility text";large.lifetime = .keepAlways;add(large)
+            app.terminate();app.launchArguments=[];app.launch()
+            selectLeagueRole(app,pitcher:pitcher)
+            reveal(app.staticTexts["homeFatigue"],in:app);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+        }
+    }
+}
+
+extension CareerFlowTests {
+    @MainActor private func selectLeagueRole(_ app:XCUIApplication,pitcher:Bool) {
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:5))
+        let button=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"]
+        if button.exists {reveal(button,in:app);button.tap()}
+        let selected=XCTNSPredicateExpectation(predicate:NSPredicate(format:"label CONTAINS %@",pitcher ? "LeaguePitch":"LeagueBat"),object:app.staticTexts["homePlayerName"])
+        XCTAssertEqual(XCTWaiter.wait(for:[selected],timeout:5),.completed)
+    }
+}

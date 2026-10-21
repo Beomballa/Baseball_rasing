@@ -72,3 +72,33 @@ typealias CareerCalendarState = CareerSchemaV2.CalendarState
         if case .failed(let message) = self { message } else { nil }
     }
 }
+
+@MainActor enum AnnualLeagueStore {
+    static func load(player:CareerPlayer,state:CareerCalendarState,year:Int,in context:ModelContext) throws -> AnnualLeague {
+        let id=player.id
+        let records=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
+        return try snapshot(player:player,state:state,year:year,records:records)
+    }
+    static func snapshot(player:CareerPlayer,state:CareerCalendarState,year:Int,records:[CareerMatchRecord]) throws -> AnnualLeague {
+        guard state.playerID == player.id,state.schoolIDs.contains(player.schoolID),state.rulesVersion == "career-core-v1" else {throw LeagueError.invalidRecord}
+        let today=try GameDate(player.gameDate),origin=try GameDate(state.originDate)
+        let fixtures=try SeasonSchedule.fixtures(year:year,schoolIDs:state.schoolIDs).filter {
+            $0.date >= origin && origin.age(startingAt:player.startAge,on:$0.date) <= 18
+        }
+        let byID=Dictionary(uniqueKeysWithValues:fixtures.map {($0.id,$0)})
+        var official:[LeagueOfficialResult]=[],pending:Set<String>=[]
+        var seen:Set<String>=[]
+        for record in records where record.playerID == player.id {
+            guard try GameDate(record.gameDate).year == year else {continue}
+            guard let fixture=byID[record.fixtureID],fixture.includes(player.schoolID),fixture.date.description == record.gameDate,
+                  record.key == CareerMatchRecord.key(player.id,fixture.id),record.opponentID == fixture.opponent(of:player.schoolID),
+                  seen.insert(record.fixtureID).inserted else {throw LeagueError.invalidRecord}
+            let match=try record.snapshot()
+            guard match.isHome == (fixture.homeID == player.schoolID),match.role == player.roleRaw else {throw LeagueError.invalidRecord}
+            if record.completed {
+                official.append(LeagueOfficialResult(fixtureID:fixture.id,homeScore:match.homeScore,awayScore:match.awayScore))
+            } else {pending.insert(fixture.id)}
+        }
+        return try AnnualLeague.make(playerID:player.id,schoolIDs:state.schoolIDs,origin:origin,startAge:player.startAge,today:today,year:year,official:official,pending:pending)
+    }
+}

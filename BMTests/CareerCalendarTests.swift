@@ -412,4 +412,138 @@ import SwiftData
         XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: 1, in: container.mainContext))
     }
 
+    private var leagueID:UUID {UUID(uuidString:"00000000-0000-0000-0000-000000000001")!}
+    private var leagueTeams:[String] {["A","B","C","D","E","F"]}
+    private func league(on date:String="2026-04-01",year:Int=2026,official:[LeagueOfficialResult]=[],pending:Set<String>=[],origin:String="2026-04-01") throws -> AnnualLeague {
+        try AnnualLeague.make(playerID:leagueID,schoolIDs:leagueTeams,origin:GameDate(origin),startAge:16,today:GameDate(date),year:year,official:official,pending:pending)
+    }
+    func testLeagueInitialTodayWaitsAndPastDateSimulatesExactlyThree() throws {
+        let first=try league();XCTAssertEqual(first.fixtures.count,90);XCTAssertTrue(first.results.isEmpty)
+        XCTAssertTrue(first.standings.allSatisfy {$0.games == 0 && $0.rank == nil && $0.percentage == "—"})
+        let next=try league(on:"2026-04-02");XCTAssertEqual(next.results.count,3);XCTAssertTrue(next.results.allSatisfy(\.automatic))
+        XCTAssertTrue(next.standings.allSatisfy {$0.games == 1});XCTAssertEqual(next,try league(on:"2026-04-02"))
+        XCTAssertEqual(try league(on:"2026-04-06"),next)
+    }
+    func testLeagueFixedVersionScoreIndependentOracleAndCareerSeed() throws {
+        let f=try XCTUnwrap(SeasonSchedule.fixtures(year:2026,schoolIDs:leagueTeams).first)
+        XCTAssertEqual(f.id,"2026-04-01-A-F")
+        let score=AnnualLeague.automaticScore(playerID:leagueID,fixture:f)
+        XCTAssertEqual(score.0,6);XCTAssertEqual(score.1,5)
+        let a=try league(on:"2026-09-23")
+        let b=try AnnualLeague.make(playerID:UUID(uuidString:"00000000-0000-0000-0000-000000000002")!,schoolIDs:leagueTeams,origin:GameDate("2026-04-01"),startAge:16,today:GameDate("2026-09-23"),year:2026,official:[])
+        XCTAssertNotEqual(a.results,b.results)
+    }
+    func testLeagueActualDrawImmediatelyOverridesAutoWithoutDoubleCounting() throws {
+        let id=try XCTUnwrap(league().fixtures.first?.id)
+        let official=LeagueOfficialResult(fixtureID:id,homeScore:7,awayScore:7)
+        let today=try league(official:[official]);XCTAssertEqual(today.results.count,1);XCTAssertFalse(try XCTUnwrap(today.results.first).automatic)
+        XCTAssertEqual(today.standings.filter {$0.draws == 1}.count,2);XCTAssertEqual(today.standings.map(\.wins).reduce(0,+),0)
+        let next=try league(on:"2026-04-02",official:[official]);XCTAssertEqual(next.results.count,3)
+        XCTAssertEqual(next.results.filter {$0.id == id}.count,1);XCTAssertEqual(next.results.first?.homeScore,7)
+        XCTAssertTrue(next.standings.allSatisfy {$0.games == 1})
+    }
+    func testLeagueFullAnnualScheduleConservesWinsLossesAndDraws() throws {
+        for year in [2026,2027,2028] {
+            let snapshot=try league(on:"\(year)-09-23",year:year)
+            XCTAssertEqual(snapshot.results.count,90);XCTAssertTrue(snapshot.standings.allSatisfy {$0.games == 30})
+            XCTAssertEqual(snapshot.standings.map(\.wins).reduce(0,+),snapshot.standings.map(\.losses).reduce(0,+))
+            XCTAssertEqual(snapshot.standings.map(\.draws).reduce(0,+),snapshot.results.filter {$0.homeScore == $0.awayScore}.count*2)
+            for row in snapshot.standings {
+                let own=snapshot.results.filter {$0.fixture.includes(row.id)}
+                let wins=own.filter {$0.fixture.homeID == row.id ? $0.homeScore > $0.awayScore:$0.awayScore > $0.homeScore}.count
+                let draws=own.filter {$0.homeScore == $0.awayScore}.count
+                XCTAssertEqual(row.wins,wins);XCTAssertEqual(row.losses,30-wins-draws);XCTAssertEqual(row.draws,draws)
+            }
+        }
+    }
+    func testLeagueExactFractionsSharedCompetitionRanksAndUndefinedStandings() {
+        let teams=[LeagueStanding(id:"A",wins:1,losses:1),LeagueStanding(id:"B",wins:3,losses:3),LeagueStanding(id:"C",wins:1,losses:2),LeagueStanding(id:"D",draws:4),LeagueStanding(id:"E",wins:1),LeagueStanding(id:"F",losses:1)]
+        let sorted=AnnualLeague.ordered(teams)
+        XCTAssertEqual(sorted.map(\.id),["E","A","B","C","F","D"]);XCTAssertEqual(sorted.map(\.rank),[1,2,2,4,5,nil])
+        let close=AnnualLeague.ordered([LeagueStanding(id:"A",wins:333,losses:667),LeagueStanding(id:"B",wins:1,losses:2)])
+        XCTAssertEqual(close.map(\.percentage),["0.333","0.333"]);XCTAssertEqual(close.map(\.rank),[1,2]);XCTAssertEqual(close.first?.id,"B")
+    }
+    func testLeagueRejectsDuplicatesDamagedFutureAndUnfinishedPastWithoutInventingResults() throws {
+        let id=try XCTUnwrap(league().fixtures.first?.id),a=LeagueOfficialResult(fixtureID:id,homeScore:1,awayScore:0)
+        XCTAssertThrowsError(try league(official:[a,a]));XCTAssertThrowsError(try league(official:[LeagueOfficialResult(fixtureID:id,homeScore:-1,awayScore:0)]))
+        XCTAssertThrowsError(try league(official:[a],pending:[id]));XCTAssertThrowsError(try league(on:"2026-04-02",pending:[id]))
+        XCTAssertTrue(try league(pending:[id]).results.isEmpty)
+        XCTAssertThrowsError(try league(on:"2026-03-31",official:[a]))
+        XCTAssertThrowsError(try league(on:"2026-04-01",year:2027));XCTAssertThrowsError(try league(official:[LeagueOfficialResult(fixtureID:"missing",homeScore:0,awayScore:0)]))
+    }
+    func testLeagueCareerStartAgeAndYearBoundariesDoNotResetPriorResults() throws {
+        let partial=try league(on:"2026-09-23",origin:"2026-07-01")
+        XCTAssertTrue(partial.fixtures.allSatisfy {$0.date >= (try! GameDate("2026-07-01"))});XCTAssertLessThan(partial.fixtures.count,90)
+        XCTAssertEqual(try league(on:"2027-01-01",year:2026),try league(on:"2026-09-23"))
+        XCTAssertTrue(try league(on:"2027-01-01",year:2027).results.isEmpty)
+        XCTAssertTrue(try league(on:"2029-10-01",year:2029).fixtures.isEmpty)
+    }
+    func testLeagueCompletedMatchAndDateProgressionHaveNoSecondPersonalReward() throws {
+        for role in PlayerRole.allCases {
+            let (container,p,s)=try fixture(date:"2026-04-01",role:role),c=container.mainContext
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let record=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertTrue(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c).results.isEmpty)
+            try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c)
+            let actual=try record.snapshot(),before=record.payload,fatigue=p.fatigue,revision=s.revision
+            let today=try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c)
+            XCTAssertEqual(today.results.count,1);XCTAssertEqual(today.results.first?.homeScore,actual.homeScore)
+            for _ in 0..<3 {XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),today)}
+            XCTAssertEqual(record.payload,before);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+            let next=try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c)
+            XCTAssertEqual(next.results.count,3);XCTAssertEqual(next.results.filter {!$0.automatic}.count,1)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).count,1)
+            XCTAssertEqual(record.payload,before);XCTAssertEqual(p.fatigue,max(0,fatigue-4))
+            let own=try XCTUnwrap(next.standings.first {$0.id == p.schoolID});XCTAssertEqual(own.games,1)
+        }
+    }
+    func testLeagueDateSaveFailureRollbackRetryAndStaleInputDoNotAddResults() throws {
+        enum Failure:Error {case injected}
+        let (container,p,s)=try fixture(date:"2026-04-01",role:.batter),c=container.mainContext
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let r=try CareerMatchStore.start(player:p,state:s,in:c)
+        try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+        let before=try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),revision=s.revision,fatigue=p.fatigue
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:revision,in:c,save:{_ in throw Failure.injected}))
+        XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),before);XCTAssertEqual(p.fatigue,fatigue)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:revision,in:c)
+        let after=try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c);XCTAssertEqual(after.results.count,3)
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,in:c))
+        XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),after)
+    }
+    func testLeagueSnapshotRejectsInvalidOwnRecordInsteadOfIgnoringIt() throws {
+        let (container,p,s)=try fixture(date:"2026-04-01",role:.batter),c=container.mainContext
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let r=try CareerMatchStore.start(player:p,state:s,in:c)
+        r.opponentID="wrong";try c.save()
+        XCTAssertThrowsError(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c));XCTAssertEqual(r.opponentID,"wrong")
+    }
+    func testLeagueDiskReloadKeepsOriginalPayloadAndOtherRoleIndependent() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("league.store")
+        let saved=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            var draft=PlayerDraft();draft.schoolID="hs-ref-001";draft.name="LeagueBatter"
+            let p=try CareerStore.create(draft,schools:SchoolCatalog.load(),in:c)
+            draft.role = .pitcher;draft.name="LeaguePitch"
+            let other=try CareerStore.create(draft,schools:SchoolCatalog.load(),in:c)
+            let s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == p.id})
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let r=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+            return (p.id,other.id,r.payload,try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),p.fatigue)
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext,players=try c.fetch(FetchDescriptor<CareerPlayer>())
+            let p=try XCTUnwrap(players.first {$0.id == saved.0}),other=try XCTUnwrap(players.first {$0.id == saved.1})
+            let states=try c.fetch(FetchDescriptor<CareerCalendarState>()),s=try XCTUnwrap(states.first {$0.playerID == p.id}),otherState=try XCTUnwrap(states.first {$0.playerID == other.id})
+            XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),saved.3)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).first?.payload,saved.2);XCTAssertEqual(p.fatigue,saved.4)
+            XCTAssertEqual(other.gameDate,"2026-04-01");XCTAssertTrue(try AnnualLeagueStore.load(player:other,state:otherState,year:2026,in:c).results.isEmpty)
+        }
+    }
+
 }
