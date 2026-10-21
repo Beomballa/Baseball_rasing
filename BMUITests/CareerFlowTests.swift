@@ -1514,3 +1514,86 @@ extension CareerFlowTests {
         }
     }
 }
+
+extension CareerFlowTests {
+    @MainActor private func openOffseasonRole(_ app: XCUIApplication, pitcher: Bool) {
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+        reveal(role, in: app); role.tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains(pitcher ? "SeasonPitch" : "SeasonBat"))
+        reveal(app.buttons["openSeasonSummary"], in: app); app.buttons["openSeasonSummary"].tap()
+        XCTAssertTrue(app.staticTexts["seasonChampion"].waitForExistence(timeout: 5))
+    }
+    @MainActor func testOffseasonBothRolesOpeningDiskResumeAndPastFinalUnchanged() throws {
+        let app = XCUIApplication(); app.launchArguments = ["-offseason-verification"]; app.launch()
+        for pitcher in [false, true] {
+            openOffseasonRole(app, pitcher: pitcher)
+            let champion = app.staticTexts["seasonChampion"].label
+            let stats = app.descendants(matching: .any).matching(identifier: "seasonTotals").firstMatch.label
+            for (index, date) in ["2026-10-23", "2026-11-22", "2026-12-22", "2027-01-21", "2027-02-20", "2027-03-22", "2027-03-31"].enumerated() {
+                let next = app.buttons["advanceOffseason"]; reveal(next, in: app); XCTAssertTrue(next.isEnabled); next.tap()
+                let dates = app.staticTexts["offseasonDates"]
+                let arrived = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH %@", date), object: dates)
+                XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 10), .completed)
+                let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.otherElements["careerTransition"])
+                XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed)
+                if index == 3 {
+                    app.terminate(); app.launch(); openOffseasonRole(app, pitcher: pitcher)
+                    reveal(app.staticTexts["offseasonDates"], in: app)
+                    XCTAssertTrue(app.staticTexts["offseasonDates"].label.hasPrefix(date))
+                    let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Offseason pitcher year resume" : "Offseason batter year resume"; shot.lifetime = .keepAlways; add(shot)
+                }
+            }
+            XCTAssertTrue(app.staticTexts["offseasonAge"].label.contains("16세 → 17세"))
+            reveal(app.buttons["advanceOffseason"], in: app); app.buttons["advanceOffseason"].tap()
+            XCTAssertTrue(app.buttons["확인하고 계속 진행"].waitForExistence(timeout: 5)); app.buttons["확인하고 계속 진행"].tap()
+            XCTAssertTrue(app.staticTexts["offseasonUnavailable"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.buttons["advanceOffseason"].exists)
+            XCTAssertEqual(app.staticTexts["seasonChampion"].label, champion)
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "seasonTotals").firstMatch.label, stats)
+            reveal(app.buttons["offseasonReturnHome"], in: app); app.buttons["offseasonReturnHome"].tap()
+            XCTAssertTrue(app.staticTexts["calendarDate"].waitForExistence(timeout: 5)); XCTAssertEqual(app.staticTexts["calendarDate"].label, "2027-04-01")
+            XCTAssertTrue(app.staticTexts["homeAge"].label.contains("17세 / 고2")); XCTAssertTrue(app.staticTexts["homeFatigue"].label.contains("피로 0 / 100"))
+            XCTAssertTrue(app.staticTexts["calendarAction"].label.contains("미사용")); XCTAssertTrue(app.staticTexts["todaySchedule"].label.hasPrefix("1 / 30차전"))
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Offseason pitcher opening home" : "Offseason batter opening home"; shot.lifetime = .keepAlways; add(shot)
+            app.terminate(); app.launch(); openOffseasonRoleAfterOpening(app, pitcher: pitcher)
+            let previous = app.buttons["seasonPreviousYear"]; reveal(previous, in: app); previous.tap()
+            XCTAssertTrue(app.staticTexts["seasonChampion"].waitForExistence(timeout: 5)); XCTAssertEqual(app.staticTexts["seasonChampion"].label, champion)
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "seasonTotals").firstMatch.label, stats)
+            XCTAssertFalse(app.buttons["advanceOffseason"].exists)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+    }
+    @MainActor private func openOffseasonRoleAfterOpening(_ app: XCUIApplication, pitcher: Bool) {
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]; reveal(role, in: app); role.tap()
+        XCTAssertEqual(app.staticTexts["calendarDate"].label, "2027-04-01")
+        reveal(app.buttons["openSeasonSummary"], in: app); app.buttons["openSeasonSummary"].tap()
+        XCTAssertTrue(app.staticTexts["seasonProgress"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["seasonProgress"].label.contains("완료 0 / 대상 90"))
+    }
+}
+
+extension CareerFlowTests {
+    @MainActor func testOffseasonLargeTextBothRolesThirtyDayControlsAndSummary() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-season-summary-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        for pitcher in [false, true] {
+            openOffseasonRole(app, pitcher: pitcher)
+            let next = app.buttons["advanceOffseason"]; reveal(next, in: app)
+            XCTAssertTrue(next.isHittable); XCTAssertGreaterThanOrEqual(next.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(next.frame.minX, 0); XCTAssertLessThanOrEqual(next.frame.maxX, app.windows.firstMatch.frame.maxX)
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Offseason large pitcher controls" : "Offseason large batter controls"; shot.lifetime = .keepAlways; add(shot)
+            next.tap()
+            let arrived = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH %@", "2026-10-23"), object: app.staticTexts["offseasonDates"])
+            XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 15), .completed)
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.otherElements["careerTransition"])
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed)
+            reveal(app.staticTexts["offseasonSummary"], in: app)
+            XCTAssertTrue(app.staticTexts["offseasonSummary"].label.contains("30일 진행"))
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertEqual(app.staticTexts["calendarDate"].label, "2026-10-23")
+        }
+    }
+}

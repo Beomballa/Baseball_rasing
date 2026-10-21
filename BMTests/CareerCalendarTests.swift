@@ -678,4 +678,191 @@ import SwiftData
         XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), final)
     }
 
+    private func offseasonFixture(role: PlayerRole = .pitcher, year: Int = 2026) throws -> (ModelContainer, CareerPlayer, CareerCalendarState) {
+        let (container, p, s) = try fixture(date: "\(year)-04-01", role: role), c = container.mainContext
+        _ = try finishSeason(player: p, state: s, in: c)
+        try CalendarProgression.advanceDay(player: p, state: s, revision: s.revision, in: c)
+        return (container, p, s)
+    }
+    private func offseasonBatch(_ p: CareerPlayer, _ s: CareerCalendarState, _ c: ModelContext, year: Int = 2026,
+                                confirmed: Bool = false) async throws -> CalendarAdvanceSummary {
+        try await CalendarProgression.advanceOffseason(player: p, state: s, seasonYear: year,
+            revision: s.revision, expectedDate: p.gameDate, confirmAnniversary: confirmed, in: c)
+    }
+    func testOffseasonBothRolesDailyRecoveryThirtyDayBatchesAndOpeningPreserveGrowthAndHistory() async throws {
+        for role in PlayerRole.allCases {
+            let (container, p, s) = try offseasonFixture(role: role), c = container.mainContext
+            let previous = try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c)
+            let values = [p.contact, p.power, p.discipline, p.speed, p.defense, p.arm]
+            let pitches = Dictionary(uniqueKeysWithValues: p.pitches.map { ($0.code, $0.mastery) })
+            let profile = try XCTUnwrap(PlayerAbilityStore.profile(playerID: p.id, in: c))
+            let initial = profile.initialValues, mental = profile.mental, velocity = profile.velocity
+            let traits = try XCTUnwrap(PlayerTraitStore.profile(playerID: p.id, in: c)), traitData = traits.payload
+            let positions = try PlayerPositionStore.profile(playerID: p.id, in: c), positionData = positions?.payload
+            let payloads = try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            p.fatigue = 100; s.actionDate = p.gameDate; try c.save()
+            let startRevision = s.revision
+            var dates: [String] = [], fatigue: [Int] = []
+            let first = try await CalendarProgression.advanceOffseason(player: p, state: s, seasonYear: 2026,
+                revision: s.revision, expectedDate: p.gameDate, in: c, onDaySaved: { date in
+                    XCTAssertFalse(c.hasChanges); dates.append(date); fatigue.append(p.fatigue)
+                })
+            XCTAssertEqual(first.days, 30); XCTAssertEqual(first.restDays, 29); XCTAssertEqual(first.stop, .limit)
+            XCTAssertEqual(dates.count, 30); XCTAssertEqual(Set(dates).count, 30); XCTAssertEqual(fatigue.first, 96)
+            XCTAssertEqual(fatigue[1], 74); XCTAssertEqual(p.fatigue, 0)
+            XCTAssertEqual(try s.age(of: p), 16)
+            while p.gameDate < "2027-03-31" {
+                let result = try await offseasonBatch(p, s, c)
+                XCTAssertLessThanOrEqual(result.days, 30); XCTAssertGreaterThan(result.days, 0)
+            }
+            XCTAssertEqual(p.gameDate, "2027-03-31"); XCTAssertEqual(try s.age(of: p), 16)
+            let paused = try await offseasonBatch(p, s, c)
+            XCTAssertEqual(paused.stop, .anniversary); XCTAssertEqual(paused.days, 0)
+            let opened = try await offseasonBatch(p, s, c, confirmed: true)
+            XCTAssertEqual(opened.days, 1); XCTAssertEqual(opened.stop, .seasonOpening)
+            XCTAssertEqual(p.gameDate, "2027-04-01"); XCTAssertEqual(try s.age(of: p), 17)
+            XCTAssertEqual(s.revision, startRevision + 190); XCTAssertNil(s.actionDate)
+            XCTAssertEqual(try s.fixtures(for: p, year: 2027).count, 30)
+            XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), previous)
+            XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2027, in: c).totals.games, 0)
+            XCTAssertEqual([p.contact, p.power, p.discipline, p.speed, p.defense, p.arm], values)
+            XCTAssertEqual(Dictionary(uniqueKeysWithValues: p.pitches.map { ($0.code, $0.mastery) }), pitches)
+            XCTAssertEqual(profile.initialValues, initial); XCTAssertEqual(profile.mental, mental); XCTAssertEqual(profile.velocity, velocity)
+            XCTAssertEqual(traits.payload, traitData); XCTAssertEqual(positions?.payload, positionData)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload), payloads)
+            do { _ = try await offseasonBatch(p, s, c, confirmed: true); XCTFail("opened twice") } catch {}
+            XCTAssertEqual(s.revision, startRevision + 190)
+            // Opening day is a real fixture: preparation and actual completion still gate the next day.
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player: p, state: s, revision: s.revision, automaticRest: true, in: c))
+        }
+    }
+    func testOffseasonRejectsUnfinishedStalePartialAndPendingTrainingWithoutSaving() async throws {
+        let (container, p, s) = try fixture(date: "2026-04-01"), c = container.mainContext
+        do { _ = try await offseasonBatch(p, s, c); XCTFail("unfinished") } catch {}
+        XCTAssertEqual(p.gameDate, "2026-04-01")
+        _ = try finishSeason(player: p, state: s, in: c)
+        do { _ = try await offseasonBatch(p, s, c); XCTFail("last day only88") } catch {}
+        try CalendarProgression.advanceDay(player: p, state: s, revision: s.revision, in: c)
+        let date = p.gameDate, revision = s.revision
+        for (r, d, year) in [(revision - 1, date, 2026), (revision, "2026-09-22", 2026), (revision, date, 2025)] {
+            do { _ = try await CalendarProgression.advanceOffseason(player: p, state: s, seasonYear: year, revision: r, expectedDate: d, in: c); XCTFail("stale") } catch {}
+        }
+        _ = try CareerTrainingStore.start(player: p, state: s, pitchCode: p.pitches[0].code, in: c)
+        let pendingRevision = s.revision
+        do { _ = try await offseasonBatch(p, s, c); XCTFail("pending training") } catch {}
+        XCTAssertEqual(p.gameDate, date); XCTAssertEqual(s.revision, pendingRevision)
+        let summary = CareerSeasonSummary(league: try league(on: "2026-09-23", origin: "2026-05-01"), totals: PersonalSeasonTotals())
+        XCTAssertThrowsError(try OffseasonPlan.make(summary: summary, origin: GameDate("2026-05-01"), startAge: 16, today: GameDate("2026-09-23")))
+    }
+    func testOffseasonCancellationBeforeAndAfterCommittedDaysCanResume() async throws {
+        let (container, p, s) = try offseasonFixture(), c = container.mainContext
+        p.fatigue = 100; try c.save()
+        let revision = s.revision
+        let before = Task { @MainActor in try await self.offseasonBatch(p, s, c) }; before.cancel()
+        let zero = try await before.value; XCTAssertEqual(zero.days, 0); XCTAssertEqual(zero.stop, .cancelled)
+        XCTAssertEqual(p.fatigue, 100); XCTAssertEqual(s.revision, revision)
+        var dates: [String] = []
+        let task = Task { @MainActor in
+            try await CalendarProgression.advanceOffseason(player: p, state: s, seasonYear: 2026, revision: s.revision, expectedDate: p.gameDate, in: c, onDaySaved: { date in
+                dates.append(date)
+                if dates.count == 3 { withUnsafeCurrentTask { $0?.cancel() } }
+            })
+        }
+        let result = try await task.value
+        XCTAssertEqual(result.stop, .cancelled); XCTAssertEqual(result.days, 3)
+        XCTAssertEqual(p.gameDate, "2026-09-26"); XCTAssertEqual(p.fatigue, 34)
+        let resumed = try await offseasonBatch(p, s, c)
+        XCTAssertEqual(resumed.days, 30); XCTAssertEqual(p.gameDate, "2026-10-26")
+    }
+    func testOffseasonSaveFailureFirstMiddleAndOpeningDayRollBackOnlyFailedDay() async throws {
+        enum Failure: Error { case injected }
+        let (container, p, s) = try offseasonFixture(), c = container.mainContext
+        p.fatigue = 100; try c.save()
+        for failAt in [1, 4] {
+            let start = try GameDate(p.gameDate), revision = s.revision, beforeFatigue = p.fatigue
+            var calls = 0
+            do {
+                _ = try await CalendarProgression.advanceOffseason(player: p, state: s, seasonYear: 2026, revision: revision, expectedDate: p.gameDate, in: c, save: { context in
+                    calls += 1; if calls == failAt { throw Failure.injected }; try context.save()
+                }); XCTFail("save failure")
+            } catch let error as CalendarAdvanceFailure {
+                XCTAssertEqual(error.summary.days, failAt - 1); XCTAssertEqual(error.summary.lastSavedDate, start.adding(days: failAt - 1).description)
+                XCTAssertEqual(error.summary.fatigueAfter, max(0, beforeFatigue - (failAt - 1) * 22))
+            }
+            XCTAssertEqual(s.revision, revision + failAt - 1)
+        }
+        while p.gameDate < "2027-03-31" { _ = try await offseasonBatch(p, s, c) }
+        let revision = s.revision
+        do {
+            _ = try await CalendarProgression.advanceOffseason(player: p, state: s, seasonYear: 2026, revision: revision, expectedDate: p.gameDate, confirmAnniversary: true, in: c, save: { _ in throw Failure.injected }); XCTFail("birthday failure")
+        } catch {}
+        XCTAssertEqual(p.gameDate, "2027-03-31"); XCTAssertEqual(try s.age(of: p), 16); XCTAssertEqual(s.revision, revision)
+        _ = try await offseasonBatch(p, s, c, confirmed: true)
+        XCTAssertEqual(p.gameDate, "2027-04-01"); XCTAssertEqual(try s.age(of: p), 17)
+    }
+    func testOffseasonUsesLegacyAnniversaryRatherThanUnconditionallyAgingAtOpening() async throws {
+        let (container, p, s) = try offseasonFixture(), c = container.mainContext
+        s.originDate = "2026-02-01"; p.gameDate = "2027-01-20"; try c.save()
+        let plan = try XCTUnwrap(CareerSeasonStore.offseason(player: p, state: s, in: c))
+        XCTAssertEqual(plan.seasonYear, 2026); XCTAssertEqual(plan.age, 16); XCTAssertEqual(plan.targetAge, 17)
+        let stopped = try await offseasonBatch(p, s, c)
+        XCTAssertEqual(stopped.days, 11); XCTAssertEqual(stopped.stop, .anniversary); XCTAssertEqual(p.gameDate, "2027-01-31")
+        _ = try await offseasonBatch(p, s, c, confirmed: true)
+        XCTAssertEqual(try s.age(of: p), 17)
+        while p.gameDate < "2027-04-01" { _ = try await offseasonBatch(p, s, c) }
+        XCTAssertEqual(try s.age(of: p), 17)
+    }
+    func testOffseasonLeapYearGraduationAndNoAutomaticHighSchoolOrProSeasonAtNineteen() async throws {
+        let (container, p, s) = try offseasonFixture(year: 2028), c = container.mainContext
+        while p.gameDate < "2029-03-31" { _ = try await offseasonBatch(p, s, c, year: 2028) }
+        XCTAssertEqual(try s.age(of: p), 18)
+        _ = try await offseasonBatch(p, s, c, year: 2028, confirmed: true)
+        XCTAssertEqual(p.gameDate, "2029-04-01"); XCTAssertEqual(try s.age(of: p), 19)
+        XCTAssertTrue(try s.fixtures(for: p, year: 2029).isEmpty)
+        XCTAssertEqual(p.schoolID, "hs-ref-001"); XCTAssertEqual(SeasonSchedule.academicStatus(age: 19), "고교 졸업 · 진로준비")
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).count, 30)
+        let leap = try OffseasonPlan.make(summary: CareerSeasonStore.load(player: p, state: s, year: 2028, in: c), origin: GameDate(s.originDate), startAge: p.startAge, today: GameDate("2029-02-28"))
+        XCTAssertEqual(leap.remainingDays, 32)
+        // The preceding 2027 offseason includes February29,2028.
+        let league2027 = try league(on: "2028-03-31", year: 2027)
+        let leapPlan = try OffseasonPlan.make(summary: CareerSeasonSummary(league: league2027, totals: PersonalSeasonTotals()), origin: GameDate("2026-04-01"), startAge: 16, today: GameDate("2028-02-28"))
+        XCTAssertEqual(leapPlan.remainingDays, 33)
+    }
+    func testOffseasonDiskPartialAcrossNewYearReloadPreservesRecordsAndOtherRole() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("offseason.store")
+        var savedID: UUID!, oldTotals: CareerSeasonSummary!, oldPayloads: [String: Data] = [:]
+        do {
+            let container = try CareerStore.makeContainer(url: url), c = container.mainContext
+            var draft = PlayerDraft(); draft.schoolID = "hs-ref-001"; draft.role = .pitcher; draft.name = "OffPitch"
+            let p = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: c)
+            draft.role = .batter; draft.name = "OffBatter"; _ = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: c)
+            let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id })
+            _ = try finishSeason(player: p, state: s, in: c); try CalendarProgression.advanceDay(player: p, state: s, revision: s.revision, in: c)
+            savedID = p.id; oldTotals = try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c)
+            oldPayloads = Dictionary(uniqueKeysWithValues: try c.fetch(FetchDescriptor<CareerMatchRecord>()).map { ($0.key, $0.payload) })
+            for _ in 0..<4 { _ = try await offseasonBatch(p, s, c) }
+            XCTAssertEqual(p.gameDate, "2027-01-21")
+        }
+        let reopened = try CareerStore.makeContainer(url: url), c = reopened.mainContext
+        let players = try c.fetch(FetchDescriptor<CareerPlayer>()), p = try XCTUnwrap(players.first { $0.id == savedID })
+        let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id })
+        XCTAssertEqual(p.gameDate, "2027-01-21"); XCTAssertEqual(try CareerSeasonStore.offseason(player: p, state: s, in: c)?.seasonYear, 2026)
+        while p.gameDate < "2027-03-31" { _ = try await offseasonBatch(p, s, c) }
+        _ = try await offseasonBatch(p, s, c, confirmed: true)
+        XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), oldTotals)
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: try c.fetch(FetchDescriptor<CareerMatchRecord>()).map { ($0.key, $0.payload) }), oldPayloads)
+        XCTAssertEqual(players.first { $0.id != p.id }?.gameDate, "2026-04-01")
+    }
+    func testOffseasonCannotSkipAnUnfinishedMatchFromAnotherDate() async throws {
+        let (container, p, s) = try offseasonFixture(), c = container.mainContext
+        let originalDate = p.gameDate
+        p.gameDate = "2027-04-01"; s.actionDate = p.gameDate; try c.save()
+        _ = try CareerMatchStore.start(player: p, state: s, in: c)
+        p.gameDate = originalDate; s.actionDate = nil; try c.save()
+        do { _ = try await offseasonBatch(p, s, c); XCTFail("future pending match") } catch {}
+        XCTAssertEqual(p.gameDate, originalDate)
+    }
+
 }

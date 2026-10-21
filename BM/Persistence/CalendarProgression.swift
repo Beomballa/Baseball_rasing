@@ -6,6 +6,7 @@ struct CalendarAdvanceSummary: Equatable, Sendable {
         case fixture = "경기일 도착 · 경기 진행/완료 확인"
         case anniversary = "나이·학적 변경 전 · 하루 진행으로 확인"
         case limit = "30일 진행 완료"
+        case seasonOpening = "다음 연도 4월 1일 도착"
         case failed = "진행 중단 · 완료한 날짜는 저장되어 있습니다"
         case cancelled = "진행 중지 · 마지막 저장일부터 이어집니다"
     }
@@ -118,5 +119,57 @@ struct CalendarAdvanceFailure: LocalizedError {
         }
         return CalendarAdvanceSummary(days: days, restDays: rests, fatigueBefore: before,
                                       fatigueAfter: lastSavedFatigue, stop: stop, lastSavedDate: lastSavedDate)
+    }
+}
+
+
+extension CalendarProgression {
+    /// Each batch preserves the existing 30-day limit and daily atomic save/recovery.
+    static func advanceOffseason(player: CareerPlayer, state: CareerCalendarState, seasonYear: Int,
+                                 revision: Int, expectedDate: String, confirmAnniversary: Bool = false,
+                                 in context: ModelContext, save: Save = { try $0.save() },
+                                 onDaySaved: (@MainActor (String) async -> Void)? = nil) async throws -> CalendarAdvanceSummary {
+        let before = player.fatigue
+        var days = 0, rests = 0, expectedRevision = revision
+        var lastDate = expectedDate, lastFatigue = before
+        var stop = CalendarAdvanceSummary.Stop.limit
+        do {
+            try validate(player, state, revision: revision)
+            guard player.gameDate == expectedDate else { throw CalendarError.staleState }
+            guard let plan = try CareerSeasonStore.offseason(player: player, state: state, in: context),
+                  plan.seasonYear == seasonYear else { throw OffseasonError.unavailable }
+            try CareerTrainingStore.requireNoPending(player: player, in: context)
+            let id = player.id
+            let records = try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate: #Predicate { $0.playerID == id }))
+            guard !records.contains(where: { !$0.completed }) else { throw CalendarError.fixturePending }
+            while days < 30 {
+                if Task.isCancelled { stop = .cancelled; break }
+                try validate(player, state, revision: expectedRevision)
+                guard player.gameDate == lastDate else { throw CalendarError.staleState }
+                if try GameDate(player.gameDate) >= plan.target { stop = .seasonOpening; break }
+                if try hasGameToday(player: player, state: state) { stop = .fixture; break }
+                let birthday = try isAnniversaryTomorrow(player: player, state: state)
+                if birthday && !(confirmAnniversary && days == 0) { stop = .anniversary; break }
+                let needsRest = !state.hasAction(on: player.gameDate)
+                try advanceDay(player: player, state: state, revision: expectedRevision, automaticRest: true,
+                    confirmAnniversary: birthday && confirmAnniversary && days == 0, in: context, save: save)
+                expectedRevision = state.revision; lastDate = player.gameDate; lastFatigue = player.fatigue
+                days += 1
+                if needsRest { rests += 1 }
+                await onDaySaved?(lastDate)
+                await Task.yield()
+            }
+            if stop == .limit {
+                if try GameDate(player.gameDate) == plan.target { stop = .seasonOpening }
+                else if try isAnniversaryTomorrow(player: player, state: state) { stop = .anniversary }
+            }
+        } catch {
+            // A preflight failure reports the actual saved date, not a stale caller's date.
+            if days == 0 { lastDate = player.gameDate; lastFatigue = player.fatigue }
+            throw CalendarAdvanceFailure(summary: CalendarAdvanceSummary(days: days, restDays: rests, fatigueBefore: before,
+                fatigueAfter: lastFatigue, stop: .failed, lastSavedDate: lastDate), reason: error.localizedDescription)
+        }
+        return CalendarAdvanceSummary(days: days, restDays: rests, fatigueBefore: before,
+            fatigueAfter: lastFatigue, stop: stop, lastSavedDate: lastDate)
     }
 }

@@ -5,7 +5,7 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-season-summary-verification") {
+            if ProcessInfo.processInfo.arguments.contains("-season-summary-verification") || ProcessInfo.processInfo.arguments.contains("-offseason-verification") {
                 SeasonSummaryVerification()
             } else if ProcessInfo.processInfo.arguments.contains("-position-training-preview") {
                 NavigationStack { PositionTrainingPreview() }
@@ -79,7 +79,14 @@ private struct SeasonSummaryVerification: View {
     }
     @MainActor private func prepare() {
         do {
-            let schools = try SchoolCatalog.load(), store = try CareerStore.makeContainer(inMemory: true), c = store.mainContext
+            let schools = try SchoolCatalog.load()
+            let diskQA = ProcessInfo.processInfo.arguments.contains("-offseason-verification")
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("offseason-verification.store")
+            let store = try diskQA ? CareerStore.makeContainer(url: url) : CareerStore.makeContainer(inMemory: true)
+            let c = store.mainContext
+            if try c.fetchCount(FetchDescriptor<CareerPlayer>()) > 0 {
+                self.schools = schools; container = store; return
+            }
             for role in PlayerRole.allCases {
                 var draft = PlayerDraft(); draft.schoolID = schools[0].id; draft.role = role
                 draft.name = role == .batter ? "SeasonBat" : "SeasonPitch"

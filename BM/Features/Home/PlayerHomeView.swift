@@ -50,7 +50,7 @@ struct PlayerHomeView: View {
                 if let calendar {
                     CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
                     playActions(calendar)
-                    AnnualLeagueHomePanel(player:player,state:calendar,schools:schools)
+                    AnnualLeagueHomePanel(player:player,state:calendar,schools:schools,transition:transition)
                 } else {
                     Text("달력 정보를 불러오지 못했습니다. 앱을 다시 열어 주세요.").font(.caption).foregroundStyle(GameTheme.gold)
                 }
@@ -198,6 +198,7 @@ struct AnnualLeagueHomePanel: View {
     let player: CareerPlayer
     let state: CareerCalendarState
     let schools: [School]
+    let transition: CareerTransition
     @Environment(\.modelContext) private var context
     @State private var season: CareerSeasonSummary?
     private var league: AnnualLeague? { season?.league }
@@ -220,14 +221,16 @@ struct AnnualLeagueHomePanel: View {
             if let season {
                 Text("SEASON · 내 시즌 성적").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.boardMuted)
                 SeasonPersonalRecord(totals: season.totals, role: player.role, compact: true)
-                NavigationLink { CareerSeasonScreen(player: player, state: state, schools: schools) } label: {
+                NavigationLink { CareerSeasonScreen(player: player, state: state, schools: schools, transition: transition) } label: {
                     Text(season.finalized ? "시즌 결산 · 최종 성적" : "시즌 성적 · 결산 보기")
                 }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openSeasonSummary")
             }
             NavigationLink {AnnualLeagueScreen(player:player,state:state,schools:schools)} label: {
                 HStack {LeaguePixelFlag().frame(width:20,height:22);Text("리그 순위 보기")}
             }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openAnnualLeague")
-        }.task(id:"\(player.gameDate):\(state.revision)"){reload()}
+        }.task(id:"\(player.gameDate):\(state.revision):\(transition.display == nil)") {
+            if transition.display == nil { reload() }
+        }
     }
 }
 
@@ -389,6 +392,7 @@ struct CareerSeasonScreen: View {
     let player: CareerPlayer
     let state: CareerCalendarState
     let schools: [School]
+    let transition: CareerTransition
     @Environment(\.modelContext) private var context
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var selectedYear: Int?
@@ -397,7 +401,9 @@ struct CareerSeasonScreen: View {
     private func name(_ id: String) -> String { schools.first { $0.id == id }?.name ?? id }
     private func reload() {
         do {
-            summary = try CareerSeasonStore.load(player: player, state: state, year: selectedYear ?? GameDate(player.gameDate).year, in: context)
+            let year = try selectedYear ?? CareerSeasonStore.offseason(player: player, state: state, in: context)?.seasonYear ?? GameDate(player.gameDate).year
+            summary = try CareerSeasonStore.load(player: player, state: state, year: year, in: context)
+            if selectedYear == nil { selectedYear = year }
             error = nil
         } catch { summary = nil; self.error = error.localizedDescription }
     }
@@ -433,6 +439,9 @@ struct CareerSeasonScreen: View {
                     GamePanel(title: "MY RECORD · 내 시즌 성적", onBoard: true) {
                         SeasonPersonalRecord(totals: summary.totals, role: player.role)
                     }
+                    if summary.finalized {
+                        SeasonOffseasonPanel(player: player, state: state, seasonYear: league.year, transition: transition)
+                    }
                     GamePanel(title: summary.finalized ? "FINAL TABLE · 최종 순위" : "TABLE · 현재 순위", onBoard: true) {
                         ForEach(summary.finalStandings) { row in
                             VStack(alignment: .leading, spacing: 5) {
@@ -446,7 +455,7 @@ struct CareerSeasonScreen: View {
                         Text("승률 동률은 공동 순위·공동 우승\n전 경기 무승부일 때는 모든 팀 공동 우승·승률 —")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                     }
-                    Text("완료 원장과 저장된 날짜로 복원 · 조회는 날짜·나이·피로·보상을 변경하지 않습니다. 다음 시즌 전환은 후속 기능입니다.")
+                    Text("완료 원장과 저장된 날짜로 복원 · 조회는 날짜·나이·피로·보상을 변경하지 않습니다. 오프시즌은 하루 단위로 저장하며 다음 해 4월 1일에 새 연간 일정이 시작됩니다.")
                         .font(.caption).foregroundStyle(GameTheme.boardMuted)
                 } else if let error {
                     GamePanel(title: "시즌 기록 확인 필요", onBoard: true) {
@@ -459,7 +468,9 @@ struct CareerSeasonScreen: View {
             .navigationTitle("시즌 성적 · 결산").navigationBarTitleDisplayMode(.inline)
             .preferredColorScheme(.dark)
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
-            .task(id: "\(selectedYear ?? 0):\(player.gameDate):\(state.revision)") { reload() }
+            .task(id: "\(selectedYear ?? 0):\(player.gameDate):\(state.revision):\(transition.display == nil)") {
+                if transition.display == nil { reload() }
+            }
     }
 }
 
@@ -475,5 +486,85 @@ struct SeasonPixelTrophy: View {
             }
             c.fill(Path(CGRect(x: 5 * u, y: 2 * u, width: 2 * u, height: 4 * u)), with: .color(GameTheme.boardInk))
         }.accessibilityHidden(true)
+    }
+}
+
+struct SeasonOffseasonPanel: View {
+    let player: CareerPlayer
+    let state: CareerCalendarState
+    let seasonYear: Int
+    let transition: CareerTransition
+    @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.dismiss) private var dismiss
+    @State private var plan: OffseasonPlan?
+    @State private var loadError: String?
+    @State private var progress = ""
+    @State private var failure: String?
+    @State private var confirmBirthday = false
+    private func reload() {
+        do {
+            let latest = try CareerSeasonStore.offseason(player: player, state: state, in: context)
+            plan = latest?.seasonYear == seasonYear ? latest : nil; loadError = nil
+        } catch { plan = nil; loadError = error.localizedDescription }
+    }
+    private func proceed(confirmed: Bool = false) {
+        guard let plan else { return }
+        do {
+            if try CalendarProgression.isAnniversaryTomorrow(player: player, state: state), !confirmed {
+                confirmBirthday = true; return
+            }
+            let revision = state.revision, date = player.gameDate
+            transition.perform(date: date, label: "오프시즌 진행", reduced: reduced, cancellable: true) {
+                progress = ""
+                do {
+                    progress = try await CalendarProgression.advanceOffseason(player: player, state: state, seasonYear: plan.seasonYear,
+                        revision: revision, expectedDate: date, confirmAnniversary: confirmed, in: context, onDaySaved: { saved in
+                            transition.arrive(on: saved, reduced: reduced)
+                            try? await Task.sleep(for: .milliseconds(reduced ? 0 : 35))
+                        }).message
+                } catch let error as CalendarAdvanceFailure {
+                    progress = error.summary.message; failure = error.localizedDescription
+                    transition.arrive(on: error.summary.lastSavedDate, reduced: reduced)
+                } catch { failure = error.localizedDescription }
+                reload()
+            }
+        } catch { failure = error.localizedDescription }
+    }
+    var body: some View {
+        GamePanel(title: "OFFSEASON · 다음 연도 준비", onBoard: true) {
+            if let loadError {
+                Text(loadError).font(.caption).accessibilityIdentifier("offseasonLoadError")
+                Button("다시 확인", action: reload).buttonStyle(MatchPixelButtonStyle())
+            } else if let plan {
+                Text("\(plan.date) → \(plan.target)").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                    .accessibilityIdentifier("offseasonDates")
+                Text("남은 \(plan.remainingDays)일 · \(plan.age)세 → \(plan.targetAge)세 · \(SeasonSchedule.academicStatus(age: plan.targetAge))")
+                    .font(.caption).accessibilityIdentifier("offseasonAge")
+                Text("하루씩 저장 · 미사용 행동은 휴식 −\(DailyRecovery.rest) · 수면 −\(DailyRecovery.sleep)\n최대 30일 진행 후 계속 · 나이 변경 전 확인")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                if plan.targetAge >= 19 {
+                    Text("고교 졸업·진로준비로 전환합니다. 고교 경기나 프로·대학 계약을 자동 생성하지 않습니다.")
+                        .font(.caption).foregroundStyle(GameTheme.gold)
+                }
+                Button("다음 연도까지 · 최대 \(min(30, plan.remainingDays))일 진행") { proceed() }
+                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("advanceOffseason")
+            } else {
+                Text("이 결산의 다음 연도로 이미 진행했거나 현재 진행할 오프시즌이 아닙니다. 과거 기록은 보존됩니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("offseasonUnavailable")
+                Button("선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("offseasonReturnHome")
+            }
+            if !progress.isEmpty { Text(progress).font(.caption).accessibilityIdentifier("offseasonSummary") }
+        }
+        .task(id: "\(seasonYear):\(player.gameDate):\(state.revision):\(transition.display == nil)") {
+            if transition.display == nil { reload() }
+        }
+        .onDisappear { transition.requestCancel() }
+        .confirmationDialog("나이·학적 변경일로 진행할까요?", isPresented: $confirmBirthday, titleVisibility: .visible) {
+            Button("확인하고 계속 진행") { proceed(confirmed: true) }
+        } message: { Text("시작일 기념일에만 나이가 바뀝니다. 능력치·구종·이전 기록을 유지하며 자동 입단이나 성장 보상을 지급하지 않습니다.") }
+        .alert("오프시즌 진행을 완료하지 못했습니다", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("확인") { failure = nil }
+        } message: { Text(failure ?? "") }
     }
 }

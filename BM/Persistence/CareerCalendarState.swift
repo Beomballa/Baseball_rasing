@@ -119,3 +119,15 @@ typealias CareerCalendarState = CareerSchemaV2.CalendarState
         return CareerSeasonSummary(league: league, totals: totals)
     }
 }
+
+extension CareerSeasonStore {
+    static func offseason(player: CareerPlayer, state: CareerCalendarState, in context: ModelContext) throws -> OffseasonPlan? {
+        let today = try GameDate(player.gameDate), origin = try GameDate(state.originDate)
+        let april = try GameDate(String(format: "%04d-04-01", today.year))
+        let year = today < april ? today.year - 1 : today.year
+        guard year >= origin.year else { return nil }
+        let summary = try load(player: player, state: state, year: year, in: context)
+        guard summary.finalized, year < 9998, today < (try GameDate(String(format: "%04d-04-01", year + 1))) else { return nil }
+        return try OffseasonPlan.make(summary: summary, origin: origin, startAge: player.startAge, today: today)
+    }
+}

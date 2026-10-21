@@ -242,3 +242,29 @@ struct CareerSeasonSummary: Equatable {
     }
     var champions: [LeagueStanding] { finalized ? finalStandings.filter { $0.rank == 1 } : [] }
 }
+
+struct OffseasonPlan: Equatable {
+    let seasonYear: Int
+    let date: GameDate
+    let target: GameDate
+    let age: Int
+    let targetAge: Int
+    var remainingDays: Int {
+        var day = date, count = 0
+        while day < target { day = day.adding(days: 1); count += 1 }
+        return count
+    }
+    static func make(summary: CareerSeasonSummary, origin: GameDate, startAge: Int, today: GameDate) throws -> OffseasonPlan {
+        let year = summary.league.year
+        guard summary.finalized, year < 9998 else { throw OffseasonError.unavailable }
+        let target = try GameDate(String(format: "%04d-04-01", year + 1))
+        guard let last = summary.league.fixtures.map(\.date).max(), today > last, today < target else { throw OffseasonError.unavailable }
+        return OffseasonPlan(seasonYear: year, date: today, target: target,
+            age: origin.age(startingAt: startAge, on: today), targetAge: origin.age(startingAt: startAge, on: target))
+    }
+}
+
+enum OffseasonError: LocalizedError {
+    case unavailable
+    var errorDescription: String? { "최신 시즌의 30경기 결산을 마친 뒤 다음 해 4월 1일 전까지만 진행할 수 있습니다. 현재 날짜와 기록을 다시 확인해 주세요." }
+}
