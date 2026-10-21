@@ -77,7 +77,10 @@ import SpriteKit
         removeAllActions(); ball.removeAllActions(); pitcher.removeAllActions(); batter.removeAllActions(); mitt.removeAllActions()
         pitchStage = .idle
         ball.isHidden = true; pitcherPose(0); batterPose(0)
-        if catcherFrames.count >= 2 { catcher.texture = catcherFrames[0]; mitt.texture = mittFrames[0] }
+        if catcherFrames.count >= 2 {
+            catcher.texture = catcherFrames[0]; mitt.texture = mittFrames[0]
+            mitt.position = point(0.55, 0.475)
+        }
     }
     private func handPoint(_ frame: Int) -> CGPoint {
         let anchors = [(0.42, 0.56), (0.38, 0.52), (0.72, 0.37), (0.78, 0.11)]
@@ -87,6 +90,7 @@ import SpriteKit
     }
     func preparePitch(phase: Double, reduced: Bool) {
         guard ready, role == .pitcher, pitchStage != .flight else { return }
+        if pitchStage == .received { cancelDelivery() }
         pitchStage = .preparing
         let frame = reduced ? 0 : phase < 0.22 ? 0 : phase < 0.48 ? 1 : 2
         pitcherPose(frame); ball.position = handPoint(frame); ball.isHidden = false
@@ -102,7 +106,7 @@ import SpriteKit
         }
     }
     @discardableResult func demonstrate(reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5,
-                                       pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false, completion: (@MainActor () -> Void)? = nil) -> Bool {
+                                       pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false, onArrival: (@MainActor () -> Void)? = nil, completion: (@MainActor () -> Void)? = nil) -> Bool {
         guard ready else { return false }
         cancelDelivery()
         let flight = (flightDuration ?? 1.1) * MatchDelivery.contactPhase
@@ -113,14 +117,15 @@ import SpriteKit
         ball.position = role == .batter ? release : handPoint(0); ball.isHidden = false
         if preparedRelease && role == .pitcher {
             pitchStage = .flight; pitcherPose(3); ball.position = release
-            let duration = reduceMotion ? 0.08 : flight
+            let duration = DeliveryPresentation.flight(flight, reduced: reduceMotion)
             ball.run(fly(to: destination, duration: duration, code: pitchCode))
+            if !["안타", "홈런", "범타"].contains(outcome ?? "") { mitt.run(.move(to: destination, duration: duration * 0.8)) }
             run(.sequence([
                 .wait(forDuration: duration * 0.25), .run { [weak self] in if !reduceMotion { self?.pitcherPose(4) } },
                 .wait(forDuration: duration * 0.75), .run { [weak self] in
-                    self?.pitcherPose(5); self?.finishPitch(outcome: outcome, reduced: reduceMotion)
+                    self?.pitcherPose(5); self?.finishPitch(outcome: outcome, reduced: reduceMotion); onArrival?()
                 },
-                .wait(forDuration: reduceMotion ? 0.04 : 0.24), .run { completion?() }
+                .wait(forDuration: DeliveryPresentation.receipt(reduced: reduceMotion)), .run { completion?() }
             ]), withKey: "delivery")
             return true
         }
@@ -144,9 +149,9 @@ import SpriteKit
             .wait(forDuration: flight * 0.75),
             .run { [weak self] in
                 guard let self else { return }; self.pitcherPose(5)
-                if self.role == .pitcher { self.finishPitch(outcome: outcome, reduced: reduceMotion) }
+                if self.role == .pitcher { self.finishPitch(outcome: outcome, reduced: reduceMotion) }; onArrival?()
             },
-            .wait(forDuration: 0.24), .run { completion?() }
+            .wait(forDuration: DeliveryPresentation.receipt(reduced: reduceMotion)), .run { completion?() }
         ]), withKey: "delivery")
         return true
     }
@@ -161,15 +166,15 @@ import SpriteKit
             if !reduced { mitt.run(.sequence([.moveBy(x: 0, y: -2, duration: 0.06), .moveBy(x: 0, y: 2, duration: 0.1)])) }
         }
     }
-    func finishBat(action: String, outcome: String, reduced: Bool, completion: @escaping @MainActor () -> Void) {
+    func finishBat(action: String, outcome: String, reduced: Bool, onArrival: (@MainActor () -> Void)? = nil, completion: @escaping @MainActor () -> Void) {
         let hit = ["안타", "홈런", "범타"].contains(outcome)
         let remaining = max(0, contactAt - ProcessInfo.processInfo.systemUptime)
         if action != "watch" { batterPose(action == "bunt" ? 4 : 1) }
         run(.sequence([
-            .wait(forDuration: hit ? remaining : 0),
+            .wait(forDuration: remaining),
             .run { [weak self] in
                 guard let self else { return }
-                if action != "watch" { self.batterPose(action == "bunt" ? 5 : 2) }
+                if action != "watch" { self.batterPose(action == "bunt" ? 5 : 2) }; onArrival?()
                 if hit {
                     self.ball.removeAllActions()
                     let barrel = MatchPresentation.batContact(action: action)
@@ -178,7 +183,7 @@ import SpriteKit
                     self.ball.run(.sequence([.move(to: self.point(action == "bunt" ? 0.54 : 0.7, outcome == "홈런" ? 0.06 : 0.40), duration: reduced ? 0.1 : 0.26), .hide()]))
                 }
             },
-            .wait(forDuration: max(remaining, 0.26)),
+            .wait(forDuration: DeliveryPresentation.receipt(reduced: reduced)),
             .run { [weak self] in
                 guard let self else { return }; self.removeAction(forKey: "delivery"); self.ball.isHidden = true
                 if action == "swing" && !reduced { self.batterPose(3) }; completion()

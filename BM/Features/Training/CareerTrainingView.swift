@@ -27,6 +27,8 @@ struct CareerTrainingView: View {
     @State private var replayStarted = Date()
     @State private var replayTask: Task<Void, Never>?
     @State private var replayScore: Int?
+    @State private var feedbackVisible = false
+    @State private var releaseHint = ""
     @State private var feedbackTick = 0
     @State private var judging = false
     @State private var judgementStarted = Date()
@@ -40,6 +42,7 @@ struct CareerTrainingView: View {
     @State private var retryRevision: Int?
 
     private var displayTraining: CareerTraining? { replay ?? training }
+    private var replayLabel: String { feedbackVisible ? "결과 확인 중…" : "동작 진행 중…" }
     private var inputLocked: Bool { retryInput != nil || replay != nil }
     private var isPitcher: Bool { player.role == .pitcher }
     private var selectedKind: TrainingKind { training?.selectedKind ?? (category == 0 && isPitcher ? .pitch : kind) }
@@ -91,13 +94,13 @@ struct CareerTrainingView: View {
     private func submit(_ input: TrainingInput) {
         guard !inputLocked, training != nil, practice || record != nil else { return }
         clock.stop(); judging = false
-        replay = training; replayStarted = Date()
+        replay = training; replayStarted = Date(); feedbackVisible = false
         retryInput = input; retryRevision = record?.revision ?? 0
         saveAttempt()
     }
     private func saveAttempt() {
         guard let input = retryInput, let revision = retryRevision else { return }
-        if replay == nil { replay = training; replayStarted = Date() }
+        if replay == nil { replay = training; replayStarted = Date(); feedbackVisible = false }
         do {
             if practice {
                 guard var round = training else { return }
@@ -107,33 +110,45 @@ struct CareerTrainingView: View {
                 try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: revision, input: input, in: context)
                 training = try record.snapshot()
             }
-            if selectedKind == .pitch, let previous = replay {
-                let target = previous.targets[previous.scores.count]
-                scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: target.x, y: target.y,
-                                  pitchCode: previous.pitchCode ?? "four-seam", preparedRelease: true)
-            }
             if selectedKind == .power, let force = input.force, let angle = input.angle { lastDistance = TrainingRules.distance(force: force, angle: angle) }
             retryInput = nil; retryRevision = nil; errorMessage = nil
-            replayScore = training?.scores.last; feedbackTick += 1
-            if selectedKind == .contact {
+            replayScore = training?.scores.last
+            if selectedKind == .pitch, let previous = replay {
+                let target = previous.targets[previous.scores.count]
+                let release = input.release ?? 0
+                releaseHint = abs(release - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: previous.before)
+                    ? "정확한 릴리스" : release < ManualMatchRules.releaseCenter ? "릴리스 빠름" : "릴리스 늦음"
+                let started = scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: target.x, y: target.y,
+                                               pitchCode: previous.pitchCode ?? "four-seam", preparedRelease: true,
+                                               onArrival: { showFeedback() }, completion: { finishReplay() })
+                if !started { scheduleFeedback() }
+            } else if selectedKind == .contact {
                 let contact = training?.lastContact
                 scene.finishBat(action: input.timing == nil ? "watch" : "swing",
                                 outcome: (contact?.timingScore ?? 0) >= 60 && (contact?.positionScore ?? 0) >= 60 ? "안타" : "헛스윙",
-                                reduced: reduced) {}
-            }
-            replayTask?.cancel()
-            replayTask = Task { @MainActor in
-                let remaining = selectedKind == .pitch ? 1.6 * MatchDelivery.contactPhase + 0.3
-                    : selectedKind == .contact ? max(1.1, (MatchDelivery.contactPhase - (input.timing ?? 1)) * 1.6 + 0.7) : 1.1
-                try? await Task.sleep(for: .seconds(reduced ? 0.15 : remaining))
-                guard !Task.isCancelled else { return }
-                replay = nil; scene.cancelDelivery()
-            }
+                                reduced: reduced, onArrival: { showFeedback() }, completion: { finishReplay() })
+            } else { scheduleFeedback() }
         } catch { replay = nil; scene.cancelDelivery(); errorMessage = error.localizedDescription }
+    }
+    private func showFeedback() {
+        guard replay != nil else { return }
+        feedbackVisible = true; feedbackTick += 1
+    }
+    private func finishReplay() {
+        replay = nil; feedbackVisible = false; scene.cancelDelivery()
+    }
+    private func scheduleFeedback() {
+        replayTask?.cancel()
+        replayTask = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(DeliveryPresentation.trainingMotion(reduced: reduced))) } catch { return }
+            guard !Task.isCancelled else { return }; showFeedback()
+            do { try await Task.sleep(for: .seconds(DeliveryPresentation.trainingRead(reduced: reduced))) } catch { return }
+            guard !Task.isCancelled else { return }; finishReplay()
+        }
     }
     private func cancelUncommitted() {
         clock.stop(); scene.cancelDelivery(); judging = false
-        replayTask?.cancel(); replayTask = nil; replay = nil
+        replayTask?.cancel(); replayTask = nil; replay = nil; feedbackVisible = false
     }
 
     var body: some View {
@@ -153,7 +168,7 @@ struct CareerTrainingView: View {
                                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                                     }
                                     Spacer(minLength: 0)
-                                    Text(training.map { "\($0.scores.count) / 5" } ?? "READY")
+                                    Text(displayTraining.map { "\($0.scores.count + (feedbackVisible ? 1 : 0)) / 5" } ?? "READY")
                                         .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                                 }.padding(10).background(GameTheme.boardPanel)
                                     .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
@@ -257,16 +272,20 @@ struct CareerTrainingView: View {
                 MatchTimingGauge(phase: clock.phase, center: isPitcher ? ManualMatchRules.releaseCenter : MatchDelivery.contactPhase,
                                  good: isPitcher ? ManualMatchRules.goodWidth(mastery: training.before) : ManualMatchRules.timingWidth(contact: training.before),
                                  perfect: isPitcher ? ManualMatchRules.perfectWidth(mastery: training.before) : TrainingRules.contactPerfectWidth,
-                                 label: isPitcher ? (replay != nil ? "릴리스 확정 · 공 비행 중" : clock.running ? "팔 준비 중 · 노란 구간에 릴리스" : "공을 쥐고 투구 준비") : "노란 구간 · 타이밍 100점")
+                                 label: isPitcher ? (replay != nil ? (feedbackVisible ? "포구 완료 · 결과 확인" : "릴리스 확정 · 공 비행 중") : clock.running ? "팔 준비 중 · 노란 구간에 릴리스" : "공을 쥐고 투구 준비") : "노란 구간 · 타이밍 100점")
                     .accessibilityIdentifier("trainingTimingGauge")
             }
-            if let result = self.training?.lastContact { ContactTrainingFeedback(result: result) }
-            scores(self.training ?? training)
+            if let result = (feedbackVisible || replay == nil ? self.training : replay)?.lastContact { ContactTrainingFeedback(result: result) }
+            scores((feedbackVisible || replay == nil ? self.training : replay) ?? training)
+            if selectedKind == .pitch, feedbackVisible, dynamicTypeSize.isAccessibilitySize, let replayScore {
+                PitchJudgmentToast(title: "포구 완료", detail: "\(replayScore)점 · \(releaseHint)")
+                    .accessibilityIdentifier("trainingCatchToast")
+            }
             if let score = training.scores.last, replay == nil { TrainingGradeBanner(score: score) }
             if selectedKind.isRaw {
                 rawButtons(training).disabled(retryInput != nil)
             } else if selectedKind.isField {
-                Button(selectedKind == .speed ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .defense ? "포구!" : "송구!") {
+                Button(replay != nil ? replayLabel : selectedKind == .speed ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .defense ? "포구!" : "송구!") {
                     if [.speed, .stamina].contains(selectedKind) { beginAttempt() }
                     else if selectedKind == .defense { submit(TrainingInput(x: x, y: y)) }
                     else { submit(TrainingInput(force: throwForce, angle: throwAngle, base: throwBase)) }
@@ -286,11 +305,11 @@ struct CareerTrainingView: View {
                         .accessibilityIdentifier("trainingAttempt")
                 }
             } else if selectedKind == .power {
-                Button("티배팅!") { submit(TrainingInput(force: force, angle: angle)) }
+                Button(replay != nil ? replayLabel : "티배팅!") { submit(TrainingInput(force: force, angle: angle)) }
                     .buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(retryInput != nil)
                     .accessibilityIdentifier("trainingAttempt")
             } else {
-                Button(clock.running ? (isPitcher ? "던지기!" : "타격!") : "\(training.scores.count + 1)번째 시도 시작") {
+                Button(replay != nil ? (feedbackVisible ? "결과 확인 중…" : isPitcher ? "투구·포구 중…" : "타격 동작 중…") : clock.running ? (isPitcher ? "던지기!" : "타격!") : "\(training.scores.count + 1)번째 시도 시작") {
                     if clock.running {
                         submit(isPitcher ? TrainingInput(release: clock.phase) : TrainingInput(x: x, y: y, timing: clock.phase))
                     } else { beginAttempt() }
@@ -379,12 +398,19 @@ struct CareerTrainingView: View {
                     }
                 }.padding(8)
             }
+            if selectedKind == .pitch, replay != nil, feedbackVisible, !dynamicTypeSize.isAccessibilitySize, let replayScore {
+                PitchJudgmentToast(title: "포구 완료", detail: "\(replayScore)점 · \(releaseHint)")
+                    .frame(maxWidth: height * 0.8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, height * 0.13)
+                    .accessibilityIdentifier("trainingCatchToast")
+            }
             if selectedKind == .pitch {
                 MatchGrip(code: training?.pitchCode ?? code, hand: player.throwingHandRaw)
                     .frame(width: 74, height: 74).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
-            if replay != nil, let replayScore {
+            if replay != nil, feedbackVisible, selectedKind != .pitch, let replayScore {
                 TrainingGradeBanner(score: replayScore)
+                    .accessibilityIdentifier("trainingReplayFeedback")
                     .frame(maxHeight: .infinity, alignment: .bottom).padding(8).allowsHitTesting(false)
             }
         }.frame(width: height * (isPitcher && !selectedKind.isField && !selectedKind.isRaw ? 1219.0 / 1290 : 1), height: height).clipped()
@@ -417,7 +443,7 @@ struct CareerTrainingView: View {
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("mentalChoice-\(index)")
             }
         } else {
-            Button(selectedKind == .stamina ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .control ? "목표로 투구!" : "\(selectedKind.label) 도전!") {
+            Button(replay != nil ? replayLabel : selectedKind == .stamina ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .control ? "목표로 투구!" : "\(selectedKind.label) 도전!") {
                 if selectedKind == .stamina { beginAttempt() }
                 else if selectedKind == .control { submit(TrainingInput(x: x, y: y)) }
                 else { submit(TrainingInput(force: force, angle: angle)) }
@@ -447,7 +473,7 @@ struct CareerTrainingView: View {
                 Button("왼발") { step(.left) }.accessibilityIdentifier("sprintLeft")
                 Button("오른발") { step(.right) }.accessibilityIdentifier("sprintRight")
             }.buttonStyle(MatchPixelButtonStyle()).disabled(!clock.running)
-            ProgressView(value: clock.phase).tint(GameTheme.gold).accessibilityLabel("4초 달리기 진행")
+            ProgressView(value: clock.running || replay != nil ? clock.phase : 0).tint(GameTheme.gold).accessibilityLabel("4초 달리기 진행").accessibilityIdentifier("sprintProgress")
         } else if selectedKind == .defense {
             Text("노란 낙하지점으로 선수를 옮겨 포구").font(.caption)
         } else {

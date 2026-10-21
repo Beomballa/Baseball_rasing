@@ -92,6 +92,7 @@ struct MatchScoreStrip: View {
                     VStack(spacing: 4) {
                         Text("\(match.half / 2 + 1) \(match.half % 2 == 0 ? "▲" : "▼")").bold()
                         Text(pitchCount.map { "P \($0)" } ?? "BAT").font(.system(.caption2, design: .monospaced))
+                            .accessibilityIdentifier("boardPitchCount")
                     }.frame(minWidth: 32)
                     HStack(spacing: 8) {
                         lamps("B", count: match.balls, total: 3, blink: blink)
@@ -504,5 +505,33 @@ struct PitcherChangePanel: View {
         }.padding(8).frame(maxWidth:.infinity,alignment:.leading).background(GameTheme.boardPanel)
             .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
             .onAppear {withAnimation(reduced ? nil:.easeInOut(duration:0.9)){entered=true}}
+    }
+}
+
+// These intervals affect presentation only; input windows, pitch speed and saved outcomes stay unchanged.
+enum DeliveryPresentation {
+    static func flight(_ duration: Double, reduced: Bool) -> Double { reduced ? 0.15 : duration }
+    static func receipt(reduced: Bool) -> Double { reduced ? 0.8 : 1.1 }
+    static func trainingMotion(reduced: Bool) -> Double { reduced ? 0.15 : 0.9 }
+    static func trainingRead(reduced: Bool) -> Double { reduced ? 0.8 : 1.1 }
+    static func call(_ outcome: String) -> String {
+        outcome == "루킹 스트라이크" ? "스트라이크" : outcome
+    }
+}
+
+struct PitchJudgmentToast: View {
+    let title: String
+    var detail: String? = nil
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(title).font(.system(.headline, design: .monospaced, weight: .heavy))
+            if let detail { Text(detail).font(.caption2.monospaced().bold()) }
+        }.foregroundStyle(GameTheme.paper).padding(.horizontal, 14).padding(.vertical, 8)
+            .background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.gold, lineWidth: 2))
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(GameTheme.gold).frame(width: 8, height: 4).offset(y: 4)
+            }.fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine).accessibilityAddTraits(.updatesFrequently)
+            .allowsHitTesting(false)
     }
 }

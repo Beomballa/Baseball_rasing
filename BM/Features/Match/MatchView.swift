@@ -4,6 +4,8 @@ import SwiftData
 
 struct MatchView: View {
     let player: CareerPlayer
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var showingDelivery = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scene = BallparkScene(size: CGSize(width: 320, height: 400))
     @State private var cue = "투구 모션과 경기장 연결을 확인해 보세요."
@@ -15,26 +17,35 @@ struct MatchView: View {
                     Text("\(player.schoolName) · \(player.roleDetail)").font(.caption)
                 }
                 Spacer()
-                Text("연습 장면").font(.caption.bold()).padding(8).background(GameTheme.gold)
+                Text("연습 장면").font(.caption.bold()).padding(8).background(GameTheme.gold).foregroundStyle(GameTheme.navy)
             }
             SpriteView(scene: scene, options: [.ignoresSiblingOrder])
-                .aspectRatio(0.8, contentMode: .fit)
-                .overlay(Rectangle().strokeBorder(GameTheme.navy, lineWidth: 3))
-                .accessibilityLabel("위에서 보는 도트 야구장")
+                .aspectRatio(1219.0 / 1290, contentMode: .fit)
+                .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 3))
+                .accessibilityLabel("투수 뒤에서 보는 도트 연습장")
                 .accessibilityIdentifier("spriteKitField")
             Text(cue).font(.subheadline).multilineTextAlignment(.center)
                 .accessibilityIdentifier("matchCue")
-            Button("투구 연습 보기") {
-                if scene.demonstrate(reduceMotion: reduceMotion) { cue = "손에서 릴리스 → 포수 수신 · 기록/피로 변화 없음" }
-            }.buttonStyle(GameButtonStyle()).accessibilityIdentifier("demoPitch")
-            Text("카운트·성적·성장 판정은 다음 이식 단계입니다.")
-                .font(.caption).foregroundStyle(GameTheme.muted)
+            Button(showingDelivery ? "포수 수신 확인 중…" : "투구 연습 보기") {
+                guard !showingDelivery else { return }
+                showingDelivery = true; cue = "손에서 릴리스 → 포수 수신 · 동작 진행 중"
+                let started = scene.demonstrate(reduceMotion: reduceMotion,
+                    onArrival: { cue = "포수 수신 완료 · 기록/피로 변화 없음" },
+                    completion: { showingDelivery = false })
+                if !started { showingDelivery = false }
+            }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(showingDelivery).accessibilityIdentifier("demoPitch")
+            Text("이곳은 동작 시연입니다. 공식 카운트·성적은 홈의 경기에서 확인하세요.")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
             Spacer(minLength: 0)
         }
-        .padding(16).background(GameTheme.paper).foregroundStyle(GameTheme.navy)
+        .padding(16).background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+        .preferredColorScheme(.dark)
         .navigationTitle("경기장").navigationBarTitleDisplayMode(.inline)
         .onAppear { scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, appearance: player.appearance, jerseyNumber: player.jerseyNumber) }
-        .onDisappear { scene.removeAllActions() }
+        .onDisappear { scene.cancelDelivery(); showingDelivery = false }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { scene.cancelDelivery(); showingDelivery = false }
+        }
     }
 }
 

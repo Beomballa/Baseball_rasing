@@ -87,6 +87,35 @@ import SwiftData
         }
     }
 
+    func testRenderedPitchArrivalPrecedesCompletionAndCancellationDropsCallbacks() async throws {
+        let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = windowScene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: windowScene)
+        let controller = UIViewController()
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        controller.view = view; window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { view.presentScene(nil); window.isHidden = true; previous?.makeKey() }
+        for (reduced, prepared) in [(false, true), (true, true), (false, false), (true, false)] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+            scene.configure(hand: reduced ? "left" : "right", kit: 0)
+            view.presentScene(scene)
+            var arrival: Double?, completion: Double?
+            XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, flightDuration: 0.5, preparedRelease: prepared,
+                onArrival: { XCTAssertEqual(scene.pitchStage, .received); arrival = ProcessInfo.processInfo.systemUptime },
+                completion: { completion = ProcessInfo.processInfo.systemUptime }))
+            try await Task.sleep(for: .seconds(0.65 + (prepared ? 0 : MatchDelivery.windup)))
+            XCTAssertNotNil(arrival); XCTAssertNil(completion, "포구 직후에는 판정 확인을 위해 다음 투구를 열지 않습니다")
+            try await Task.sleep(for: .seconds(1))
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(completion) - XCTUnwrap(arrival), reduced ? 0.75 : 1.0)
+            var cancelledCallback = false
+            XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, preparedRelease: true,
+                onArrival: { cancelledCallback = true }, completion: { cancelledCallback = true }))
+            scene.cancelDelivery()
+            try await Task.sleep(for: .seconds(0.3))
+            XCTAssertFalse(cancelledCallback); XCTAssertEqual(scene.pitchStage, .idle)
+        }
+    }
+
     func testPitchPreparationHoldsBallUntilExplicitReleaseForBothHands() {
         for hand in ["left", "right"] {
             let scene = BallparkScene(size: CGSize(width: 320, height: 320))
