@@ -182,7 +182,7 @@ struct MatchResultSummary {
             let count=plays.filter { $0.secondThrow?.out == true && (match.role == "batter" ? $0.ownBatter : (($0.half % 2 == 1) != match.isHome)) }.count
             result.append(Metric(id:"doublePlays",label:match.role == "batter" ? "병살타" : "병살 유도",value:String(count)))
         }
-        if match.detailedFieldVersion == 3,match.role == "batter" {
+        if (match.detailedFieldVersion ?? 0) >= 3,match.role == "batter" {
             let count=match.fieldPlays?.filter { $0.ownBatter && $0.sacrificeFly }.count ?? 0
             result.append(Metric(id:"sacrificeFlies",label:"희생플라이",value:String(count)))
         }
@@ -358,7 +358,11 @@ struct DetailedFieldReplayBoard: View {
                 : second != nil && time >= play.controlAt && time < (second?.releaseAt ?? 0) ? "2루 아웃 → 1루 재송구 준비"
                 : secondActive && time < play.decisionAt ? "2루 아웃 → 1루 경합"
                 : time < play.decisionAt ? "송구 중" : play.summary
-            let phase=play.fly?.caught == true ? (time < play.flight ? "뜬공 낙하지점 이동" : time < play.releaseAt ? "포구 아웃 · 태그업 출발" : time < play.decisionAt ? "태그업 · 송구 경합" : play.summary) : groundPhase
+            let normalPhase=play.fly?.caught == true ? (time < play.flight ? "뜬공 낙하지점 이동" : time < play.releaseAt ? "포구 아웃 · 태그업 출발" : time < play.decisionAt ? "태그업 · 송구 경합" : play.summary) : groundPhase
+            let phase=play.relay.map { relay in
+                time < play.releaseAt ? normalPhase : time < relay.receiveAt ? "외야수 → \(DetailedFieldRules.names[relay.fielder]) 중계 송구"
+                    : time < relay.releaseAt ? "중계 포구 → 재송구 준비" : time < play.decisionAt ? "중계 야수 → 베이스 경합" : play.summary
+            } ?? normalPhase
             VStack(spacing:4) {
                 Text(phase)
                     .font(.system(.caption,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
@@ -396,7 +400,7 @@ struct DetailedFieldReplayBoard: View {
                     }
                     for index in play.fielders.indices {
                         let nodes=play.fielders[index],p=FieldNode.sample(nodes,at:time)
-                        actor(p,own:play.ownDefense && index==play.fielder || second?.ownThrower == true && index==play.receiver,runner:false,moving:p.distance(to:FieldNode.sample(nodes,at:time+0.06)) > 0.001)
+                        actor(p,own:play.ownDefense && index==play.fielder || second?.ownThrower == true && index==play.receiver || play.relay?.ownThrower == true && index==play.relay?.fielder,runner:false,moving:p.distance(to:FieldNode.sample(nodes,at:time+0.06)) > 0.001)
                     }
                     for runner in play.runners {
                         actor(FieldNode.sample(runner.nodes,at:time),own:runner.profile.own,runner:true,moving:FieldNode.sample(runner.nodes,at:time).distance(to:FieldNode.sample(runner.nodes,at:time+0.06)) > 0.001,out:runner.out && time >= (runner.retiredAt ?? play.decisionAt))
@@ -414,12 +418,18 @@ struct DetailedFieldReplayBoard: View {
                     }
                     if play.fly?.caught == true,time>=play.flight {
                         let p=point(play.landing)
-                        context.draw(Text("CATCH · OUT").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(GameTheme.gold),at:CGPoint(x:p.x,y:p.y-20))
+                        context.draw(Text("CATCH · OUT").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(GameTheme.gold),at:CGPoint(x:min(size.width-60,max(60,p.x+(p.x > size.width/2 ? -60:60))),y:max(12,p.y-20)))
                     }
                     if second != nil,time>=play.controlAt { call(2,true) }
                     if time>=play.decisionAt,play.targetRunner != nil { call(second != nil ? 1 : play.targetBase,second?.out ?? play.out) }
 
                 }.accessibilityLabel("도트 수비 주루 재생 · " + play.summary).accessibilityIdentifier("fieldReplayCanvas")
+                if let relay=play.relay {
+                    Text("중계 \(DetailedFieldRules.names[relay.fielder]) · 수신 \(relay.receiveAt,specifier:"%.2f")초 / 재송구 \(relay.releaseAt,specifier:"%.2f")초")
+                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayRelayTimes")
+                    Text("직접 \(relay.directAt,specifier:"%.2f")초 → 중계 \(play.controlAt,specifier:"%.2f")초")
+                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayRouteComparison")
+                }
                 if let fly=play.fly {
                     Text("공 낙하 \(play.flight,specifier:"%.2f")초 / 포구 준비 \(fly.reachAt,specifier:"%.2f")초 · \(fly.caught ? "포구 성공" : "낙하 후 처리")")
                         .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayCatchTimes")

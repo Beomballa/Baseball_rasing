@@ -504,4 +504,91 @@ import SwiftUI
         }
     }
 
+    private func relayFly(_ x:Double=0,_ y:Double=100,outs:Int=0,speed:Double=100,defense:Double=60,arm:Double=60,
+                          position:String="2B",enabled:Bool=true,before:[FieldRunnerProfile?]?=nil) -> MatchDetailedPlay {
+        DetailedFieldRules.resolveFly(half:0,order:0,landing:FieldPoint(x:x,y:y),flight:7,
+            runners:before ?? [nil,nil,FieldRunnerProfile(speed:speed)],batter:FieldRunnerProfile(speed:60),outs:outs,
+            stats:MatchFieldStats(version:3,speed:60,defense:defense,arm:arm,position:position,activeTraits:[],positionMastery:100),
+            defending:true,ownBatter:false,relayEnabled:enabled)
+    }
+    func testRelayIndependentTwoLegTimesAndDirectComparison() throws {
+        let p=relayFly(),r=try XCTUnwrap(p.relay)
+        let leg=50/28.8*1.125
+        XCTAssertEqual(p.fielder,7);XCTAssertEqual(r.fielder,3);XCTAssertEqual(p.targetBase,4)
+        XCTAssertEqual(p.releaseAt,7.39,accuracy:1e-9)
+        XCTAssertEqual(r.receiveAt,7.39+leg,accuracy:1e-9)
+        XCTAssertEqual(r.releaseAt,7.39+leg+0.39,accuracy:1e-9)
+        XCTAssertEqual(p.controlAt,7.39+2*leg+0.39+0.21,accuracy:1e-9)
+        XCTAssertEqual(r.directAt,7.39+100/28.8*1.75+0.21,accuracy:1e-9)
+        XCTAssertLessThan(p.controlAt,r.directAt);XCTAssertTrue(r.ownThrower);XCTAssertTrue(p.ownParticipation)
+        XCTAssertFalse(p.ownDefense);XCTAssertNil(p.secondThrow);try p.validate()
+    }
+    func testRelayCutoffArmDefenseAndShortDistanceCanChooseDirect() throws {
+        let weak=relayFly(defense:0,arm:0),strong=relayFly(defense:100,arm:100)
+        XCTAssertNotNil(strong.relay)
+        XCTAssertLessThan(strong.controlAt,weak.controlAt)
+        let short=relayFly(0,65,before:[FieldRunnerProfile(speed:100),nil,nil])
+        XCTAssertNil(short.relay);try short.validate()
+        let weakOutfield=relayFly(0,66,arm:0,position:"CF"),strongOutfield=relayFly(0,66,arm:100,position:"CF")
+        XCTAssertNotNil(weakOutfield.relay);XCTAssertNil(strongOutfield.relay)
+        XCTAssertFalse(weakOutfield.out);XCTAssertTrue(strongOutfield.out)
+        try weakOutfield.validate();try strongOutfield.validate()
+        let old=relayFly(enabled:false)
+        XCTAssertEqual(old.version,3);XCTAssertNil(old.relay);try old.validate()
+    }
+    func testRelayBallHoldsAtCutoffAndPlayersReachBeforeReceiving() throws {
+        let p=relayFly(),r=try XCTUnwrap(p.relay)
+        XCTAssertEqual(FieldNode.sample(p.ball,at:r.receiveAt),r.point)
+        XCTAssertEqual(FieldNode.sample(p.ball,at:(r.receiveAt+r.releaseAt)/2),r.point)
+        XCTAssertEqual(FieldNode.sample(p.ball,at:p.ballAt),DetailedFieldRules.bases[4])
+        XCTAssertEqual(FieldNode.sample(p.fielders[r.fielder],at:r.receiveAt),r.point)
+        XCTAssertLessThanOrEqual(r.readyAt,r.receiveAt)
+        XCTAssertEqual(p,try JSONDecoder().decode(MatchDetailedPlay.self,from:JSONEncoder().encode(p)))
+    }
+    func testRelayAllOccupanciesGroundFlyAndOutsKeepSingleRaceAndThirdOutRules() throws {
+        var relayCount=0,direct=0,outCount=0
+        for mask in 0..<8 { for outs in 0...2 { for x in [-45.0,0,45] { for speed in [30.0,60,100] {
+            let before=(0..<3).map { mask & (1 << $0) == 0 ? nil:FieldRunnerProfile(speed:speed) }
+            for fly in [false,true] {
+                let p=fly ? relayFly(x,100,outs:outs,speed:speed,before:before) : DetailedFieldRules.resolve(half:0,order:0,
+                    landing:FieldPoint(x:x,y:95),flight:2,runners:before,batter:FieldRunnerProfile(speed:speed),outs:outs,stats:nil,
+                    defending:false,ownBatter:true,doublePlayEnabled:true,groundBall:false,relayEnabled:true)
+                try p.validate();XCTAssertLessThanOrEqual(outs+p.outsAdded,3)
+                if let r=p.relay {relayCount += 1;XCTAssertLessThan(p.controlAt,r.directAt);XCTAssertNil(p.secondThrow)} else {direct += 1}
+                if p.out {outCount += 1}
+                let occupied=p.runners.filter { !$0.out && (1...3).contains($0.destination) }.map(\.destination)
+                XCTAssertEqual(Set(occupied).count,occupied.count)
+            }
+        } } } }
+        XCTAssertGreaterThan(relayCount,0);XCTAssertGreaterThan(direct,0);XCTAssertGreaterThan(outCount,0)
+    }
+    func testRelayActualEngineBothRolesResumeAndSingleEvents() throws {
+        for role in ["batter","pitcher"] {
+            var m=game(42,role:role);m.detailedFieldVersion=4;m.fieldPlays=[];m.runnerProfiles=[nil,nil,nil]
+            var single=m;try m.advance(.automatic)
+            while !single.completed {try single.advance(role == "batter" ? .swing:.pitch,pitchCode:role == "pitcher" ? "four-seam":nil)}
+            XCTAssertEqual(single,m);try m.validateDetailedField()
+            XCTAssertTrue(m.fieldPlays?.contains { $0.relay != nil } == true)
+            XCTAssertEqual(Set(m.fieldPlays?.map(\.eventID) ?? []).count,m.fieldPlays?.count)
+            XCTAssertEqual(m,try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(m)))
+        }
+    }
+    func testRelayInvalidVersionTimingOrNodeCannotSilentlyBecomeDirect() throws {
+        var p=relayFly();p.version=3;XCTAssertThrowsError(try p.validate())
+        p=relayFly();let r=try XCTUnwrap(p.relay)
+        p.relay=FieldRelay(fielder:r.fielder,point:r.point,readyAt:r.receiveAt+1,receiveAt:r.receiveAt,releaseAt:r.releaseAt,
+            directAt:r.directAt,ownThrower:r.ownThrower,traits:r.traits,positionDelay:r.positionDelay)
+        XCTAssertThrowsError(try p.validate())
+        p=relayFly();p.relay=FieldRelay(fielder:p.receiver,point:r.point,readyAt:r.readyAt,receiveAt:r.receiveAt,releaseAt:r.releaseAt,
+            directAt:r.directAt,ownThrower:false,traits:[],positionDelay:0);XCTAssertThrowsError(try p.validate())
+    }
+    func testSavedRelayBoardRendersReadOnly() throws {
+        let p=relayFly(),data=try JSONEncoder().encode(p)
+        let renderer=ImageRenderer(content:DetailedFieldReplayBoard(play:p,appearance:PlayerAppearance(),animated:false) {}
+            .frame(width:390,height:350));renderer.scale=2
+        let image=try XCTUnwrap(renderer.uiImage),a=XCTAttachment(image:image)
+        a.name="Relay saved board";a.lifetime = .keepAlways;add(a)
+        XCTAssertEqual(p,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+    }
+
 }

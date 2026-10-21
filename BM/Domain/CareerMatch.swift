@@ -194,18 +194,18 @@ struct CareerMatch: Codable, Equatable {
         var detailed: MatchDetailedPlay?
         let newRunner = FieldRunnerProfile(speed:batter ? fieldStats?.speed ?? 60 : 60,
             traits:batter ? (fieldStats?.activeTraits ?? []).filter { $0 == .cheetah } : [],own:batter)
-        if let version=detailedFieldVersion,[1,2,3].contains(version), ["안타","범타"].contains(initial) {
-            let flyBall = version == 3 && !bunt && roll() < 0.30
+        if let version=detailedFieldVersion,[1,2,3,4].contains(version), ["안타","범타"].contains(initial) {
+            let flyBall = version >= 3 && !bunt && roll() < 0.30
             let depth = flyBall ? 20 + roll()*65 : bunt ? 3 + roll()*13 : initial == "안타" ? 40 + roll() * 45 : 5 + roll() * 36
             let landing = FieldPoint(x:(roll()-0.5)*depth*1.5,y:depth)
             let flight = flyBall ? 2.2 + depth/27 : DetailedFieldRules.bases[0].distance(to:landing)/(initial == "안타" ? 28 : 20)
             var play = flyBall ? DetailedFieldRules.resolveFly(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
                 runners:runnerProfiles ?? bases.map { $0 ? FieldRunnerProfile(speed:60) : nil },batter:newRunner,outs:outs,
-                stats:fieldStats,defending:!offense && appearance,ownBatter:batter) : DetailedFieldRules.resolve(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
+                stats:fieldStats,defending:!offense && appearance,ownBatter:batter,relayEnabled:version == 4) : DetailedFieldRules.resolve(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
                 runners:runnerProfiles ?? bases.map { $0 ? FieldRunnerProfile(speed:60) : nil },batter:newRunner,outs:outs,
                 stats:fieldStats,defending:!offense && appearance,ownBatter:batter,
-                doublePlayEnabled:version >= 2,groundBall:initial == "범타" && !bunt)
-            if version == 3 { play.version=3 }
+                doublePlayEnabled:version >= 2,groundBall:initial == "범타" && !bunt,relayEnabled:version == 4)
+            if version >= 3 { play.version=version }
             detailed=play;fieldPlays?.append(play)
             if play.ownParticipation || batter {
                 lastFieldPlay=play.xpPlay

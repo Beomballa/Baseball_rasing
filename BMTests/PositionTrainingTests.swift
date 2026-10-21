@@ -551,4 +551,81 @@ import SwiftData
             XCTAssertNotNil(MatchResultSummary(match:after,fatigueBefore:r.fatigueBefore,fatigueAfter:r.fatigueAfter).metrics.first { $0.id == "doublePlays" })
         }
     }
+    func testRelayCutoffDiskResumeAtomicXPAndResultOnce() throws {
+        enum Failure:Error {case injected}
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:directory)}
+        let url=directory.appendingPathComponent("relay.store")
+        let partial=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (p,s,r,profile)=try gameReady(c)
+            p.positionRaw="2B"
+            var loadout=try profile.snapshot();loadout.skills["2B"]=PositionSkill(mastery:10,xp:99)
+            profile.payload=try JSONEncoder().encode(loadout)
+            var initial=try r.snapshot()
+            initial.fieldStats=MatchFieldStats(version:3,speed:p.speed,defense:p.defense,arm:p.arm,position:"2B",activeTraits:[],positionMastery:10)
+            initial.half=initial.isHome ? 0:1;initial.outs=0;initial.bases=[false,false,true]
+            initial.fieldPlays=[];initial.runnerProfiles=[nil,nil,FieldRunnerProfile(speed:100)]
+            initial.positionExperience=MatchPositionExperience(position:.second,before:PositionSkill(mastery:10,xp:99),profileRevision:profile.revision,age:16,fatigue:p.fatigue)
+            var found:CareerMatch?
+            for seed in 1...2000 {
+                var candidate=initial;candidate.random=UInt64(seed)
+                var next=candidate;try next.advance(.watch,control:ManualMatchInput())
+                if next.fieldPlays?.contains(where: { $0.relay?.ownThrower == true }) == true { found=candidate;break }
+            }
+            r.payload=try JSONEncoder().encode(XCTUnwrap(found));try c.save()
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.watch,control:ManualMatchInput(),in:c)
+            XCTAssertFalse(r.completed);XCTAssertEqual(try profile.snapshot().skill(.second),PositionSkill(mastery:10,xp:99))
+            return (r.payload,profile.payload)
+        }
+        let final=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let r=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first),profile=try XCTUnwrap(PlayerPositionStore.profile(playerID:p.id,in:c))
+            XCTAssertEqual(r.payload,partial.0);XCTAssertEqual(profile.payload,partial.1)
+            let fatigue=p.fatigue,revision=s.revision
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c,save:{_ in throw Failure.injected}))
+            XCTAssertEqual(r.payload,partial.0);XCTAssertEqual(profile.payload,partial.1);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            let match=try r.snapshot(),experience=try XCTUnwrap(match.positionExperience),plays=try XCTUnwrap(match.fieldPlays)
+            let own=plays.filter(\.ownParticipation)
+            XCTAssertEqual(experience.events.count,own.count)
+            XCTAssertEqual(experience.successes,own.filter { !$0.xpPlay.safe }.count)
+            XCTAssertEqual(Set(experience.events.map { "\($0.half):\($0.order)" }).count,experience.events.count)
+            XCTAssertTrue(own.contains { $0.relay?.ownThrower == true })
+            XCTAssertEqual(try profile.snapshot().skill(.second),experience.after);XCTAssertEqual(profile.revision,1)
+            return (r.payload,profile.payload,p.fatigue)
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let r=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first),profile=try XCTUnwrap(PlayerPositionStore.profile(playerID:p.id,in:c))
+            XCTAssertEqual(r.payload,final.0);XCTAssertEqual(profile.payload,final.1)
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,final.0)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+            XCTAssertEqual(profile.payload,final.1);XCTAssertEqual(p.fatigue,final.2)
+        }
+    }
+    func testRelayV58DiskKeepsFlyPayloadAndRNGWithoutUpgrade() throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:directory)}
+        let url=directory.appendingPathComponent("v58.store")
+        let original=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (_,_,r,_)=try gameReady(c)
+            var old=try r.snapshot();old.detailedFieldVersion=3;old.fieldPlays=[]
+            old.bases=[false,false,false];old.runnerProfiles=[nil,nil,nil];old.positionExperience?.events=[]
+            r.payload=try JSONEncoder().encode(old);try c.save();return r.payload
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let r=try CareerMatchStore.start(player:p,state:s,in:c);XCTAssertEqual(r.payload,original)
+            var expected=try r.snapshot();try expected.advance(.automatic)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            let after=try r.snapshot();XCTAssertEqual(after,expected)
+            XCTAssertEqual(after.detailedFieldVersion,3);XCTAssertTrue(after.fieldPlays?.allSatisfy { $0.relay == nil && $0.version == 3 } == true)
+            XCTAssertNotNil(MatchResultSummary(match:after,fatigueBefore:r.fatigueBefore,fatigueAfter:r.fatigueAfter).metrics.first { $0.id == "doublePlays" })
+        }
+    }
 }

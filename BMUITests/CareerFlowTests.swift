@@ -771,6 +771,17 @@ extension CareerFlowTests {
             XCTAssertTrue(flySummary.contains("뜬공") || flySummary.contains("태그업"))
             let flySettled=XCTAttachment(screenshot:app.screenshot());flySettled.name=pitcher ? "Fly pitcher settled" : "Fly batter settled";flySettled.lifetime = .keepAlways;add(flySettled)
             reveal(dpMetric,in:app);XCTAssertEqual(dpMetric.label,dpValue)
+            let relayButton=app.buttons["replayRelayPlay"]
+            reveal(relayButton,in:app);XCTAssertTrue(relayButton.exists)
+            relayButton.tap()
+            XCTAssertTrue(app.staticTexts["fieldReplayRelayTimes"].exists)
+            XCTAssertTrue(app.staticTexts["fieldReplayRouteComparison"].exists)
+            reveal(app.staticTexts["fieldReplayPhase"],in:app)
+            let relayMoving=XCTAttachment(screenshot:app.screenshot());relayMoving.name=pitcher ? "Relay pitcher moving":"Relay batter moving";relayMoving.lifetime = .keepAlways;add(relayMoving)
+            waitForEnabled(relayButton,timeout:9)
+            XCTAssertTrue(app.staticTexts["gameDetailedFieldSummary"].label.contains("중계"))
+            let relaySettled=XCTAttachment(screenshot:app.screenshot());relaySettled.name=pitcher ? "Relay pitcher settled":"Relay batter settled";relaySettled.lifetime = .keepAlways;add(relaySettled)
+            reveal(dpMetric,in:app);XCTAssertEqual(dpMetric.label,dpValue)
             var positionGrowth = ""
             if !pitcher {
                 reveal(app.staticTexts["gamePositionGrowth"], in: app)
