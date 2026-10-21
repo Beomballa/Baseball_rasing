@@ -216,7 +216,12 @@ struct PositionDrillLiveView: View {
                         let target = training.targets[index]
                         if practice { Text("자유 연습 · 성장·저장 없음").font(.caption).foregroundStyle(GameTheme.gold) }
                         Text(position.label + " · " + position.positionDrill.title).font(.subheadline.bold())
-                        Text("\(training.scores.count) / 5").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("positionAttemptCount")
+                        let mission = TrainingMissionProgress(kind: .defense, scores: training.scores)
+                        HStack {
+                            Text("\(training.scores.count) / 5").font(.headline.monospaced()).accessibilityIdentifier("positionAttemptCount")
+                            Spacer(minLength: 4)
+                            Text("목표75점3회 · 성공 \(mission.successes)/3").font(.caption2)
+                        }.foregroundStyle(GameTheme.gold)
                         HStack(spacing: 6) {
                             ForEach(0..<5) { i in Text(i < training.scores.count ? "\(training.scores[i])" : "·").font(.caption.monospaced()).frame(maxWidth: .infinity, minHeight: 28).background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(GameTheme.boardLine)) }
                         }.accessibilityElement(children: .combine)

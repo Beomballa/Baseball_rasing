@@ -18,6 +18,7 @@ struct CareerTrainingView: View {
     @State private var kind = TrainingKind.contact
     @State private var category = 0
     @State private var footfalls: [SprintFoot] = []
+    @State private var lastFootfallTime = 0.0
     @State private var throwAngle = 0.0
     @State private var throwForce = 50.0
     @State private var throwBase = 1
@@ -28,6 +29,8 @@ struct CareerTrainingView: View {
     @State private var replayTask: Task<Void, Never>?
     @State private var replayScore: Int?
     @State private var feedbackVisible = false
+    @State private var reviewReady = false
+    @State private var coachNote: TrainingCoachNote?
     @State private var releaseHint = ""
     @State private var feedbackTick = 0
     @State private var judging = false
@@ -72,7 +75,7 @@ struct CareerTrainingView: View {
     private func beginAttempt() {
         guard let training, !training.completed, !inputLocked else { return }
         if [.speed, .stamina].contains(selectedKind) {
-            footfalls = []
+            footfalls = []; lastFootfallTime = 0
             clock.start(windup: 0, duration: 4) { submit(TrainingInput(footfalls: footfalls)) }
             return
         }
@@ -94,13 +97,13 @@ struct CareerTrainingView: View {
     private func submit(_ input: TrainingInput) {
         guard !inputLocked, training != nil, practice || record != nil else { return }
         clock.stop(); judging = false
-        replay = training; replayStarted = Date(); feedbackVisible = false
+        replay = training; replayStarted = Date(); feedbackVisible = false; reviewReady = false
         retryInput = input; retryRevision = record?.revision ?? 0
         saveAttempt()
     }
     private func saveAttempt() {
         guard let input = retryInput, let revision = retryRevision else { return }
-        if replay == nil { replay = training; replayStarted = Date(); feedbackVisible = false }
+        if replay == nil { replay = training; replayStarted = Date(); feedbackVisible = false; reviewReady = false }
         do {
             if practice {
                 guard var round = training else { return }
@@ -113,6 +116,7 @@ struct CareerTrainingView: View {
             if selectedKind == .power, let force = input.force, let angle = input.angle { lastDistance = TrainingRules.distance(force: force, angle: angle) }
             retryInput = nil; retryRevision = nil; errorMessage = nil
             replayScore = training?.scores.last
+            if let previous = replay, let score = replayScore { coachNote = TrainingSessionGuide.note(round: previous, input: input, score: score) }
             if selectedKind == .pitch, let previous = replay {
                 let target = previous.targets[previous.scores.count]
                 let release = input.release ?? 0
@@ -135,7 +139,27 @@ struct CareerTrainingView: View {
         feedbackVisible = true; feedbackTick += 1
     }
     private func finishReplay() {
-        replay = nil; feedbackVisible = false; scene.cancelDelivery()
+        guard replay != nil else { return }
+        reviewReady = true
+    }
+    private func continueSession() {
+        guard reviewReady else { return }
+        replay = nil; feedbackVisible = false; reviewReady = false; scene.cancelDelivery()
+    }
+    private var reviewControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let replayScore { TrainingGradeBanner(score: replayScore) }
+            if let coachNote {
+                Text(coachNote.observation).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                Text(coachNote.next).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("trainingCoach")
+            }
+            TrainingMissionBanner(kind: selectedKind, scores: training?.scores ?? [])
+            Button(training?.completed == true ? "세트 결산 보기" : "다음 시도 · \((training?.scores.count ?? 0) + 1)/5") {
+                continueSession()
+            }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingNext")
+            Text("성장은 5회 평균 성적으로 결정됩니다.").font(.caption2).foregroundStyle(GameTheme.boardMuted)
+        }
     }
     private func scheduleFeedback() {
         replayTask?.cancel()
@@ -148,7 +172,7 @@ struct CareerTrainingView: View {
     }
     private func cancelUncommitted() {
         clock.stop(); scene.cancelDelivery(); judging = false
-        replayTask?.cancel(); replayTask = nil; replay = nil; feedbackVisible = false
+        replayTask?.cancel(); replayTask = nil; replay = nil; feedbackVisible = false; reviewReady = false; coachNote = nil
     }
 
     var body: some View {
@@ -174,6 +198,7 @@ struct CareerTrainingView: View {
                                     .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
                                     .accessibilityIdentifier("trainingProgress")
                                 if training == nil { selection }
+                                if let training, !reviewReady { TrainingMissionBanner(kind: selectedKind, scores: (feedbackVisible ? self.training : displayTraining)?.scores ?? training.scores) }
                                 if dynamicTypeSize.isAccessibilitySize {
                                     Button("훈련 버튼으로 이동") { scroll.scrollTo("trainingControls", anchor: .bottom) }
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("trainingJumpControls")
@@ -181,7 +206,7 @@ struct CareerTrainingView: View {
                             }.background(chromeMeasurement("top"))
                             arena(height: fieldHeight(in: geometry.size))
                             VStack(spacing: 8) {
-                                playControls.disabled(replay != nil)
+                                if reviewReady { reviewControls } else { playControls.disabled(replay != nil) }
                                 errorControls
                             }.id("trainingControls").background(chromeMeasurement("bottom"))
                         }.padding(12)
@@ -398,7 +423,7 @@ struct CareerTrainingView: View {
                     }
                 }.padding(8)
             }
-            if selectedKind == .pitch, replay != nil, feedbackVisible, !dynamicTypeSize.isAccessibilitySize, let replayScore {
+            if selectedKind == .pitch, replay != nil, feedbackVisible, !reviewReady, !dynamicTypeSize.isAccessibilitySize, let replayScore {
                 PitchJudgmentToast(title: "포구 완료", detail: "\(replayScore)점 · \(releaseHint)")
                     .frame(maxWidth: height * 0.8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, height * 0.13)
@@ -408,7 +433,7 @@ struct CareerTrainingView: View {
                 MatchGrip(code: training?.pitchCode ?? code, hand: player.throwingHandRaw)
                     .frame(width: 74, height: 74).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
-            if replay != nil, feedbackVisible, selectedKind != .pitch, let replayScore {
+            if replay != nil, feedbackVisible, !reviewReady, selectedKind != .pitch, let replayScore {
                 TrainingGradeBanner(score: replayScore)
                     .accessibilityIdentifier("trainingReplayFeedback")
                     .frame(maxHeight: .infinity, alignment: .bottom).padding(8).allowsHitTesting(false)
@@ -465,10 +490,19 @@ struct CareerTrainingView: View {
     }
     private func step(_ foot: SprintFoot) {
         guard clock.running, clock.phase < 1, footfalls.last != foot else { return }
-        footfalls.append(foot)
+        let now = ProcessInfo.processInfo.systemUptime
+        if selectedKind == .stamina && now - lastFootfallTime < 0.18 { return }
+        footfalls.append(foot); lastFootfallTime = now
     }
     @ViewBuilder private func fieldControls(_ training: CareerTraining) -> some View {
         if [.speed, .stamina].contains(selectedKind) {
+            if selectedKind == .stamina {
+                let beat = (clock.phase * 16).truncatingRemainder(dividingBy: 1)
+                HStack(spacing: 6) {
+                    Rectangle().fill(clock.running && beat < 0.35 ? GameTheme.gold : GameTheme.boardLine).frame(width: 8, height: 8)
+                    Text("박자에 맞춰 교대 · 과한 연타는 제외").font(.caption2)
+                }.accessibilityLabel("지구력 리듬 안내, 일정한 간격으로 좌우 교대")
+            }
             HStack {
                 Button("왼발") { step(.left) }.accessibilityIdentifier("sprintLeft")
                 Button("오른발") { step(.right) }.accessibilityIdentifier("sprintRight")
@@ -501,6 +535,7 @@ struct CareerTrainingView: View {
                     }
                 }
                 scores(value)
+                TrainingMissionBanner(kind: value.selectedKind, scores: value.scores, completed: true)
             }
             if practice {
                 Text("연습 완료 · 점수만 확인하며 실제 선수에게 반영되지 않습니다.")

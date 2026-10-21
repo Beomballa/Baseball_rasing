@@ -71,7 +71,21 @@ final class CareerFlowTests: XCTestCase {
                     if ["speed", "stamina"].contains(kind), round == 0 {
                         app.buttons["sprintLeft"].tap(); app.buttons["sprintRight"].tap()
                     }
-                    if round == 4 { XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout: 8)) }
+                    if round == 0 {
+                        let next = app.buttons["trainingNext"]
+                        XCTAssertTrue(next.waitForExistence(timeout: 8))
+                        XCTAssertTrue(app.staticTexts["trainingCoach"].exists)
+                        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trainingMission").firstMatch.exists)
+                        Thread.sleep(forTimeInterval: 0.6)
+                        XCTAssertTrue(next.exists, "코칭을 읽는 동안 자동으로 다음 회차를 시작하지 않습니다")
+                        let review = XCTAttachment(screenshot: app.screenshot()); review.name = "Session coaching " + kind; review.lifetime = .keepAlways; add(review)
+                        next.tap()
+                    }
+                    if round > 0 && round < 4 {
+                        let next = app.buttons["trainingNext"]
+                        XCTAssertTrue(next.waitForExistence(timeout: 8)); next.tap()
+                    }
+                    if round == 4 { finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout: 8)) }
                 }
                 XCTAssertFalse(app.staticTexts["trainingGrowth"].exists)
                 XCTAssertFalse(app.staticTexts["trainingFatigue"].exists)
@@ -99,7 +113,7 @@ final class CareerFlowTests: XCTestCase {
         app.buttons["practiceGeneralTraining"].tap()
         app.buttons["trainingKind-power"].tap(); app.buttons["startTraining"].tap()
         for _ in 0..<5 { waitForEnabled(app.buttons["trainingAttempt"]); app.buttons["trainingAttempt"].tap() }
-        XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout: 5))
         app.buttons["trainingReturnHome"].tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertEqual(app.staticTexts["calendarDate"].label, date)
@@ -163,14 +177,14 @@ final class CareerFlowTests: XCTestCase {
                 let caught = XCTAttachment(screenshot: app.screenshot()); caught.name = "Native pitch training receipt and release coaching"; caught.lifetime = .keepAlways; add(caught)
             }
         }
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         let growth = app.staticTexts["trainingGrowth"].label
         app.buttons["trainingReturnHome"].tap()
         XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 \(min(100, fatigue + 6)) / 100")
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["trainingGrowth"].label, growth)
         app.buttons["trainingReturnHome"].tap()
         XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 \(min(100, fatigue + 6)) / 100")
@@ -191,7 +205,7 @@ final class CareerFlowTests: XCTestCase {
         app.buttons["trainingKind-power"].tap(); app.buttons["startTraining"].tap()
         let action = app.buttons["trainingAttempt"]
         for _ in 0..<5 { waitForEnabled(action); action.tap() }
-        XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["trainingGrowth"].exists)
         app.buttons["practiceRetry"].tap(); XCTAssertTrue(action.waitForExistence(timeout: 5))
         app.buttons["practiceChangeTraining"].tap(); app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -212,7 +226,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertFalse(action.isEnabled, "포구 후 결과 확인 시간에도 다음 시도는 잠겨야 합니다")
         let caught = XCTAttachment(screenshot: app.screenshot()); caught.name = "Pitch training catch and readable score"; caught.lifetime = .keepAlways; add(caught)
         for _ in 1..<5 { waitForEnabled(action); action.tap(); action.tap() }
-        XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout: 6))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout: 6))
         XCTAssertFalse(app.staticTexts["trainingFatigue"].exists)
         app.buttons["practiceRetry"].tap(); XCTAssertTrue(action.waitForExistence(timeout: 5))
         app.terminate(); app.launch()
@@ -256,7 +270,19 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertEqual(field.frame.width / field.frame.height, ratio, accuracy: 0.02)
     }
     @MainActor private func waitForEnabled(_ button: XCUIElement, timeout:TimeInterval = 5) {
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)], timeout: timeout), .completed)
+        let next = XCUIApplication().buttons["trainingNext"]
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if next.exists { next.tap() }
+            if button.exists, let state = try? button.snapshot(), state.isEnabled { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        XCTFail("조작 또는 회차 코칭 확인 후 버튼이 열리지 않았습니다")
+    }
+    @MainActor private func finishTrainingReviewIfNeeded(_ app: XCUIApplication) {
+        if app.staticTexts["trainingCompleted"].exists || app.staticTexts["practiceCompleted"].exists { return }
+        let next = app.buttons["trainingNext"]
+        XCTAssertTrue(next.waitForExistence(timeout: 8)); next.tap()
     }
 
     @MainActor private func checkLargeTraining(_ app: XCUIApplication, name: String, pitcher: Bool = false, actionID: String = "trainingAttempt") {
@@ -335,7 +361,7 @@ final class CareerFlowTests: XCTestCase {
                 }
             }
         }
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         let result = app.staticTexts["trainingGrowth"].label
         let resultShot = XCTAttachment(screenshot: app.screenshot()); resultShot.name = pitcher ? "Pitch growth saved" : "Contact growth saved"; resultShot.lifetime = .keepAlways; add(resultShot)
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -343,7 +369,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["homeTrainingGrowth"].exists)
         reveal(app.staticTexts["homePlayerName"], in: app)
         reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.staticTexts["trainingGrowth"].label, result)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         reveal(app.staticTexts["homePlayerName"], in: app)
@@ -389,7 +415,7 @@ final class CareerFlowTests: XCTestCase {
                 app.buttons["trainingCallStrike"].tap()
             }
         }
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         let saved = app.staticTexts["trainingGrowth"].label
         let result = XCTAttachment(screenshot: app.screenshot()); result.name = power ? "Power growth saved" : "Discipline growth saved"; result.lifetime = .keepAlways; add(result)
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -397,7 +423,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["homeTrainingGrowth"].label.contains(power ? "파워" : "선구안"))
         reveal(app.staticTexts["homePlayerName"], in: app)
         reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.staticTexts["trainingGrowth"].label, saved)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         reveal(app.buttons["restToday"], in: app); XCTAssertFalse(app.buttons["restToday"].isEnabled)
@@ -438,14 +464,14 @@ final class CareerFlowTests: XCTestCase {
                 waitForEnabled(app.buttons["trainingAttempt"]); app.buttons["trainingAttempt"].tap()
                 if round==0 { app.buttons["sprintLeft"].tap(); app.buttons["sprintRight"].tap() }
                 if round < 4 {
-                    XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"enabled == true"),object:app.buttons["trainingAttempt"])],timeout:7),.completed)
-                } else { XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:7)) }
+                    waitForEnabled(app.buttons["trainingAttempt"], timeout: 8)
+                } else { finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:7)) }
             } else {
                 if kind == "송구" { waitForEnabled(app.buttons["trainingAttempt"]); app.buttons["throwBase-" + ["1","2","4","3","2"][round]].tap() }
                 waitForEnabled(app.buttons["trainingAttempt"]); app.buttons["trainingAttempt"].tap()
             }
         }
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:5))
         let result=app.staticTexts["trainingGrowth"].label
         let saved=XCTAttachment(screenshot:app.screenshot());saved.name=(pitcher ? "Pitcher " : "")+kind+" growth";saved.lifetime = .keepAlways;add(saved)
         app.navigationBars.buttons.element(boundBy:0).tap()
@@ -453,7 +479,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["homeTrainingGrowth"].label.contains(kind))
         reveal(app.staticTexts["homePlayerName"], in: app)
         reveal(app.buttons["openTraining"],in:app);app.buttons["openTraining"].tap()
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:3));XCTAssertEqual(app.staticTexts["trainingGrowth"].label,result)
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:3));XCTAssertEqual(app.staticTexts["trainingGrowth"].label,result)
         app.navigationBars.buttons.element(boundBy:0).tap()
         reveal(app.buttons["restToday"],in:app);XCTAssertFalse(app.buttons["restToday"].isEnabled)
         XCTAssertTrue(app.buttons["advanceDay"].isEnabled);app.buttons["advanceDay"].tap()
@@ -493,11 +519,11 @@ final class CareerFlowTests: XCTestCase {
                     app.buttons["sprintLeft"].tap(); app.buttons["sprintRight"].tap()
                     if round < 4 {
                         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["trainingAttempt"])], timeout: 7), .completed)
-                    } else { XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 7)) }
+                    } else { finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 7)) }
                 }
             }
         }
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         let saved = app.staticTexts["trainingGrowth"].label
         let result = XCTAttachment(screenshot: app.screenshot()); result.name = kind + " raw growth saved"; result.lifetime = .keepAlways; add(result)
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -510,7 +536,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(row.label.contains(saved.components(separatedBy: "→").last!.trimmingCharacters(in: .whitespaces)))
         reveal(app.staticTexts["homePlayerName"], in: app)
         reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3)); XCTAssertEqual(app.staticTexts["trainingGrowth"].label, saved)
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 3)); XCTAssertEqual(app.staticTexts["trainingGrowth"].label, saved)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         reveal(app.buttons["restToday"], in: app); XCTAssertFalse(app.buttons["restToday"].isEnabled)
         if nextDay {
@@ -984,7 +1010,7 @@ extension CareerFlowTests {
         XCTAssertLessThanOrEqual(action.frame.maxY, app.windows.firstMatch.frame.maxY)
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Round pixel spin portrait"; shot.lifetime = .keepAlways; add(shot)
         for _ in 0..<5 { waitForEnabled(action); action.tap() }
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["trainingGrowth"].label.contains("→"))
     }
 
@@ -1010,13 +1036,13 @@ extension CareerFlowTests {
         XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
         reveal(app.buttons["openTraining"], in: app); XCTAssertTrue(app.buttons["openTraining"].label.contains("1/5")); app.buttons["openTraining"].tap()
         for _ in 0..<4 { waitForEnabled(app.buttons["trainingAttempt"]); app.buttons["trainingAttempt"].tap() }
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         let result = app.staticTexts["trainingGrowth"].label
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["calendarAction"].label, "오늘 행동 완료 · 훈련")
         reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
-        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
+        finishTrainingReviewIfNeeded(app); XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["trainingGrowth"].label, result)
     }
 
@@ -1422,6 +1448,37 @@ extension CareerFlowTests {
         reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
         app.buttons["startTraining"].tap()
         checkLargeTraining(app, name: "pitch role restore", pitcher: true)
+    }
+
+    @MainActor func testTrainingSessionCoachingLargeTextAndResume() throws {
+        let app = XCUIApplication(); app.launch()
+        app.buttons["role-pitcher"].tap(); createDashboardSample(app, name: "SessionPitch")
+        let day = app.staticTexts["calendarDate"].label
+        let fatigue = app.staticTexts["homeFatigue"].label
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        app.buttons["startTraining"].tap()
+        app.terminate()
+        app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        let jump = app.buttons["trainingJumpControls"]; reveal(jump, in: app); jump.tap()
+        let attempt = app.buttons["trainingAttempt"]; reveal(attempt, in: app); attempt.tap(); attempt.tap()
+        let next = app.buttons["trainingNext"]; XCTAssertTrue(next.waitForExistence(timeout: 8))
+        reveal(next, in: app)
+        XCTAssertTrue(next.isHittable)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(next.frame.minX, window.minX)
+        XCTAssertLessThanOrEqual(next.frame.maxX, window.maxX)
+        let coach = app.descendants(matching: .any).matching(identifier: "trainingCoach").firstMatch
+        reveal(coach, in: app); XCTAssertTrue(coach.exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Session coaching accessibility XXXL"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launchArguments = []; app.launch()
+        XCTAssertEqual(app.staticTexts["calendarDate"].label, day)
+        XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
+        reveal(app.buttons["openTraining"], in: app)
+        XCTAssertTrue(app.buttons["openTraining"].label.contains("1/5")); app.buttons["openTraining"].tap()
+        XCTAssertTrue(app.staticTexts["1 / 5"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["trainingNext"].exists)
     }
 
     @MainActor private func createDashboardSample(_ app: XCUIApplication, name: String, motionStyle: Bool = false) {

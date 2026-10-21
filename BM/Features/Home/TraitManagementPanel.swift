@@ -606,7 +606,12 @@ struct TraitDrillExperience: View {
                         }.buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("traitDrillRetry")
                     }
                     Text(targetText).font(.subheadline.bold()).accessibilityIdentifier("traitDrillTarget")
-                    Text("\(scores.count) / 5").font(.caption.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("traitAttemptCount")
+                    let mission = TrainingMissionProgress(kind: trait == .cheetah ? .speed : trait == .strongArm ? .arm : .defense, scores: scores)
+                    HStack {
+                        Text("\(scores.count) / 5").font(.caption.monospaced()).accessibilityIdentifier("traitAttemptCount")
+                        Spacer(minLength: 4)
+                        Text("목표75점3회 · 성공 \(mission.successes)/3").font(.caption2)
+                    }.foregroundStyle(GameTheme.gold)
                     HStack(spacing: 5) { ForEach(0..<5) { index in
                         VStack(spacing: 2) { Text("\(index + 1)회").font(.caption); Text(index < scores.count ? "\(scores[index])" : "·").font(.subheadline.monospaced().bold()) }
                             .frame(maxWidth: .infinity, minHeight: 44).background(GameTheme.boardPanel)

@@ -4,6 +4,46 @@ import SwiftUI
 @testable import BM
 
 @MainActor final class FieldTrainingTests: XCTestCase {
+    func testSessionMissionUsesSavedScoresAndDoesNotRewardFailuresOrLongestStreakTwice() {
+        let mixed = TrainingMissionProgress(kind: .contact, scores: [75, 80, 0, 100, 74])
+        XCTAssertEqual(mixed.successes, 3); XCTAssertTrue(mixed.achieved); XCTAssertEqual(mixed.bestStreak, 2)
+        XCTAssertFalse(TrainingMissionProgress(kind: .contact, scores: [74,74,74,74,74]).achieved)
+        XCTAssertFalse(TrainingMissionProgress(kind: .mental, scores: [100,100,100,0,0]).achieved)
+        XCTAssertTrue(TrainingMissionProgress(kind: .discipline, scores: [100,100,0,100,100]).achieved)
+        XCTAssertEqual(TrainingMissionProgress(kind: .pitch, scores: [75,75,75]).bestStreak, 3)
+    }
+    func testSessionCoachMatchesActualPitchPowerPlacementAndWrongBase() throws {
+        func round(_ kind: TrainingKind) -> CareerTraining {
+            CareerTraining(playerID: UUID(), date: "2026-04-01", role: kind == .pitch ? "pitcher" : "batter",
+                pitchCode: kind == .pitch ? "slider" : nil, before: 60, fatigue: 0, age: 16, calendarRevision: 0, kind: kind)
+        }
+        XCTAssertTrue(TrainingSessionGuide.note(round: round(.pitch), input: TrainingInput(release: 0.2), score: 0).next.contains("늦게"))
+        XCTAssertTrue(TrainingSessionGuide.note(round: round(.pitch), input: TrainingInput(release: 0.95), score: 0).next.contains("일찍"))
+        XCTAssertTrue(TrainingSessionGuide.note(round: round(.power), input: TrainingInput(force: 100, angle: 45), score: 0).next.contains("줄여"))
+        var defense = round(.defense)
+        let target = defense.targets[0]
+        XCTAssertTrue(TrainingSessionGuide.note(round: defense, input: TrainingInput(x: target.x - 0.1, y: target.y), score: 50).next.contains("오른쪽"))
+        XCTAssertTrue(TrainingSessionGuide.note(round: round(.arm), input: TrainingInput(force: 50, angle: 0, base: 2), score: 0).observation.contains("베이스"))
+        let original = defense
+        _ = TrainingSessionGuide.note(round: defense, input: TrainingInput(x: target.x, y: target.y), score: 100)
+        XCTAssertEqual(defense, original)
+        try defense.attempt(TrainingInput(x: target.x, y: target.y))
+        XCTAssertEqual(defense.scores, [100])
+    }
+    func testAllSessionCoachKindsUseTheOriginalTargetAndKeepRawScoringUnchanged() throws {
+        for kind in TrainingKind.allCases {
+            let role = [TrainingKind.pitch,.velocity,.control,.stuff,.stamina].contains(kind) ? "pitcher" : "batter"
+            var round = CareerTraining(playerID: UUID(), date: "2026-04-01", role: role, pitchCode: kind == .pitch ? "four-seam" : nil,
+                before: 60, fatigue: 0, age: 16, calendarRevision: 0, kind: kind)
+            let untouched = round
+            let input = TrainingInput(x: 0.5, y: 0.5, timing: kind == .contact ? 0.82 : nil, release: kind == .pitch ? 0.68 : nil)
+            let note = TrainingSessionGuide.note(round: round, input: input, score: 50)
+            XCTAssertFalse(note.observation.isEmpty); XCTAssertFalse(note.next.isEmpty); XCTAssertEqual(round, untouched)
+            round.scores = [100,0,75]
+            let encoded = try JSONEncoder().encode(round), restored = try JSONDecoder().decode(CareerTraining.self, from: encoded)
+            XCTAssertEqual(TrainingMissionProgress(kind: kind, scores: restored.scores),TrainingMissionProgress(kind: kind, scores: round.scores))
+        }
+    }
     private func setup(_ context: ModelContext, role: PlayerRole = .batter, date: String = "2026-04-01") throws -> (CareerPlayer, CareerCalendarState) {
         var draft = PlayerDraft(); draft.name = "필드훈련"; draft.schoolID = "hs-ref-001"; draft.role = role
         let player = try LegacyPlayerFixture.create(draft, schools: SchoolCatalog.load(), in: context)

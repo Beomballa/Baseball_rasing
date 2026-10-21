@@ -300,3 +300,116 @@ struct TrainingValueRail: View {
             }
     }
 }
+
+struct TrainingMissionProgress: Equatable {
+    let threshold: Int
+    let required: Int
+    let successes: Int
+    let bestStreak: Int
+    let attempts: Int
+    var achieved: Bool { successes >= required }
+    init(kind: TrainingKind, scores: [Int]) {
+        let passing = [.discipline, .mental].contains(kind) ? 100 : 75
+        threshold = passing
+        required = [.discipline, .mental].contains(kind) ? 4 : 3
+        attempts = scores.count
+        successes = scores.filter { $0 >= passing }.count
+        var streak = 0, best = 0
+        for score in scores { streak = score >= passing ? streak + 1 : 0; best = max(best, streak) }
+        bestStreak = best
+    }
+}
+
+struct TrainingCoachNote: Equatable {
+    let observation: String
+    let next: String
+}
+
+enum TrainingSessionGuide {
+    static func note(round: CareerTraining, input: TrainingInput, score: Int) -> TrainingCoachNote {
+        let kind = round.selectedKind, index = min(4, round.scores.count)
+        let target = round.targets[index]
+        func result(_ observation: String, _ next: String) -> TrainingCoachNote {
+            TrainingCoachNote(observation: observation, next: next)
+        }
+        func placement(_ noun: String) -> TrainingCoachNote {
+            let dx = target.x - input.x, dy = target.y - input.y
+            let direction = abs(dx) >= abs(dy) ? (dx > 0 ? "오른쪽" : "왼쪽") : (dy > 0 ? "아래쪽" : "위쪽")
+            return result(score >= 75 ? "목표 가까이에 도착했어요" : "목표와 위치가 벌어졌어요",
+                          score >= 75 ? "다음 목표에서도 위치를 먼저 확인하세요" : "\(noun)을 \(direction)으로 더 옮겨 보세요")
+        }
+        switch kind {
+        case .contact:
+            let contact = TrainingRules.contactResult(input: input, target: target, contact: round.before)
+            guard contact.didSwing else { return result("공을 지켜봤어요", "다음에는 조준 후 타격 버튼을 눌러 보세요") }
+            if contact.positionScore < contact.timingScore { return placement("조준점") }
+            let early = (input.timing ?? 0) < MatchDelivery.contactPhase
+            return result("조준 \(contact.positionScore) · 타이밍 \(contact.timingScore)점",
+                          contact.timingScore == 100 ? "지금 타이밍을 유지하고 다음 목표를 확인하세요" : early ? "배트를 조금 더 늦게 내보세요" : "배트를 조금 더 일찍 내보세요")
+        case .pitch:
+            let phase = input.release ?? 0
+            let exact = abs(phase - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: round.before)
+            return result(exact ? "노란 구간에서 공을 놓았어요" : phase < ManualMatchRules.releaseCenter ? "릴리스가 빨랐어요" : "릴리스가 늦었어요",
+                          exact ? "같은 손 놓는 위치를 다시 재현해 보세요" : phase < ManualMatchRules.releaseCenter ? "다음에는 손을 조금 더 늦게 떼세요" : "다음에는 손을 조금 더 일찍 떼세요")
+        case .power:
+            let distance = TrainingRules.distance(force: input.force ?? 0, angle: input.angle ?? 0)
+            let goal = TrainingRules.powerTarget(index), delta = distance - goal
+            return result(String(format: "목표 %.0fm · 실제 %.1fm", goal, distance),
+                          score >= 75 ? "좋은 거리예요. 다음 표적에 맞춰 다시 조절하세요" : delta > 0 ? "거리가 길어요. 힘을 조금 줄여 보세요" : "거리가 짧아요. 힘을 늘리거나 각도를45° 쪽으로 조절하세요")
+        case .discipline:
+            let strike = ManualMatchRules.isStrike(x: target.x, y: target.y)
+            return result(strike ? "이번 공은 스트라이크였어요" : "이번 공은 볼이었어요",
+                          score == 100 ? "경계를 잘 읽었어요. 다음 공도 끝까지 보세요" : "공이 도착한 위치와 존의 경계를 비교하세요")
+        case .control: return placement("조준점")
+        case .defense: return placement("선수")
+        case .arm:
+            let base = round.throwBase(index)
+            if input.base != base { return result("송구할 베이스가 달랐어요", "먼저 목표 \(base == 4 ? "홈" : "\(base)루")을 선택하세요") }
+            let point = TrainingRules.basePoint(base)
+            let dx = point.x - 0.5, dy = point.y - 0.63
+            let angle = (atan2(dy, dx) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+            let force = hypot(dx, dy) / 0.55 * 100
+            return result(score >= 75 ? "목표 베이스 근처로 송구했어요" : "목표 베이스에서 송구가 벗어났어요",
+                          String(format: "목표 방향 %.0f° · 필요한 강도 약%.0f%%", angle, force))
+        case .velocity, .stuff:
+            let goal = RawTrainingRules.goal(kind: kind, target: target)
+            let difference = abs((input.angle ?? 0) - goal.angle).truncatingRemainder(dividingBy: 360)
+            let angleError = min(difference, 360 - difference) / (kind == .velocity ? 35 : 90)
+            let forceError = abs((input.force ?? 0) - goal.force) / 40
+            return result(score >= 75 ? "목표 힘과 방향을 잘 맞췄어요" : "목표 힘 또는 방향에서 벗어났어요",
+                          forceError >= angleError ? String(format: "먼저 강도를 %.0f%% 쪽으로 조절하세요", goal.force) : String(format: "먼저 방향을 %.0f° 쪽으로 조절하세요", goal.angle))
+        case .speed, .stamina:
+            let steps = TrainingRules.steps(input.footfalls ?? [])
+            return result("좌우 교대 \(steps) / 16회", steps >= 12 ? "좋은 교대 리듬이에요. 다음에도 균형을 유지하세요" : "같은 발을 반복하기보다 좌우를 번갈아 눌러 보세요")
+        case .mental:
+            let question = RawTrainingRules.question(targets: round.targets, round: index)
+            return result(score == 100 ? "다음 플레이에 집중하는 선택이에요" : "이 상황에서는 루틴을 먼저 정리해요", question.choices[question.answer])
+        }
+    }
+}
+
+struct TrainingMissionBanner: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let kind: TrainingKind
+    let scores: [Int]
+    var completed = false
+    var body: some View {
+        let mission = TrainingMissionProgress(kind: kind, scores: scores)
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+        layout {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(completed ? (mission.achieved ? "세트 목표 달성" : "다음 세트에서 다시 도전") : "오늘의 집중 목표")
+                    .font(.caption.bold()).foregroundStyle(GameTheme.gold)
+                Text("\(mission.threshold)점 이상 \(mission.required)회 · 성공 \(mission.successes)/\(mission.required)")
+                    .font(.caption.monospaced()).fixedSize(horizontal: false, vertical: true)
+            }
+            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 3) {
+                Text("최고 연속 \(mission.bestStreak)회").font(.caption2.monospaced())
+                Text("5회 · 권장30초~1분").font(.caption2).foregroundStyle(GameTheme.boardMuted)
+            }
+        }.padding(8).background(GameTheme.boardPanel)
+            .overlay(Rectangle().strokeBorder(mission.achieved ? GameTheme.gold : GameTheme.boardLine, lineWidth: 1))
+            .accessibilityElement(children: .combine).accessibilityIdentifier("trainingMission")
+    }
+}
