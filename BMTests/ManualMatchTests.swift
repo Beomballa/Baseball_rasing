@@ -394,7 +394,7 @@ import SwiftData
             let container = try CareerStore.makeContainer(url: url); let context = container.mainContext
             for role in PlayerRole.allCases {
                 let (_, _, record) = try fixture(in: context, role: role)
-                var legacy = try record.snapshot(); legacy.controlVersion = nil; legacy.lastManual = nil
+                var legacy = try record.snapshot(); legacy.pitching = nil; legacy.controlVersion = nil; legacy.lastManual = nil
                 if role == .pitcher { try legacy.advance(.automatic) }
                 var dictionary = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
                 dictionary.removeValue(forKey: "controlVersion"); dictionary.removeValue(forKey: "lastManual")

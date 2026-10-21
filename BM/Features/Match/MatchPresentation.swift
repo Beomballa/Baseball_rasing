@@ -473,3 +473,36 @@ struct DetailedFieldReplayBoard: View {
         }
     }
 }
+
+struct PitcherChangePanel: View {
+    let change: PitcherChange
+    var finalRuns: Int?
+    let appearance: PlayerAppearance
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @State private var entered=false
+    var body: some View {
+        VStack(alignment:.leading,spacing:6) {
+            Text("투수 교체 · 내 등판 종료").font(.headline).foregroundStyle(GameTheme.gold)
+            GeometryReader { g in
+                ZStack {
+                    Rectangle().fill(Color(hex:0x215b44))
+                    Path {p in p.move(to:CGPoint(x:16,y:48));p.addLine(to:CGPoint(x:g.size.width-16,y:48))}.stroke(GameTheme.gold,style:StrokeStyle(lineWidth:2,dash:[4,4]))
+                    PixelPlayer(appearance:appearance).frame(width:24,height:32).position(x:entered ? 26:g.size.width*0.5,y:38)
+                    PixelPlayer(appearance:PlayerAppearance()).frame(width:24,height:32).position(x:entered ? g.size.width*0.5:g.size.width-26,y:38)
+                }
+            }.frame(height:66).accessibilityLabel("선발 퇴장 후 구원 투수 마운드 입장")
+            Text("\(change.half/2+1)회 \(change.half%2 == 0 ? "초":"말") · \(change.outs)아웃 · \(change.reason) · \(change.pitches)구")
+                .font(.caption.monospaced()).accessibilityIdentifier("pitcherChangeReason")
+            Text("등판 \(change.outsAtExit/3).\(change.outsAtExit%3)이닝 · 강판 시 실점 \(change.runsAtExit)")
+                .font(.caption.monospaced())
+            if let finalRuns {
+                Text("최종 실점 \(finalRuns) · 강판 후 책임 주자 실점 \(max(0,finalRuns-change.runsAtExit))")
+                    .font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("pitcherResponsibilityResult")
+            }
+            Text(change.inheritedBases.isEmpty ? "남긴 주자 없음":"책임 주자 · \(change.inheritedBases.map {"\($0)루"}.joined(separator:" · "))")
+                .font(.caption).accessibilityIdentifier("pitcherInheritedBases")
+        }.padding(8).frame(maxWidth:.infinity,alignment:.leading).background(GameTheme.boardPanel)
+            .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
+            .onAppear {withAnimation(reduced ? nil:.easeInOut(duration:0.9)){entered=true}}
+    }
+}

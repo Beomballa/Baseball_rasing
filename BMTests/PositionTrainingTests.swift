@@ -369,7 +369,7 @@ import SwiftData
         let original=try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (p,s,r,_)=try gameReady(c)
-            var legacy=try r.snapshot();legacy.detailedFieldVersion=nil;legacy.fieldPlays=nil;legacy.runnerProfiles=nil
+            var legacy=try r.snapshot();legacy.pitching=nil;legacy.detailedFieldVersion=nil;legacy.fieldPlays=nil;legacy.runnerProfiles=nil
             r.payload=try JSONEncoder().encode(legacy);try c.save()
             return (r.payload,p.pitches.map(\.mastery),s.revision)
         }
@@ -459,7 +459,7 @@ import SwiftData
         let original=try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (_,_,r,_)=try gameReady(c)
-            var old=try r.snapshot();old.detailedFieldVersion=1;old.fieldPlays=[]
+            var old=try r.snapshot();old.pitching=nil;old.detailedFieldVersion=1;old.fieldPlays=[]
             old.bases=[false,false,false];old.runnerProfiles=[nil,nil,nil];old.positionExperience?.events=[]
             r.payload=try JSONEncoder().encode(old);try c.save();return r.payload
         }
@@ -536,7 +536,7 @@ import SwiftData
         let original=try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (_,_,r,_)=try gameReady(c)
-            var old=try r.snapshot();old.detailedFieldVersion=2;old.fieldPlays=[]
+            var old=try r.snapshot();old.pitching=nil;old.detailedFieldVersion=2;old.fieldPlays=[]
             old.bases=[false,false,false];old.runnerProfiles=[nil,nil,nil];old.positionExperience?.events=[]
             r.payload=try JSONEncoder().encode(old);try c.save();return r.payload
         }
@@ -613,7 +613,7 @@ import SwiftData
         let original=try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (_,_,r,_)=try gameReady(c)
-            var old=try r.snapshot();old.detailedFieldVersion=3;old.fieldPlays=[]
+            var old=try r.snapshot();old.pitching=nil;old.detailedFieldVersion=3;old.fieldPlays=[]
             old.bases=[false,false,false];old.runnerProfiles=[nil,nil,nil];old.positionExperience?.events=[]
             r.payload=try JSONEncoder().encode(old);try c.save();return r.payload
         }
@@ -690,7 +690,7 @@ import SwiftData
         let original=try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (_,_,r,_)=try gameReady(c)
-            var old=try r.snapshot();old.detailedFieldVersion=4;old.fieldPlays=[]
+            var old=try r.snapshot();old.pitching=nil;old.detailedFieldVersion=4;old.fieldPlays=[]
             old.bases=[false,false,false];old.runnerProfiles=[nil,nil,nil];old.positionExperience?.events=[]
             r.payload=try JSONEncoder().encode(old);try c.save();return r.payload
         }

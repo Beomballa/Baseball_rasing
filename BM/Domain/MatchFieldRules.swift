@@ -84,11 +84,12 @@ struct FieldRunnerProfile: Codable, Equatable {
     let speed: Double
     var traits: [PlayerTrait] = []
     var own = false
+    var responsiblePitcher: String?
 }
 struct DetailedRunner: Codable, Equatable {
     let from: Int
     var destination: Int
-    let profile: FieldRunnerProfile
+    var profile: FieldRunnerProfile
     var nodes: [FieldNode]
     var out = false
     var retiredAt: Double?
@@ -149,7 +150,7 @@ struct MatchDetailedPlay: Codable, Equatable {
     var runners: [DetailedRunner]
     let ball: [FieldNode]
     let fielders: [[FieldNode]]
-    let afterRunners: [FieldRunnerProfile?]
+    var afterRunners: [FieldRunnerProfile?]
     let runs: Int
     let outsAdded: Int
     let hitBases: Int

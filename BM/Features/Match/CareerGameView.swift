@@ -50,7 +50,7 @@ struct CareerGameView: View {
         } catch { self.error = error.localizedDescription }
     }
     private func begin() {
-        guard !presenting, attempt == nil, retrySave == nil, let record, let match = try? record.snapshot(), !match.completed else { return }
+        guard !presenting, attempt == nil, retrySave == nil, let record, let match = try? record.snapshot(), !match.completed, player.role != .pitcher || match.ownPitcherActive else { return }
         let input: MatchInput = player.role == .pitcher ? .pitch : battingAction
         attempt = Attempt(revision: record.revision, input: input, pitchCode: pitchCode)
         let delivery = match.delivery(pitchCode: pitchCode)
@@ -117,6 +117,11 @@ struct CareerGameView: View {
         if let pending = retrySave {
             Text("직전 입력을 저장하지 못했습니다.").font(.caption)
             Button("같은 입력 다시 저장") { commit(pending) }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("retryGameInput")
+        } else if let change=match.ownPitcherChange {
+            PitcherChangePanel(change:change,appearance:player.appearance)
+            Text("남겨 둔 주자의 실점은 경기 종료까지 확정됩니다.").font(.caption)
+            Button("남은 경기 자동 진행") {advance(.automatic)}
+                .buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(inputLocked).accessibilityIdentifier("finishAfterPitcherChange")
         } else if record?.appearance == true {
             if player.role == .pitcher {
                 HStack(spacing: 8) {
@@ -237,6 +242,7 @@ struct CareerGameView: View {
                     .accessibilityIdentifier("gameResultSaved")
             }
             GamePanel(title: player.role == .batter ? "타자 경기 기록" : "투수 경기 기록", onBoard: true) {
+                if let change=match.ownPitcherChange {PitcherChangePanel(change:change,finalRuns:match.line.runsAllowed,appearance:player.appearance)}
                 if !record.appearance {
                     Text("비등판 · 팀 경기 결과").font(.headline).accessibilityIdentifier("gameResultNoAppearance")
                     Text("개인 기록과 피로 변화가 없습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -355,6 +361,7 @@ struct CareerGameView: View {
                                     available: CGSize(width: max(1, geometry.size.width - 16), height: geometry.size.height),
                                     role: player.role, chromeHeight: chromeHeights.values.reduce(0, +) + 28))
                                 VStack(spacing: 6) {
+                                    if match.pitching != nil {Text("현재 투수 · " + match.pitchingLabel).font(.caption.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("activePitcherLabel")}
                                     MatchScoreStrip(match: match, pitchCount: player.role == .pitcher ? match.line.pitches : nil, pulse: pulse, pulseAt: pulseAt)
                                     Text(match.lastManual.map { "\($0.grade) · \($0.outcome)" }
                                          ?? (match.completed ? match.message : player.role == .batter ? "조준 → 투구 요청 → 타격" : "그립 선택 → 투구 준비 → 릴리스"))

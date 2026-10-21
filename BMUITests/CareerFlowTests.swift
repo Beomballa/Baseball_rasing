@@ -738,6 +738,13 @@ extension CareerFlowTests {
             app.buttons["gameAutomatic"].tap(); app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
             checkResultBoard(app, pitcher: pitcher)
+            if pitcher {
+                let reason=app.staticTexts["pitcherChangeReason"]
+                reveal(reason,in:app);XCTAssertTrue(reason.exists)
+                let responsibility=app.staticTexts["pitcherResponsibilityResult"]
+                reveal(responsibility,in:app);XCTAssertTrue(responsibility.exists)
+                let change=XCTAttachment(screenshot:app.screenshot());change.name="Pitcher change final responsibility";change.lifetime = .keepAlways;add(change)
+            }
             reveal(app.buttons["replayResultFieldPlay"], in:app)
             let fieldSummary=app.staticTexts["gameDetailedFieldSummary"].label
             XCTAssertFalse(fieldSummary.isEmpty)

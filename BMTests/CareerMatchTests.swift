@@ -1,5 +1,6 @@
 import XCTest
 import SwiftData
+import SwiftUI
 @testable import BM
 
 @MainActor final class CareerMatchTests: XCTestCase {
@@ -190,4 +191,152 @@ import SwiftData
         }
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerMatchRecord>()), 0)
     }
+    private func reliefMatch(seed:UInt64=1) -> CareerMatch {
+        var m=CareerMatch(random:seed,isHome:true,role:"pitcher",appearance:true,contact:60,power:60,discipline:60,mastery:["four-seam":60])
+        m.controlVersion=2;m.detailedFieldVersion=5;m.fieldPlays=[];m.runnerProfiles=[nil,nil,nil];m.pitching=MatchPitching()
+        m.abilityStats=MatchAbilityStats(mental:60,velocity:60,control:60,stuff:60,stamina:60,fatigue:0)
+        return m
+    }
+    func testPitcherLimitUsesStaminaAndWaitsForPlateEnd() throws {
+        XCTAssertEqual(MatchPitching.limit(stamina:0),70);XCTAssertEqual(MatchPitching.limit(stamina:60),94);XCTAssertEqual(MatchPitching.limit(stamina:100),110)
+        var found=false
+        for seed in 1...100 {
+            var m=reliefMatch(seed:UInt64(seed));m.line.pitches=93;m.pitching?.homePitches=93
+            try m.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68))
+            guard m.homeOrder+m.awayOrder == 0 else {continue}
+            found=true;XCTAssertEqual(m.line.pitches,94);XCTAssertNil(m.ownPitcherChange)
+            for _ in 0..<20 where m.ownPitcherChange == nil {try m.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68))}
+            let c=try XCTUnwrap(m.ownPitcherChange);XCTAssertGreaterThanOrEqual(c.pitches,94);XCTAssertEqual(c.reason,"투구 수 한도")
+            XCTAssertFalse(m.completed);XCTAssertEqual(m.balls,0);XCTAssertEqual(m.strikes,0)
+            XCTAssertThrowsError(try m.advance(.pitch,pitchCode:"four-seam"));try m.validatePitching();break
+        }
+        XCTAssertTrue(found)
+    }
+    func testFatigueChangeFreezesPersonalOutsPitchesAndCostThroughRelief() throws {
+        var m=reliefMatch();m.pitching?.startingFatigue=100;m.abilityStats=MatchAbilityStats(mental:60,velocity:60,control:60,stuff:60,stamina:60,fatigue:100)
+        for _ in 0..<20 where m.ownPitcherChange == nil {try m.advance(.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68))}
+        XCTAssertEqual(m.ownPitcherChange?.reason,"피로 한도");XCTAssertFalse(m.completed)
+        let before=m.line,cost=m.fatigueCost
+        let data=try JSONEncoder().encode(m);var resumed=try JSONDecoder().decode(CareerMatch.self,from:data)
+        try m.advance(.automatic);try resumed.advance(.automatic)
+        XCTAssertEqual(m,resumed);XCTAssertTrue(m.completed);try m.validatePitching();try m.validateDetailedField()
+        XCTAssertEqual(m.line.pitches,before.pitches);XCTAssertEqual(m.line.pitchingOuts,before.pitchingOuts);XCTAssertEqual(m.line.hitsAllowed,before.hitsAllowed)
+        XCTAssertEqual(m.line.pitchingWalks,before.pitchingWalks);XCTAssertEqual(m.fatigueCost,cost)
+    }
+    func testInheritedScoringAndForceChoicePreserveOriginalPitcher() throws {
+        var scored=false
+        for seed in 1...20 {
+            var m=reliefMatch(seed:UInt64(seed));m.line.pitches=94;m.pitching?.homePitches=94
+            m.bases=[true,true,true];m.runnerProfiles=(0..<3).map {_ in FieldRunnerProfile(speed:60,responsiblePitcher:"home-starter")}
+            m.finishPitcherPlate(home:true,previousHalf:0)
+            XCTAssertEqual(m.ownPitcherChange?.inheritedBases,[1,2,3]);try m.advance(.automatic);try m.validatePitching()
+            XCTAssertEqual(m.line.pitchingOuts,0);XCTAssertEqual(m.line.pitches,94);XCTAssertTrue((0...3).contains(m.line.runsAllowed))
+            XCTAssertEqual(m.line.runsAllowed,m.pitching?.runs["home-starter",default:0]);XCTAssertEqual(m.opponentScore,(m.pitching?.runs["home-starter",default:0] ?? 0)+(m.pitching?.runs["home-relief",default:0] ?? 0))
+            scored = scored || m.line.runsAllowed > 0
+        }
+        XCTAssertTrue(scored)
+        var found=false
+        for depth in [3.0,8,15,25,35] {
+            var p=DetailedFieldRules.resolve(half:0,order:0,landing:FieldPoint(x:0,y:depth),flight:0.4,runners:[FieldRunnerProfile(speed:10,responsiblePitcher:"home-starter"),nil,nil],batter:FieldRunnerProfile(speed:100,responsiblePitcher:"home-relief"),outs:0,stats:nil,defending:false,ownBatter:false)
+            guard p.runners.contains(where:{$0.from == 1 && $0.out}),p.runners.contains(where:{$0.from == 0 && !$0.out}) else {continue}
+            MatchPitching.transferChoiceResponsibility(&p);XCTAssertEqual(p.runners.first(where:{$0.from == 0})?.profile.responsiblePitcher,"home-starter");try p.validate();found=true
+        }
+        XCTAssertTrue(found)
+    }
+    func testNewPitchingBothRolesAndAllSeedsValidateWithoutChangingLegacy() throws {
+        for role in ["batter","pitcher"] {for seed in 1...24 {
+            var m=reliefMatch(seed:UInt64(seed))
+            if role == "batter" {m=CareerMatch(random:UInt64(seed),isHome:false,role:role,appearance:true,contact:60,power:60,discipline:60,mastery:[:]);m.controlVersion=2;m.pitching=MatchPitching();m.detailedFieldVersion=5;m.fieldPlays=[];m.runnerProfiles=[nil,nil,nil]}
+            try m.advance(.automatic);try m.validatePitching();try m.validateDetailedField()
+            XCTAssertEqual(m.pitching?.runs.values.reduce(0,+),m.homeScore+m.awayScore)
+            XCTAssertEqual(m,try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(m)))
+        }}
+        var legacy=reliefMatch();legacy.pitching=nil
+        try legacy.advance(.automatic);XCTAssertEqual(legacy.line.runsAllowed,legacy.opponentScore);XCTAssertTrue([24,25,26,27].contains(legacy.line.pitchingOuts))
+    }
+    func testMalformedPitchingLedgerIsRejectedWithoutReset() throws {
+        var m=reliefMatch();try m.validatePitching()
+        m.pitching?.runs["other"]=1;XCTAssertThrowsError(try m.validatePitching())
+        m=reliefMatch();m.runnerProfiles=[FieldRunnerProfile(speed:60,responsiblePitcher:"unknown"),nil,nil];XCTAssertThrowsError(try m.validatePitching())
+        m=reliefMatch();m.pitching?.version=2;XCTAssertThrowsError(try m.validatePitching())
+        m=reliefMatch();m.awayScore=1;m.pitching?.runs["away-starter"]=1;XCTAssertThrowsError(try m.validatePitching())
+    }
+
+    func testPitcherChangeDiskResumeRollbackAndFinalRewardOnce() throws {
+        enum Failure:Error {case injected}
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("pitching.store")
+        let partial=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (p,s)=try setup(role:.pitcher,in:c),r=try ready(p,s,in:c)
+            var m=try r.snapshot();m.line.pitches=93;m.pitching?.homePitches=m.isHome ? 93:0;m.pitching?.awayPitches=m.isHome ? 0:93
+            r.payload=try JSONEncoder().encode(m);try c.save()
+            let fatigue=p.fatigue
+            for _ in 0..<30 where try r.snapshot().ownPitcherChange == nil {
+                try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68),in:c)
+            }
+            XCTAssertNotNil(try r.snapshot().ownPitcherChange);XCTAssertFalse(r.completed);XCTAssertEqual(p.fatigue,fatigue)
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c))
+            return (r.payload,p.fatigue)
+        }
+        let final=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first),r=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first)
+            XCTAssertEqual(r.payload,partial.0);XCTAssertNotNil(try r.snapshot().ownPitcherChange)
+            let revision=s.revision
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c,save:{_ in throw Failure.injected}))
+            XCTAssertEqual(r.payload,partial.0);XCTAssertEqual(p.fatigue,partial.1);XCTAssertEqual(s.revision,revision)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            XCTAssertTrue(r.completed);let value=try r.snapshot()
+            XCTAssertEqual(p.fatigue,min(100,partial.1+value.appliedFatigueCost))
+            return (r.payload,p.fatigue)
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first),r=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertEqual(r.payload,final.0);XCTAssertEqual(p.fatigue,final.1)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+            XCTAssertEqual(r.payload,final.0);XCTAssertEqual(p.fatigue,final.1)
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+        }
+    }
+
+    func testPitcherChangeBoardsRenderFromSavedJSONReadOnly() throws {
+        var m=reliefMatch();m.line.pitches=94;m.pitching?.homePitches=94
+        m.bases=[true,false,true];m.runnerProfiles=[FieldRunnerProfile(speed:60,responsiblePitcher:"home-starter"),nil,FieldRunnerProfile(speed:60,responsiblePitcher:"home-starter")]
+        m.finishPitcherPlate(home:true,previousHalf:0)
+        let data=try JSONEncoder().encode(m),saved=try JSONDecoder().decode(CareerMatch.self,from:data),change=try XCTUnwrap(saved.ownPitcherChange)
+        for final in [false,true] {
+            let renderer=ImageRenderer(content:PitcherChangePanel(change:change,finalRuns:final ? 2:nil,appearance:PlayerAppearance()).foregroundStyle(GameTheme.boardInk).frame(width:350).padding(8).background(GameTheme.boardPanel));renderer.scale=2
+            let a=XCTAttachment(image:try XCTUnwrap(renderer.uiImage));a.name=final ? "Pitcher responsibility saved result":"Pitcher change saved pending";a.lifetime = .keepAlways;add(a)
+        }
+        XCTAssertEqual(saved,m);XCTAssertEqual(saved,try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(m)))
+    }
+
+    func testV60DiskPayloadWithoutPitchingKeepsOriginalAndOldCompleteGame() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("v60.store")
+        let original=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (p,s)=try setup(role:.pitcher,in:c),r=try ready(p,s,in:c)
+            func oldJSON(_ object:Any) -> Any {
+                if let d=object as? [String:Any] {return d.filter {$0.key != "pitching" && $0.key != "responsiblePitcher"}.mapValues {oldJSON($0)}}
+                if let a=object as? [Any] {return a.map {oldJSON($0)}}
+                return object
+            }
+            r.payload=try JSONSerialization.data(withJSONObject:oldJSON(JSONSerialization.jsonObject(with:r.payload)),options:[.sortedKeys]);try c.save();return r.payload
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first),r=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertEqual(r.payload,original);var expected=try r.snapshot();XCTAssertNil(expected.pitching);try expected.advance(.automatic)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            let final=try r.snapshot();XCTAssertEqual(final,expected);XCTAssertNil(final.pitching);XCTAssertEqual(final.line.runsAllowed,final.opponentScore)
+            XCTAssertTrue([24,25,26,27].contains(final.line.pitchingOuts))
+            let data=r.payload;XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,data)
+        }
+    }
+
 }
