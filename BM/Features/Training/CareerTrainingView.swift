@@ -75,12 +75,12 @@ struct CareerTrainingView: View {
         }
         if selectedKind == .discipline {
             judging = true; judgementStarted = Date()
-            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role)
+            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
             scene.demonstrate(reduceMotion: reduced, flightDuration: 0.9, x: training.targets[training.scores.count].x,
                               y: training.targets[training.scores.count].y, pitchCode: "four-seam")
             return
         }
-        scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role)
+        scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
         if selectedKind == .pitch { scene.preparePitch(phase: 0, reduced: reduced) }
         else { scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: training.targets[training.scores.count].x,
                           y: training.targets[training.scores.count].y, pitchCode: training.pitchCode ?? "four-seam") }
@@ -181,7 +181,7 @@ struct CareerTrainingView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(GameTheme.boardPanel, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         .onAppear {
-            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role)
+            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
             load()
         }
         .sensoryFeedback(.impact(weight: .light), trigger: feedbackTick)

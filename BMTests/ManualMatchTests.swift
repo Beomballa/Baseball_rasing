@@ -1,9 +1,92 @@
 import XCTest
 import SpriteKit
+import UIKit
 import SwiftData
 @testable import BM
 
 @MainActor final class ManualMatchTests: XCTestCase {
+    private func motionPixels(_ image: UIImage) throws -> [UInt8] {
+        let source = try XCTUnwrap(image.cgImage)
+        var data = [UInt8](repeating: 0, count: source.width * source.height * 4)
+        try data.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: source.width, height: source.height, bitsPerComponent: 8, bytesPerRow: source.width * 4,
+                                                 space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(source, in: CGRect(x: 0, y: 0, width: source.width, height: source.height))
+        }
+        return data
+    }
+    func testPersonalMotionAllPosesKeepAlphaAndUsePaletteWithoutEditingSources() throws {
+        let style = PlayerAppearance(skin: 5, hair: 4, kit: 1, hairStyle: 2, expression: 2)
+        for role in PlayerRole.allCases {
+            for frame in 0..<6 {
+                let source = try XCTUnwrap(MatchArt.cell(role == .pitcher ? "pitcher-delivery-v2" : "batter-actions", column: frame % 3, row: frame / 3, columns: 3, rows: 2))
+                let before = try motionPixels(source)
+                let image = try XCTUnwrap(PlayerMotionArt.image(role: role, frame: frame, appearance: style, number: 9, hand: role == .pitcher ? "left" : "right"))
+                let after = try motionPixels(image)
+                XCTAssertEqual(image.size, source.size)
+                XCTAssertNotEqual(before, after)
+                XCTAssertTrue(stride(from: 3, to: before.count, by: 4).allSatisfy { before[$0] == after[$0] })
+                XCTAssertEqual(try motionPixels(source), before)
+                let attachment = XCTAttachment(image: image); attachment.name = "Personal motion \(role.rawValue) pose \(frame)"; attachment.lifetime = .keepAlways; add(attachment)
+            }
+        }
+    }
+    func testPersonalMotionNumbersAndLeftHandKeepReadableDigitOrder() throws {
+        let style = PlayerAppearance(kit: 1)
+        let right = try motionPixels(XCTUnwrap(PlayerMotionArt.image(role: .pitcher, frame: 0, appearance: style, number: 9, hand: "right")))
+        let left = try motionPixels(XCTUnwrap(PlayerMotionArt.image(role: .pitcher, frame: 0, appearance: style, number: 9, hand: "left")))
+        func ink(_ bytes: [UInt8], _ x: Int, _ y: Int) -> Bool {
+            let i = (y * 512 + x) * 4, a = Int(bytes[i+3]); guard a > 128 else { return false }
+            return Int(bytes[i])*255/a > 235 && Int(bytes[i+1])*255/a > 230 && (205..<235).contains(Int(bytes[i+2])*255/a)
+        }
+        var count = 0
+        for y in 241..<291 { for x in 281..<325 {
+            XCTAssertEqual(ink(right,x,y),ink(left,606-x,y))
+            if ink(right,x,y) { count += 1 }
+        } }
+        XCTAssertEqual(count, 12 * 7 * 7)
+        for number in [0, 7, 27, 99] {
+            let value = try motionPixels(XCTUnwrap(PlayerMotionArt.image(role: .pitcher, frame: 0, appearance: style, number: number, hand: "right")))
+            XCTAssertNotEqual(value, right)
+            if number == 27 {
+                let mirrored = try motionPixels(XCTUnwrap(PlayerMotionArt.image(role: .pitcher, frame: 0, appearance: style, number: number, hand: "left")))
+                for y in 241..<291 { for x in 270..<337 { XCTAssertEqual(ink(value,x,y),ink(mirrored,606-x,y)) } }
+            }
+        }
+        XCTAssertNil(PlayerMotionArt.image(role: .batter, frame: 6, appearance: style, number: 9, hand: "right"))
+        XCTAssertNil(PlayerMotionArt.image(role: .pitcher, frame: 0, appearance: style, number: 100, hand: "right"))
+    }
+    func testPersonalMotionPaletteUsesSavedSkinHairKitAndKeepsEquipment() throws {
+        let style = PlayerAppearance(skin: 5, hair: 4, kit: 1)
+        let changed = try motionPixels(XCTUnwrap(PlayerMotionArt.image(role: .pitcher, frame: 0, appearance: style, number: 27, hand: "right")))
+        for (point,hex) in [(CGPoint(x:280,y:150),PlayerAppearance.kitColors[1]),(CGPoint(x:222,y:289),PlayerAppearance.skinColors[5]),(CGPoint(x:280,y:199),PlayerAppearance.hairColors[4])] {
+            let i = (Int(point.y)*512+Int(point.x))*4, a = Double(changed[i+3])
+            let target = [Double((hex >> 16)&255), Double((hex >> 8)&255), Double(hex&255)]
+            let ratios = (0..<3).map { Double(changed[i+$0])*255/a/target[$0] }
+            XCTAssertEqual(ratios[0],ratios[1],accuracy:0.08); XCTAssertEqual(ratios[1],ratios[2],accuracy:0.08)
+        }
+        for (role,points) in [(PlayerRole.pitcher,[CGPoint(x:205,y:241),CGPoint(x:270,y:342)]),(.batter,[CGPoint(x:155,y:69),CGPoint(x:220,y:339)])] {
+            let original = try motionPixels(XCTUnwrap(MatchArt.cell(role == .pitcher ? "pitcher-delivery-v2" : "batter-actions", column:0,row:0,columns:3,rows:2)))
+            let personalized = try motionPixels(XCTUnwrap(PlayerMotionArt.image(role:role,frame:0,appearance:style,number:27,hand:"right")))
+            for point in points {
+                let i = (Int(point.y)*512+Int(point.x))*4
+                XCTAssertEqual(Array(original[i..<(i+4)]),Array(personalized[i..<(i+4)]))
+            }
+        }
+    }
+
+    func testPersonalMotionTextureCacheSeparatesIdentityAndAllPaletteChoicesRender() throws {
+        let a = PlayerMotionArt.textures(role: .batter, appearance: PlayerAppearance(), number: 0, hand: "right")
+        let b = PlayerMotionArt.textures(role: .batter, appearance: PlayerAppearance(), number: 0, hand: "right")
+        XCTAssertEqual(a.count,6); XCTAssertTrue(zip(a,b).allSatisfy { $0 === $1 })
+        let other = PlayerMotionArt.textures(role: .batter, appearance: PlayerAppearance(kit: 5), number: 99, hand: "right")
+        XCTAssertFalse(a[0] === other[0]); XCTAssertTrue(other.allSatisfy { $0.filteringMode == .nearest })
+        for index in 0..<6 {
+            XCTAssertNotNil(PlayerMotionArt.image(role: index % 2 == 0 ? .pitcher : .batter, frame: index,
+                appearance: PlayerAppearance(skin: index, hair: index, kit: index, hairStyle: index % 3, expression: index % 3), number: index, hand: "left"))
+        }
+    }
+
     func testPitchPreparationHoldsBallUntilExplicitReleaseForBothHands() {
         for hand in ["left", "right"] {
             let scene = BallparkScene(size: CGSize(width: 320, height: 320))

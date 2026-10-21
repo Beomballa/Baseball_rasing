@@ -324,7 +324,7 @@ struct CareerGameView: View {
                 }
             }
         }
-        .onAppear { scene.configure(hand: player.throwingHandRaw, kit: player.kit, role: player.role); load() }
+        .onAppear { scene.configure(hand: player.throwingHandRaw, kit: player.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber); load() }
         .task(id: pulseAt) {
             guard pulse != nil else { return }
             do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }

@@ -32,9 +32,9 @@ final class CareerFlowTests: XCTestCase {
     }
 
     @MainActor private func createOwnPracticePlayers(_ app: XCUIApplication) {
-        app.launch(); createDashboardSample(app, name: "OwnBatter")
+        app.launch(); createDashboardSample(app, name: "OwnBatter", motionStyle: true)
         reveal(app.buttons["createOtherRole"], in: app); app.buttons["createOtherRole"].tap()
-        createDashboardSample(app, name: "OwnPitcher")
+        createDashboardSample(app, name: "OwnPitcher", motionStyle: true)
         app.terminate(); app.launchArguments = ["-training-practice"]; app.launch()
     }
 
@@ -62,7 +62,7 @@ final class CareerFlowTests: XCTestCase {
 
     @MainActor func testNativePitchReleaseTrainingResumeAndRewardOnce() throws {
         let app = XCUIApplication(); app.launch()
-        app.buttons["role-pitcher"].tap(); createDashboardSample(app, name: "ReleasePitch")
+        app.buttons["role-pitcher"].tap(); createDashboardSample(app, name: "ReleasePitch", motionStyle: true)
         let fatigue = try XCTUnwrap(Int(app.staticTexts["homeFatigue"].label.split(separator: " ")[1]))
         reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
         app.buttons["startTraining"].tap()
@@ -97,6 +97,10 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "practiceValue-homeContact").firstMatch.label.contains("62.0"))
         app.buttons["능력치·보유 구종 확인"].tap()
         app.buttons["practiceGeneralTraining"].tap()
+        app.buttons["startTraining"].tap()
+        app.buttons["trainingAttempt"].tap(); app.buttons["trainingAttempt"].tap()
+        let swing = XCTAttachment(screenshot: app.screenshot()); swing.name = "Personal practice batter swing saved number"; swing.lifetime = .keepAlways; add(swing)
+        app.buttons["practiceChangeTraining"].tap()
         app.buttons["trainingKind-power"].tap(); app.buttons["startTraining"].tap()
         let action = app.buttons["trainingAttempt"]
         for _ in 0..<5 { waitForEnabled(action); action.tap() }
@@ -674,8 +678,11 @@ extension CareerFlowTests {
             if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
             if pitcher { app.buttons["hand-left"].tap() }
             reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
+            configureMotionStyle(app)
             reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+            let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", pitcher ? "BoardPitcher" : "BoardBatter"), object: app.staticTexts["homePlayerName"])
+            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
             reveal(app.buttons["restToday"], in: app); app.buttons["restToday"].tap()
             reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
             let primary = pitcher ? "gamePitch" : "requestGamePitch"
@@ -715,7 +722,10 @@ extension CareerFlowTests {
                 app.buttons["gameInput-swing"].tap(); app.buttons["requestGamePitch"].tap()
                 let watched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "지켜보기"), object: app.staticTexts["careerGameMessage"])
                 XCTAssertEqual(XCTWaiter.wait(for: [watched], timeout: 5), .completed)
+                app.buttons["gameInput-bunt"].tap()
                 waitForEnabled(app.buttons[primary]); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
+                let bunt = XCTAttachment(screenshot: app.screenshot()); bunt.name = "Personal batter bunt saved number"; bunt.lifetime = .keepAlways; add(bunt)
+                waitForEnabled(app.buttons[primary]); app.buttons["gameInput-swing"].tap(); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
             }
             waitForEnabled(app.buttons["gameAutomatic"])
             let speed = app.descendants(matching: .any).matching(identifier: "boardPitchSpeed").firstMatch
@@ -1237,13 +1247,21 @@ extension CareerFlowTests {
         checkLargeTraining(app, name: "pitch role restore", pitcher: true)
     }
 
-    @MainActor private func createDashboardSample(_ app: XCUIApplication, name: String) {
+    @MainActor private func createDashboardSample(_ app: XCUIApplication, name: String, motionStyle: Bool = false) {
         let field = app.textFields["playerName"]
         XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText(name)
         if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
         reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
+        if motionStyle { configureMotionStyle(app) }
         reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
+        let created = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", name), object: app.staticTexts["homePlayerName"])
+        XCTAssertEqual(XCTWaiter.wait(for: [created], timeout: 5), .completed)
+    }
+    @MainActor private func configureMotionStyle(_ app: XCUIApplication) {
+        // Move down the sheet once; swiping back to the top can dismiss creation.
+        // Off-default numbers are covered pixel-by-pixel by the renderer tests.
+        for label in ["피부 4", "머리색 3", "유니폼 5"] { reveal(app.buttons[label],in:app);app.buttons[label].tap() }
     }
     @MainActor func testHomeDashboardBothRolesAndLargeText() throws {
         let app = XCUIApplication(); app.launch()

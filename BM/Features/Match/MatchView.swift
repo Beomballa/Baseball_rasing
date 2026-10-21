@@ -33,7 +33,7 @@ struct MatchView: View {
         }
         .padding(16).background(GameTheme.paper).foregroundStyle(GameTheme.navy)
         .navigationTitle("경기장").navigationBarTitleDisplayMode(.inline)
-        .onAppear { scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit) }
+        .onAppear { scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, appearance: player.appearance, jerseyNumber: player.jerseyNumber) }
         .onDisappear { scene.removeAllActions() }
     }
 }

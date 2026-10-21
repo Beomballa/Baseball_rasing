@@ -33,7 +33,7 @@ import SpriteKit
             return texture
         }
     }
-    func configure(hand: String, kit: Int, role: PlayerRole = .pitcher) {
+    func configure(hand: String, kit: Int, role: PlayerRole = .pitcher, appearance: PlayerAppearance? = nil, jerseyNumber: Int = 1) {
         cancelDelivery(); self.hand = hand; self.role = role
         size = CGSize(width: 320, height: role == .batter ? 320 : 320 * 1290 / 1219)
         removeAllChildren()
@@ -41,8 +41,9 @@ import SpriteKit
         let texture = SKTexture(image: image); texture.filteringMode = .nearest
         let field = SKSpriteNode(texture: texture, size: size); field.position = CGPoint(x: size.width / 2, y: size.height / 2)
         addChild(field)
-        pitcherFrames = textures("pitcher-delivery-v2", columns: 3, rows: 2)
-        batterFrames = textures("batter-actions", columns: 3, rows: 2)
+        let style = appearance ?? PlayerAppearance(kit: kit)
+        pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : textures("pitcher-delivery-v2", columns: 3, rows: 2)
+        batterFrames = role == .batter ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : textures("batter-actions", columns: 3, rows: 2)
         catcherFrames = textures("catcher-parts", columns: 2, rows: 2)
         mittFrames = Array(catcherFrames.suffix(2))
         guard pitcherFrames.count == 6, batterFrames.count == 6, catcherFrames.count == 4 else { ready = false; return }
