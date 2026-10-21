@@ -72,3 +72,45 @@ extension FieldPosition {
         switch self { case .catcher, .center: 2; case .right: 3; case .left: 2; default: 1 }
     }
 }
+
+// Opt-in per-match ledger: legacy matches never infer defensive participation from outs.
+struct MatchPositionEvent: Codable, Equatable {
+    let half: Int
+    let order: Int
+    let play: MatchFieldPlay
+}
+
+struct MatchPositionExperience: Codable, Equatable {
+    var version = 1
+    let position: FieldPosition
+    let before: PositionSkill
+    let profileRevision: Int
+    let age: Int
+    let fatigue: Int
+    var events: [MatchPositionEvent] = []
+
+    var successes: Int { events.filter { !$0.play.safe }.count }
+    var gainedXP: Double {
+        // Participation 2 XP; a successful first-base out adds 3 XP.
+        let multiplier = PositionTrainingRules.gainedXP(mastery: before.mastery, score: 0, fatigue: fatigue, age: age) / 20
+        return TrainingRules.round(events.reduce(0) { $0 + TrainingRules.round(($1.play.safe ? 2 : 5) * multiplier) })
+    }
+    var after: PositionSkill { PositionTrainingRules.adding(gainedXP, to: before) }
+
+    func validate(match: CareerMatch) throws {
+        guard version == 1, match.role == "batter", match.appearance,
+              let stats = match.fieldStats, stats.version == 3, stats.position == position.rawValue,
+              stats.positionMastery == before.mastery, profileRevision >= 0, age >= 16,
+              (0...100).contains(fatigue), before.mastery.isFinite, (0...100).contains(before.mastery),
+              before.xp.isFinite, (0..<100).contains(before.xp), before.mastery < 100 || before.xp == 0 else { throw MatchError.invalidRecord }
+        var previous = (-1, -1)
+        for event in events {
+            let index = (event.half, event.order)
+            guard (0..<18).contains(event.half), event.half <= match.half, event.order >= 0, event.order < (match.isHome ? match.awayOrder : match.homeOrder),
+                  ((event.half % 2 == 1) != match.isHome), index > previous,
+                  event.play.ownDefense, event.play.runnerTime.isFinite, event.play.runnerTime > 0,
+                  event.play.ballTime.isFinite, event.play.ballTime > 0 else { throw MatchError.invalidRecord }
+            previous = index
+        }
+    }
+}

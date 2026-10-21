@@ -733,7 +733,19 @@ extension CareerFlowTests {
             app.buttons["gameAutomatic"].tap(); app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
             checkResultBoard(app, pitcher: pitcher)
+            var positionGrowth = ""
+            if !pitcher {
+                reveal(app.staticTexts["gamePositionGrowth"], in: app)
+                XCTAssertTrue(app.staticTexts["gamePositionParticipation"].exists)
+                positionGrowth = app.staticTexts["gamePositionGrowth"].label
+                let xpShot = XCTAttachment(screenshot: app.screenshot()); xpShot.name = "Game position XP result"; xpShot.lifetime = .keepAlways; add(xpShot)
+            }
             reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
+            if !pitcher {
+                reveal(app.staticTexts["homeGamePositionGrowth"], in: app)
+                XCTAssertEqual(app.staticTexts["homeGamePositionGrowth"].label, positionGrowth)
+                let xpHome = XCTAttachment(screenshot: app.screenshot()); xpHome.name = "Home actual game position XP"; xpHome.lifetime = .keepAlways; add(xpHome)
+            }
             reveal(app.staticTexts["homeFatigue"], in: app); let fatigue = app.staticTexts["homeFatigue"].label
             reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 결과"); app.buttons["openCareerGame"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons[primary].exists)

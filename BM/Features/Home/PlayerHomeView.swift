@@ -99,6 +99,15 @@ struct PlayerHomeView: View {
                         }
                     }
                 }
+                if let recent = gameRecords.first(where: { $0.playerID == player.id && $0.completed }),
+                   let experience = try? recent.snapshot().positionExperience {
+                    GamePanel(title: "최근 경기 · 실전 포지션 XP", onBoard: true) {
+                        Text("\(experience.position.label) · 수비 \(experience.events.count)회 / 아웃 \(experience.successes)회")
+                            .font(.subheadline)
+                        Text("XP +\(experience.gainedXP, specifier: "%.1f") · 숙련 \(experience.before.mastery, specifier: "%.1f") → \(experience.after.mastery, specifier: "%.1f")")
+                            .font(.headline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homeGamePositionGrowth")
+                    }
+                }
                 PositionHomePanel(player: player, calendar: calendar)
                 recentGames
                 GamePanel(title: "커리어 메뉴", onBoard: true) {

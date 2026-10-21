@@ -164,7 +164,7 @@ import SwiftData
         XCTAssertEqual(MatchFieldRules.applyingPosition(base,mastery:60).ballTime,1.95,accuracy:0.00001)
         let running=MatchFieldPlay(runnerTime:2,ballTime:1.85,ownDefense:false,appliedTraits:[])
         XCTAssertEqual(MatchFieldRules.applyingPosition(running,mastery:10),running)
-        var old=snapshot;old.fieldStats?.version=2;old.fieldStats?.positionMastery=nil
+        var old=snapshot;old.fieldStats?.version=2;old.fieldStats?.positionMastery=nil;old.positionExperience=nil
         let data=try JSONEncoder().encode(old);game.payload=data;try c.save()
         XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,data)
     }
@@ -223,5 +223,143 @@ import SwiftData
         restored.payload=Data("broken".utf8);try c.save()
         try PlayerPositionStore.addMissing(in:c)
         XCTAssertEqual(restored.payload,Data("broken".utf8));XCTAssertThrowsError(try restored.snapshot())
+    }
+    private func gameReady(_ c: ModelContext) throws -> (CareerPlayer, CareerCalendarState, CareerMatchRecord, PlayerPositions) {
+        let (p,s) = try setup(c, date: "2026-04-01")
+        let profile = try XCTUnwrap(PlayerPositionStore.profile(playerID:p.id,in:c))
+        var value = try profile.snapshot(); value.skills["SS"]?.xp = 99
+        profile.payload = try JSONEncoder().encode(value); try c.save()
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let r = try CareerMatchStore.start(player:p,state:s,in:c)
+        let initial = try r.snapshot()
+        // Fix only the test RNG. Require a genuine defensive opportunity in the engine.
+        for seed in 1...100 {
+            var candidate = initial; candidate.random = UInt64(seed)
+            var final = candidate; try final.advance(.automatic)
+            if final.positionExperience?.events.isEmpty == false {
+                r.payload = try JSONEncoder().encode(candidate); try c.save()
+                return (p,s,r,profile)
+            }
+        }
+        throw MatchError.invalidRecord
+    }
+    func testGameXPFormulaParticipationSuccessBandsCarryAndCap() throws {
+        let safe = MatchFieldPlay(runnerTime:3,ballTime:4,ownDefense:true)
+        let out = MatchFieldPlay(runnerTime:4,ballTime:3,ownDefense:true)
+        var xp = MatchPositionExperience(position:.shortstop,before:PositionSkill(mastery:60,xp:99),profileRevision:0,age:16,fatigue:24)
+        xp.events = [MatchPositionEvent(half:0,order:0,play:safe),MatchPositionEvent(half:0,order:1,play:out)]
+        XCTAssertEqual(xp.successes,1); XCTAssertEqual(xp.gainedXP,13.65)
+        XCTAssertEqual(xp.after,PositionSkill(mastery:61,xp:12.65))
+        xp = MatchPositionExperience(position:.shortstop,before:PositionSkill(mastery:99,xp:99.99),profileRevision:0,age:40,fatigue:80,events:xp.events)
+        XCTAssertEqual(xp.gainedXP,0.0263); XCTAssertEqual(xp.after,PositionSkill(mastery:100,xp:0))
+        xp = MatchPositionExperience(position:.shortstop,before:PositionSkill(mastery:100,xp:0),profileRevision:0,age:16,fatigue:0,events:xp.events)
+        XCTAssertEqual(xp.gainedXP,0); XCTAssertEqual(xp.after.mastery,100)
+    }
+    func testGameXPActualParticipationAllPositionsAndNoInventedLegacyEvents() throws {
+        for position in FieldPosition.allCases {
+            var found = false
+            for seed in 1...40 {
+                var game = CareerMatch(random:UInt64(seed),isHome:seed % 2 == 0,role:"batter",appearance:true,contact:60,power:0,discipline:60,mastery:[:])
+                game.fieldStats = MatchFieldStats(version:3,speed:60,defense:60,arm:60,position:position.rawValue,activeTraits:[],positionMastery:60)
+                game.positionExperience = MatchPositionExperience(position:position,before:PositionSkill(mastery:60,xp:0),profileRevision:0,age:16,fatigue:0)
+                var legacy = game; legacy.positionExperience = nil
+                try game.advance(.automatic); try legacy.advance(.automatic)
+                let ledger = try XCTUnwrap(game.positionExperience); try ledger.validate(match:game)
+                XCTAssertEqual(game.random,legacy.random);XCTAssertEqual(game.line,legacy.line)
+                XCTAssertEqual(game.teamScore,legacy.teamScore);XCTAssertEqual(game.opponentScore,legacy.opponentScore)
+                XCTAssertTrue(ledger.events.allSatisfy { $0.play.ownDefense })
+                XCTAssertNil(legacy.positionExperience)
+                // Removing the opt-in ledger must not change a single gameplay decision/RNG draw.
+                game.positionExperience = nil; XCTAssertEqual(game,legacy)
+                if !ledger.events.isEmpty { found=true;break }
+            }
+            XCTAssertTrue(found,position.rawValue)
+        }
+    }
+    func testGameXPAtomicFailureRetryStaleProfileAndNoDuplicateReward() throws {
+        enum Failure: Error {case injected}
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        let (p,s,r,profile)=try gameReady(c)
+        let payload=r.payload,positions=profile.payload,fatigue=p.fatigue,revision=s.revision
+        XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c,save:{_ in throw Failure.injected}))
+        XCTAssertEqual(r.payload,payload);XCTAssertEqual(profile.payload,positions);XCTAssertEqual(profile.revision,0)
+        XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision);XCTAssertFalse(r.completed)
+        profile.revision += 1;try c.save()
+        XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+        XCTAssertEqual(r.payload,payload);XCTAssertEqual(p.fatigue,fatigue)
+        profile.revision -= 1;try c.save()
+        try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+        let xp=try XCTUnwrap(r.snapshot().positionExperience),after=profile.payload
+        XCTAssertGreaterThan(xp.gainedXP,0);XCTAssertEqual(try profile.snapshot().skill(.shortstop),xp.after)
+        XCTAssertEqual(profile.revision,1)
+        for position in FieldPosition.allCases where position != .shortstop {
+            XCTAssertEqual(try profile.snapshot().skill(position),PositionSkill(mastery:10,xp:0))
+        }
+        XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+        XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,r.payload)
+        XCTAssertEqual(profile.payload,after);XCTAssertEqual(profile.revision,1)
+    }
+    func testGameXPDiskResumeAndNextGameUsesNewMasteryOnly() throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:directory)}
+        let url=directory.appendingPathComponent("game-xp.store")
+        let partial=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (p,s,r,profile)=try gameReady(c)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.watch,control:ManualMatchInput(),in:c)
+            XCTAssertFalse(r.completed);XCTAssertEqual(try profile.snapshot().skill(.shortstop).xp,99)
+            return r.payload
+        }
+        let final=try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let r=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first);XCTAssertEqual(r.payload,partial)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            let xp=try XCTUnwrap(r.snapshot().positionExperience)
+            XCTAssertGreaterThan(xp.after.mastery,xp.before.mastery)
+            XCTAssertEqual(try r.snapshot().fieldStats?.positionMastery,xp.before.mastery)
+            return r.payload
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let r=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first);XCTAssertEqual(r.payload,final)
+            let profile=try XCTUnwrap(PlayerPositionStore.profile(playerID:p.id,in:c)),saved=profile.payload
+            let after=try profile.snapshot().skill(.shortstop)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+            p.gameDate="2026-04-07";try c.save()
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let next=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertEqual(try next.snapshot().fieldStats?.positionMastery,after.mastery)
+            XCTAssertEqual(try next.snapshot().positionExperience?.before,after)
+            XCTAssertEqual(profile.payload,saved);XCTAssertEqual(r.payload,final)
+            let base=MatchFieldPlay(runnerTime:4,ballTime:3,ownDefense:true)
+            XCTAssertLessThan(MatchFieldRules.applyingPosition(base,mastery:after.mastery).ballTime,MatchFieldRules.applyingPosition(base,mastery:60).ballTime)
+        }
+    }
+    func testGameXPLegacyPendingAndCompletedKeepPayloadAndNoRetroactiveReward() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        let (p,s,r,profile)=try gameReady(c)
+        var old=try r.snapshot();old.positionExperience=nil
+        r.payload=try JSONEncoder().encode(old);try c.save()
+        let before=profile.payload
+        try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+        XCTAssertNil(try r.snapshot().positionExperience);XCTAssertEqual(profile.payload,before)
+        let saved=r.payload
+        XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,saved)
+        XCTAssertEqual(profile.revision,0)
+    }
+    func testGameXPDamagedOrDuplicateEventsRejectedWithoutReset() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        let (_,_,r,_)=try gameReady(c)
+        var game=try r.snapshot();try game.advance(.automatic)
+        var ledger=try XCTUnwrap(game.positionExperience)
+        ledger.events.append(try XCTUnwrap(ledger.events.first));game.positionExperience=ledger
+        // Record completion consistency is kept so the ledger validation itself is exercised.
+        r.completed=true;r.payload=try JSONEncoder().encode(game);try c.save()
+        XCTAssertThrowsError(try r.snapshot());XCTAssertNotNil(try c.fetch(FetchDescriptor<CareerMatchRecord>()).first)
+        ledger.events=[];ledger.version=99;game.positionExperience=ledger;r.payload=try JSONEncoder().encode(game);try c.save()
+        XCTAssertThrowsError(try r.snapshot())
     }
 }

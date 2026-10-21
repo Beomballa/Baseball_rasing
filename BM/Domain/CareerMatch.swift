@@ -31,6 +31,7 @@ struct CareerMatch: Codable, Equatable {
     var abilityStats: MatchAbilityStats?
     var fieldStats: MatchFieldStats?
     var lastFieldPlay: MatchFieldPlay?
+    var positionExperience: MatchPositionExperience?
     var trainingEffectsVersion: Int?
     var controlVersion: Int?
     var lastManual: ManualMatchResult?
@@ -206,6 +207,9 @@ struct CareerMatch: Codable, Equatable {
                                                     chase: chase, distance: distance, ownDefense: ownDefense)
                 }
                 if stats.version == 3, let mastery = stats.positionMastery { play = MatchFieldRules.applyingPosition(play, mastery: mastery) }
+                if ownDefense, role == "batter", positionExperience != nil {
+                    positionExperience?.events.append(MatchPositionEvent(half: half, order: isHome ? awayOrder : homeOrder, play: play))
+                }
                 lastFieldPlay = play; result = play.safe ? "안타" : "범타"
             }
         }

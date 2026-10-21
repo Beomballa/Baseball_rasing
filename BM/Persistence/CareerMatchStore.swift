@@ -37,6 +37,7 @@ enum CareerSchemaV3: VersionedSchema {
                     guard let mastery = stats.positionMastery, mastery.isFinite, (0...100).contains(mastery), FieldPosition(rawValue: stats.position) != nil else { throw MatchError.invalidRecord }
                 }
             }
+            try match.positionExperience?.validate(match: match)
             return match
         }
     }
@@ -94,7 +95,10 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             match.fieldStats?.version = 3
             let active = match.fieldStats?.activeTraits ?? []
             match.fieldStats?.activeTraits = active
-            match.fieldStats?.positionMastery = try profile.snapshot().skill(position).mastery
+            let skill = try profile.snapshot().skill(position)
+            match.fieldStats?.positionMastery = skill.mastery
+            match.positionExperience = MatchPositionExperience(position: position, before: skill,
+                profileRevision: profile.revision, age: try state.age(of: player), fatigue: player.fatigue)
         }
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
@@ -112,16 +116,34 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         guard !record.completed else { throw MatchError.finished }
         var match = try record.snapshot()
         try match.advance(input, pitchCode: pitchCode, control: control)
-        record.payload = try JSONEncoder().encode(match)
+        // Validate all reward recipients before mutating any persistent object.
+        var positionReward: (PlayerPositions, PositionLoadout)?
+        if match.completed, let experience = match.positionExperience {
+            guard let profile = try PlayerPositionStore.profile(playerID: player.id, in: context),
+                  profile.revision == experience.profileRevision else { throw MatchError.stale }
+            var loadout = try profile.snapshot()
+            guard try loadout.skill(experience.position) == experience.before else { throw MatchError.stale }
+            loadout.skills[experience.position.rawValue] = experience.after
+            try loadout.validate()
+            if experience.after != experience.before { positionReward = (profile, loadout) }
+        }
+        try match.positionExperience?.validate(match: match)
+        let payload = try JSONEncoder().encode(match)
+        let positionPayload = try positionReward.map { try JSONEncoder().encode($0.1) }
+        record.payload = payload
         if match.controlVersion == 2 { record.rulesVersion = "native-match-v2" }
         record.revision += 1
         if match.completed {
             record.completed = true
             player.fatigue = min(100, max(0, player.fatigue + match.appliedFatigueCost))
             record.fatigueAfter = player.fatigue
+            if let (profile, _) = positionReward, let positionPayload {
+                profile.payload = positionPayload
+                profile.revision += 1
+            }
         }
         state.revision += 1
-        // Result, personal fatigue and completion gate share exactly one explicit save.
+        // Result, position XP, personal fatigue and completion gate share one explicit save.
         do { try save(context) } catch { context.rollback(); throw error }
     }
 }

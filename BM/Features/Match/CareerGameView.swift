@@ -234,6 +234,16 @@ struct CareerGameView: View {
                     }
                 }
             }
+            if let experience = match.positionExperience {
+                GamePanel(title: "실전 포지션 성장 · " + experience.position.label, onBoard: true) {
+                    Text("수비 참여 \(experience.events.count)회 · 아웃 성공 \(experience.successes)회")
+                        .font(.subheadline).accessibilityIdentifier("gamePositionParticipation")
+                    Text("XP +\(experience.gainedXP, specifier: "%.1f") · 숙련 \(experience.before.mastery, specifier: "%.1f") → \(experience.after.mastery, specifier: "%.1f")")
+                        .font(.headline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("gamePositionGrowth")
+                    Text("잔여 XP \(experience.after.xp, specifier: "%.1f") / 100 · 다음 새 경기 반영")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }
+            }
             GamePanel(title: "피로 변화", onBoard: true) {
                 let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(spacing: 12))
                 layout {
