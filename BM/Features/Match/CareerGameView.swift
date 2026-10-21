@@ -35,6 +35,7 @@ struct CareerGameView: View {
 
     @State private var visualSnapshot: CareerMatch?
     @State private var presenting = false
+    @State private var resultReplayPlay:MatchDetailedPlay?
     @State private var resultReplayID=0
     @State private var animateResultReplay=false
     @State private var replay: MatchDetailedPlay?
@@ -79,7 +80,7 @@ struct CareerGameView: View {
             retrySave = nil
             let updated=try record.snapshot()
             let added=Array((updated.fieldPlays ?? []).dropFirst(previous.fieldPlays?.count ?? 0))
-            let fieldPlay=added.first { $0.ownBatter || $0.ownDefense || (player.role == .pitcher && $0.half == previous.half) }
+            let fieldPlay=added.first { $0.ownBatter || $0.ownParticipation || (player.role == .pitcher && $0.half == previous.half) }
             if let result = updated.lastManual {
                 visualSnapshot = previous; presenting = true
                 let showResult: @MainActor () -> Void = {
@@ -102,7 +103,7 @@ struct CareerGameView: View {
         } catch { retrySave = pending; self.error = error.localizedDescription; scene.cancelDelivery() }
     }
     private func cancelInput() {
-        clock.stop(); attempt = nil; presenting = false; visualSnapshot = nil; replay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
+        clock.stop(); attempt = nil; presenting = false; visualSnapshot = nil; replay=nil;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
     }
     private func advance(_ input: MatchInput) {
         guard !presenting, attempt == nil, retrySave == nil, let record else { return }
@@ -252,13 +253,18 @@ struct CareerGameView: View {
                     }
                 }
             }
-            if let play=match.fieldPlays?.last {
-                GamePanel(title:"마지막 타구 · 수비/주루",onBoard:true) {
+            if let play=resultReplayPlay ?? match.fieldPlays?.last {
+                GamePanel(title:resultReplayPlay == nil ? "마지막 타구 · 수비/주루" : "최근 병살 시도",onBoard:true) {
                     Text(play.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gameDetailedFieldSummary")
                     DetailedFieldReplayBoard(play:play,appearance:player.appearance,animated:animateResultReplay) { animateResultReplay=false }
                         .id(resultReplayID).frame(height:240)
                     Button("수비·주루 재생") { animateResultReplay=true;resultReplayID += 1 }
                         .buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayResultFieldPlay")
+                    if let doublePlay=match.fieldPlays?.last(where: { $0.secondThrow != nil }) {
+                        Button("최근 병살 시도 다시 보기") {
+                            resultReplayPlay=doublePlay;animateResultReplay=true;resultReplayID += 1
+                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayDoublePlay")
+                    }
                 }
             }
             if let experience = match.positionExperience {
@@ -283,8 +289,8 @@ struct CareerGameView: View {
             GamePanel(title: "적용 특성 · 마지막 개인 경합", onBoard: true) {
                 Text(summary.traitMessage).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("gameResultTraitStatus")
                 if record.appearance, let play = match.lastFieldPlay {
-                    let detailed=match.fieldPlays?.last { $0.ownDefense || $0.ownBatter }
-                    let base=detailed?.targetBase ?? 1
+                    let detailed=match.fieldPlays?.last { $0.ownParticipation || $0.ownBatter }
+                    let base=(detailed?.secondThrow?.ownThrower == true || detailed?.ownBatter == true && detailed?.secondThrow != nil) ? 1 : detailed?.targetBase ?? 1
                     let perspective=detailed?.ownBatter == true && detailed?.targetRunner != 0 ? "내 타석" : "내 \(play.ownDefense ? "수비" : "주루")"
                     Text("\(perspective) · \(base == 4 ? "홈" : "\(base)루") \(play.safe ? "세이프" : "아웃")")
                         .font(.headline).foregroundStyle(GameTheme.gold)

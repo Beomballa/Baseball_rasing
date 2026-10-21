@@ -742,6 +742,19 @@ extension CareerFlowTests {
             waitForEnabled(app.buttons["replayResultFieldPlay"],timeout:9)
             XCTAssertEqual(app.staticTexts["gameDetailedFieldSummary"].label,fieldSummary)
             let settledField=XCTAttachment(screenshot:app.screenshot());settledField.name=pitcher ? "Detailed pitcher field settled" : "Detailed batter field settled";settledField.lifetime = .keepAlways;add(settledField)
+            let dpMetric=app.descendants(matching:.any).matching(identifier:"gameResult-doublePlays").firstMatch
+            reveal(dpMetric,in:app);XCTAssertTrue(dpMetric.exists)
+            let dpValue=dpMetric.label
+            if app.buttons["replayDoublePlay"].exists {
+                reveal(app.buttons["replayDoublePlay"],in:app);app.buttons["replayDoublePlay"].tap()
+                XCTAssertTrue(app.staticTexts["fieldReplaySecondTimes"].exists)
+                reveal(app.staticTexts["fieldReplayPhase"],in:app)
+                let moving=XCTAttachment(screenshot:app.screenshot());moving.name=pitcher ? "Double play pitcher moving" : "Double play batter moving";moving.lifetime = .keepAlways;add(moving)
+                waitForEnabled(app.buttons["replayDoublePlay"],timeout:9)
+                XCTAssertTrue(app.staticTexts["gameDetailedFieldSummary"].label.contains("2루 아웃 → 1루"))
+                let ended=XCTAttachment(screenshot:app.screenshot());ended.name=pitcher ? "Double play pitcher settled" : "Double play batter settled";ended.lifetime = .keepAlways;add(ended)
+                reveal(dpMetric,in:app);XCTAssertEqual(dpMetric.label,dpValue)
+            }
             var positionGrowth = ""
             if !pitcher {
                 reveal(app.staticTexts["gamePositionGrowth"], in: app)
@@ -758,6 +771,8 @@ extension CareerFlowTests {
             reveal(app.staticTexts["homeFatigue"], in: app); let fatigue = app.staticTexts["homeFatigue"].label
             reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 결과"); app.buttons["openCareerGame"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons[primary].exists)
+            let savedDP=app.descendants(matching:.any).matching(identifier:"gameResult-doublePlays").firstMatch
+            reveal(savedDP,in:app);XCTAssertEqual(savedDP.label,dpValue)
             reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
             reveal(app.staticTexts["homeFatigue"], in: app); XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
             reveal(app.buttons["advanceDay"], in: app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled)

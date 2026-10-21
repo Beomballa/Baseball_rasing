@@ -194,17 +194,18 @@ struct CareerMatch: Codable, Equatable {
         var detailed: MatchDetailedPlay?
         let newRunner = FieldRunnerProfile(speed:batter ? fieldStats?.speed ?? 60 : 60,
             traits:batter ? (fieldStats?.activeTraits ?? []).filter { $0 == .cheetah } : [],own:batter)
-        if detailedFieldVersion == 1, ["안타","범타"].contains(initial) {
+        if let version=detailedFieldVersion,[1,2].contains(version), ["안타","범타"].contains(initial) {
             let depth = bunt ? 3 + roll()*13 : initial == "안타" ? 40 + roll() * 45 : 5 + roll() * 36
             let landing = FieldPoint(x:(roll()-0.5)*depth*1.5,y:depth)
             let flight = DetailedFieldRules.bases[0].distance(to:landing)/(initial == "안타" ? 28 : 20)
             let play = DetailedFieldRules.resolve(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
                 runners:runnerProfiles ?? bases.map { $0 ? FieldRunnerProfile(speed:60) : nil },batter:newRunner,outs:outs,
-                stats:fieldStats,defending:!offense && appearance,ownBatter:batter)
+                stats:fieldStats,defending:!offense && appearance,ownBatter:batter,
+                doublePlayEnabled:version == 2,groundBall:initial == "범타" && !bunt)
             detailed=play;fieldPlays?.append(play)
-            if play.ownDefense || batter {
+            if play.ownParticipation || batter {
                 lastFieldPlay=play.xpPlay
-                if play.ownDefense,role == "batter",positionExperience != nil {
+                if play.ownParticipation,role == "batter",positionExperience != nil {
                     positionExperience?.events.append(MatchPositionEvent(half:half,order:isHome ? awayOrder : homeOrder,play:play.xpPlay))
                 }
             }

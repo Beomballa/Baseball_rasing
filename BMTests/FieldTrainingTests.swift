@@ -277,4 +277,111 @@ import SwiftData
         var legacy=game(42);try legacy.advance(.automatic)
         XCTAssertNil(legacy.detailedFieldVersion);XCTAssertNil(legacy.fieldPlays);XCTAssertNil(legacy.runnerProfiles)
     }
+    private func doublePlay(_ x:Double = -14,_ y:Double = 35,batterSpeed:Double=60,runnerSpeed:Double=60,
+                            defense:Double=60,arm:Double=60,position:String="SS",outs:Int=0,
+                            before:[FieldRunnerProfile?]?=nil,enabled:Bool=true,ground:Bool=true) -> MatchDetailedPlay {
+        DetailedFieldRules.resolve(half:0,order:0,landing:FieldPoint(x:x,y:y),flight:1,
+            runners:before ?? [FieldRunnerProfile(speed:runnerSpeed),nil,nil],batter:FieldRunnerProfile(speed:batterSpeed),outs:outs,
+            stats:MatchFieldStats(version:3,speed:60,defense:defense,arm:arm,position:position,activeTraits:[],positionMastery:60),
+            defending:true,ownBatter:false,doublePlayEnabled:enabled,groundBall:ground)
+    }
+    func testDoublePlayIndependentTwoArrivalTimesAndPivotFlight() throws {
+        let play=doublePlay(),second=try XCTUnwrap(play.secondThrow)
+        let pickup=0.44+4/5.8+0.2
+        let first=pickup+0.39+hypot(14,DetailedFieldRules.diagonal*2-35)/28.8
+        let final=first+0.39+27.43/28.8
+        XCTAssertEqual(play.fielder,5);XCTAssertEqual(play.receiver,3);XCTAssertEqual(second.receiver,2)
+        XCTAssertEqual(play.controlAt,first,accuracy:0.000001)
+        XCTAssertEqual(second.controlAt,final,accuracy:0.000001)
+        XCTAssertEqual(play.runnerAt!,0.26+27.43/7.6,accuracy:0.000001)
+        XCTAssertEqual(second.runnerAt,0.4+27.43/7.6,accuracy:0.000001)
+        XCTAssertTrue(play.out);XCTAssertTrue(second.out);XCTAssertEqual(play.outsAdded,2)
+        XCTAssertEqual(play.hitBases,0);XCTAssertEqual(play.rbi,0);XCTAssertTrue(play.afterRunners.allSatisfy { $0 == nil })
+        try play.validate()
+    }
+    func testDoublePlayFastBatterAndPivotDefenseArmChangeSecondOut() throws {
+        let fast=doublePlay(batterSpeed:100),slow=doublePlay(batterSpeed:0)
+        XCTAssertTrue(fast.out);XCTAssertFalse(try XCTUnwrap(fast.secondThrow).out)
+        XCTAssertEqual(fast.outsAdded,1);XCTAssertEqual(fast.afterRunners[0]?.speed,100)
+        XCTAssertEqual(fast.summary,"병살 무산 · 2루 아웃 → 1루 세이프")
+        XCTAssertTrue(try XCTUnwrap(slow.secondThrow).out);XCTAssertEqual(slow.outsAdded,2)
+        for (low,high) in [(doublePlay(arm:0,position:"2B"),doublePlay(arm:100,position:"2B")),
+                           (doublePlay(defense:0,position:"2B"),doublePlay(defense:100,position:"2B"))] {
+            XCTAssertFalse(low.ownDefense);XCTAssertTrue(low.ownParticipation)
+            XCTAssertFalse(try XCTUnwrap(low.secondThrow).out);XCTAssertTrue(try XCTUnwrap(high.secondThrow).out)
+            XCTAssertGreaterThan(try XCTUnwrap(low.secondThrow).controlAt,try XCTUnwrap(high.secondThrow).controlAt)
+            XCTAssertEqual(low.xpPlay.safe,true);XCTAssertEqual(high.xpPlay.safe,false)
+            try low.validate();try high.validate()
+        }
+    }
+    func testDoublePlayEligibilityFirstSafeAndThirdOutCancelsRuns() throws {
+        for p in [doublePlay(outs:2),doublePlay(before:[nil,nil,nil]),doublePlay(ground:false),doublePlay(-45,85),doublePlay(-30,35,runnerSpeed:100)] {
+            XCTAssertNil(p.secondThrow);XCTAssertLessThanOrEqual(p.outsAdded,1);try p.validate()
+        }
+        let loaded=[FieldRunnerProfile(speed:60),FieldRunnerProfile(speed:60),FieldRunnerProfile(speed:60)]
+        let ended=doublePlay(outs:1,before:loaded)
+        XCTAssertEqual(ended.outsAdded,2);XCTAssertEqual(ended.runs,0);XCTAssertEqual(ended.rbi,0)
+        XCTAssertTrue(ended.afterRunners.allSatisfy { $0 == nil });try ended.validate()
+        let continuing=doublePlay(outs:0,before:loaded)
+        XCTAssertEqual(continuing.outsAdded,2);XCTAssertEqual(continuing.runs,1);XCTAssertEqual(continuing.rbi,0)
+        try continuing.validate()
+    }
+    func testDoublePlayBallWaitsAtPivotAndRunnersRetireAtDifferentTimes() throws {
+        let p=doublePlay(),second=try XCTUnwrap(p.secondThrow)
+        XCTAssertEqual(FieldNode.sample(p.ball,at:p.ballAt),DetailedFieldRules.bases[2])
+        XCTAssertEqual(FieldNode.sample(p.ball,at:(p.controlAt+second.releaseAt)/2),DetailedFieldRules.bases[2])
+        XCTAssertEqual(FieldNode.sample(p.ball,at:second.ballAt),DetailedFieldRules.bases[1])
+        let middle=FieldNode.sample(p.ball,at:(second.releaseAt+second.ballAt)/2)
+        XCTAssertEqual(middle.x,DetailedFieldRules.diagonal/2,accuracy:0.000000001)
+        XCTAssertEqual(middle.y,DetailedFieldRules.diagonal*1.5,accuracy:0.000000001)
+        XCTAssertEqual(p.runners.first { $0.from == 1 }?.retiredAt,p.controlAt)
+        XCTAssertEqual(p.runners.first { $0.from == 0 }?.retiredAt,second.controlAt)
+        XCTAssertLessThan(p.controlAt,second.releaseAt)
+        XCTAssertEqual(p.decisionAt,second.controlAt)
+        XCTAssertEqual(try JSONDecoder().decode(MatchDetailedPlay.self,from:JSONEncoder().encode(p)),p)
+    }
+    func testDoublePlayAllOccupanciesPreserveV1AndNeverAddMoreThanRemainingOuts() throws {
+        var success=0,failed=0
+        for mask in 0..<8 {
+            let before=(0..<3).map { mask & (1 << $0) != 0 ? FieldRunnerProfile(speed:60) : nil }
+            for outs in 0...2 { for x in [-20.0,-14,0,14,20] { for speed in [0.0,60,100] {
+                let p=doublePlay(x,35,batterSpeed:speed,outs:outs,before:before)
+                try p.validate();XCTAssertLessThanOrEqual(outs+p.outsAdded,3)
+                let occupied=p.runners.filter { !$0.out && (1...3).contains($0.destination) }.map(\.destination)
+                XCTAssertEqual(Set(occupied).count,occupied.count)
+                if let second=p.secondThrow { if second.out {success += 1} else {failed += 1} }
+                let old=doublePlay(x,35,batterSpeed:speed,outs:outs,before:before,enabled:false)
+                XCTAssertEqual(old.version,1);XCTAssertNil(old.secondThrow);XCTAssertNil(old.outsBefore);XCTAssertNil(old.doublePlayGrounder)
+                XCTAssertTrue(old.runners.allSatisfy { $0.retiredAt == nil });try old.validate()
+            } } }
+        }
+        XCTAssertGreaterThan(success,0);XCTAssertGreaterThan(failed,0)
+    }
+    func testDoublePlayActualEngineRecordsBothRolesOutsRBIAndSummaryWithoutDuplicateXP() throws {
+        for role in ["batter","pitcher"] {
+            var observed=false
+            for seed in 1...150 {
+                var m=game(seed,role:role);m.detailedFieldVersion=2;m.fieldPlays=[]
+                m.bases=[true,false,false];m.runnerProfiles=[FieldRunnerProfile(speed:60),nil,nil];m.outs=1
+                if role == "pitcher" { m.line.pitchingOuts=1 }
+                try m.advance(role == "pitcher" ? .pitch : .swing,pitchCode:role == "pitcher" ? "four-seam":nil)
+                guard let p=m.fieldPlays?.first,p.secondThrow?.out == true else { continue }
+                try m.validateDetailedField()
+                XCTAssertEqual(p.outsAdded,2);XCTAssertEqual(p.rbi,0)
+                let summary=MatchResultSummary(match:m,fatigueBefore:0,fatigueAfter:1)
+                XCTAssertEqual(summary.metrics.first { $0.id == "doublePlays" }?.value,"1")
+                if role == "pitcher" { XCTAssertEqual(m.line.pitchingOuts,3) }
+                else { XCTAssertEqual(m.line.atBats,1);XCTAssertEqual(m.line.hits,0);XCTAssertEqual(m.line.rbi,0) }
+                XCTAssertEqual(try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(m)),m)
+                observed=true;break
+            }
+            XCTAssertTrue(observed,role)
+        }
+    }
+    func testDoublePlayInvalidSecondThrowOrRetirementNeverFallsBackToSingleOut() throws {
+        var p=doublePlay();p.outsBefore=2;XCTAssertThrowsError(try p.validate())
+        p=doublePlay();p.doublePlayGrounder=false;XCTAssertThrowsError(try p.validate())
+        p=doublePlay();p.version=1;XCTAssertThrowsError(try p.validate())
+        p=doublePlay();p.runners[0].retiredAt = .nan;XCTAssertThrowsError(try p.validate())
+    }
 }

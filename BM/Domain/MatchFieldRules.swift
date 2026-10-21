@@ -89,9 +89,23 @@ struct DetailedRunner: Codable, Equatable {
     let profile: FieldRunnerProfile
     var nodes: [FieldNode]
     var out = false
+    var retiredAt: Double?
     var arrival: Double { nodes.last?.at ?? 0 }
     func arrival(at base: Int) -> Double? { nodes.dropFirst().first { $0.point == DetailedFieldRules.bases[base] }?.at }
 }
+struct FieldSecondThrow: Codable, Equatable {
+    let receiver: Int
+    let releaseAt: Double
+    let ballAt: Double
+    let controlAt: Double
+    let runnerAt: Double
+    let ownThrower: Bool
+    let traits: [PlayerTrait]
+    let positionDelay: Double
+    var out: Bool { controlAt < runnerAt }
+    var decisionAt: Double { out ? controlAt : max(controlAt,runnerAt) }
+}
+
 struct MatchDetailedPlay: Codable, Equatable {
     var version = 1
     let half: Int
@@ -120,33 +134,60 @@ struct MatchDetailedPlay: Codable, Equatable {
     let runs: Int
     let outsAdded: Int
     let hitBases: Int
+    var secondThrow: FieldSecondThrow?
+    var outsBefore: Int?
+    var doublePlayGrounder: Bool?
+    var ownParticipation: Bool { ownDefense || secondThrow?.ownThrower == true }
     var outAt: Double { force ? controlAt : runnerAt ?? controlAt }
-    var decisionAt: Double { out ? outAt : max(controlAt,runnerAt ?? 0) }
+    var decisionAt: Double { secondThrow?.decisionAt ?? (out ? outAt : max(controlAt,runnerAt ?? 0)) }
     var duration: Double { max(decisionAt, runners.map(\.arrival).max() ?? 0) + 0.4 }
-    var rbi: Int { out && force && targetRunner != 0 ? 0 : runs }
+    var rbi: Int { secondThrow != nil || out && force && targetRunner != 0 ? 0 : runs }
     var eventID: String { "\(half):\(order)" }
     var summary: String {
+        if let secondThrow { return secondThrow.out ? "병살 · 2루 아웃 → 1루 아웃" : "병살 무산 · 2루 아웃 → 1루 세이프" }
         let hit = hitBases == 2 ? "2루타" : hitBases == 1 ? "안타" : out && targetRunner != 0 ? "야수 선택" : "땅볼 아웃"
         return "\(hit) · \(targetBase == 4 ? "홈" : "\(targetBase)루") 송구 · \(targetRunner == nil ? "주자 진루 완료" : out ? "아웃" : "세이프")"
     }
     var xpPlay: MatchFieldPlay {
-        MatchFieldPlay(runnerTime: runnerAt ?? controlAt, ballTime: controlAt, ownDefense: ownDefense,
+        if let secondThrow, secondThrow.ownThrower || ownBatter {
+            return MatchFieldPlay(runnerTime:secondThrow.runnerAt,ballTime:secondThrow.controlAt,ownDefense:secondThrow.ownThrower,
+                appliedTraits:secondThrow.ownThrower ? secondThrow.traits : appliedTraits,positionDelay:secondThrow.ownThrower ? secondThrow.positionDelay : nil)
+        }
+        return MatchFieldPlay(runnerTime: runnerAt ?? controlAt, ballTime: controlAt, ownDefense: ownDefense,
                        appliedTraits: appliedTraits, positionDelay: ownDefense ? positionDelay : nil)
     }
     func validate() throws {
-        guard version == 1, (0..<18).contains(half), order >= 0, (0..<9).contains(fielder), (0..<9).contains(receiver),
-              fielder != receiver, (1...4).contains(targetBase), (0...1).contains(outsAdded), outsAdded == (out ? 1 : 0),
+        guard [1,2].contains(version), (0..<18).contains(half), order >= 0, (0..<9).contains(fielder), (0..<9).contains(receiver),
+              fielder != receiver, (1...4).contains(targetBase), (0...2).contains(outsAdded), outsAdded == (out ? 1 : 0) + (secondThrow?.out == true ? 1 : 0),
               (0...2).contains(hitBases), (0...4).contains(runs), afterRunners.count == 3, fielders.count == 9,
               [flight,pickupAt,releaseAt,ballAt,controlAt,positionDelay].allSatisfy({ $0.isFinite && $0 >= 0 }),
               flight <= pickupAt, pickupAt <= releaseAt, releaseAt <= ballAt, ballAt <= controlAt,
               TraitLoadout.valid(appliedTraits), Set(runners.map(\.from)).count == runners.count,
               runners.contains(where: { $0.from == 0 }),
               out == (runnerAt.map { controlAt < $0 } ?? false) else { throw MatchError.invalidRecord }
+        if version == 2 {
+            guard let outsBefore,(0...2).contains(outsBefore),doublePlayGrounder != nil,outsBefore+outsAdded <= 3 else { throw MatchError.invalidRecord }
+        } else if secondThrow != nil || outsBefore != nil || doublePlayGrounder != nil { throw MatchError.invalidRecord }
+        if let secondThrow {
+            guard version == 2,outsBefore.map({ $0 < 2 }) == true,doublePlayGrounder == true,
+                  [0,3,4,5].contains(fielder),targetBase == 2,targetRunner == 1,force,out,
+                  secondThrow.receiver == 2,secondThrow.receiver != receiver,
+                  [secondThrow.releaseAt,secondThrow.ballAt,secondThrow.controlAt,secondThrow.runnerAt,secondThrow.positionDelay].allSatisfy({ $0.isFinite && $0 >= 0 }),
+                  controlAt <= secondThrow.releaseAt,secondThrow.releaseAt <= secondThrow.ballAt,secondThrow.ballAt == secondThrow.controlAt,
+                  TraitLoadout.valid(secondThrow.traits),hitBases == 0,!(ownDefense && secondThrow.ownThrower),
+                  ball.last?.at == secondThrow.ballAt,ball.last?.point == DetailedFieldRules.bases[1],
+                  runners.contains(where: { $0.from == 1 && $0.out && $0.retiredAt == controlAt }),
+                  runners.contains(where: { $0.from == 0 && $0.out == secondThrow.out && $0.retiredAt == (secondThrow.out ? secondThrow.controlAt : nil) }),
+                  outsBefore != 1 || !secondThrow.out || runs == 0 && afterRunners.allSatisfy({ $0 == nil }) else { throw MatchError.invalidRecord }
+        }
         for nodes in [ball] + fielders + runners.map(\.nodes) {
             guard !nodes.isEmpty, nodes.allSatisfy({ $0.at.isFinite && $0.at >= 0 && $0.point.x.isFinite && $0.point.y.isFinite }),
                   zip(nodes,nodes.dropFirst()).allSatisfy({ $0.at <= $1.at }) else { throw MatchError.invalidRecord }
         }
         for runner in runners {
+            if let retiredAt=runner.retiredAt {
+                guard version == 2,runner.out,retiredAt.isFinite,retiredAt >= 0 else { throw MatchError.invalidRecord }
+            }
             guard (0...3).contains(runner.from), (runner.from...4).contains(runner.destination),
                   runner.profile.speed.isFinite, (0...100).contains(runner.profile.speed), TraitLoadout.valid(runner.profile.traits) else { throw MatchError.invalidRecord }
         }
@@ -175,7 +216,8 @@ enum DetailedFieldRules {
         let release: Double, ball: Double, control: Double
     }
     static func resolve(half: Int, order: Int, landing: FieldPoint, flight: Double, runners before: [FieldRunnerProfile?],
-                        batter: FieldRunnerProfile, outs: Int, stats: MatchFieldStats?, defending: Bool, ownBatter: Bool) -> MatchDetailedPlay {
+                        batter: FieldRunnerProfile, outs: Int, stats: MatchFieldStats?, defending: Bool, ownBatter: Bool,
+                        doublePlayEnabled: Bool = false, groundBall: Bool = true) -> MatchDetailedPlay {
         let ownIndex = defending ? names.firstIndex(of: stats?.position ?? "") : nil
         let skills = names.indices.map { index -> Skill in
             guard index == ownIndex, let stats else { return Skill() }
@@ -226,36 +268,61 @@ enum DetailedFieldRules {
                 candidates.append((index,arrival,force,plan,priority))
             }
         }
-        let chosen=candidates.max { $0.priority < $1.priority }
+        var chosen=candidates.max { $0.priority < $1.priority }
+        var secondThrow: FieldSecondThrow?
+        if doublePlayEnabled,groundBall,outs < 2,before[0] != nil,[0,3,4,5].contains(handler),
+           let first=candidates.first(where: { $0.plan.base == 2 && runners[$0.runner].from == 1 && $0.force && $0.plan.control < $0.at }),
+           let batterAt=runners.first(where: { $0.from == 0 })?.arrival(at:1) {
+            let pivot=first.plan.receiver,firstBase=2
+            let travel=bases[2].distance(to:bases[1])/skills[pivot].throwVelocity
+            let cover=skills[firstBase].reaction+positions[firstBase].distance(to:bases[1])/skills[firstBase].velocity
+            let release=max(first.plan.control+skills[pivot].transfer,cover-travel)
+            let next=FieldSecondThrow(receiver:firstBase,releaseAt:release,ballAt:release+travel,controlAt:release+travel,
+                runnerAt:batterAt,ownThrower:pivot == ownIndex,traits:skills[pivot].traits,positionDelay:skills[pivot].positionDelay)
+            if next.out || chosen.map({ $0.runner == first.runner && $0.plan.base == 2 }) == true {
+                chosen=first;secondThrow=next
+            }
+        }
         let plan=chosen?.plan ?? planThrow(2,force:false)
         let out=chosen.map { $0.plan.control < $0.at } ?? false
         let outAt=chosen?.force == true ? plan.control : chosen?.at ?? plan.control
         if out,let chosen {
             let index=chosen.runner
             runners[index].out=true;runners[index].destination=plan.base
+            if doublePlayEnabled { runners[index].retiredAt=outAt }
             let stopped=FieldNode.sample(runners[index].nodes,at:outAt)
             runners[index].nodes=runners[index].nodes.filter { $0.at < outAt }
             runners[index].nodes.append(FieldNode(at:outAt,point:stopped))
         }
+        if let secondThrow,let index=runners.firstIndex(where: { $0.from == 0 }) {
+            let stop=secondThrow.out ? secondThrow.controlAt : secondThrow.runnerAt
+            let point=FieldNode.sample(runners[index].nodes,at:stop)
+            runners[index].destination=1;runners[index].out=secondThrow.out
+            runners[index].retiredAt=secondThrow.out ? stop : nil
+            runners[index].nodes=runners[index].nodes.filter { $0.at < stop }
+            runners[index].nodes.append(FieldNode(at:stop,point:point))
+        }
         let batterRunner=runners.first { $0.from == 0 }!
         let batterOutBeforeFirst=out && chosen.map { runners[$0.runner].from == 0 && plan.base == 1 } == true
         let forceChoice=out && chosen?.force == true && chosen.map { runners[$0.runner].from != 0 } == true
-        let hitBases = batterOutBeforeFirst || forceChoice ? 0 : min(2,batterRunner.out ? max(1,plan.base-1) : batterRunner.destination)
-        let thirdOut=out && outs == 2
-        let cancelRuns=thirdOut && (chosen?.force == true || batterOutBeforeFirst)
+        let hitBases = secondThrow != nil || batterOutBeforeFirst || forceChoice ? 0 : min(2,batterRunner.out ? max(1,plan.base-1) : batterRunner.destination)
+        let outsAdded=(out ? 1 : 0)+(secondThrow?.out == true ? 1 : 0)
+        let thirdOut=outs+outsAdded == 3
+        let inningOutAt=secondThrow?.out == true ? secondThrow!.controlAt : outAt
+        let cancelRuns=thirdOut && (secondThrow?.out == true || chosen?.force == true || batterOutBeforeFirst)
         var after: [FieldRunnerProfile?] = [nil,nil,nil]
         var runs=0
         for runner in runners where !runner.out {
             if runner.destination == 4 {
-                if !cancelRuns && (!thirdOut || runner.arrival < outAt) { runs += 1 }
+                if !cancelRuns && (!thirdOut || runner.arrival < inningOutAt) { runs += 1 }
             } else if runner.destination > 0 { after[runner.destination-1]=runner.profile }
         }
         if thirdOut { after=[nil,nil,nil] }
         if thirdOut {
-            for index in runners.indices where runners[index].arrival > outAt {
-                let stopped=FieldNode.sample(runners[index].nodes,at:outAt)
-                runners[index].nodes=runners[index].nodes.filter { $0.at < outAt }
-                runners[index].nodes.append(FieldNode(at:outAt,point:stopped))
+            for index in runners.indices where runners[index].arrival > inningOutAt {
+                let stopped=FieldNode.sample(runners[index].nodes,at:inningOutAt)
+                runners[index].nodes=runners[index].nodes.filter { $0.at < inningOutAt }
+                runners[index].nodes.append(FieldNode(at:inningOutAt,point:stopped))
             }
         }
         var fielderNodes=positions.map { [FieldNode(at:0,point:$0)] }
@@ -265,28 +332,40 @@ enum DetailedFieldRules {
         let cover=skills[plan.receiver].reaction+positions[plan.receiver].distance(to:bases[plan.base])/skills[plan.receiver].velocity
         fielderNodes[plan.receiver].append(FieldNode(at:skills[plan.receiver].reaction,point:positions[plan.receiver]))
         fielderNodes[plan.receiver].append(FieldNode(at:cover,point:bases[plan.base]))
-        // Non-handlers back up the play without becoming extra participants or creating outs.
-        for index in positions.indices where index != handler && index != plan.receiver {
+        if let secondThrow {
+            let index=secondThrow.receiver
+            let cover=skills[index].reaction+positions[index].distance(to:bases[1])/skills[index].velocity
+            fielderNodes[index].append(FieldNode(at:skills[index].reaction,point:positions[index]))
+            fielderNodes[index].append(FieldNode(at:cover,point:bases[1]))
+        }
+        // Receiving alone or backing up does not award extra XP.
+        for index in positions.indices where index != handler && index != plan.receiver && index != secondThrow?.receiver {
             fielderNodes[index].append(FieldNode(at:pickup,point:positions[index].towards(landing,fraction:0.12)))
         }
-        return MatchDetailedPlay(half:half,order:order,landing:landing,flight:flight,fielder:handler,receiver:plan.receiver,
+        var ballNodes=[FieldNode(at:0,point:bases[0]),FieldNode(at:flight,point:landing),FieldNode(at:plan.release,point:landing),FieldNode(at:plan.ball,point:bases[plan.base])]
+        if let secondThrow {
+            ballNodes.append(FieldNode(at:secondThrow.releaseAt,point:bases[2]))
+            ballNodes.append(FieldNode(at:secondThrow.ballAt,point:bases[1]))
+        }
+        return MatchDetailedPlay(version:doublePlayEnabled ? 2 : 1,half:half,order:order,landing:landing,flight:flight,fielder:handler,receiver:plan.receiver,
             ownDefense:handler == ownIndex,ownBatter:ownBatter,appliedTraits:handler == ownIndex ? skill.traits : ownBatter ? batter.traits.filter { $0 == .cheetah } : [],positionDelay:skill.positionDelay,
             pickupAt:pickup,releaseAt:plan.release,ballAt:plan.ball,controlAt:plan.control,targetBase:plan.base,
             targetRunner:chosen.map { runners[$0.runner].from },force:chosen?.force ?? false,out:out,runnerAt:chosen?.at,
-            runners:runners,ball:[FieldNode(at:0,point:bases[0]),FieldNode(at:flight,point:landing),FieldNode(at:plan.release,point:landing),FieldNode(at:plan.ball,point:bases[plan.base])],fielders:fielderNodes,
-            afterRunners:after,runs:runs,outsAdded:out ? 1 : 0,hitBases:hitBases)
+            runners:runners,ball:ballNodes,fielders:fielderNodes,
+            afterRunners:after,runs:runs,outsAdded:outsAdded,hitBases:hitBases,secondThrow:secondThrow,
+            outsBefore:doublePlayEnabled ? outs : nil,doublePlayGrounder:doublePlayEnabled ? groundBall : nil)
     }
 }
 
 extension CareerMatch {
     func validateDetailedField() throws {
         if let version=detailedFieldVersion {
-            guard version == 1, let plays=fieldPlays, let runners=runnerProfiles,runners.count == 3,
+            guard [1,2].contains(version), let plays=fieldPlays, let runners=runnerProfiles,runners.count == 3,
                   runners.map({ $0 != nil }) == bases,Set(plays.map(\.eventID)).count == plays.count else { throw MatchError.invalidRecord }
             for runner in runners.compactMap({ $0 }) {
                 guard runner.speed.isFinite,(0...100).contains(runner.speed),TraitLoadout.valid(runner.traits) else { throw MatchError.invalidRecord }
             }
-            for play in plays { try play.validate() }
+            for play in plays { guard play.version == version else { throw MatchError.invalidRecord };try play.validate() }
         } else if fieldPlays != nil || runnerProfiles != nil { throw MatchError.invalidRecord }
     }
 }
