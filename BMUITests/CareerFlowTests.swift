@@ -2,13 +2,18 @@ import XCTest
 
 final class CareerFlowTests: XCTestCase {
     @MainActor func testFreePracticeFromHomeAfterDailyActionDoesNotChangeCareer() throws {
-        let app = XCUIApplication(); app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["-training-practice"]; app.launch()
+        XCTAssertTrue(app.staticTexts["practiceNoPlayer"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["practiceGeneralTraining"].exists)
+        app.terminate(); app.launchArguments = []; app.launch()
         createDashboardSample(app, name: "FreeBatter")
         reveal(app.buttons["restToday"], in: app); app.buttons["restToday"].tap()
         let date = app.staticTexts["calendarDate"].label
         let action = app.staticTexts["calendarAction"].label
         let fatigue = app.staticTexts["homeFatigue"].label
         reveal(app.buttons["openTrainingPractice"], in: app); app.buttons["openTrainingPractice"].tap()
+        XCTAssertTrue(app.staticTexts["practicePlayerName"].label.contains("FreeBatter"))
+        XCTAssertFalse(app.segmentedControls["practiceRole"].buttons["투수"].exists)
         app.buttons["practiceGeneralTraining"].tap()
         app.buttons["trainingKind-power"].tap(); app.buttons["startTraining"].tap()
         for _ in 0..<5 { waitForEnabled(app.buttons["trainingAttempt"]); app.buttons["trainingAttempt"].tap() }
@@ -26,8 +31,15 @@ final class CareerFlowTests: XCTestCase {
         reveal(app.buttons["restToday"], in: app); XCTAssertFalse(app.buttons["restToday"].isEnabled)
     }
 
+    @MainActor private func createOwnPracticePlayers(_ app: XCUIApplication) {
+        app.launch(); createDashboardSample(app, name: "OwnBatter")
+        reveal(app.buttons["createOtherRole"], in: app); app.buttons["createOtherRole"].tap()
+        createDashboardSample(app, name: "OwnPitcher")
+        app.terminate(); app.launchArguments = ["-training-practice"]; app.launch()
+    }
+
     @MainActor func testFreePracticeTraitAndPositionFiveAttemptsWithoutRewards() throws {
-        let app = XCUIApplication(); app.launchArguments = ["-training-practice"]; app.launch()
+        let app = XCUIApplication(); createOwnPracticePlayers(app)
         XCTAssertTrue(app.staticTexts["practiceIsolation"].waitForExistence(timeout: 8))
         app.buttons["practiceTrait-safe-hands"].tap()
         for index in 0..<5 {
@@ -78,8 +90,12 @@ final class CareerFlowTests: XCTestCase {
     }
 
     @MainActor func testFreePracticeBothRolesReplayRetryAndRelease() throws {
-        let app = XCUIApplication(); app.launchArguments = ["-training-practice"]; app.launch()
+        let app = XCUIApplication(); createOwnPracticePlayers(app)
         XCTAssertTrue(app.staticTexts["practiceIsolation"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["practicePlayerName"].label.contains("OwnBatter"))
+        app.buttons["능력치·보유 구종 확인"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "practiceValue-homeContact").firstMatch.label.contains("62.0"))
+        app.buttons["능력치·보유 구종 확인"].tap()
         app.buttons["practiceGeneralTraining"].tap()
         app.buttons["trainingKind-power"].tap(); app.buttons["startTraining"].tap()
         let action = app.buttons["trainingAttempt"]
@@ -90,7 +106,10 @@ final class CareerFlowTests: XCTestCase {
         app.buttons["practiceChangeTraining"].tap(); app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts["practiceIsolation"].waitForExistence(timeout: 5))
         app.segmentedControls["practiceRole"].buttons["투수"].tap()
-        app.buttons["practiceGeneralTraining"].tap(); app.buttons["startTraining"].tap()
+        XCTAssertTrue(app.staticTexts["practicePlayerName"].label.contains("OwnPitcher"))
+        app.buttons["practiceGeneralTraining"].tap()
+        XCTAssertTrue(app.buttons["trainingPitchPicker"].label.contains("62.0"))
+        app.buttons["startTraining"].tap()
         action.tap()
         XCTAssertTrue(app.staticTexts["팔 준비 중 · 노란 구간에 릴리스"].waitForExistence(timeout: 2))
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Practice held ball before release"; shot.lifetime = .keepAlways; add(shot)

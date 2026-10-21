@@ -40,28 +40,58 @@ struct MatchView: View {
 
 
 @MainActor enum TrainingPractice {
-    static func round(role: PlayerRole, kind: TrainingKind, code: String = "", position: FieldPosition? = nil) -> CareerTraining {
-        var round = CareerTraining(playerID: UUID(), date: "2026-04-01", role: role.rawValue,
-                                   pitchCode: kind == .pitch ? code : nil, before: 60, fatigue: 0,
-                                   age: 16, calendarRevision: 0, kind: kind, position: position)
+    static func round(player: CareerPlayer, calendar: CareerCalendarState, kind: TrainingKind, code: String = "",
+                      position: FieldPosition? = nil, in context: ModelContext) throws -> CareerTraining {
+        let before: Double
+        if let position {
+            guard let profile = try PlayerPositionStore.profile(playerID: player.id, in: context) else { throw TrainingError.invalidRecord }
+            before = try profile.snapshot().skill(position).mastery
+        } else {
+            before = try CareerTrainingStore.value(player: player, code: kind == .pitch ? code : nil, kind: kind, in: context)
+        }
+        var round = CareerTraining(playerID: UUID(), date: player.gameDate, role: player.roleRaw,
+                                   pitchCode: kind == .pitch ? code : nil, before: before, fatigue: 0,
+                                   age: try calendar.age(of: player), calendarRevision: 0, kind: kind, position: position)
         if position != nil { round.positionRevision = 0; round.positionXP = 0 }
         return round
     }
-    static func samples(in context: ModelContext) throws -> [CareerPlayer] {
-        let schools = try SchoolCatalog.load()
-        return try PlayerRole.allCases.map { role in
-            var draft = PlayerDraft()
-            draft.name = role == .batter ? "연습 타자" : "연습 투수"
-            draft.role = role; draft.schoolID = schools[0].id
-            let player = try CareerStore.create(draft, schools: schools, in: context)
-            player.fatigue = 0
-            for pitch in player.pitches { pitch.mastery = 60 }
-            return player
+    static func copy(_ original: CareerPlayer, from source: ModelContext, into memory: ModelContext) throws -> CareerPlayer {
+        guard let abilities = try PlayerAbilityStore.profile(playerID: original.id, in: source),
+              let state = try source.fetch(FetchDescriptor<CareerCalendarState>()).first(where: { $0.playerID == original.id }) else {
+            throw TrainingError.invalidRecord
         }
+        var draft = PlayerDraft()
+        draft.name = original.name; draft.jerseyNumber = String(original.jerseyNumber); draft.role = original.role
+        draft.position = FieldPosition(rawValue: original.positionRaw) ?? .center
+        draft.throwingHand = ThrowingHand(rawValue: original.throwingHandRaw) ?? .right
+        draft.appearance = original.appearance
+        let copy = CareerPlayer(draft: draft, school: School(id: original.schoolID, region: "", name: original.schoolName))
+        copy.positionRaw = original.positionRaw; copy.throwingHandRaw = original.throwingHandRaw
+        copy.gameDate = original.gameDate; copy.startAge = original.startAge; copy.fatigue = 0
+        copy.contact = original.contact; copy.power = original.power; copy.discipline = original.discipline
+        copy.speed = original.speed; copy.defense = original.defense; copy.arm = original.arm
+        copy.pitches = original.pitches.map { CareerSchemaV1.PitchMastery(code: $0.code, name: $0.name, mastery: $0.mastery, order: $0.order) }
+        let profile = try PlayerAbilities(player: copy, archetype: nil)
+        profile.archetypeRaw = abilities.archetypeRaw; profile.productionPresetVersion = abilities.productionPresetVersion
+        profile.initialValues = abilities.initialValues; profile.mental = abilities.mental
+        profile.velocity = abilities.velocity; profile.control = abilities.control; profile.stuff = abilities.stuff; profile.stamina = abilities.stamina
+        let calendar = CareerCalendarState(player: copy, schools: try SchoolCatalog.load(), legacySave: state.legacySave)
+        calendar.originDate = state.originDate
+        memory.insert(copy); memory.insert(profile); memory.insert(calendar)
+        if copy.role == .batter {
+            guard let positions = try PlayerPositionStore.profile(playerID: original.id, in: source) else { throw TrainingError.invalidRecord }
+            memory.insert(try PlayerPositions(playerID: copy.id, loadout: positions.snapshot(), source: "practice-copy"))
+        }
+        return copy
     }
+
 }
 
 struct TrainingPracticeView: View {
+    var sourcePlayers: [CareerPlayer]? = nil
+    var initialRole: PlayerRole = .batter
+    @Environment(\.modelContext) private var sourceContext
+    @State private var profiles: [PlayerAbilities] = []
     @State private var container: ModelContainer?
     @State private var players: [CareerPlayer] = []
     @State private var calendars: [CareerCalendarState] = []
@@ -74,21 +104,36 @@ struct TrainingPracticeView: View {
                     VStack(spacing: 12) {
                         GamePanel(title: "FREE PRACTICE", onBoard: true) {
                             Text("자유 연습").font(.title2.bold())
-                            Text("샘플 선수 · 판정 기준 능력 60 · 피로 0")
+                            Text("내 선수 현재 능력·보유 구종 · 연습 피로 0")
                             Text("성장·기록·날짜·피로 변화 없음 · 하루 제한 없음")
                                 .font(.caption).accessibilityIdentifier("practiceIsolation")
                         }
-                        Picker("연습 역할", selection: $role) {
-                            ForEach(PlayerRole.allCases) { Text($0.label).tag($0) }
-                        }.pickerStyle(.segmented).accessibilityIdentifier("practiceRole")
+                        if !players.isEmpty { Picker("연습 역할", selection: $role) {
+                            ForEach(players) { Text($0.role.label).tag($0.role) }
+                        }.pickerStyle(.segmented).accessibilityIdentifier("practiceRole") }
                         if let player = players.first(where: { $0.role == role }), let calendar = calendars.first(where: { $0.playerID == player.id }) {
+                            HStack(spacing: 10) {
+                                PixelPlayer(appearance: player.appearance).frame(width: 32, height: 44)
+                                VStack(alignment: .leading) {
+                                    Text("\(player.name) #\(player.jerseyNumber)").bold().accessibilityIdentifier("practicePlayerName")
+                                    Text(player.schoolName + " · " + player.roleDetail).font(.caption)
+                                }
+                            }
+                            DisclosureGroup("능력치·보유 구종 확인") {
+                                let summary = HomeAbilitySummary(player: player, abilities: profiles.first { $0.playerID == player.id })
+                                ForEach(summary.originals + summary.pitches) { value in
+                                    HStack { Text(value.label); Spacer(); Text(value.current, format: .number.precision(.fractionLength(1))) }
+                                        .font(.caption.monospaced()).accessibilityElement(children: .combine)
+                                        .accessibilityIdentifier("practiceValue-" + value.id)
+                                }
+                            }.tint(GameTheme.gold)
                             NavigationLink {
                                 CareerTrainingView(player: player, calendar: calendar, practice: true).modelContainer(container)
                             } label: { Text(role == .batter ? "타격·주루·수비 훈련" : "구종·투구·주루·수비 훈련") }
                                 .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("practiceGeneralTraining")
                             GamePanel(title: "특성 전용 훈련", onBoard: true) {
                                 ForEach(PlayerTrait.allCases) { trait in
-                                    NavigationLink { TraitDrillExperience(trait: trait).modelContainer(container) } label: { Text(trait.label) }
+                                    NavigationLink { TraitDrillExperience(trait: trait, player: player).modelContainer(container) } label: { Text(trait.label) }
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("practiceTrait-" + trait.rawValue)
                                 }
                             }
@@ -103,6 +148,10 @@ struct TrainingPracticeView: View {
                                 }
                             }
                         }
+                        if players.isEmpty {
+                            Text("생성된 선수가 없습니다. 선수 생성 후 자유 연습을 이용해 주세요.")
+                                .accessibilityIdentifier("practiceNoPlayer")
+                        }
                     }.padding(12)
                 }
             } else if let error {
@@ -116,9 +165,13 @@ struct TrainingPracticeView: View {
     private func load() {
         do {
             let memory = try CareerStore.makeContainer(inMemory: true)
-            let samples = try TrainingPractice.samples(in: memory.mainContext)
+            let originals = try sourcePlayers ?? sourceContext.fetch(FetchDescriptor<CareerPlayer>())
+            let copies = try originals.map { try TrainingPractice.copy($0, from: sourceContext, into: memory.mainContext) }
             let states = try memory.mainContext.fetch(FetchDescriptor<CareerCalendarState>())
-            players = samples; calendars = states; container = memory; error = nil
+            let abilities = try memory.mainContext.fetch(FetchDescriptor<PlayerAbilities>())
+            players = copies; calendars = states; profiles = abilities
+            role = copies.first(where: { $0.role == initialRole })?.role ?? copies.first?.role ?? initialRole
+            container = memory; error = nil
         } catch { self.error = error.localizedDescription }
     }
 }
@@ -127,6 +180,7 @@ private struct PositionPracticeDestination: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
     let position: FieldPosition
+    @Environment(\.modelContext) private var context
     @State private var record: CareerTrainingRecord?
     @State private var error: String?
     var body: some View {
@@ -136,7 +190,7 @@ private struct PositionPracticeDestination: View {
             else { ProgressView() }
         }.task {
             guard record == nil else { return }
-            do { record = try CareerTrainingRecord(TrainingPractice.round(role: .batter, kind: .defense, position: position)) }
+            do { record = try CareerTrainingRecord(TrainingPractice.round(player: player, calendar: calendar, kind: .defense, position: position, in: context)) }
             catch { self.error = error.localizedDescription }
         }
     }

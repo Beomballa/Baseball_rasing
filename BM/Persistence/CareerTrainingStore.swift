@@ -45,7 +45,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
     static func requireNoPending(player: CareerPlayer, in context: ModelContext) throws {
         guard try !hasPending(player: player, in: context) else { throw TrainingError.pending }
     }
-    private static func value(player: CareerPlayer, code: String?, kind: TrainingKind, in context: ModelContext) throws -> Double {
+    static func value(player: CareerPlayer, code: String?, kind: TrainingKind, in context: ModelContext) throws -> Double {
         guard kind.allows(player.roleRaw) else { throw TrainingError.invalidInput }
         if kind.isRaw {
             guard code == nil, let profile = try PlayerAbilityStore.profile(playerID: player.id, in: context) else { throw TrainingError.invalidRecord }

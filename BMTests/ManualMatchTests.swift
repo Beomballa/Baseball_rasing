@@ -27,17 +27,49 @@ import SwiftData
 
     func testFreePracticeAllKindsAndPositionsLeaveCareerStoreUnchanged() throws {
         let real = try CareerStore.makeContainer(inMemory: true)
-        let (player, calendar, matchRecord) = try fixture(in: real.mainContext)
-        let date = player.gameDate, fatigue = player.fatigue, revision = calendar.revision
-        let original = matchRecord.payload
+        var originals: [CareerPlayer] = []
+        for role in PlayerRole.allCases {
+            var draft = PlayerDraft(); draft.name = role.label; draft.role = role; draft.schoolID = "hs-ref-001"
+            draft.throwingHand = .left; draft.appearance = PlayerAppearance(skin: 3, hair: 4, kit: 5, hairStyle: 2, expression: 1)
+            let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: real.mainContext)
+            player.contact = 81.2345; player.speed = 77.3456
+            if role == .pitcher {
+                player.pitches = [CareerSchemaV1.PitchMastery(code: "knuckle", name: "너클", mastery: 88.1234, order: 2),
+                                  CareerSchemaV1.PitchMastery(code: "slider", name: "슬라이더", mastery: 32.5678, order: 1),
+                                  CareerSchemaV1.PitchMastery(code: "four-seam", name: "포심", mastery: 93.4567, order: 0)]
+            }
+            let profile = try XCTUnwrap(PlayerAbilityStore.profile(playerID: player.id, in: real.mainContext))
+            profile.mental = 78.4321
+            if role == .pitcher { profile.velocity = 87.6543; profile.control = 91.2345; profile.stuff = 76.789; profile.stamina = 83.4567 }
+            originals.append(player)
+        }
+        try real.mainContext.save()
+        let player = originals[0]
+        let calendar = try XCTUnwrap(real.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+        try CalendarProgression.rest(player: player, state: calendar, revision: calendar.revision, in: real.mainContext)
+        let matchRecord = try CareerMatchStore.start(player: player, state: calendar, in: real.mainContext)
+        let date = player.gameDate, fatigue = player.fatigue, revision = calendar.revision, original = matchRecord.payload
         let memory = try CareerStore.makeContainer(inMemory: true)
-        let samples = try TrainingPractice.samples(in: memory.mainContext)
-        XCTAssertEqual(Set(samples.map(\.role)), Set(PlayerRole.allCases))
-        XCTAssertTrue(samples.allSatisfy { $0.fatigue == 0 })
+        let copies = try originals.map { try TrainingPractice.copy($0, from: real.mainContext, into: memory.mainContext) }
+        for (original, copy) in zip(originals, copies) {
+            XCTAssertNotEqual(copy.id, original.id); XCTAssertFalse(copy === original)
+            XCTAssertEqual(copy.name, original.name); XCTAssertEqual(copy.appearance, original.appearance)
+            XCTAssertEqual(copy.throwingHandRaw, "left"); XCTAssertEqual(copy.contact, 81.2345)
+            XCTAssertEqual(copy.speed, 77.3456); XCTAssertEqual(copy.fatigue, 0)
+            XCTAssertEqual(copy.pitches.sorted { $0.order < $1.order }.map(\.code), original.pitches.sorted { $0.order < $1.order }.map(\.code))
+            XCTAssertEqual(Dictionary(uniqueKeysWithValues: copy.pitches.map { ($0.code, $0.mastery) }), Dictionary(uniqueKeysWithValues: original.pitches.map { ($0.code, $0.mastery) }))
+            let a = try XCTUnwrap(PlayerAbilityStore.profile(playerID: original.id, in: real.mainContext))
+            let b = try XCTUnwrap(PlayerAbilityStore.profile(playerID: copy.id, in: memory.mainContext))
+            XCTAssertFalse(a === b); XCTAssertEqual(a.initialValues, b.initialValues)
+            XCTAssertEqual(a.mental, b.mental); XCTAssertEqual(a.velocity, b.velocity); XCTAssertEqual(a.control, b.control)
+            XCTAssertEqual(a.stuff, b.stuff); XCTAssertEqual(a.stamina, b.stamina)
+        }
         for role in PlayerRole.allCases {
             for kind in TrainingKind.allCases where kind.allows(role.rawValue) {
                 for _ in 0..<2 {
-                    var round = TrainingPractice.round(role: role, kind: kind, code: "four-seam")
+                    let copy = try XCTUnwrap(copies.first { $0.role == role })
+                    let state = try XCTUnwrap(memory.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == copy.id })
+                    var round = try TrainingPractice.round(player: copy, calendar: state, kind: kind, code: "four-seam", in: memory.mainContext)
                     for _ in 0..<5 {
                         let input: TrainingInput
                         switch kind {
@@ -53,13 +85,15 @@ import SwiftData
                         try round.attempt(input)
                     }
                     XCTAssertTrue(round.completed)
-                    XCTAssertEqual(round.before, 60); XCTAssertEqual(round.fatigue, 0)
+                    XCTAssertEqual(round.before, try CareerTrainingStore.value(player: originals.first { $0.role == role }!, code: kind == .pitch ? "four-seam" : nil, kind: kind, in: real.mainContext)); XCTAssertEqual(round.fatigue, 0)
                     XCTAssertThrowsError(try round.attempt(TrainingInput()))
                 }
             }
         }
         for position in FieldPosition.allCases {
-            var round = TrainingPractice.round(role: .batter, kind: .defense, position: position)
+            let copy = copies[0]
+            let state = try XCTUnwrap(memory.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == copy.id })
+            var round = try TrainingPractice.round(player: copy, calendar: state, kind: .defense, position: position, in: memory.mainContext)
             XCTAssertEqual(try CareerTrainingRecord(round).snapshot(), round)
             for _ in 0..<5 { try round.attempt(TrainingInput(x: 0.5, y: 0.5, force: 50, angle: 270, base: 1)) }
             XCTAssertTrue(round.completed)
@@ -69,7 +103,14 @@ import SwiftData
         XCTAssertEqual(try real.mainContext.fetchCount(FetchDescriptor<CareerTrainingRecord>()), 0)
         XCTAssertEqual(try memory.mainContext.fetchCount(FetchDescriptor<CareerTrainingRecord>()), 0)
         XCTAssertEqual(try memory.mainContext.fetchCount(FetchDescriptor<CareerMatchRecord>()), 0)
-        XCTAssertEqual(try real.mainContext.fetchCount(FetchDescriptor<CareerPlayer>()), 1)
+        XCTAssertEqual(try real.mainContext.fetchCount(FetchDescriptor<CareerPlayer>()), 2)
+        let pitcher = copies[1], state = try XCTUnwrap(memory.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == pitcher.id })
+        XCTAssertThrowsError(try TrainingPractice.round(player: pitcher, calendar: state, kind: .pitch, code: "fork", in: memory.mainContext))
+        let before = try TrainingPractice.round(player: pitcher, calendar: state, kind: .pitch, code: "four-seam", in: memory.mainContext)
+        XCTAssertEqual(before.before, 93.4567)
+        originals[1].pitches.first { $0.code == "four-seam" }!.mastery = 1
+        XCTAssertEqual(pitcher.pitches.first { $0.code == "four-seam" }?.mastery, 93.4567)
+        pitcher.speed = 1; XCTAssertEqual(originals[1].speed, 77.3456)
     }
 
     private func match(role: PlayerRole = .batter, seed: UInt64 = 42, mastery: Double = 72) -> CareerMatch {

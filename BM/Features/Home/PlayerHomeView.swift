@@ -26,7 +26,7 @@ struct PlayerHomeView: View {
                 HStack {
                     Text("BM  CAREER").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                     Spacer()
-                    NavigationLink { TrainingPracticeView() } label: { Text("자유 연습") }
+                    NavigationLink { TrainingPracticeView(sourcePlayers: players, initialRole: player.role) } label: { Text("자유 연습") }
                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openTrainingPractice")
                 }
                 if players.count > 1 {

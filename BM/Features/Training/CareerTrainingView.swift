@@ -58,7 +58,7 @@ struct CareerTrainingView: View {
     private func start() {
         do {
             if practice {
-                training = TrainingPractice.round(role: player.role, kind: selectedKind, code: code)
+                training = try TrainingPractice.round(player: player, calendar: calendar, kind: selectedKind, code: code, in: context)
             } else {
                 record = try CareerTrainingStore.start(player: player, state: calendar, pitchCode: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
                 training = try record?.snapshot()

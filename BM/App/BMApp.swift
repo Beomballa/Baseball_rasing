@@ -5,9 +5,7 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-training-practice") {
-                NavigationStack { TrainingPracticeView() }
-            } else if ProcessInfo.processInfo.arguments.contains("-position-training-preview") {
+            if ProcessInfo.processInfo.arguments.contains("-position-training-preview") {
                 NavigationStack { PositionTrainingPreview() }
             } else if ProcessInfo.processInfo.arguments.contains("-trait-acquisition-preview") {
                 NavigationStack { TraitAcquisitionPreview() }
@@ -27,7 +25,11 @@ struct AppBootstrapView: View {
     var body: some View {
         Group {
             if let container {
-                CareerRootView(schools: schools).modelContainer(container)
+                if launchPractice {
+                    NavigationStack { TrainingPracticeView() }.modelContainer(container)
+                } else {
+                    CareerRootView(schools: schools).modelContainer(container)
+                }
             } else if let errorMessage {
                 ContentUnavailableView {
                     Label("세이브를 열지 못했습니다", systemImage: "externaldrive.badge.exclamationmark")
@@ -44,6 +46,13 @@ struct AppBootstrapView: View {
         .task { if container == nil && errorMessage == nil { load() } }
     }
 
+    private var launchPractice: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-training-practice")
+        #else
+        false
+        #endif
+    }
     @MainActor private func load() {
         do {
             let catalog = try SchoolCatalog.load()
