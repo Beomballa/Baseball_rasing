@@ -13,6 +13,8 @@ struct TrainingAdjustment: View {
             HStack(spacing: 8) {
                 Button("−") { value = max(range.lowerBound, value - step) }
                     .accessibilityLabel(label + " 줄이기").accessibilityIdentifier(identifier + "Down").disabled(value <= range.lowerBound)
+                TrainingValueRail(label: label, value: $value, range: range, step: step, suffix: suffix)
+                    .accessibilityIdentifier(identifier + "Slider")
                 Button("+") { value = min(range.upperBound, value + step) }
                     .accessibilityLabel(label + " 늘리기").accessibilityIdentifier(identifier + "Up").disabled(value >= range.upperBound)
             }.buttonStyle(MatchPixelButtonStyle())
@@ -31,42 +33,19 @@ struct FieldTrainingBoard: View {
     @Binding var x: Double
     @Binding var y: Double
     let locked: Bool
+    var motion: Double = 0
+    var moving: Bool = false
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                Canvas { context, size in
-                    func point(_ target: TrainingTarget) -> CGPoint { CGPoint(x: target.x * size.width, y: target.y * size.height) }
-                    context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(hex: 0x2b684b)))
-                    var diamond = Path(); diamond.move(to: point(TrainingRules.basePoint(4)))
-                    for number in [1, 2, 3, 4] { diamond.addLine(to: point(TrainingRules.basePoint(number))) }
-                    context.fill(diamond, with: .color(Color(hex: 0x986743))); context.stroke(diamond, with: .color(GameTheme.paper), lineWidth: 2)
-                    for number in 1...4 {
-                        let center = point(TrainingRules.basePoint(number))
-                        context.fill(Path(CGRect(x: center.x - 5, y: center.y - 5, width: 10, height: 10)), with: .color(number == base && kind == .arm ? GameTheme.gold : GameTheme.paper))
-                    }
-                    if kind == .arm {
-                        let origin = point(TrainingTarget(x: 0.5, y: 0.63)), end = point(TrainingRules.throwEndpoint(angle: angle, force: force))
-                        var line = Path(); line.move(to: origin); line.addLine(to: end)
-                        context.stroke(line, with: .color(GameTheme.gold), style: StrokeStyle(lineWidth: 3, dash: [5, 5]))
-                        context.fill(Path(CGRect(x: end.x - 4, y: end.y - 4, width: 8, height: 8)), with: .color(GameTheme.gold))
-                    }
-                    if kind == .defense, let target {
-                        let center = point(target)
-                        context.stroke(Path(CGRect(x: center.x - 12, y: center.y - 12, width: 24, height: 24)), with: .color(GameTheme.gold), lineWidth: 3)
-                    }
-                }
-                if kind == .defense {
-                    PixelPlayer(appearance: appearance).frame(width: 24, height: 34)
-                        .position(x: geometry.size.width * x, y: geometry.size.height * y).allowsHitTesting(false)
-                } else if kind == .speed {
-                    VStack {
-                        Text("16 STEP / 4 SEC").font(.caption.monospaced().bold())
-                        Spacer()
-                        PixelPlayer(appearance: appearance).frame(width: 40, height: 55)
-                            .offset(x: min(1, Double(steps) / 16) * geometry.size.width * 0.45 - geometry.size.width * 0.22)
-                        Spacer()
-                        Text("\(steps)걸음").font(.title2.monospaced().bold()).accessibilityIdentifier("sprintSteps")
-                    }.padding(12)
+                TraitTrainingArena(trait: kind == .arm ? .strongArm : kind == .speed ? .cheetah : .safeHands,
+                                   target: kind == .arm ? TrainingRules.basePoint(base) : target ?? TrainingTarget(x: 0.5, y: 0.5),
+                                   player: TrainingTarget(x: x, y: y), endpoint: TrainingRules.throwEndpoint(angle: angle, force: force),
+                                   motion: motion, steps: steps, moving: moving, success: nil, appearance: appearance)
+                if kind == .speed {
+                    Text("\(steps) / 16 STEP").font(.caption.monospaced().bold())
+                        .padding(6).background(GameTheme.navy)
+                        .frame(maxHeight: .infinity, alignment: .top).padding(8).accessibilityIdentifier("sprintSteps")
                 }
             }.contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
                 guard kind == .defense, !locked else { return }
@@ -87,6 +66,10 @@ struct RawTrainingBoard: View {
     let kind: TrainingKind
     let training: CareerTraining?
     let steps: Int
+    var motion: Double = 0
+    var moving: Bool = false
+    var force: Double = 70
+    var angle: Double = 35
     let appearance: PlayerAppearance
     @Binding var x: Double
     @Binding var y: Double
@@ -96,15 +79,11 @@ struct RawTrainingBoard: View {
             ZStack {
                 if kind == .stamina {
                     FieldTrainingBoard(kind: .speed, target: nil, base: 1, angle: 0, force: 0,
-                                       steps: steps, appearance: appearance, x: $x, y: $y, locked: locked)
+                                       steps: steps, appearance: appearance, x: $x, y: $y, locked: locked, motion: motion, moving: moving)
                 } else {
                     Rectangle().fill(Color(hex: 0x2b684b))
-                    // Pixel lanes connect the controls to a practice field rather than a settings form.
-                    Canvas { context, size in
-                        for row in stride(from: 0, to: Int(size.height), by: 24) {
-                            context.fill(Path(CGRect(x: 0, y: row, width: Int(size.width), height: 1)), with: .color(GameTheme.paper.opacity(0.12)))
-                        }
-                    }.allowsHitTesting(false)
+                    RawPracticeBackdrop(kind: kind, force: force, angle: angle, motion: motion, playing: moving)
+                        .allowsHitTesting(false)
                     if let training, !training.completed {
                         let target = training.targets[training.scores.count]
                         if kind == .control {
@@ -121,9 +100,14 @@ struct RawTrainingBoard: View {
                             }.padding(12)
                         } else {
                             let goal = RawTrainingRules.goal(kind: kind, target: target)
-                            VStack(spacing: 18) {
+                            if kind == .velocity {
+                                PixelPlayer(appearance: appearance).frame(width: 36, height: 50)
+                                    .rotationEffect(.degrees(moving ? 10 : 0), anchor: .bottom)
+                                    .position(x: geometry.size.width * 0.15, y: geometry.size.height * 0.73)
+                            }
+                            VStack(spacing: 8) {
                                 Text(kind == .stuff ? "SPIN LAB" : "POWER THROW").font(.title2.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                                PixelPlayer(appearance: appearance).frame(width: 48, height: 66)
+                                Spacer(minLength: 50)
                                 if !dynamicTypeSize.isAccessibilitySize {
                                     Text("목표 \(Int(goal.force))% · \(Int(goal.angle))°").font(.headline.monospaced()).accessibilityIdentifier("rawTrainingTarget")
                                 }
@@ -139,5 +123,180 @@ struct RawTrainingBoard: View {
                 }
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("rawTrainingBoard")
+    }
+}
+
+/// Feedback is a projection of a confirmed score, never an additional reward event.
+struct TrainingGradeBanner: View {
+    let score: Int
+    private var grade: String { score >= 99 ? "PERFECT" : score >= 90 ? "GREAT" : score >= 70 ? "GOOD" : "KEEP TRYING" }
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(grade).font(.caption.monospaced().bold())
+            Spacer(minLength: 0)
+            Text("\(score)점").font(.headline.monospaced().bold())
+        }.padding(8).foregroundStyle(score >= 70 ? GameTheme.growth : GameTheme.gold)
+            .background(GameTheme.navy).overlay(Rectangle().strokeBorder(GameTheme.gold, lineWidth: 2))
+            .accessibilityElement(children: .combine).accessibilityIdentifier("trainingGrade")
+    }
+}
+
+/// Side-on tee practice: the preview and playback use the same distance rule as scoring.
+struct PowerPracticeBoard: View {
+    let force: Double
+    let angle: Double
+    let round: Int
+    let motion: Double
+    let playing: Bool
+    let appearance: PlayerAppearance
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Canvas { context, size in
+                    context.scaleBy(x: size.width / 320, y: size.height / 220)
+                    func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double, _ color: Int) {
+                        context.fill(Path(CGRect(x: x.rounded(), y: y.rounded(), width: w, height: h)), with: .color(Color(hex: color)))
+                    }
+                    box(0, 0, 320, 220, 0x142d40); box(0, 82, 320, 138, 0x326b4d)
+                    for i in 0..<16 { box(Double(i * 22), 68, 14, 8, 0x496777) }
+                    box(0, 80, 320, 3, 0xecc66b); box(0, 184, 320, 36, 0x9b724a)
+                    let target = TrainingRules.powerTarget(min(4, round))
+                    let goalX = 42 + target * 1.75
+                    box(goalX - 8, 179, 16, 5, 0xecc66b)
+                    for i in 1...5 {
+                        let x = 42 + Double(i * 30) * 1.75
+                        box(x, 187, 2, 12, 0xe7dfbe)
+                        context.draw(Text("\(i * 30)m").font(.system(size: 8, design: .monospaced)).foregroundColor(.white), at: CGPoint(x: x, y: 210))
+                    }
+                    box(46, 169, 3, 15, 0x152c3f); box(40, 183, 16, 3, 0xf3edd5)
+                    let distance = TrainingRules.distance(force: force, angle: angle)
+                    let endX = 46 + min(150, distance) * 1.75
+                    let peak = min(130, max(12, sin(angle * .pi / 180) * force * 1.3))
+                    func pathPoint(_ t: Double) -> CGPoint { CGPoint(x: 46 + (endX - 46) * t, y: 164 + 20 * t - sin(t * .pi) * peak) }
+                    for i in 1...18 {
+                        let t = Double(i) / 18
+                        let p = pathPoint(t)
+                        box(p.x, p.y, 2, 2, playing && t < motion ? 0xfff5d4 : 0x93ad90)
+                    }
+                    let ball = pathPoint(playing ? motion : 0)
+                    box(ball.x - 3, 184, 8, 2, 0x245039)
+                    box(ball.x - 2, ball.y - 2, 5, 5, 0xfff5d4)
+                    if playing && motion < 0.2 {
+                        for d in [-1.0, 1] { box(48 + d * 12, 158 + d * 6, 5, 3, 0xecc66b) }
+                    }
+                }
+                PixelPlayer(appearance: appearance).frame(width: 32, height: 44)
+                    .rotationEffect(.degrees(playing ? -8 : 0), anchor: .bottom)
+                    .position(x: geometry.size.width * 0.09, y: geometry.size.height * 0.73)
+                Rectangle().fill(Color(hex: 0xc99759)).frame(width: 5, height: 28)
+                    .rotationEffect(.degrees(playing ? 80 : -25), anchor: .bottom)
+                    .position(x: geometry.size.width * 0.12, y: geometry.size.height * 0.72)
+            }
+        }.accessibilityElement(children: .ignore)
+            .accessibilityLabel("티배팅 훈련장")
+            .accessibilityValue("예상 비거리 \(TrainingRules.distance(force: force, angle: angle), specifier: "%.1f")미터")
+    }
+}
+
+struct RawPracticeBackdrop: View {
+    let kind: TrainingKind
+    let force: Double
+    let angle: Double
+    let motion: Double
+    let playing: Bool
+    var body: some View {
+        Canvas { context, size in
+            context.scaleBy(x: size.width / 320, y: size.height / 220)
+            func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double, _ color: Int) {
+                context.fill(Path(CGRect(x: x.rounded(), y: y.rounded(), width: w, height: h)), with: .color(Color(hex: color)))
+            }
+            box(0, 0, 320, 38, 0x142d40)
+            for i in 0..<12 { box(Double(i * 28), 15, 18, 8, 0x446478) }
+            box(0, 38, 320, 3, 0xecc66b)
+            if kind == .stuff {
+                let center = CGPoint(x: 160, y: 110)
+                // The field can stretch vertically; ball pixels must remain square on screen.
+                let aspect = (size.width / 320) / (size.height / 220)
+                func ballPixel(_ x: Double, _ y: Double, _ width: Double, _ height: Double, _ color: Color) {
+                    context.fill(Path(CGRect(x: x, y: center.y + (y - center.y) * aspect, width: width, height: height * aspect)), with: .color(color), style: FillStyle(antialiased: false))
+                }
+                for row in -13...13 {
+                    let half = floor(sqrt(Double(13 * 13 - row * row)))
+                    ballPixel(center.x - half * 2, center.y + Double(row) * 2, (half * 2 + 1) * 2, 2, GameTheme.paper)
+                }
+                for i in 0..<32 {
+                    let t = Double(i) / 32 * .pi * 2
+                    ballPixel(center.x + cos(t) * 43 - 1, center.y + sin(t) * 43 - 1, 2, 2, GameTheme.boardMuted)
+                }
+                let rotation = angle * .pi / 180 + (playing ? motion * force / 100 * .pi * 4 : 0)
+                for i in 0..<8 {
+                    let t = Double(i) / 8 * .pi * 2 + rotation
+                    ballPixel(center.x + cos(t) * 18 - 2, center.y + sin(t) * 18 - 2, 4, 4, Color(hex: 0xbf5544))
+                }
+                ballPixel(center.x + cos(rotation) * 43 - 3, center.y + sin(rotation) * 43 - 3, 6, 6, GameTheme.gold)
+                for i in 0..<10 { box(102 + Double(i * 12), 167, 9, 7, Double(i * 10) < force ? 0xecc66b : 0x204839) }
+            } else if kind == .velocity {
+                box(270, 61, 3, 112, 0xc6ceaf); box(225, 61, 48, 3, 0xc6ceaf)
+                for i in 0..<7 { box(225 + Double(i * 8), 64, 1, 105, 0x82a091) }
+                for i in 0..<10 { box(225, 64 + Double(i * 11), 45, 1, 0x82a091) }
+                box(32, 173, 258, 16, 0x9b724a)
+                let radians = angle * .pi / 180
+                let end = CGPoint(x: 60 + cos(radians) * force * 1.8, y: 150 - sin(radians) * force)
+                for i in 1...12 {
+                    let t = Double(i) / 12
+                    box(60 + (end.x - 60) * t, 150 + (end.y - 150) * t, 3, 2, 0xecc66b)
+                }
+                let t = playing ? motion : 0
+                box(60 + (end.x - 60) * t, 150 + (end.y - 150) * t, 6, 6, 0xfff5d4)
+            } else if kind == .mental {
+                box(28, 160, 264, 12, 0x9b724a); box(40, 172, 8, 30, 0x634d39); box(270, 172, 8, 30, 0x634d39)
+                for i in 0..<7 { box(43 + Double(i * 37), 75, 21, 38, 0x244b44) }
+            } else if kind == .control {
+                for i in 0..<12 { box(Double(i * 29), 45, 2, 160, 0x638572) }
+                for i in 0..<8 { box(0, 45 + Double(i * 23), 320, 1, 0x638572) }
+            }
+        }.clipped()
+    }
+}
+
+
+/// A compact pixel rail complements the named step buttons and avoids a settings-style control.
+struct TrainingValueRail: View {
+    @Environment(\.isEnabled) private var enabled
+    let label: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let suffix: String
+    private func set(_ fraction: Double) {
+        guard enabled else { return }
+        let raw = range.lowerBound + min(1, max(0, fraction)) * (range.upperBound - range.lowerBound)
+        value = min(range.upperBound, max(range.lowerBound, range.lowerBound + ((raw - range.lowerBound) / step).rounded() * step))
+    }
+    var body: some View {
+        GeometryReader { geometry in
+            Canvas { context, size in
+                let fraction = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+                let width = max(1, size.width - 12)
+                context.fill(Path(CGRect(x: 6, y: 18, width: width, height: 8)), with: .color(GameTheme.navy))
+                for index in 0..<11 {
+                    let x = 6 + width * Double(index) / 10
+                    context.fill(Path(CGRect(x: x, y: 16, width: 2, height: 12)), with: .color(GameTheme.boardMuted))
+                }
+                context.fill(Path(CGRect(x: 6, y: 20, width: width * fraction, height: 4)), with: .color(GameTheme.gold))
+                context.fill(Path(CGRect(x: width * fraction, y: 12, width: 12, height: 20)), with: .color(GameTheme.gold))
+                context.fill(Path(CGRect(x: width * fraction + 4, y: 15, width: 4, height: 14)), with: .color(GameTheme.navy))
+            }.contentShape(Rectangle()).allowsHitTesting(enabled)
+                .gesture(DragGesture(minimumDistance: 0).onChanged { set(($0.location.x - 6) / max(1, geometry.size.width - 12)) })
+        }.frame(minWidth: 48, minHeight: 44, maxHeight: 44)
+            .accessibilityElement(children: .ignore).accessibilityLabel(label)
+            .accessibilityValue("\(Int(value))\(suffix)")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: value = min(range.upperBound, value + step)
+                case .decrement: value = max(range.lowerBound, value - step)
+                @unknown default: break
+                }
+            }
     }
 }

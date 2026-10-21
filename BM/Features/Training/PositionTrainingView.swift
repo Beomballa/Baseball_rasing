@@ -212,10 +212,11 @@ private struct PositionDrillLiveView: View {
                         HStack(spacing: 6) {
                             ForEach(0..<5) { i in Text(i < training.scores.count ? "\(training.scores[i])" : "·").font(.caption.monospaced()).frame(maxWidth: .infinity, minHeight: 28).background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(GameTheme.boardLine)) }
                         }.accessibilityElement(children: .combine)
-                        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: phase != 2 || errorMessage != nil)) { time in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduced || phase == 1 || phase == 3 || errorMessage != nil)) { time in
                             PositionPracticeField(position: position, phase: phase == 0 ? 0 : phase == 1 ? 1 : 2, overview: false, appearance: player.appearance,
                                                   location: TrainingTarget(x: x, y: y), target: target, endpoint: endpoint,
-                                                  motion: reduced ? 1 : min(1, max(0, time.date.timeIntervalSince(startedAt) / 0.7)))
+                                                  motion: reduced ? 1 : min(1, max(0, time.date.timeIntervalSince(startedAt) / 0.7)),
+                                                  readMotion: reduced ? 0.6 : time.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4)
                         }.frame(height: typeSize.isAccessibilitySize ? 230 : max(170, min(220, geometry.size.height - 390)))
                             .contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { value in
                                 guard !typeSize.isAccessibilitySize, phase < 2, errorMessage == nil else { return }
@@ -255,6 +256,7 @@ private struct PositionDrillLiveView: View {
                             Text(position == .first ? "포구 중 · 확정 입력 저장 대기" : "송구 중 · 확정 입력 저장 대기")
                                 .font(.caption).foregroundStyle(GameTheme.gold)
                         } else if phase == 3 {
+                            if let score = training.scores.last { TrainingGradeBanner(score: score) }
                             Text(training.completed ? "훈련 완료 · 저장됨" : "\(training.scores.last ?? 0)점 · 시도 저장됨").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("positionFeedback")
                             if training.completed {
                                 GamePanel(title: "포지션 훈련 결과", onBoard: true) {

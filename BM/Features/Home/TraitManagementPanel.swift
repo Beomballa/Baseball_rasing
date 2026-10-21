@@ -395,7 +395,7 @@ private extension PlayerTrait {
     }
 }
 
-private struct TraitTrainingArena: View {
+struct TraitTrainingArena: View {
     let trait: PlayerTrait
     let target: TrainingTarget
     let player: TrainingTarget
@@ -468,6 +468,11 @@ private struct TraitTrainingArena: View {
                         let hand = CGPoint(x: origin.x + 10, y: origin.y - 7)
                         let x = hand.x + (end.x - hand.x) * phase
                         let y = hand.y + (end.y - hand.y) * phase - sin(phase * .pi) * 22
+                        box(x - 3, end.y + 4, 8, 2, 0x245039)
+                        for i in 1...3 {
+                            let trail = max(0, phase - Double(i) * 0.055)
+                            box(hand.x + (end.x - hand.x) * trail, hand.y + (end.y - hand.y) * trail - sin(trail * .pi) * 22, 2, 2, 0xc0c89e)
+                        }
                         box(x - 2, y - 2, 5, 5, 0xfff6d5)
                     }
                 } else {
@@ -475,7 +480,11 @@ private struct TraitTrainingArena: View {
                     athlete(p.x, p.y, PlayerAppearance.kitColors[appearance.kit])
                     box(p.x + 8, p.y - (moving ? 13 : 3), 8, 7, 0xc99759)
                     let height = moving || success != nil ? (1 - motion) * 65 : 65
+                    box(t.x - 5, t.y + 4, 11, 3, 0x245039)
                     box(t.x - 2, t.y - height - sin(motion * .pi) * 30, 5, 5, 0xfff5d4)
+                    if moving && motion > 0.82 && hypot(target.x - player.x, target.y - player.y) < 0.1 {
+                        for d in [-1.0, 1] { box(p.x + 11 + d * 10, p.y - 10 + d * 5, 4, 3, 0xecc66b) }
+                    }
                     line(CGPoint(x: t.x, y: t.y - height + 9), CGPoint(x: t.x, y: t.y - 6), 0xc1c99c, 1)
                 }
                 if let success { context.stroke(Path(CGRect(x: t.x - 17, y: t.y - 14, width: 34, height: 28)), with: .color(success ? GameTheme.growth : GameTheme.gold), lineWidth: 3) }
@@ -638,6 +647,7 @@ private struct TraitDrillExperience: View {
                         .font(.caption).foregroundStyle(GameTheme.boardMuted)
                     controls
                     if let feedback {
+                        if let score = scores.last { TrainingGradeBanner(score: score) }
                         Text(feedback).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("traitDrillFeedback")
                         if finished {
                             Text("5회 평균 \(averageScore)점 · \(record == nil ? "체험 완료" : "훈련 완료")")

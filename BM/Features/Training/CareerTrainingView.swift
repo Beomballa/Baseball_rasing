@@ -22,7 +22,13 @@ struct CareerTrainingView: View {
     @State private var throwBase = 1
     @State private var force = 70.0
     @State private var angle = 35.0
+    @State private var replay: CareerTraining?
+    @State private var replayStarted = Date()
+    @State private var replayTask: Task<Void, Never>?
+    @State private var replayScore: Int?
+    @State private var feedbackTick = 0
     @State private var judging = false
+    @State private var judgementStarted = Date()
     @State private var lastDistance: Double?
     @State private var x = 0.5
     @State private var y = 0.5
@@ -32,6 +38,8 @@ struct CareerTrainingView: View {
     @State private var retryInput: TrainingInput?
     @State private var retryRevision: Int?
 
+    private var displayTraining: CareerTraining? { replay ?? training }
+    private var inputLocked: Bool { retryInput != nil || replay != nil }
     private var isPitcher: Bool { player.role == .pitcher }
     private var selectedKind: TrainingKind { training?.selectedKind ?? (category == 0 && isPitcher ? .pitch : kind) }
     private var title: String { selectedKind.label + " 훈련" }
@@ -52,13 +60,19 @@ struct CareerTrainingView: View {
         } catch { errorMessage = error.localizedDescription }
     }
     private func beginAttempt() {
-        guard let training, !training.completed, retryInput == nil else { return }
+        guard let training, !training.completed, !inputLocked else { return }
         if [.speed, .stamina].contains(selectedKind) {
             footfalls = []
             clock.start(windup: 0, duration: 4) { submit(TrainingInput(footfalls: footfalls)) }
             return
         }
-        if selectedKind == .discipline { judging = true; return }
+        if selectedKind == .discipline {
+            judging = true; judgementStarted = Date()
+            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role)
+            scene.demonstrate(reduceMotion: reduced, flightDuration: 0.9, x: training.targets[training.scores.count].x,
+                              y: training.targets[training.scores.count].y, pitchCode: "four-seam")
+            return
+        }
         scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role)
         scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: training.targets[training.scores.count].x,
                           y: training.targets[training.scores.count].y, pitchCode: training.pitchCode ?? "four-seam")
@@ -67,27 +81,47 @@ struct CareerTrainingView: View {
         }
     }
     private func submit(_ input: TrainingInput) {
-        clock.stop(); scene.cancelDelivery(); judging = false
-        guard let record else { return }
+        guard !inputLocked, let record else { return }
+        clock.stop(); judging = false
+        replay = training; replayStarted = Date()
         retryInput = input; retryRevision = record.revision
         saveAttempt()
     }
     private func saveAttempt() {
         guard let record, let input = retryInput, let revision = retryRevision else { return }
+        if replay == nil { replay = training; replayStarted = Date() }
         do {
             try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: revision, input: input, in: context)
             training = try record.snapshot()
             if selectedKind == .power, let force = input.force, let angle = input.angle { lastDistance = TrainingRules.distance(force: force, angle: angle) }
             retryInput = nil; retryRevision = nil; errorMessage = nil
-        } catch { errorMessage = error.localizedDescription }
+            replayScore = training?.scores.last; feedbackTick += 1
+            if selectedKind == .contact {
+                let contact = training?.lastContact
+                scene.finishBat(action: input.timing == nil ? "watch" : "swing",
+                                outcome: (contact?.timingScore ?? 0) >= 60 && (contact?.positionScore ?? 0) >= 60 ? "안타" : "헛스윙",
+                                reduced: reduced) {}
+            }
+            replayTask?.cancel()
+            replayTask = Task { @MainActor in
+                let remaining = selectedKind == .pitch ? max(1.1, (1 - (input.release ?? 1)) * 1.6 + 0.35)
+                    : selectedKind == .contact ? max(1.1, (MatchDelivery.contactPhase - (input.timing ?? 1)) * 1.6 + 0.7) : 1.1
+                try? await Task.sleep(for: .seconds(reduced ? 0.15 : remaining))
+                guard !Task.isCancelled else { return }
+                replay = nil; scene.cancelDelivery()
+            }
+        } catch { replay = nil; scene.cancelDelivery(); errorMessage = error.localizedDescription }
     }
-    private func cancelUncommitted() { clock.stop(); scene.cancelDelivery(); judging = false }
+    private func cancelUncommitted() {
+        clock.stop(); scene.cancelDelivery(); judging = false
+        replayTask?.cancel(); replayTask = nil; replay = nil
+    }
 
     var body: some View {
         GeometryReader { geometry in
             ScrollViewReader { scroll in
                 ScrollView {
-                    if let training, training.completed {
+                    if let training, training.completed, replay == nil {
                         VStack(spacing: 8) { result(training); errorControls }.padding(12)
                     } else {
                         VStack(spacing: 8) {
@@ -113,7 +147,7 @@ struct CareerTrainingView: View {
                             }.background(chromeMeasurement("top"))
                             arena(height: fieldHeight(in: geometry.size))
                             VStack(spacing: 8) {
-                                playControls
+                                playControls.disabled(replay != nil)
                                 errorControls
                             }.id("trainingControls").background(chromeMeasurement("bottom"))
                         }.padding(12)
@@ -131,6 +165,7 @@ struct CareerTrainingView: View {
             scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role)
             load()
         }
+        .sensoryFeedback(.impact(weight: .light), trigger: feedbackTick)
         .onDisappear { cancelUncommitted() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { cancelUncommitted() } }
     }
@@ -179,7 +214,7 @@ struct CareerTrainingView: View {
         }
     }
     @ViewBuilder private var playControls: some View {
-        if let training {
+        if let training = displayTraining {
             if selectedKind.isRaw {
                 rawControls(training).disabled(retryInput != nil)
             } else if selectedKind.isField {
@@ -194,8 +229,9 @@ struct CareerTrainingView: View {
                                  perfect: isPitcher ? ManualMatchRules.perfectWidth(mastery: training.before) : TrainingRules.contactPerfectWidth,
                                  label: isPitcher ? "릴리스 · 노란 구간에 던지기" : "노란 구간 · 타이밍 100점")
             }
-            if let result = training.lastContact { ContactTrainingFeedback(result: result) }
-            scores(training)
+            if let result = self.training?.lastContact { ContactTrainingFeedback(result: result) }
+            scores(self.training ?? training)
+            if let score = training.scores.last, replay == nil { TrainingGradeBanner(score: score) }
             if selectedKind.isRaw {
                 rawButtons(training).disabled(retryInput != nil)
             } else if selectedKind.isField {
@@ -256,18 +292,24 @@ struct CareerTrainingView: View {
         }.accessibilityIdentifier("trainingScores")
     }
     private func arena(height: CGFloat) -> some View {
+        TimelineView(.animation(minimumInterval: reduced ? 0.1 : 1.0 / 30, paused: replay == nil && !judging && !clock.running)) { timeline in
+        let progress = replay == nil ? 0.0 : reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(replayStarted) / 0.9))
+        let training = displayTraining
         ZStack {
             if selectedKind.isRaw {
-                RawTrainingBoard(kind: selectedKind, training: training, steps: TrainingRules.steps(footfalls), appearance: player.appearance, x: $x, y: $y, locked: retryInput != nil)
+                RawTrainingBoard(kind: selectedKind, training: training, steps: TrainingRules.steps(footfalls), motion: progress, moving: replay != nil || clock.running, force: force, angle: angle, appearance: player.appearance, x: $x, y: $y, locked: inputLocked)
             } else if selectedKind.isField {
                 FieldTrainingBoard(kind: selectedKind, target: training.flatMap { $0.completed ? nil : $0.targets[$0.scores.count] },
                                    base: training.map { $0.completed ? 1 : TrainingRules.throwBase($0.scores.count) } ?? 1,
-                                   angle: throwAngle, force: throwForce, steps: TrainingRules.steps(footfalls), appearance: player.appearance, x: $x, y: $y, locked: retryInput != nil)
+                                   angle: throwAngle, force: throwForce, steps: TrainingRules.steps(footfalls), appearance: player.appearance, x: $x, y: $y, locked: inputLocked, motion: progress, moving: replay != nil || clock.running)
+            } else if selectedKind == .power {
+                PowerPracticeBoard(force: force, angle: angle, round: training?.scores.count ?? 0,
+                                   motion: progress, playing: replay != nil, appearance: player.appearance)
             } else { SpriteView(scene: scene).allowsHitTesting(false) }
             if selectedKind == .contact, let training, !training.completed {
                 let target = training.targets[training.scores.count]
                 ZStack {
-                    BattingAimZone(x: $x, y: $y, locked: retryInput != nil)
+                    BattingAimZone(x: $x, y: $y, locked: inputLocked)
                     GeometryReader { geometry in
                         Rectangle().strokeBorder(Color(hex: 0x82e6b2), lineWidth: 3).frame(width: 18, height: 18)
                             .position(x: geometry.size.width * target.x, y: geometry.size.height * target.y)
@@ -281,12 +323,14 @@ struct CareerTrainingView: View {
                 GeometryReader { geometry in
                     let target = training.targets[training.scores.count]
                     ZStack {
-                        Rectangle().fill(GameTheme.navy.opacity(0.7))
+                        Rectangle().fill(GameTheme.navy.opacity(0.25))
                         Rectangle().strokeBorder(Color(hex: 0xf3edcf), lineWidth: 3)
                             .frame(width: geometry.size.width * 0.6, height: geometry.size.height * 0.6)
                         if judging {
                             Rectangle().fill(GameTheme.gold).frame(width: 12, height: 12)
-                                .position(x: geometry.size.width * target.x, y: geometry.size.height * target.y)
+                                .scaleEffect(reduced ? 1 : 0.35 + min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)) * 0.65)
+                                .position(x: geometry.size.width * (0.5 + (target.x - 0.5) * (reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)))),
+                                          y: geometry.size.height * (0.5 + (target.y - 0.5) * (reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)))))
                         }
                     }
                 }.frame(width: height * 0.7, height: height * 0.7)
@@ -298,7 +342,7 @@ struct CareerTrainingView: View {
                     Text("목표 \(TrainingRules.powerTarget(training.scores.count), specifier: "%.0f")m").bold()
                         .padding(8).background(GameTheme.navy).accessibilityIdentifier("powerTarget")
                     Spacer()
-                    if let lastDistance {
+                    if let lastDistance, replay == nil {
                         Text("직전 \(lastDistance, specifier: "%.1f")m · \(training.scores.last ?? 0)점")
                             .font(.caption.bold()).padding(8).background(GameTheme.navy)
                     }
@@ -308,9 +352,14 @@ struct CareerTrainingView: View {
                 MatchGrip(code: training?.pitchCode ?? code, hand: player.throwingHandRaw)
                     .frame(width: 74, height: 74).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
+            if replay != nil, let replayScore {
+                TrainingGradeBanner(score: replayScore)
+                    .frame(maxHeight: .infinity, alignment: .bottom).padding(8).allowsHitTesting(false)
+            }
         }.frame(width: height * (isPitcher && !selectedKind.isField && !selectedKind.isRaw ? 1219.0 / 1290 : 1), height: height).clipped()
             .overlay(Rectangle().strokeBorder(GameTheme.gold.opacity(0.5), lineWidth: 2))
             .accessibilityElement(children: .contain).accessibilityIdentifier("trainingField")
+        }
     }
     @ViewBuilder private func rawControls(_ training: CareerTraining) -> some View {
         if [.velocity, .stuff].contains(selectedKind) {

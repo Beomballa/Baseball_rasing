@@ -252,6 +252,7 @@ struct PositionPracticeField: View {
     var target: TrainingTarget? = nil
     var endpoint: TrainingTarget? = nil
     var motion: Double = 1
+    var readMotion: Double = 0.5
     var body: some View {
         Canvas { context, size in
             context.scaleBy(x: size.width / 320, y: size.height / 220)
@@ -294,7 +295,13 @@ struct PositionPracticeField: View {
                 context.stroke(Path(CGRect(x: catchPoint.x - 13, y: catchPoint.y - 9, width: 26, height: 18)), with: .color(GameTheme.gold), lineWidth: 2)
                 if phase == 0 {
                     line(home, catchPoint, 0xecc66b, width: 1)
-                    box((home.x + catchPoint.x) / 2, (home.y + catchPoint.y) / 2 - 16, 5, 5, 0xfff5d4)
+                    let t = readMotion
+                    let ballX = home.x + (catchPoint.x - home.x) * t
+                    let groundY = home.y + (catchPoint.y - home.y) * t
+                    let rise = position == .left || position == .center || position == .right ? sin(t * .pi) * 38 : abs(sin(t * .pi * 3)) * 7
+                    box(ballX - 3, groundY + 2, 8, 2, 0x245039)
+                    box(ballX - 2, groundY - rise - 5, 5, 5, 0xfff5d4)
+                    for i in 1...4 { let trail = max(0, t - Double(i) * 0.05); box(home.x + (catchPoint.x - home.x) * trail, home.y + (catchPoint.y - home.y) * trail, 2, 2, 0xa3b68c) }
                 } else if phase == 1 { box(catchPoint.x + 6, catchPoint.y - 11, 5, 5, 0xfff5d4) }
                 else {
                     for step in 1..<8 {
@@ -306,6 +313,8 @@ struct PositionPracticeField: View {
                     context.stroke(Path(CGRect(x: destination.x - 13, y: destination.y - 12, width: 26, height: 24)), with: .color(GameTheme.growth), lineWidth: 2)
                 }
                 player(p, selected: true, receiving: phase > 0)
+                if phase == 1 { box(p.x + 7, p.y - 13, 9, 7, 0xb98248) }
+                if phase == 2 && motion < 0.25 { box(p.x + 5, p.y - 18, 5, 11, PlayerAppearance.skinColors[appearance.skin]) }
             }
         }.drawingGroup().clipped().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
     }
