@@ -254,12 +254,17 @@ struct CareerGameView: View {
                 }
             }
             if let play=resultReplayPlay ?? match.fieldPlays?.last {
-                GamePanel(title:resultReplayPlay == nil ? "마지막 타구 · 수비/주루" : "최근 병살 시도",onBoard:true) {
+                GamePanel(title:resultReplayPlay == nil ? "마지막 타구 · 수비/주루" : resultReplayPlay?.fly != nil ? "최근 뜬공 · 태그업" : "최근 병살 시도",onBoard:true) {
                     Text(play.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gameDetailedFieldSummary")
                     DetailedFieldReplayBoard(play:play,appearance:player.appearance,animated:animateResultReplay) { animateResultReplay=false }
                         .id(resultReplayID).frame(height:240)
                     Button("수비·주루 재생") { animateResultReplay=true;resultReplayID += 1 }
                         .buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayResultFieldPlay")
+                    if let fly=match.fieldPlays?.last(where: { $0.fly?.caught == true && $0.targetRunner != nil }) ?? match.fieldPlays?.last(where:{ $0.fly?.caught == true }) ?? match.fieldPlays?.last(where:{ $0.fly != nil }) {
+                        Button("최근 뜬공·태그업 다시 보기") {
+                            resultReplayPlay=fly;animateResultReplay=true;resultReplayID += 1
+                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayFlyPlay")
+                    }
                     if let doublePlay=match.fieldPlays?.last(where: { $0.secondThrow != nil }) {
                         Button("최근 병살 시도 다시 보기") {
                             resultReplayPlay=doublePlay;animateResultReplay=true;resultReplayID += 1
@@ -292,9 +297,9 @@ struct CareerGameView: View {
                     let detailed=match.fieldPlays?.last { $0.ownParticipation || $0.ownBatter }
                     let base=(detailed?.secondThrow?.ownThrower == true || detailed?.ownBatter == true && detailed?.secondThrow != nil) ? 1 : detailed?.targetBase ?? 1
                     let perspective=detailed?.ownBatter == true && detailed?.targetRunner != 0 ? "내 타석" : "내 \(play.ownDefense ? "수비" : "주루")"
-                    Text("\(perspective) · \(base == 4 ? "홈" : "\(base)루") \(play.safe ? "세이프" : "아웃")")
+                    Text(detailed?.fly?.caught == true ? (play.ownDefense ? "내 수비 · 뜬공 포구 아웃" : "내 타석 · 뜬공 아웃") : "\(perspective) · \(base == 4 ? "홈" : "\(base)루") \(play.safe ? "세이프" : "아웃")")
                         .font(.headline).foregroundStyle(GameTheme.gold)
-                    Text("\(detailed != nil ? "대상 주자" : play.ownDefense ? "상대 주자" : "내 주자") \(play.runnerTime, specifier: "%.2f")초 / 공 \(play.ballTime, specifier: "%.2f")초")
+                    Text(play.caughtFly == true ? String(format:"포구 준비 %.2f초 / 공 도착 %.2f초",play.ballTime,play.runnerTime) : String(format:"대상 주자 %.2f초 / 공 %.2f초",play.runnerTime,play.ballTime))
                         .font(.caption.monospaced()).accessibilityIdentifier("gameFieldResult")
                     if let delay = play.positionDelay {
                         Text("위치 적응 준비 \(delay, specifier: "%.3f")초").font(.caption).foregroundStyle(GameTheme.boardMuted)

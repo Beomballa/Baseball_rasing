@@ -138,6 +138,11 @@ final class CareerFlowTests: XCTestCase {
             }
             app.swipeUp()
         }
+        // Lazy result grids can remove earlier rows from the accessibility tree while scrolled down.
+        for _ in 0..<10 {
+            if element.isHittable { return }
+            app.swipeDown()
+        }
         XCTAssertTrue(element.isHittable)
     }
 
@@ -755,6 +760,17 @@ extension CareerFlowTests {
                 let ended=XCTAttachment(screenshot:app.screenshot());ended.name=pitcher ? "Double play pitcher settled" : "Double play batter settled";ended.lifetime = .keepAlways;add(ended)
                 reveal(dpMetric,in:app);XCTAssertEqual(dpMetric.label,dpValue)
             }
+            let flyButton=app.buttons["replayFlyPlay"]
+            reveal(flyButton,in:app);XCTAssertTrue(flyButton.exists)
+            flyButton.tap()
+            XCTAssertTrue(app.staticTexts["fieldReplayCatchTimes"].exists)
+            reveal(app.staticTexts["fieldReplayPhase"],in:app)
+            let flyMoving=XCTAttachment(screenshot:app.screenshot());flyMoving.name=pitcher ? "Fly pitcher moving" : "Fly batter moving";flyMoving.lifetime = .keepAlways;add(flyMoving)
+            waitForEnabled(flyButton,timeout:9)
+            let flySummary=app.staticTexts["gameDetailedFieldSummary"].label
+            XCTAssertTrue(flySummary.contains("뜬공") || flySummary.contains("태그업"))
+            let flySettled=XCTAttachment(screenshot:app.screenshot());flySettled.name=pitcher ? "Fly pitcher settled" : "Fly batter settled";flySettled.lifetime = .keepAlways;add(flySettled)
+            reveal(dpMetric,in:app);XCTAssertEqual(dpMetric.label,dpValue)
             var positionGrowth = ""
             if !pitcher {
                 reveal(app.staticTexts["gamePositionGrowth"], in: app)

@@ -178,9 +178,13 @@ struct MatchResultSummary {
             ("rbi", "타점", "\(l.rbi)"), ("walks", "볼넷", "\(l.walks)"), ("strikeouts", "삼진", "\(l.strikeouts)")
         ]
         var result=values.map { Metric(id: $0.0, label: $0.1, value: $0.2) }
-        if match.detailedFieldVersion == 2,let plays=match.fieldPlays {
+        if (match.detailedFieldVersion ?? 0) >= 2,let plays=match.fieldPlays {
             let count=plays.filter { $0.secondThrow?.out == true && (match.role == "batter" ? $0.ownBatter : (($0.half % 2 == 1) != match.isHome)) }.count
             result.append(Metric(id:"doublePlays",label:match.role == "batter" ? "병살타" : "병살 유도",value:String(count)))
+        }
+        if match.detailedFieldVersion == 3,match.role == "batter" {
+            let count=match.fieldPlays?.filter { $0.ownBatter && $0.sacrificeFly }.count ?? 0
+            result.append(Metric(id:"sacrificeFlies",label:"희생플라이",value:String(count)))
         }
         return result
     }
@@ -349,11 +353,12 @@ struct DetailedFieldReplayBoard: View {
             let second=play.secondThrow
             let secondActive=second.map { time >= $0.releaseAt } ?? false
             let target=secondActive ? 1 : play.targetBase
-            let phase: String = time < play.pickupAt ? "\(DetailedFieldRules.names[play.fielder]) 타구 접근"
+            let groundPhase: String = time < play.pickupAt ? "\(DetailedFieldRules.names[play.fielder]) 타구 접근"
                 : time < play.releaseAt ? "포구 → \(play.targetBase == 4 ? "홈" : "\(play.targetBase)루") 송구 준비"
                 : second != nil && time >= play.controlAt && time < (second?.releaseAt ?? 0) ? "2루 아웃 → 1루 재송구 준비"
                 : secondActive && time < play.decisionAt ? "2루 아웃 → 1루 경합"
                 : time < play.decisionAt ? "송구 중" : play.summary
+            let phase=play.fly?.caught == true ? (time < play.flight ? "뜬공 낙하지점 이동" : time < play.releaseAt ? "포구 아웃 · 태그업 출발" : time < play.decisionAt ? "태그업 · 송구 경합" : play.summary) : groundPhase
             VStack(spacing:4) {
                 Text(phase)
                     .font(.system(.caption,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
@@ -391,23 +396,38 @@ struct DetailedFieldReplayBoard: View {
                     }
                     for index in play.fielders.indices {
                         let nodes=play.fielders[index],p=FieldNode.sample(nodes,at:time)
-                        actor(p,own:play.ownDefense && index==play.fielder || second?.ownThrower == true && index==play.receiver,runner:false,moving:nodes.contains { $0.at > time })
+                        actor(p,own:play.ownDefense && index==play.fielder || second?.ownThrower == true && index==play.receiver,runner:false,moving:p.distance(to:FieldNode.sample(nodes,at:time+0.06)) > 0.001)
                     }
                     for runner in play.runners {
-                        actor(FieldNode.sample(runner.nodes,at:time),own:runner.profile.own,runner:true,moving:time<runner.arrival,out:runner.out && time >= (runner.retiredAt ?? play.decisionAt))
+                        actor(FieldNode.sample(runner.nodes,at:time),own:runner.profile.own,runner:true,moving:FieldNode.sample(runner.nodes,at:time).distance(to:FieldNode.sample(runner.nodes,at:time+0.06)) > 0.001,out:runner.out && time >= (runner.retiredAt ?? play.decisionAt))
                     }
-                    let ball=point(FieldNode.sample(play.ball,at:time)),w=max(3,size.width*0.012)
+                    let groundBall=point(FieldNode.sample(play.ball,at:time))
+                    let loft=play.fly != nil && time < play.flight ? sin(.pi*time/play.flight)*size.height*0.18 : 0
+                    if loft > 0 {
+                        context.fill(Path(CGRect(x:groundBall.x-2,y:groundBall.y-1,width:4,height:2)),with:.color(.black.opacity(0.4)))
+                    }
+                    let ball=CGPoint(x:groundBall.x,y:groundBall.y-loft),w=max(3,size.width*0.012)
                     context.fill(Path(CGRect(x:ball.x-w/2,y:ball.y-w/2,width:w,height:w)),with:.color(.white))
                     func call(_ base:Int,_ out:Bool) {
                         let b=point(DetailedFieldRules.bases[base])
                         context.draw(Text(out ? "OUT" : "SAFE").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(out ? Color(hex:0xff9d83) : GameTheme.growth),at:CGPoint(x:b.x,y:b.y-18))
                     }
+                    if play.fly?.caught == true,time>=play.flight {
+                        let p=point(play.landing)
+                        context.draw(Text("CATCH · OUT").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(GameTheme.gold),at:CGPoint(x:p.x,y:p.y-20))
+                    }
                     if second != nil,time>=play.controlAt { call(2,true) }
                     if time>=play.decisionAt,play.targetRunner != nil { call(second != nil ? 1 : play.targetBase,second?.out ?? play.out) }
 
                 }.accessibilityLabel("도트 수비 주루 재생 · " + play.summary).accessibilityIdentifier("fieldReplayCanvas")
+                if let fly=play.fly {
+                    Text("공 낙하 \(play.flight,specifier:"%.2f")초 / 포구 준비 \(fly.reachAt,specifier:"%.2f")초 · \(fly.caught ? "포구 성공" : "낙하 후 처리")")
+                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayCatchTimes")
+                }
+                if play.fly?.caught != true || play.targetRunner != nil {
                 Text("\(play.targetBase == 4 ? "홈" : "\(play.targetBase)루") · 공 \(play.controlAt,specifier:"%.2f")초 / 주자 \(play.runnerAt.map { String(format:"%.2f초",$0) } ?? "진루 완료")")
                     .font(.caption2.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayTimes")
+                }
                 if let second {
                     Text("1루 · 공 \(second.controlAt,specifier:"%.2f")초 / 타자 \(second.runnerAt,specifier:"%.2f")초")
                         .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplaySecondTimes")

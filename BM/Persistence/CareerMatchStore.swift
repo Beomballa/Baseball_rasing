@@ -101,7 +101,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             match.positionExperience = MatchPositionExperience(position: position, before: skill,
                 profileRevision: profile.revision, age: try state.age(of: player), fatigue: player.fatigue)
         }
-        match.detailedFieldVersion=2;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
+        match.detailedFieldVersion=3;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"

@@ -1,5 +1,6 @@
 import XCTest
 import SwiftData
+import SwiftUI
 @testable import BM
 
 @MainActor final class FieldTrainingTests: XCTestCase {
@@ -384,4 +385,123 @@ import SwiftData
         p=doublePlay();p.version=1;XCTAssertThrowsError(try p.validate())
         p=doublePlay();p.runners[0].retiredAt = .nan;XCTAssertThrowsError(try p.validate())
     }
+    private func fly(_ x:Double=0,_ y:Double=90,flight:Double=5.5,speed:Double=60,defense:Double=60,arm:Double=60,
+                     outs:Int=0,before:[FieldRunnerProfile?]?=nil) -> MatchDetailedPlay {
+        DetailedFieldRules.resolveFly(half:0,order:0,landing:FieldPoint(x:x,y:y),flight:flight,
+            runners:before ?? [nil,nil,FieldRunnerProfile(speed:speed,own:true)],batter:FieldRunnerProfile(speed:60),outs:outs,
+            stats:MatchFieldStats(version:3,speed:60,defense:defense,arm:arm,position:"CF",activeTraits:[],positionMastery:100),defending:true,ownBatter:false)
+    }
+    func testFlyCatchAndTagHomeUseIndependentArrivalTimes() throws {
+        let p=fly(speed:100)
+        XCTAssertEqual(p.fly?.caught,true);XCTAssertEqual(p.fielder,7);XCTAssertEqual(p.targetBase,4)
+        XCTAssertEqual(p.flight,5.5);XCTAssertEqual(p.fly?.reachAt ?? 0,0.34+17/5.8+0.2,accuracy:1e-9)
+        XCTAssertEqual(p.controlAt,5.5+0.39+90/28.8+0.21,accuracy:1e-9)
+        XCTAssertEqual(p.runnerAt ?? 0,5.5+0.18+27.43/9,accuracy:1e-9)
+        XCTAssertFalse(p.force);XCTAssertFalse(p.out);XCTAssertEqual(p.outsAdded,1);XCTAssertEqual(p.runs,1)
+        XCTAssertTrue(p.sacrificeFly);XCTAssertEqual(p.rbi,1);XCTAssertTrue(p.ownDefense);XCTAssertFalse(p.xpPlay.safe)
+        try p.validate()
+    }
+    func testFlySpeedArmDefenseDetermineCatchHoldSafeAndTagOut() throws {
+        let fast=fly(speed:100),caught=fly(speed:60),hold=fly(speed:0)
+        XCTAssertFalse(fast.out);XCTAssertEqual(fast.runs,1)
+        XCTAssertTrue(caught.out);XCTAssertEqual(caught.outsAdded,2);XCTAssertEqual(caught.runs,0)
+        XCTAssertNil(hold.targetRunner);XCTAssertNotNil(hold.afterRunners[2])
+        let weak=fly(speed:100,arm:0),strong=fly(speed:100,arm:100)
+        XCTAssertNotNil(weak.targetRunner);XCTAssertTrue(strong.out)
+        let low=fly(0,90,flight:3.5,defense:0),high=fly(0,90,flight:3.5,defense:100)
+        XCTAssertEqual(low.fly?.caught,false);XCTAssertEqual(high.fly?.caught,true)
+        for p in [fast,caught,hold,weak,strong,low,high] { try p.validate() }
+    }
+    func testFlyWaitsAtBagUntilCatchAndReplaysLoftAndSeparateRetirement() throws {
+        let p=fly(speed:60),r=try XCTUnwrap(p.runners.first { $0.from == 3 })
+        for t in [0,2.0,5.49,5.5] { XCTAssertEqual(FieldNode.sample(r.nodes,at:t),DetailedFieldRules.bases[3]) }
+        XCTAssertEqual(p.runners.first { $0.from == 0 }?.retiredAt,p.flight)
+        XCTAssertEqual(r.retiredAt,p.controlAt);XCTAssertLessThan(p.flight,p.controlAt)
+        XCTAssertEqual(p.decisionAt,p.controlAt)
+        XCTAssertEqual(FieldNode.sample(p.ball,at:p.flight),p.landing)
+        XCTAssertEqual(FieldNode.sample(p.ball,at:p.ballAt),DetailedFieldRules.bases[4])
+        XCTAssertEqual(try JSONDecoder().decode(MatchDetailedPlay.self,from:JSONEncoder().encode(p)),p)
+    }
+    func testFlyTwoOutCatchEndsInningAndInfieldDoesNotCreditSacrifice() throws {
+        let loaded=[FieldRunnerProfile(speed:100),FieldRunnerProfile(speed:100),FieldRunnerProfile(speed:100)]
+        let p=fly(outs:2,before:loaded)
+        XCTAssertEqual(p.outsAdded,1);XCTAssertEqual(p.runs,0);XCTAssertNil(p.targetRunner)
+        XCTAssertTrue(p.afterRunners.allSatisfy { $0 == nil });try p.validate()
+        let pop=fly(0,18,flight:5,before:loaded)
+        XCTAssertEqual(pop.fly?.caught,true);XCTAssertEqual(pop.fielder,0)
+        XCTAssertFalse(pop.sacrificeFly);XCTAssertEqual(pop.runs,0);try pop.validate()
+    }
+    func testFlyAllOccupanciesNoForceCollisionOrMoreThanThreeOuts() throws {
+        var tags=0,outsCount=0,drops=0
+        for mask in 0..<8 { for outs in 0...2 { for y in [30.0,60,90,105] { for speed in [0.0,60,100] {
+            let before=(0..<3).map { mask & (1 << $0) == 0 ? nil:FieldRunnerProfile(speed:speed) }
+            let p=fly(0,y,flight:3.5,speed:speed,outs:outs,before:before)
+            try p.validate();XCTAssertLessThanOrEqual(outs+p.outsAdded,3)
+            let occupied=p.runners.filter { !$0.out && (1...3).contains($0.destination) }.map(\.destination)
+            XCTAssertEqual(Set(occupied).count,occupied.count)
+            if p.fly?.caught == true { XCTAssertFalse(p.force);if p.targetRunner != nil {tags += 1};if p.out {outsCount += 1} }
+            else {drops += 1}
+        } } } }
+        XCTAssertGreaterThan(tags,0);XCTAssertGreaterThan(outsCount,0);XCTAssertGreaterThan(drops,0)
+    }
+    func testFlyActualEngineSacrificeIsPAWithoutABAndPreservesBothRolesOuts() throws {
+        for role in ["batter","pitcher"] {
+            var seen=false
+            for seed in 1...1000 {
+                var m=game(seed,role:role);m.detailedFieldVersion=3;m.fieldPlays=[]
+                m.bases=[false,false,true];m.runnerProfiles=[nil,nil,FieldRunnerProfile(speed:100)];m.outs=0
+                try m.advance(role == "pitcher" ? .pitch:.swing,pitchCode:role == "pitcher" ? "four-seam":nil)
+                guard let p=m.fieldPlays?.first,p.sacrificeFly else {continue}
+                try m.validateDetailedField();XCTAssertEqual(p.outsAdded,1)
+                if role == "batter" {
+                    XCTAssertEqual(m.line.plateAppearances,1);XCTAssertEqual(m.line.atBats,0);XCTAssertEqual(m.line.hits,0);XCTAssertEqual(m.line.rbi,1)
+                    XCTAssertEqual(MatchResultSummary(match:m,fatigueBefore:0,fatigueAfter:0).metrics.first { $0.id == "sacrificeFlies" }?.value,"1")
+                } else {XCTAssertEqual(m.line.pitchingOuts,1);XCTAssertEqual(m.line.hitsAllowed,0);XCTAssertEqual(m.line.runsAllowed,1)}
+                XCTAssertEqual(try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(m)),m)
+                seen=true;break
+            }
+            XCTAssertTrue(seen,role)
+        }
+    }
+    func testFlyMalformedCatchVersionOrPrematureRunnerFailsValidation() throws {
+        var p=fly();p.version=2;XCTAssertThrowsError(try p.validate())
+        p=fly();p.fly=FieldFlyPlay(caught:true,reachAt:10);XCTAssertThrowsError(try p.validate())
+        p=fly();p.outsBefore=2;XCTAssertThrowsError(try p.validate())
+        p=fly();let i=try XCTUnwrap(p.runners.firstIndex { $0.from == 3 })
+        p.runners[i].nodes[0]=FieldNode(at:0,point:DetailedFieldRules.bases[4]);XCTAssertThrowsError(try p.validate())
+    }
+
+    func testTagThirdOutIsTimePlayEarlierHomeRunCountsButLaterDoesNot() throws {
+        let before=[nil,FieldRunnerProfile(speed:60),FieldRunnerProfile(speed:100)]
+        let early=fly(40,90,flight:6,outs:1,before:before)
+        XCTAssertEqual(early.fly?.caught,true);XCTAssertEqual(early.targetBase,3);XCTAssertTrue(early.out)
+        XCTAssertEqual(early.outsAdded,2);XCTAssertEqual(early.runs,1);XCTAssertEqual(early.rbi,1)
+        XCTAssertTrue(early.afterRunners.allSatisfy { $0 == nil });try early.validate()
+        let late=fly(0,90,flight:5.5,outs:1,before:[nil,FieldRunnerProfile(speed:100),FieldRunnerProfile(speed:100)])
+        XCTAssertEqual(late.targetBase,3);XCTAssertTrue(late.out);XCTAssertEqual(late.runs,0);try late.validate()
+    }
+
+    func testFlyReadyExactlyAtBallArrivalIsCatchAndOnlyOneSuccessfulXPEvent() throws {
+        let reach=try XCTUnwrap(fly(before:[nil,nil,nil]).fly).reachAt
+        let p=fly(flight:reach,before:[nil,nil,nil])
+        XCTAssertEqual(p.fly?.caught,true);XCTAssertEqual(p.outsAdded,1)
+        XCTAssertEqual(p.xpPlay.runnerTime,p.xpPlay.ballTime);XCTAssertEqual(p.xpPlay.caughtFly,true)
+        XCTAssertFalse(p.xpPlay.safe);try p.validate()
+    }
+
+    func testSavedTagUpSafeAndOutRenderReadOnlyWithoutChangingLedger() throws {
+        for speed in [60.0,100] {
+            let original=try JSONEncoder().encode(fly(speed:speed))
+            let play=try JSONDecoder().decode(MatchDetailedPlay.self,from:original)
+            let renderer=ImageRenderer(content:DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),animated:false) {}
+                .frame(width:390,height:300))
+            renderer.scale=2
+            let image=try XCTUnwrap(renderer.uiImage)
+            XCTAssertEqual(image.size.width,390);XCTAssertEqual(image.size.height,300)
+            let attachment=XCTAttachment(image:image);attachment.name=speed == 60 ? "Tag up OUT saved board":"Tag up SAFE saved board"
+            attachment.lifetime = .keepAlways;add(attachment)
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:original))
+        }
+    }
+
 }
