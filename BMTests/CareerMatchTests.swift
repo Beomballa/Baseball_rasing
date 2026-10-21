@@ -340,3 +340,198 @@ import SwiftUI
     }
 
 }
+
+@MainActor extension CareerMatchTests {
+    private func growthSetup(role: PlayerRole = .batter, in context: ModelContext) throws -> (CareerPlayer, CareerCalendarState) {
+        var draft = PlayerDraft(); draft.name = "Growth"; draft.schoolID = "hs-ref-001"; draft.role = role
+        let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+        return (player, state)
+    }
+    private func growthSample(role: String = "batter", annual: Double = 0, age: Int = 16, fatigue: Int = 20) -> CareerMatch {
+        var match = CareerMatch(random: 1, isHome: true, role: role, appearance: true, contact: 60, power: 60, discipline: 60, mastery: [:])
+        match.abilityStats = MatchAbilityStats(mental: 60, velocity: role == "pitcher" ? 60 : nil,
+            control: role == "pitcher" ? 60 : nil, stuff: role == "pitcher" ? 60 : nil, stamina: role == "pitcher" ? 60 : nil, fatigue: fatigue)
+        match.abilityExperience = MatchAbilityExperience(year: 2026, age: age, fatigue: fatigue,
+            before: Dictionary(uniqueKeysWithValues: MatchAbilityExperience.kinds(role: role).map { ($0.rawValue, 60.0) }), annualBefore: annual)
+        match.completed = true
+        return match
+    }
+    private func growthResult(_ match: CareerMatch) throws -> MatchAbilityGrowth {
+        try XCTUnwrap(match.abilityExperience).reward(for: match)
+    }
+    func testMatchGrowthIndependentBatterAndPitcherAllocation() throws {
+        var batter = growthSample()
+        batter.line.plateAppearances = 4; batter.line.atBats = 3; batter.line.hits = 2
+        batter.line.homeRuns = 1; batter.line.walks = 1; batter.line.strikeouts = 1
+        let b = try growthResult(batter)
+        XCTAssertEqual(b.rawXP, 2.6); XCTAssertEqual(b.quality, 1); XCTAssertEqual(b.participation, 1)
+        XCTAssertEqual(b.awards.map(\.rawXP), [0.4588, 0.6118, 0.9176, 0.6118])
+        XCTAssertEqual(b.awards.map(\.after), [60.0089, 60.0119, 60.0179, 60.0119])
+        var pitcher = growthSample(role: "pitcher")
+        pitcher.line.pitchingOuts = 18; pitcher.line.pitchingStrikeouts = 18; pitcher.line.pitches = 72
+        let p = try growthResult(pitcher)
+        XCTAssertEqual(p.rawXP, 13); XCTAssertEqual(p.quality, 1); XCTAssertEqual(p.participation, 1)
+        XCTAssertEqual(p.awards.map(\.rawXP), [3.7143, 5.5714, 1.8571, 1.8572])
+        XCTAssertEqual(p.awards.map(\.kind), [.control,.stuff,.stamina,.mental])
+        XCTAssertEqual(p.awards.map(\.after), [60.0724,60.1086,60.0362,60.0362])
+    }
+    func testMatchGrowthParticipationBadGameAgeFatigueAndCaps() throws {
+        var b = growthSample(); b.line.plateAppearances = 4; b.line.atBats = 4; b.line.strikeouts = 4
+        XCTAssertEqual(try growthResult(b).rawXP, 2)
+        XCTAssertEqual(try growthResult(b).awards.first { $0.kind == .power }?.rawXP, 0)
+        b.line.plateAppearances = 1; b.line.atBats = 1; b.line.strikeouts = 1
+        XCTAssertEqual(try growthResult(b).rawXP, 0.5)
+        var p = growthSample(role: "pitcher"); p.line.pitches = 1; p.line.hitsAllowed = 1
+        XCTAssertEqual(try growthResult(p).participation, 0.2); XCTAssertEqual(try growthResult(p).rawXP, 2)
+        p.line.pitches = 0; XCTAssertEqual(try growthResult(p).rawXP, 0)
+        var capped = growthSample(annual: 79.9); capped.line = b.line
+        XCTAssertEqual(try growthResult(capped).rawXP, 0.1)
+        capped.abilityExperience = MatchAbilityExperience(year: 2026, age: 16, fatigue: 20, before: ["contact":100,"power":100,"discipline":100,"mental":100], annualBefore: 0)
+        XCTAssertEqual(try growthResult(capped).rawXP, 0)
+        var adult = growthSample(age: 28), tired = growthSample(fatigue: 80)
+        adult.line = b.line; tired.line = b.line
+        XCTAssertGreaterThan(try growthResult(b).awards[0].gain, try growthResult(adult).awards[0].gain)
+        XCTAssertGreaterThan(try growthResult(b).awards[0].gain, try growthResult(tired).awards[0].gain)
+        var maxed = growthSample(); maxed.line = b.line
+        maxed.abilityExperience = MatchAbilityExperience(year:2026,age:16,fatigue:20,before:["contact":100,"power":60,"discipline":60,"mental":60],annualBefore:0)
+        let award = try growthResult(maxed)
+        XCTAssertEqual(award.awards[0].rawXP, 0); XCTAssertEqual(TrainingRules.round(award.awards.reduce(0) {$0 + $1.rawXP}), award.rawXP)
+    }
+    func testMatchGrowthAnnualRoleParityAndAllocationBudget() throws {
+        var batter = growthSample(), pitcher = growthSample(role: "pitcher")
+        batter.line.plateAppearances = 4; batter.line.atBats = 4; batter.line.hits = 4
+        pitcher.line.pitches = 72; pitcher.line.pitchingOuts = 18; pitcher.line.pitchingStrikeouts = 18
+        XCTAssertEqual(try growthResult(batter).rawXP * 30, 78)
+        XCTAssertEqual(try growthResult(pitcher).rawXP * 6, 78)
+        for raw in [0.0, 77.4, 79.9999, 80] {
+            var match = growthSample(annual: raw); match.line = batter.line
+            let r = try growthResult(match)
+            XCTAssertLessThanOrEqual(TrainingRules.round(raw + r.rawXP), 80)
+            XCTAssertEqual(TrainingRules.round(r.awards.reduce(0) {$0 + $1.rawXP}), r.rawXP)
+        }
+    }
+    func testMatchGrowthBothRolesAtomicFailureResumeAndNextSnapshot() throws {
+        enum Failure: Error { case injected }
+        for role in PlayerRole.allCases {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let url = directory.appendingPathComponent("growth.store")
+            let partial = try autoreleasepool {
+                let container = try CareerStore.makeContainer(url: url), c = container.mainContext
+                let (p,s) = try growthSetup(role: role, in: c), r = try ready(p,s,in:c)
+                try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:role == .batter ? .watch : .pitch,pitchCode:role == .pitcher ? "four-seam" : nil,in:c)
+                XCTAssertNil(try r.snapshot().abilityExperience?.result)
+                return r.payload
+            }
+            let completed = try autoreleasepool {
+                let container = try CareerStore.makeContainer(url: url), c = container.mainContext
+                let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first)
+                let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let r = try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first)
+                XCTAssertEqual(r.payload, partial)
+                let before = try r.snapshot(), revision = r.revision, fatigue = p.fatigue, calendarRevision = s.revision
+                let values = try MatchAbilityExperience.kinds(role: p.roleRaw).map { try CareerTrainingStore.value(player:p,code:nil,kind:$0,in:c) }
+                let pitches = Dictionary(uniqueKeysWithValues:p.pitches.map { ($0.code,$0.mastery) }), positions = try PlayerPositionStore.profile(playerID:p.id,in:c)?.payload
+                XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:revision,input:.automatic,in:c,save:{ _ in throw Failure.injected }))
+                XCTAssertEqual(r.payload,partial); XCTAssertEqual(r.revision,revision); XCTAssertEqual(p.fatigue,fatigue); XCTAssertEqual(s.revision,calendarRevision)
+                XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID:p.id,year:2026,in:c),0)
+                XCTAssertEqual(try MatchAbilityExperience.kinds(role:p.roleRaw).map { try CareerTrainingStore.value(player:p,code:nil,kind:$0,in:c) },values)
+                XCTAssertEqual(try PlayerPositionStore.profile(playerID:p.id,in:c)?.payload,positions)
+                var expected = before; try expected.advance(.automatic)
+                try CareerMatchStore.advance(player:p,state:s,record:r,revision:revision,input:.automatic,in:c)
+                XCTAssertEqual(try r.snapshot(),expected)
+                let growth = try XCTUnwrap(expected.abilityExperience?.result)
+                for award in growth.awards { XCTAssertEqual(try CareerTrainingStore.value(player:p,code:nil,kind:award.kind,in:c),award.after) }
+                XCTAssertEqual(Dictionary(uniqueKeysWithValues:p.pitches.map { ($0.code,$0.mastery) }),pitches)
+                XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID:p.id,year:2026,in:c),growth.rawXP)
+                return r.payload
+            }
+            try autoreleasepool {
+                let container = try CareerStore.makeContainer(url:url),c = container.mainContext
+                let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first), s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let r = try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first)
+                XCTAssertEqual(r.payload,completed)
+                let original = try r.snapshot(), fatigue = p.fatigue
+                XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,completed)
+                XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+                XCTAssertEqual(p.fatigue,fatigue); XCTAssertEqual(r.payload,completed)
+                try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+                let next = try XCTUnwrap(s.fixtures(for:p,year:2026).first { $0.date.description > p.gameDate && $0.isAppearance(for:role) })
+                p.gameDate = next.date.description; try c.save()
+                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let future = try CareerMatchStore.start(player:p,state:s,in:c).snapshot()
+                XCTAssertEqual(future.abilityExperience?.before,Dictionary(uniqueKeysWithValues:try XCTUnwrap(original.abilityExperience?.result).awards.map { ($0.kind.rawValue,$0.after) }))
+                XCTAssertEqual(future.abilityExperience?.annualBefore,original.abilityExperience?.result?.rawXP)
+                XCTAssertEqual(future.mastery,original.mastery)
+            }
+        }
+    }
+    func testMatchGrowthOldPendingAndCompletedPayloadsAreNotRetrofitted() throws {
+        let container = try CareerStore.makeContainer(inMemory:true),c = container.mainContext
+        let (p,s) = try growthSetup(in:c), r = try ready(p,s,in:c)
+        var legacy = try r.snapshot(); legacy.abilityExperience = nil
+        r.payload = try JSONEncoder().encode(legacy); try c.save()
+        let values = [p.contact,p.power,p.discipline], first = r.payload
+        XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,first)
+        try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+        let completed = r.payload
+        XCTAssertNil(try r.snapshot().abilityExperience); XCTAssertEqual([p.contact,p.power,p.discipline],values)
+        XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID:p.id,year:2026,in:c),0)
+        XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,completed)
+    }
+    func testMatchGrowthStaleValuesCorruptRewardAndHistoryAreRejected() throws {
+        let container = try CareerStore.makeContainer(inMemory:true),c = container.mainContext
+        let (p,s) = try growthSetup(in:c),r = try ready(p,s,in:c)
+        let first = r.payload, original = p.contact
+        p.contact += 1; try c.save()
+        XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+        XCTAssertEqual(r.payload,first); XCTAssertFalse(r.completed)
+        p.contact = original; try c.save()
+        try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+        var corrupted = try r.snapshot(); corrupted.abilityExperience?.version = 99
+        r.payload = try JSONEncoder().encode(corrupted); XCTAssertThrowsError(try r.snapshot()); c.rollback()
+        XCTAssertThrowsError(try CareerMatchStore.annualAbilityXP(playerID:p.id,year:2026,records:[r,r]))
+        XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID:UUID(),year:2026,records:[r]),0)
+        XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID:p.id,year:2027,records:[r]),0)
+    }
+    func testMatchGrowthFullYearAppearanceIsolationAndNewYearBudget() throws {
+        for role in PlayerRole.allCases {
+            let container = try CareerStore.makeContainer(inMemory:true),c = container.mainContext
+            let (p,s) = try growthSetup(role:role,in:c)
+            let fixtures = try s.fixtures(for:p,year:2026)
+            var appearances = 0, total = 0.0
+            for fixture in fixtures {
+                p.gameDate = fixture.date.description; try c.save()
+                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let r = try CareerMatchStore.start(player:p,state:s,in:c)
+                XCTAssertEqual(try r.snapshot().abilityExperience?.annualBefore ?? total,total)
+                try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+                if fixture.isAppearance(for:role) {
+                    appearances += 1
+                    total = TrainingRules.round(total + (try XCTUnwrap(r.snapshot().abilityExperience?.result)).rawXP)
+                } else { XCTAssertNil(try r.snapshot().abilityExperience); XCTAssertEqual(try r.snapshot().line,MatchLine()) }
+                XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID:p.id,year:2026,in:c),total)
+            }
+            XCTAssertEqual(appearances,role == .batter ? 30 : 6); XCTAssertLessThanOrEqual(total,78)
+            p.gameDate = "2027-04-01"; try c.save()
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).snapshot().abilityExperience?.annualBefore,0)
+            XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID:p.id,year:2026,in:c),total)
+        }
+    }
+    func testMatchGrowthLeavesRNGOutcomesAndExistingPitchMasteriesUnchanged() throws {
+        for role in ["batter","pitcher"] {
+            for seed in 1...40 {
+                var match = growthSample(role:role); match.completed = false; match.random = UInt64(seed)
+                var legacy = match; legacy.abilityExperience = nil
+                try match.advance(.automatic); try legacy.advance(.automatic)
+                XCTAssertEqual(match.random,legacy.random); XCTAssertEqual(match.line,legacy.line)
+                XCTAssertEqual(match.homeScore,legacy.homeScore); XCTAssertEqual(match.awayScore,legacy.awayScore)
+                XCTAssertEqual(match.fatigueCost,legacy.fatigueCost); XCTAssertEqual(match.mastery,legacy.mastery)
+                try match.abilityExperience?.validate(match:match)
+            }
+        }
+    }
+}

@@ -301,6 +301,14 @@ struct CareerGameView: View {
                     }
                 }
             }
+            if let experience = match.abilityExperience {
+                MatchAbilityGrowthPanel(experience: experience)
+            } else {
+                GamePanel(title: "경기 능력 성장", onBoard: true) {
+                    Text(match.appearance ? "이전 규칙 경기 · 능력 XP 소급 지급 없음" : "비출전 팀 경기 · 개인 능력 XP 없음")
+                        .font(.caption).accessibilityIdentifier("gameAbilityXPExcluded")
+                }
+            }
             if let experience = match.positionExperience {
                 GamePanel(title: "실전 포지션 성장 · " + experience.position.label, onBoard: true) {
                     Text("수비 참여 \(experience.events.count)회 · 아웃 성공 \(experience.successes)회")

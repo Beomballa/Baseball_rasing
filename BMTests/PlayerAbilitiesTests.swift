@@ -497,6 +497,9 @@ extension RawTrainingTests {
             XCTAssertEqual(try record.snapshot(),pending)
             let profile=try XCTUnwrap(PlayerAbilityStore.profile(playerID:player.id,in:context)); profile.stuff=99;try context.save()
             XCTAssertEqual(try record.snapshot().abilityStats,pending.abilityStats)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:.automatic,in:context))
+            XCTAssertFalse(record.completed)
+            profile.stuff = pending.abilityStats?.stuff; try context.save()
             try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:.automatic,in:context)
             XCTAssertTrue(record.completed)
             let fatigue=player.fatigue,payload=record.payload

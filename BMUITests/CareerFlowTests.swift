@@ -1746,3 +1746,64 @@ extension CareerFlowTests {
         }
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testMatchAbilityGrowthBothRolesResultHomeResumeAndAnnualBudget() throws {
+        let app = XCUIApplication(); app.launch()
+        for pitcher in [false,true] {
+            if pitcher { reveal(app.buttons["createOtherRole"],in:app); app.buttons["createOtherRole"].tap() }
+            createDashboardSample(app,name:pitcher ? "GrowthPitch" : "GrowthBat")
+            let date = app.staticTexts["calendarDate"].label
+            reveal(app.buttons["restToday"],in:app); app.buttons["restToday"].tap()
+            reveal(app.buttons["openCareerGame"],in:app); app.buttons["openCareerGame"].tap()
+            let primary = app.buttons[pitcher ? "gamePitch" : "requestGamePitch"]
+            XCTAssertTrue(primary.waitForExistence(timeout:5)); primary.tap()
+            if pitcher { app.buttons["gameRelease"].tap() }
+            else { XCTAssertTrue(app.buttons["gameHit"].waitForExistence(timeout:2)); app.buttons["gameHit"].tap() }
+            waitForEnabled(app.buttons["gameAutomatic"],timeout:15)
+            app.terminate(); app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:5))
+            let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+            if role.exists { reveal(role,in:app); role.tap() }
+            reveal(app.buttons["openCareerGame"],in:app)
+            XCTAssertTrue(app.buttons["openCareerGame"].label.contains("이어하기")); app.buttons["openCareerGame"].tap()
+            app.buttons["gameAutomatic"].tap(); app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
+            let xp = app.staticTexts["gameAbilityXP"]; reveal(xp,in:app)
+            let awarded = xp.label
+            XCTAssertTrue(awarded.contains("경험 XP +")); XCTAssertNotEqual(awarded,"경험 XP +0.0")
+            let rowID = pitcher ? "control" : "discipline"
+            let row = app.descendants(matching:.any).matching(identifier:"gameAbilityGrowth-" + rowID).firstMatch
+            reveal(row,in:app); XCTAssertTrue(row.exists)
+            let rowLabel = row.label
+            XCTAssertFalse(app.staticTexts["gameAnnualAbilityXP"].label.contains("2,026"))
+            let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = pitcher ? "Pitcher match ability growth" : "Batter match ability growth"; shot.lifetime = .keepAlways; add(shot)
+            reveal(app.buttons["gameReturnHome"],in:app); app.buttons["gameReturnHome"].tap()
+            reveal(app.staticTexts["homeAbilityXP"],in:app)
+            XCTAssertEqual(app.staticTexts["homeAbilityXP"].label,awarded)
+            app.buttons["homeMatchGrowthDetails"].tap()
+            let homeRow = app.descendants(matching:.any).matching(identifier:"homeRecentAbilityGrowth-" + rowID).firstMatch
+            reveal(homeRow,in:app); XCTAssertEqual(homeRow.label,rowLabel)
+            reveal(app.buttons["homeMatchGrowthDetails"],in:app); app.buttons["homeMatchGrowthDetails"].tap()
+            let budget = app.staticTexts["homeAnnualAbilityBudget"].label
+            let homeShot = XCTAttachment(screenshot:app.screenshot()); homeShot.name = pitcher ? "Pitcher home growth summary" : "Batter home growth summary"; homeShot.lifetime = .keepAlways; add(homeShot)
+            let fatigue = app.staticTexts["homeFatigue"].label
+            XCTAssertEqual(app.staticTexts["calendarDate"].label,date)
+            app.terminate(); app.launchArguments = ["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+            let restoredRole = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+            if restoredRole.exists { reveal(restoredRole,in:app); restoredRole.tap() }
+            reveal(app.staticTexts["homeAbilityXP"],in:app); XCTAssertEqual(app.staticTexts["homeAbilityXP"].label,awarded)
+            XCTAssertEqual(app.staticTexts["homeAnnualAbilityBudget"].label,budget)
+            reveal(app.buttons["openCareerGame"],in:app); app.buttons["openCareerGame"].tap()
+            let reopened = app.descendants(matching:.any).matching(identifier:"gameAbilityGrowth-" + rowID).firstMatch
+            reveal(reopened,in:app); XCTAssertEqual(reopened.label,rowLabel)
+            let large = XCTAttachment(screenshot:app.screenshot()); large.name = pitcher ? "Pitcher growth accessibility XXXL" : "Batter growth accessibility XXXL"; large.lifetime = .keepAlways; add(large)
+            reveal(app.buttons["gameReturnHome"],in:app); app.buttons["gameReturnHome"].tap()
+            XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+            app.terminate(); app.launchArguments = []; app.launch()
+            let normalRole = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+            if normalRole.exists { reveal(normalRole,in:app); normalRole.tap() }
+            reveal(app.buttons["advanceDay"],in:app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled)
+        }
+    }
+}

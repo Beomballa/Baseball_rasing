@@ -220,9 +220,12 @@ enum TrainingRules {
     static func growth(before: Double, score: Double, fatigue: Int, age: Int, pitch: Bool) -> Double {
         let base = pitch ? 0.12 : 0.08
         let performance = score >= 90 ? 1.3 : score >= 75 ? 1.2 : score >= 50 ? 1.1 : 1
+        return round(min(100, before + base * performance * growthEfficiency(before: before, fatigue: fatigue, age: age)))
+    }
+    static func growthEfficiency(before: Double, fatigue: Int, age: Int) -> Double {
         let level = before < 50 ? 1.0 : before < 70 ? 0.65 : before < 80 ? 0.4 : before < 90 ? 0.2 : before < 95 ? 0.08 : 0.025
         let recovery = fatigue <= 40 ? 1.0 : fatigue < 60 ? 0.8 : 0.5
-        return round(min(100, before + base * performance * level * recovery * ageMultiplier(age)))
+        return level * recovery * ageMultiplier(age)
     }
 }
 

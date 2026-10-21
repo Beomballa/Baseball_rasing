@@ -115,3 +115,86 @@ struct HomeDetailButton: View {
             .accessibilityIdentifier(identifier).accessibilityValue(expanded ? "펼침" : "접힘")
     }
 }
+
+struct MatchAbilityGrowthPanel: View {
+    let experience: MatchAbilityExperience
+    var prefix = "game"
+    var body: some View {
+        if let result = experience.result {
+            GamePanel(title: "경기 능력 성장", onBoard: true) {
+                Text("경험 XP +\(result.rawXP, specifier: "%.1f")")
+                    .font(.headline).foregroundStyle(GameTheme.growth).accessibilityIdentifier(prefix + "AbilityXP")
+                Text("출전 \(result.participation * 100, specifier: "%.0f")% · 성과 보너스 \(result.quality * 30, specifier: "%.0f")%")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                ForEach(result.awards.filter { $0.rawXP > 0 }, id: \.kind) { award in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(award.kind.label) · XP +\(award.rawXP, specifier: "%.2f")").font(.subheadline.bold())
+                        Text("\(award.before, specifier: "%.1f") → \(award.after, specifier: "%.1f")")
+                            .font(.caption.monospaced()).foregroundStyle(GameTheme.growth)
+                    }.accessibilityElement(children: .combine).accessibilityIdentifier(prefix + "AbilityGrowth-" + award.kind.rawValue)
+                }
+                if result.rawXP == 0 {
+                    Text(experience.annualBefore >= MatchAbilityExperience.annualCap ? "올해 경기 성장 예산을 모두 사용했습니다." : "성장 대상의 출전·성과 또는 성장 여유가 없어 XP를 지급하지 않았습니다.")
+                        .font(.caption)
+                }
+                Text("\(String(experience.year))년 예산 \(experience.annualBefore + result.rawXP, specifier: "%.1f") / 80 XP")
+                    .font(.caption.monospaced()).accessibilityIdentifier(prefix + "AnnualAbilityXP")
+                Text("나이·능력·시작 피로 보정 · 소수 성장은 내부 누적 · 다음 새 경기 반영")
+                    .font(.caption2).foregroundStyle(GameTheme.boardMuted)
+            }
+        }
+    }
+}
+
+struct MatchAbilityGrowthHomePanel: View {
+    let player: CareerPlayer
+    let records: [CareerMatchRecord]
+    @State private var annualXP: Double?
+    @State private var recent: MatchAbilityExperience?
+    @State private var recentDate = ""
+    @State private var showDetails = false
+    @State private var errorMessage: String?
+    private var refreshKey: String {
+        player.gameDate + records.filter { $0.playerID == player.id }.map { $0.key + ":\($0.revision)" }.joined(separator: ";")
+    }
+    private func load() {
+        do {
+            let year = try GameDate(player.gameDate).year
+            annualXP = try CareerMatchStore.annualAbilityXP(playerID: player.id, year: year, records: records)
+            let latest = records.first(where: { $0.playerID == player.id && $0.completed && $0.appearance })
+            recent = try latest?.snapshot().abilityExperience
+            recentDate = latest?.gameDate ?? ""
+            errorMessage = nil
+        } catch { annualXP = nil; recent = nil; errorMessage = error.localizedDescription }
+    }
+    var body: some View {
+        VStack(spacing: 8) {
+            GamePanel(title: "올해 경기 성장", onBoard: true) {
+                if let annualXP {
+                    Text("경험 XP \(annualXP, specifier: "%.1f") / 80")
+                        .font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeAnnualAbilityBudget")
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(GameTheme.boardPanel)
+                            Rectangle().fill(GameTheme.growth).frame(width: geometry.size.width * annualXP / 80)
+                        }.overlay(Rectangle().strokeBorder(GameTheme.boardLine))
+                    }.frame(height: 8).accessibilityHidden(true)
+                    if let result = recent?.result {
+                        Text("최근 출전 · " + recentDate).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Text("경험 XP +\(result.rawXP, specifier: "%.1f")").font(.subheadline.bold())
+                            .foregroundStyle(GameTheme.growth).accessibilityIdentifier("homeAbilityXP")
+                        HomeDetailButton(title: "최근 경기 성장 내역", expanded: $showDetails, identifier: "homeMatchGrowthDetails")
+                    } else {
+                        Text("새 규칙의 공식 경기 완료 후 성장 내역이 표시됩니다. 이전 경기는 소급 지급하지 않습니다.").font(.caption)
+                    }
+                } else if let errorMessage {
+                    Text("경기 성장 조회 실패 · " + errorMessage).font(.caption)
+                    Button("성장 내역 다시 확인", action: load).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("retryAbilityGrowth")
+                }
+            }
+            if let recent, showDetails {
+                MatchAbilityGrowthPanel(experience: recent, prefix: "homeRecent")
+            }
+        }.task(id: refreshKey) { load() }
+    }
+}

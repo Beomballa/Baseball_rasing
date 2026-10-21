@@ -32,6 +32,7 @@ struct CareerMatch: Codable, Equatable {
     var fieldStats: MatchFieldStats?
     var lastFieldPlay: MatchFieldPlay?
     var positionExperience: MatchPositionExperience?
+    var abilityExperience: MatchAbilityExperience?
     var detailedFieldVersion: Int?
     var fieldPlays: [MatchDetailedPlay]?
     var runnerProfiles: [FieldRunnerProfile?]?
@@ -108,6 +109,10 @@ struct CareerMatch: Codable, Equatable {
         } else {
             settle()
             if !completed { step(input, pitchCode: pitchCode, control: control); settle() }
+        }
+        if completed, let experience = abilityExperience {
+            let reward = experience.reward(for: self)
+            abilityExperience?.result = reward
         }
     }
 
@@ -411,5 +416,80 @@ extension CareerMatch {
             guard line.runsAllowed == staff.runs[MatchPitching.starterID(home:isHome),default:0],
                   line.pitches == staff.count(home:isHome),ownPitcherChange.map({$0.outsAtExit == line.pitchingOuts && $0.runsAtExit <= line.runsAllowed}) ?? true else {throw MatchError.invalidRecord}
         }
+    }
+}
+
+struct MatchAbilityAward: Codable, Equatable {
+    let kind: TrainingKind
+    let rawXP: Double
+    let before: Double
+    let after: Double
+    var gain: Double { TrainingRules.round(after - before) }
+}
+
+struct MatchAbilityGrowth: Codable, Equatable {
+    let rawXP: Double
+    let participation: Double
+    let quality: Double
+    let awards: [MatchAbilityAward]
+}
+
+/// Optional match payload: old in-progress and completed matches never acquire this reward.
+struct MatchAbilityExperience: Codable, Equatable {
+    var version = 1
+    let year: Int
+    let age: Int
+    let fatigue: Int
+    let before: [String: Double]
+    let annualBefore: Double
+    var result: MatchAbilityGrowth?
+    static let annualCap = 80.0
+    static func kinds(role: String) -> [TrainingKind] {
+        role == "batter" ? [.contact, .power, .discipline, .mental] : [.control, .stuff, .stamina, .mental]
+    }
+    func reward(for match: CareerMatch) -> MatchAbilityGrowth {
+        let line = match.line, batter = match.role == "batter"
+        let pa = Double(line.plateAppearances), outs = Double(line.pitchingOuts)
+        let participation = !match.appearance ? 0 : batter ? min(1, pa / 4)
+            : line.pitches > 0 ? max(0.2, min(1, outs / 18)) : 0
+        let quality = batter ? min(1, Double(line.hits + line.walks + 2 * line.homeRuns) / max(1, pa))
+            : 0.5 * min(1, Double(line.pitchingStrikeouts) / max(1, outs))
+                + 0.5 * (1 - min(1, Double(line.hitsAllowed + line.pitchingWalks) / max(1, outs)))
+        let kinds = Self.kinds(role: match.role)
+        let weights: [Double] = batter
+            ? [Double(line.atBats), Double(4 * line.homeRuns), pa + Double(2 * line.walks), pa]
+            : [1 + max(0, 1 - Double(line.pitchingWalks) * 4 / Double(max(1, line.pitches))),
+               outs > 0 ? 1 + 2 * Double(line.pitchingStrikeouts) / outs : 0, min(1, outs / 18), 1]
+        let eligible = kinds.indices.filter { before[kinds[$0].rawValue, default: 100] < 100 && weights[$0] > 0 }
+        let totalWeight = eligible.reduce(0.0) { $0 + weights[$1] }
+        let raw = match.completed && totalWeight > 0
+            ? TrainingRules.round(min(max(0, Self.annualCap - annualBefore), (batter ? 2 : 10) * participation * (1 + 0.3 * quality))) : 0
+        var remaining = raw
+        let awards = kinds.indices.map { index in
+            let value = before[kinds[index].rawValue, default: 100]
+            // Keep the sum of rounded allocations equal to the annual raw budget exactly.
+            let allocation = !eligible.contains(index) ? 0 : index == eligible.last ? remaining
+                : min(remaining, TrainingRules.round(raw * weights[index] / (totalWeight > 0 ? totalWeight : 1)))
+            remaining = TrainingRules.round(remaining - allocation)
+            return MatchAbilityAward(kind: kinds[index], rawXP: allocation, before: value,
+                after: TrainingRules.round(min(100, value + allocation / 100 * TrainingRules.growthEfficiency(before: value, fatigue: fatigue, age: age))))
+        }
+        return MatchAbilityGrowth(rawXP: raw, participation: participation, quality: quality, awards: awards)
+    }
+    func validate(match: CareerMatch) throws {
+        let kinds = Self.kinds(role: match.role)
+        guard version == 1, ["batter", "pitcher"].contains(match.role), match.appearance,
+              (1...9999).contains(year), (1...120).contains(age), (0...100).contains(fatigue),
+              annualBefore.isFinite, (0...Self.annualCap).contains(annualBefore),
+              Set(before.keys) == Set(kinds.map(\.rawValue)),
+              before.values.allSatisfy({ $0.isFinite && (0...100).contains($0) }) else { throw MatchError.invalidRecord }
+        guard let stats = match.abilityStats, stats.version == 1, stats.mental == before["mental"], stats.fatigue == fatigue,
+              match.role == "batter" ? (match.contact == before["contact"] && match.power == before["power"] && match.discipline == before["discipline"])
+                : (stats.control == before["control"] && stats.stuff == before["stuff"] && stats.stamina == before["stamina"]) else { throw MatchError.invalidRecord }
+        let l = match.line
+        guard [l.plateAppearances,l.atBats,l.hits,l.homeRuns,l.walks,l.strikeouts,l.pitchingOuts,l.pitches,l.hitsAllowed,l.pitchingWalks,l.pitchingStrikeouts].allSatisfy({ (0...100_000).contains($0) }),
+              l.homeRuns <= l.hits, l.hits <= l.atBats, l.atBats + l.walks <= l.plateAppearances,
+              l.strikeouts <= l.atBats, l.pitchingStrikeouts <= l.pitchingOuts,
+              match.completed ? result == reward(for: match) : result == nil else { throw MatchError.invalidRecord }
     }
 }

@@ -40,6 +40,10 @@ enum CareerSchemaV3: VersionedSchema {
             try match.validatePitching()
             try match.validateDetailedField()
             try match.positionExperience?.validate(match: match)
+            try match.abilityExperience?.validate(match: match)
+            if let growth = match.abilityExperience {
+                guard growth.year == (try GameDate(gameDate)).year else { throw MatchError.invalidRecord }
+            }
             return match
         }
     }
@@ -104,6 +108,15 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         }
         match.pitching=MatchPitching(startingFatigue:player.fatigue)
         match.detailedFieldVersion=5;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
+        if match.appearance, match.abilityStats != nil {
+            let values = try Dictionary(uniqueKeysWithValues: MatchAbilityExperience.kinds(role: player.roleRaw).map {
+                ($0.rawValue, try CareerTrainingStore.value(player: player, code: nil, kind: $0, in: context))
+            })
+            let year = try GameDate(player.gameDate).year
+            match.abilityExperience = MatchAbilityExperience(year: year, age: try state.age(of: player),
+                fatigue: player.fatigue, before: values, annualBefore: try annualAbilityXP(playerID: player.id, year: year, in: context))
+            try match.abilityExperience?.validate(match: match)
+        }
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"
@@ -134,6 +147,17 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         try match.validatePitching()
         try match.validateDetailedField()
         try match.positionExperience?.validate(match: match)
+        try match.abilityExperience?.validate(match: match)
+        var abilityReward: (PlayerAbilities, MatchAbilityGrowth)?
+        if match.completed, let experience = match.abilityExperience, let result = experience.result {
+            guard player.fatigue == experience.fatigue,
+                  try annualAbilityXP(playerID: player.id, year: experience.year, in: context) == experience.annualBefore,
+                  let profile = try PlayerAbilityStore.profile(playerID: player.id, in: context) else { throw MatchError.stale }
+            for award in result.awards {
+                guard try CareerTrainingStore.value(player: player, code: nil, kind: award.kind, in: context) == award.before else { throw MatchError.stale }
+            }
+            abilityReward = (profile, result)
+        }
         let payload = try JSONEncoder().encode(match)
         let positionPayload = try positionReward.map { try JSONEncoder().encode($0.1) }
         record.payload = payload
@@ -147,9 +171,42 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
                 profile.payload = positionPayload
                 profile.revision += 1
             }
+            if let (profile, growth) = abilityReward {
+                for award in growth.awards {
+                    switch award.kind {
+                    case .contact: player.contact = award.after
+                    case .power: player.power = award.after
+                    case .discipline: player.discipline = award.after
+                    default: try profile.grow(award.kind, to: award.after)
+                    }
+                }
+            }
         }
         state.revision += 1
-        // Result, position XP, personal fatigue and completion gate share one explicit save.
+        // Result, ability growth, position XP, fatigue and completion share one explicit save.
         do { try save(context) } catch { context.rollback(); throw error }
+    }
+
+    static func annualAbilityXP(playerID: UUID, year: Int, in context: ModelContext) throws -> Double {
+        let records = try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate: #Predicate { $0.playerID == playerID }))
+        return try annualAbilityXP(playerID: playerID, year: year, records: records)
+    }
+    static func annualAbilityXP(playerID: UUID, year: Int, records: [CareerMatchRecord]) throws -> Double {
+        let selected = try records.filter {
+            guard $0.playerID == playerID, $0.completed else { return false }
+            return try GameDate($0.gameDate).year == year
+        }
+        guard Set(selected.map(\.key)).count == selected.count else { throw MatchError.invalidRecord }
+        var total = 0.0
+        for record in selected.sorted(by: { ($0.gameDate, $0.key) < ($1.gameDate, $1.key) }) {
+            let match = try record.snapshot()
+            if let experience = match.abilityExperience, let result = experience.result {
+                guard record.appearance, record.key == CareerMatchRecord.key(playerID, record.fixtureID),
+                      experience.annualBefore == total else { throw MatchError.invalidRecord }
+                total = TrainingRules.round(total + result.rawXP)
+            }
+        }
+        guard total <= MatchAbilityExperience.annualCap else { throw MatchError.invalidRecord }
+        return total
     }
 }
