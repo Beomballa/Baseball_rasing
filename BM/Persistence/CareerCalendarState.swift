@@ -102,3 +102,20 @@ typealias CareerCalendarState = CareerSchemaV2.CalendarState
         return try AnnualLeague.make(playerID:player.id,schoolIDs:state.schoolIDs,origin:origin,startAge:player.startAge,today:today,year:year,official:official,pending:pending)
     }
 }
+
+@MainActor enum CareerSeasonStore {
+    static func load(player: CareerPlayer, state: CareerCalendarState, year: Int, in context: ModelContext) throws -> CareerSeasonSummary {
+        let id = player.id
+        let records = try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate: #Predicate { $0.playerID == id }))
+        return try snapshot(player: player, state: state, year: year, records: records)
+    }
+    static func snapshot(player: CareerPlayer, state: CareerCalendarState, year: Int, records: [CareerMatchRecord]) throws -> CareerSeasonSummary {
+        let league = try AnnualLeagueStore.snapshot(player: player, state: state, year: year, records: records)
+        var totals = PersonalSeasonTotals()
+        for record in records where record.playerID == player.id && record.completed && record.appearance {
+            guard try GameDate(record.gameDate).year == year else { continue }
+            try totals.add(record.snapshot().line)
+        }
+        return CareerSeasonSummary(league: league, totals: totals)
+    }
+}

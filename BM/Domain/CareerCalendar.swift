@@ -201,3 +201,44 @@ enum LeagueError: LocalizedError {
         }
     }
 }
+
+struct PersonalSeasonTotals: Equatable {
+    var games = 0
+    var line = MatchLine()
+    var average: String { line.atBats == 0 ? "—" : String(format: "%.3f", Double(line.hits) / Double(line.atBats)) }
+    var innings: String { "\(line.pitchingOuts / 3).\(line.pitchingOuts % 3)" }
+    var whip: String { line.pitchingOuts == 0 ? "—" : String(format: "%.2f", (Double(line.hitsAllowed) + Double(line.pitchingWalks)) * 3 / Double(line.pitchingOuts)) }
+
+    mutating func add(_ value: MatchLine) throws {
+        let keys: [WritableKeyPath<MatchLine, Int>] = [\.plateAppearances, \.atBats, \.hits, \.homeRuns, \.walks, \.strikeouts, \.rbi,
+            \.pitchingOuts, \.pitches, \.hitsAllowed, \.runsAllowed, \.pitchingWalks, \.pitchingStrikeouts]
+        guard keys.allSatisfy({ value[keyPath: $0] >= 0 }), value.homeRuns <= value.hits,
+              value.hits <= value.atBats, value.atBats <= value.plateAppearances,
+              value.walks <= value.plateAppearances - value.atBats,
+              value.strikeouts <= value.atBats else { throw LeagueError.invalidRecord }
+        var next = line
+        for key in keys {
+            let sum = next[keyPath: key].addingReportingOverflow(value[keyPath: key])
+            guard !sum.overflow else { throw LeagueError.invalidRecord }
+            next[keyPath: key] = sum.partialValue
+        }
+        let count = games.addingReportingOverflow(1)
+        guard !count.overflow else { throw LeagueError.invalidRecord }
+        line = next; games = count.partialValue
+    }
+}
+
+struct CareerSeasonSummary: Equatable {
+    let league: AnnualLeague
+    let totals: PersonalSeasonTotals
+    // A legacy partial season is not a completed 30-game season.
+    var finalized: Bool {
+        league.fixtures.count == 90 && league.results.count == 90 && league.pendingIDs.isEmpty &&
+        league.standings.count == 6 && league.standings.allSatisfy { $0.games == 30 }
+    }
+    var finalStandings: [LeagueStanding] {
+        guard finalized, league.standings.allSatisfy({ $0.decided == 0 }) else { return league.standings }
+        return league.standings.map { var row = $0; row.rank = 1; return row }
+    }
+    var champions: [LeagueStanding] { finalized ? finalStandings.filter { $0.rank == 1 } : [] }
+}

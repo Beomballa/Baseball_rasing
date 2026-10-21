@@ -546,4 +546,136 @@ import SwiftData
         }
     }
 
+    private func finishSeason(player p: CareerPlayer, state s: CareerCalendarState, in c: ModelContext) throws -> [CareerMatchRecord] {
+        let fixtures = try s.fixtures(for: p, year: GameDate(p.gameDate).year)
+        var records: [CareerMatchRecord] = []
+        for f in fixtures {
+            while try GameDate(p.gameDate) < f.date {
+                try CalendarProgression.advanceDay(player: p, state: s, revision: s.revision, automaticRest: true, in: c)
+            }
+            if !s.hasAction(on: p.gameDate) { try CalendarProgression.rest(player: p, state: s, revision: s.revision, in: c) }
+            let r = try CareerMatchStore.start(player: p, state: s, in: c)
+            try CareerMatchStore.advance(player: p, state: s, record: r, revision: r.revision, input: .automatic, in: c)
+            records.append(r)
+        }
+        return records
+    }
+    func testSeasonTotalsUseAggregateDenominatorsIntegerOutsAndZeroDashes() throws {
+        var totals = PersonalSeasonTotals()
+        XCTAssertEqual(totals.average, "—"); XCTAssertEqual(totals.whip, "—"); XCTAssertEqual(totals.innings, "0.0")
+        var a = MatchLine(); a.plateAppearances = 4; a.atBats = 3; a.hits = 2; a.homeRuns = 1; a.walks = 1
+        a.pitchingOuts = 4; a.hitsAllowed = 2; a.pitchingWalks = 1
+        var b = MatchLine(); b.plateAppearances = 2; b.atBats = 1; b.walks = 1; b.pitchingOuts = 5; b.pitchingWalks = 1
+        try totals.add(a); try totals.add(b)
+        XCTAssertEqual(totals.games, 2); XCTAssertEqual(totals.average, "0.500")
+        XCTAssertEqual(totals.innings, "3.0"); XCTAssertEqual(totals.whip, "1.33")
+        XCTAssertEqual(totals.line.walks, 2)
+        var bad = MatchLine(); bad.hits = 1
+        XCTAssertThrowsError(try totals.add(bad)); XCTAssertEqual(totals.games, 2)
+        bad = MatchLine(); bad.pitches = -1; XCTAssertThrowsError(try totals.add(bad))
+        bad = MatchLine(); bad.rbi = Int.max; try totals.add(bad)
+        bad.rbi = 1; XCTAssertThrowsError(try totals.add(bad)); XCTAssertEqual(totals.line.rbi, Int.max)
+    }
+    func testSeasonBothRolesThirtyTeamGamesFinalDayPendingThenFinalAndRewardOnce() throws {
+        for role in PlayerRole.allCases {
+            let (container, p, s) = try fixture(date: "2026-04-01", role: role), c = container.mainContext
+            let records = try finishSeason(player: p, state: s, in: c)
+            let last = try XCTUnwrap(records.last)
+            let unfinished = try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c)
+            XCTAssertEqual(records.count, 30); XCTAssertFalse(unfinished.finalized); XCTAssertTrue(unfinished.champions.isEmpty)
+            XCTAssertEqual(unfinished.league.results.count, 88)
+            let personal = try records.filter(\.appearance).map { try $0.snapshot().line }
+            XCTAssertEqual(unfinished.totals.games, role == .batter ? 30 : 6)
+            XCTAssertEqual(unfinished.totals.line.hits, personal.reduce(0) { $0 + $1.hits })
+            XCTAssertEqual(unfinished.totals.line.pitchingOuts, personal.reduce(0) { $0 + $1.pitchingOuts })
+            XCTAssertEqual(unfinished.totals.line.runsAllowed, personal.reduce(0) { $0 + $1.runsAllowed })
+            let payloads = records.map(\.payload), fatigue = p.fatigue, revision = s.revision
+            XCTAssertThrowsError(try CareerMatchStore.advance(player: p, state: s, record: last, revision: last.revision, input: .automatic, in: c))
+            XCTAssertEqual(p.fatigue, fatigue); XCTAssertEqual(s.revision, revision)
+            try CalendarProgression.advanceDay(player: p, state: s, revision: s.revision, in: c)
+            let final = try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c)
+            XCTAssertTrue(final.finalized); XCTAssertEqual(final.league.results.count, 90)
+            XCTAssertTrue(final.finalStandings.allSatisfy { $0.games == 30 })
+            XCTAssertFalse(final.champions.isEmpty); XCTAssertTrue(final.champions.allSatisfy { $0.rank == 1 })
+            XCTAssertEqual(final.totals, unfinished.totals); XCTAssertEqual(records.map(\.payload), payloads)
+            let endFatigue = p.fatigue, endRevision = s.revision
+            for _ in 0..<3 { XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), final) }
+            XCTAssertEqual(p.fatigue, endFatigue); XCTAssertEqual(s.revision, endRevision)
+            p.gameDate = "2027-01-01"; try c.save()
+            XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), final)
+            let next = try CareerSeasonStore.load(player: p, state: s, year: 2027, in: c)
+            XCTAssertEqual(next.totals.games, 0); XCTAssertFalse(next.finalized)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).count, 30)
+        }
+    }
+    func testSeasonIncompleteAndNonAppearanceNotPersonalAndCorruptionIsError() throws {
+        let (container, p, s) = try fixture(date: "2026-04-01", role: .pitcher), c = container.mainContext
+        try CalendarProgression.rest(player: p, state: s, revision: s.revision, in: c)
+        let r = try CareerMatchStore.start(player: p, state: s, in: c)
+        XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c).totals.games, 0)
+        try CareerMatchStore.advance(player: p, state: s, record: r, revision: r.revision, input: .automatic, in: c)
+        let payload = r.payload
+        var m = try r.snapshot(); m.line.hits = -1; r.payload = try JSONEncoder().encode(m); try c.save()
+        XCTAssertThrowsError(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c))
+        XCTAssertNotEqual(r.payload, payload)
+        r.payload = payload; try c.save()
+        XCTAssertThrowsError(try CareerSeasonStore.snapshot(player: p, state: s, year: 2026, records: [r, r]))
+    }
+    func testSeasonFinalTiesAllDrawsAndPartialCareerNeverClaimsThirty() throws {
+        let fixtures = try SeasonSchedule.fixtures(year: 2026, schoolIDs: leagueTeams)
+        let official = fixtures.map { LeagueOfficialResult(fixtureID: $0.id, homeScore: 2, awayScore: 2) }
+        let allDraws = try league(on: "2026-09-23", official: official)
+        let final = CareerSeasonSummary(league: allDraws, totals: PersonalSeasonTotals())
+        XCTAssertTrue(final.finalized); XCTAssertEqual(final.champions.count, 6)
+        XCTAssertTrue(final.finalStandings.allSatisfy { $0.rank == 1 && $0.percentage == "—" })
+        let partial = CareerSeasonSummary(league: try league(on: "2026-09-23", origin: "2026-05-01"), totals: PersonalSeasonTotals())
+        XCTAssertFalse(partial.finalized); XCTAssertTrue(partial.champions.isEmpty)
+        let rows = AnnualLeague.ordered([LeagueStanding(id: "A", wins: 20, losses: 10), LeagueStanding(id: "B", wins: 20, losses: 10), LeagueStanding(id: "C", wins: 19, losses: 11)])
+        XCTAssertEqual(rows.map(\.rank), [1, 1, 3])
+    }
+    func testSeasonDiskReloadPreservesFinalOriginalRecordsAndOtherRole() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("season.store")
+        let saved = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), c = container.mainContext
+            var draft = PlayerDraft(); draft.schoolID = "hs-ref-001"; draft.name = "SeasonBat"
+            let p = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: c)
+            draft.role = .pitcher; draft.name = "SeasonPitch"
+            let other = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: c)
+            let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id })
+            let records = try finishSeason(player: p, state: s, in: c)
+            try CalendarProgression.advanceDay(player: p, state: s, revision: s.revision, in: c)
+            return (p.id, other.id, Dictionary(uniqueKeysWithValues: records.map { ($0.key, $0.payload) }), try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), p.fatigue)
+        }
+        try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), c = container.mainContext
+            let players = try c.fetch(FetchDescriptor<CareerPlayer>()), states = try c.fetch(FetchDescriptor<CareerCalendarState>())
+            let p = try XCTUnwrap(players.first { $0.id == saved.0 }), other = try XCTUnwrap(players.first { $0.id == saved.1 })
+            let s = try XCTUnwrap(states.first { $0.playerID == p.id })
+            XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), saved.3)
+            XCTAssertEqual(Dictionary(uniqueKeysWithValues: try c.fetch(FetchDescriptor<CareerMatchRecord>()).map { ($0.key, $0.payload) }), saved.2)
+            XCTAssertEqual(p.fatigue, saved.4); XCTAssertEqual(other.gameDate, "2026-04-01")
+            let otherState = try XCTUnwrap(states.first { $0.playerID == other.id })
+            XCTAssertEqual(try CareerSeasonStore.load(player: other, state: otherState, year: 2026, in: c).totals.games, 0)
+        }
+    }
+
+    func testSeasonFinalDaySaveFailureCannotFinalizeUntilCommittedRetry() throws {
+        enum Failure: Error { case injected }
+        let (container, p, s) = try fixture(date: "2026-04-01", role: .pitcher), c = container.mainContext
+        _ = try finishSeason(player: p, state: s, in: c)
+        let before = try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c)
+        let fatigue = p.fatigue, revision = s.revision
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player: p, state: s, revision: revision, in: c, save: { _ in throw Failure.injected }))
+        XCTAssertEqual(p.gameDate, "2026-09-22"); XCTAssertEqual(p.fatigue, fatigue); XCTAssertEqual(s.revision, revision)
+        XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), before)
+        try CalendarProgression.advanceDay(player: p, state: s, revision: revision, in: c)
+        let final = try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c)
+        XCTAssertTrue(final.finalized); XCTAssertEqual(final.totals, before.totals)
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player: p, state: s, revision: revision, automaticRest: true, in: c))
+        XCTAssertEqual(try CareerSeasonStore.load(player: p, state: s, year: 2026, in: c), final)
+    }
+
 }

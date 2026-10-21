@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-position-training-preview") {
+            if ProcessInfo.processInfo.arguments.contains("-season-summary-verification") {
+                SeasonSummaryVerification()
+            } else if ProcessInfo.processInfo.arguments.contains("-position-training-preview") {
                 NavigationStack { PositionTrainingPreview() }
             } else if ProcessInfo.processInfo.arguments.contains("-trait-acquisition-preview") {
                 NavigationStack { TraitAcquisitionPreview() }
@@ -61,3 +63,40 @@ struct AppBootstrapView: View {
         } catch { errorMessage = error.localizedDescription }
     }
 }
+
+#if DEBUG
+/// Isolated UI verification: real automatic match/save paths, never opens the user's disk store.
+private struct SeasonSummaryVerification: View {
+    @State private var container: ModelContainer?
+    @State private var schools: [School] = []
+    @State private var error: String?
+    var body: some View {
+        Group {
+            if let container { CareerRootView(schools: schools).modelContainer(container) }
+            else if let error { Text(error) }
+            else { ProgressView("QA 시즌 구성 중") }
+        }.task { if container == nil && error == nil { prepare() } }
+    }
+    @MainActor private func prepare() {
+        do {
+            let schools = try SchoolCatalog.load(), store = try CareerStore.makeContainer(inMemory: true), c = store.mainContext
+            for role in PlayerRole.allCases {
+                var draft = PlayerDraft(); draft.schoolID = schools[0].id; draft.role = role
+                draft.name = role == .batter ? "SeasonBat" : "SeasonPitch"
+                let player = try CareerStore.create(draft, schools: schools, in: c)
+                let state = try c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }!
+                for fixture in try state.fixtures(for: player, year: 2026) {
+                    while try GameDate(player.gameDate) < fixture.date {
+                        try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, automaticRest: true, in: c)
+                    }
+                    try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: c)
+                    let record = try CareerMatchStore.start(player: player, state: state, in: c)
+                    try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision, input: .automatic, in: c)
+                }
+                try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: c)
+            }
+            self.schools = schools; container = store
+        } catch { self.error = error.localizedDescription }
+    }
+}
+#endif

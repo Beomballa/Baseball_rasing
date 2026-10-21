@@ -199,12 +199,13 @@ struct AnnualLeagueHomePanel: View {
     let state: CareerCalendarState
     let schools: [School]
     @Environment(\.modelContext) private var context
-    @State private var league: AnnualLeague?
+    @State private var season: CareerSeasonSummary?
+    private var league: AnnualLeague? { season?.league }
     @State private var error: String?
     private func reload() {
         do {
-            league=try AnnualLeagueStore.load(player:player,state:state,year:GameDate(player.gameDate).year,in:context);error=nil
-        } catch {league=nil;self.error=error.localizedDescription}
+            season=try CareerSeasonStore.load(player:player,state:state,year:GameDate(player.gameDate).year,in:context);error=nil
+        } catch {season=nil;self.error=error.localizedDescription}
     }
     var body: some View {
         GamePanel(title:"연간 리그",onBoard:true) {
@@ -216,6 +217,13 @@ struct AnnualLeagueHomePanel: View {
                 Text(error).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeLeagueError")
                 Button("순위 다시 확인",action:reload).buttonStyle(MatchPixelButtonStyle())
             } else {Text("순위 불러오는 중").font(.caption)}
+            if let season {
+                Text("SEASON · 내 시즌 성적").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.boardMuted)
+                SeasonPersonalRecord(totals: season.totals, role: player.role, compact: true)
+                NavigationLink { CareerSeasonScreen(player: player, state: state, schools: schools) } label: {
+                    Text(season.finalized ? "시즌 결산 · 최종 성적" : "시즌 성적 · 결산 보기")
+                }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openSeasonSummary")
+            }
             NavigationLink {AnnualLeagueScreen(player:player,state:state,schools:schools)} label: {
                 HStack {LeaguePixelFlag().frame(width:20,height:22);Text("리그 순위 보기")}
             }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openAnnualLeague")
@@ -337,5 +345,135 @@ struct AnnualLeagueScreen: View {
             } else {Text(pending ? "경기 진행 중":"경기 대기").font(.caption).foregroundStyle(GameTheme.boardMuted)}
         }.padding(.vertical,4).frame(maxWidth:.infinity,alignment:.leading)
             .accessibilityElement(children:.combine).accessibilityIdentifier("leagueFixture-\(fixture.id)")
+    }
+}
+
+struct SeasonPersonalRecord: View {
+    let totals: PersonalSeasonTotals
+    let role: PlayerRole
+    var compact = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var values: [(String, String)] {
+        let l = totals.line
+        return role == .batter ? [("출전", "\(totals.games)경기"), ("타율", totals.average), ("홈런", "\(l.homeRuns)"), ("타점", "\(l.rbi)")]
+            : [("등판", "\(totals.games)경기"), ("이닝", totals.innings), ("실점", "\(l.runsAllowed)"), ("탈삼진", "\(l.pitchingStrikeouts)")]
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 4))
+            layout {
+                ForEach(values.indices, id: \.self) { i in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(values[i].0).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Text(values[i].1).font(.headline.monospaced()).foregroundStyle(GameTheme.gold)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.accessibilityElement(children: .ignore)
+                .accessibilityLabel(values.map { "\($0.0) \($0.1)" }.joined(separator: " · "))
+                .accessibilityIdentifier(compact ? "homeSeasonTotals" : "seasonTotals")
+            if !compact {
+                let l = totals.line
+                Text(role == .batter
+                    ? "\(l.plateAppearances)타석 · \(l.atBats)타수 \(l.hits)안타\n\(l.walks)볼넷 · \(l.strikeouts)삼진"
+                    : "\(l.pitches)구 · 피안타 \(l.hitsAllowed) · 볼넷 \(l.pitchingWalks)\nWHIP \(totals.whip)")
+                    .font(.subheadline.monospaced()).accessibilityIdentifier("seasonRecordDetails")
+                if role == .pitcher { Text("실점 기준 기록 · 자책점/ERA·투수 승패는 별도 집계 전입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted) }
+                Text(totals.games == 0 ? "완료한 개인 출전 기록이 없습니다." : "종료한 개인 출전만 합산 · 미완료/비등판·자동 팀 경기 제외")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+        }
+    }
+}
+
+struct CareerSeasonScreen: View {
+    let player: CareerPlayer
+    let state: CareerCalendarState
+    let schools: [School]
+    @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var selectedYear: Int?
+    @State private var summary: CareerSeasonSummary?
+    @State private var error: String?
+    private func name(_ id: String) -> String { schools.first { $0.id == id }?.name ?? id }
+    private func reload() {
+        do {
+            summary = try CareerSeasonStore.load(player: player, state: state, year: selectedYear ?? GameDate(player.gameDate).year, in: context)
+            error = nil
+        } catch { summary = nil; self.error = error.localizedDescription }
+    }
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                if let summary {
+                    let league = summary.league
+                    let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+                    layout {
+                        Button("◀ 이전 연도") { selectedYear = league.year - 1 }
+                            .disabled(league.year <= (try? GameDate(state.originDate).year) ?? league.year).accessibilityIdentifier("seasonPreviousYear")
+                        Text("\(String(league.year)) SEASON").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).frame(maxWidth: .infinity)
+                        Button("다음 연도 ▶") { selectedYear = league.year + 1 }
+                            .disabled(league.year >= (try? GameDate(player.gameDate).year) ?? league.year).accessibilityIdentifier("seasonNextYear")
+                    }.buttonStyle(MatchPixelButtonStyle())
+                    GamePanel(title: summary.finalized ? "FINAL · 시즌 결산" : "LIVE · 시즌 진행 중", onBoard: true) {
+                        if summary.finalized {
+                            SeasonPixelTrophy().frame(width: 72, height: 72).frame(maxWidth: .infinity)
+                            Text(summary.champions.count > 1 ? "CO-CHAMPIONS · 공동 우승" : "LEAGUE CHAMPIONS")
+                                .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                            Text(summary.champions.map { name($0.id) }.joined(separator: " · "))
+                                .font(.title2.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("seasonChampion")
+                        }
+                        Text(summary.finalized ? "모든 팀 30경기 종료 · 전체 90경기 확정" : "완료 \(league.results.count) / 대상 \(league.fixtures.count)경기")
+                            .font(.subheadline.monospaced()).accessibilityIdentifier("seasonProgress")
+                        if !summary.finalized {
+                            Text(league.fixtures.count == 90 ? "전체 일정이 끝나면 최종 순위와 우승팀을 확정합니다. 마지막 날 다른 팀 경기는 다음 날 처리됩니다." : "경력 시작 전/출전 연령 밖 일정을 제외한 부분 시즌입니다. 30경기 결산으로 확정하지 않습니다.")
+                                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        }
+                        Text("\(player.name) · \(player.schoolName) · \(player.role.label)").font(.caption).accessibilityIdentifier("seasonPlayer")
+                    }
+                    GamePanel(title: "MY RECORD · 내 시즌 성적", onBoard: true) {
+                        SeasonPersonalRecord(totals: summary.totals, role: player.role)
+                    }
+                    GamePanel(title: summary.finalized ? "FINAL TABLE · 최종 순위" : "TABLE · 현재 순위", onBoard: true) {
+                        ForEach(summary.finalStandings) { row in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("\(row.rank.map { "\($0)위" } ?? "—") · \(name(row.id))\(row.id == player.schoolID ? " · 내 팀" : "")").font(.headline)
+                                Text("\(row.games)경기 · \(row.wins)승 \(row.losses)패 \(row.draws)무 · 승률 \(row.percentage)").font(.caption.monospaced())
+                            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(row.id == player.schoolID ? Color(hex: 0x244e48) : GameTheme.board)
+                                .overlay(Rectangle().strokeBorder(row.id == player.schoolID ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
+                                .accessibilityElement(children: .combine).accessibilityIdentifier("seasonStanding-\(row.id)")
+                        }
+                        Text("승률 동률은 공동 순위·공동 우승\n전 경기 무승부일 때는 모든 팀 공동 우승·승률 —")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
+                    Text("완료 원장과 저장된 날짜로 복원 · 조회는 날짜·나이·피로·보상을 변경하지 않습니다. 다음 시즌 전환은 후속 기능입니다.")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                } else if let error {
+                    GamePanel(title: "시즌 기록 확인 필요", onBoard: true) {
+                        Text(error).accessibilityIdentifier("seasonLoadError")
+                        Button("다시 확인", action: reload).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("retrySeasonSummary")
+                    }
+                } else { ProgressView("시즌 불러오는 중").tint(GameTheme.gold) }
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+            .navigationTitle("시즌 성적 · 결산").navigationBarTitleDisplayMode(.inline)
+            .preferredColorScheme(.dark)
+            .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
+            .task(id: "\(selectedYear ?? 0):\(player.gameDate):\(state.revision)") { reload() }
+    }
+}
+
+struct SeasonPixelTrophy: View {
+    var body: some View {
+        Canvas { c, s in
+            let u = min(s.width, s.height) / 16
+            for r in [CGRect(x: 4, y: 1, width: 8, height: 7), CGRect(x: 5, y: 8, width: 6, height: 2),
+                      CGRect(x: 7, y: 10, width: 2, height: 3), CGRect(x: 4, y: 13, width: 8, height: 2),
+                      CGRect(x: 1, y: 2, width: 2, height: 5), CGRect(x: 3, y: 6, width: 2, height: 2),
+                      CGRect(x: 13, y: 2, width: 2, height: 5), CGRect(x: 11, y: 6, width: 2, height: 2)] {
+                c.fill(Path(CGRect(x: r.minX * u, y: r.minY * u, width: r.width * u, height: r.height * u)), with: .color(GameTheme.gold))
+            }
+            c.fill(Path(CGRect(x: 5 * u, y: 2 * u, width: 2 * u, height: 4 * u)), with: .color(GameTheme.boardInk))
+        }.accessibilityHidden(true)
     }
 }

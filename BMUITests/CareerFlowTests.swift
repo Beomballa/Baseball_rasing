@@ -1422,6 +1422,15 @@ extension CareerFlowTests {
             reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
             reveal(app.staticTexts["homeLeagueRecord"],in:app)
             let home=app.staticTexts["homeLeagueRecord"].label;XCTAssertTrue(home.contains("1경기"))
+            let seasonHome = app.descendants(matching: .any).matching(identifier: "homeSeasonTotals").firstMatch
+            reveal(seasonHome, in: app); XCTAssertTrue(seasonHome.label.contains("1경기"))
+            let homeTotals = seasonHome.label
+            app.buttons["openSeasonSummary"].tap()
+            XCTAssertTrue(app.staticTexts["seasonProgress"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["seasonProgress"].label.contains("완료 1 / 대상 90"))
+            XCTAssertFalse(app.staticTexts["seasonChampion"].exists)
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "seasonTotals").firstMatch.label, homeTotals)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
             app.buttons["openAnnualLeague"].tap()
             XCTAssertTrue(app.staticTexts["leagueProgress"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["leagueProgress"].label.contains("완료 1 / 대상 90"))
             let actual=app.descendants(matching:.any).matching(identifier:"leagueOwnStanding").firstMatch.label
@@ -1465,5 +1474,43 @@ extension CareerFlowTests {
         if button.exists {reveal(button,in:app);button.tap()}
         let selected=XCTNSPredicateExpectation(predicate:NSPredicate(format:"label CONTAINS %@",pitcher ? "LeaguePitch":"LeagueBat"),object:app.staticTexts["homePlayerName"])
         XCTAssertEqual(XCTWaiter.wait(for:[selected],timeout:5),.completed)
+    }
+}
+
+extension CareerFlowTests {
+    @MainActor func testSeasonFinalBothRolesAndLargeTextIsolatedRealLedger() throws {
+        let app = XCUIApplication(); app.launchArguments = ["-season-summary-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        for pitcher in [false, true] {
+            reveal(app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"], in: app)
+            app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"].tap()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains(pitcher ? "SeasonPitch" : "SeasonBat"))
+            let date = app.staticTexts["calendarDate"].label, fatigue = app.staticTexts["homeFatigue"].label
+            reveal(app.buttons["openSeasonSummary"], in: app); app.buttons["openSeasonSummary"].tap()
+            XCTAssertTrue(app.staticTexts["seasonChampion"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.staticTexts["seasonChampion"].label.isEmpty)
+            XCTAssertTrue(app.staticTexts["seasonProgress"].label.contains("90경기 확정"))
+            let stats = app.descendants(matching: .any).matching(identifier: "seasonTotals").firstMatch
+            reveal(stats, in: app); XCTAssertTrue(stats.label.contains(pitcher ? "6경기" : "30경기"))
+            XCTAssertFalse(stats.label.contains("ERA"))
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Season final pitcher" : "Season final batter"; shot.lifetime = .keepAlways; add(shot)
+            let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "seasonStanding-")).allElementsBoundByIndex
+            XCTAssertEqual(rows.count, 6)
+            for row in rows { reveal(row, in: app); XCTAssertTrue(row.label.contains("30경기")); XCTAssertLessThanOrEqual(row.frame.maxX, app.windows.firstMatch.frame.maxX) }
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertEqual(app.staticTexts["calendarDate"].label, date); XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
+        }
+        app.terminate(); app.launchArguments = ["-season-summary-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        for pitcher in [false, true] {
+            reveal(app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"], in: app); app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"].tap()
+            reveal(app.buttons["openSeasonSummary"], in: app); app.buttons["openSeasonSummary"].tap()
+            XCTAssertTrue(app.staticTexts["seasonChampion"].waitForExistence(timeout: 5))
+            let stats = app.descendants(matching: .any).matching(identifier: "seasonTotals").firstMatch
+            reveal(stats, in: app); XCTAssertTrue(stats.label.contains(pitcher ? "6경기" : "30경기"))
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Season large pitcher" : "Season large batter"; shot.lifetime = .keepAlways; add(shot)
+            XCTAssertLessThanOrEqual(stats.frame.maxX, app.windows.firstMatch.frame.maxX)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
     }
 }
