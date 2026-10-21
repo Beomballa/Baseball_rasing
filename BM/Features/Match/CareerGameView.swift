@@ -54,6 +54,7 @@ struct CareerGameView: View {
             scene.cancelDelivery()
             _ = scene.demonstrate(reduceMotion: reduced, flightDuration: delivery.duration, x: delivery.x, y: delivery.y, pitchCode: pitchCode)
         }
+        if player.role == .pitcher { scene.preparePitch(phase: 0, reduced: reduced) }
         clock.start(windup: player.role == .batter ? MatchDelivery.windup : 0,
                     duration: player.role == .batter ? delivery.duration : 1.8) { resolve(timeout: true) }
     }
@@ -82,7 +83,7 @@ struct CareerGameView: View {
                 if player.role == .pitcher {
                     let started = scene.demonstrate(reduceMotion: reduced, flightDuration: previous.delivery(pitchCode: result.pitchCode).duration,
                                           x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
-                                          outcome: result.outcome, completion: showResult)
+                                          outcome: result.outcome, preparedRelease: true, completion: showResult)
                     if !started { showResult() }
                 } else {
                     scene.finishBat(action: result.action, outcome: result.outcome, reduced: reduced, completion: showResult)
@@ -128,7 +129,7 @@ struct CareerGameView: View {
                 let mastery = match.mastery[pitchCode] ?? 60
                 MatchTimingGauge(phase: clock.phase, center: ManualMatchRules.releaseCenter,
                                  good: match.releaseGoodWidth(mastery: mastery),
-                                 perfect: match.releasePerfectWidth(mastery: mastery), label: "릴리스 · 숙련도 \(mastery.formatted(.number.precision(.fractionLength(1))))")
+                                 perfect: match.releasePerfectWidth(mastery: mastery), label: presenting ? "릴리스 확정 · 공 비행 중" : clock.running ? "팔 준비 중 · 노란 구간에 릴리스" : "릴리스 · 숙련도 \(mastery.formatted(.number.precision(.fractionLength(1))))")
                     .accessibilityIdentifier("releaseGauge")
                 Button(clock.running ? "지금 릴리스" : "투구 준비") {
                     if clock.running { resolve() } else { begin() }
@@ -330,6 +331,9 @@ struct CareerGameView: View {
             if !Task.isCancelled { pulse = nil }
         }
         .onDisappear { cancelInput() }
+        .onChange(of: clock.phase) { _, phase in
+            if player.role == .pitcher && clock.running { scene.preparePitch(phase: phase, reduced: reduced) }
+        }
         .onChange(of: scenePhase) { _, phase in if phase != .active { cancelInput() } }
         .confirmationDialog("남은 경기를 자동으로 진행할까요?", isPresented: $confirmAutomatic, titleVisibility: .visible) {
             Button("진행하고 결과 저장") { advance(.automatic) }

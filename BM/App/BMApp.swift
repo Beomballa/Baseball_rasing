@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-position-training-preview") {
+            if ProcessInfo.processInfo.arguments.contains("-training-practice") {
+                NavigationStack { TrainingPracticeView() }
+            } else if ProcessInfo.processInfo.arguments.contains("-position-training-preview") {
                 NavigationStack { PositionTrainingPreview() }
             } else if ProcessInfo.processInfo.arguments.contains("-trait-acquisition-preview") {
                 NavigationStack { TraitAcquisitionPreview() }

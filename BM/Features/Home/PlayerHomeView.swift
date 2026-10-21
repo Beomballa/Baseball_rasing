@@ -26,7 +26,8 @@ struct PlayerHomeView: View {
                 HStack {
                     Text("BM  CAREER").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                     Spacer()
-                    Text("이 기기에 저장").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    NavigationLink { TrainingPracticeView() } label: { Text("자유 연습") }
+                        .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openTrainingPractice")
                 }
                 if players.count > 1 {
                     let roleLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))

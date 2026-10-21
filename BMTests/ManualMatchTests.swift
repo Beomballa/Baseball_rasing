@@ -4,6 +4,74 @@ import SwiftData
 @testable import BM
 
 @MainActor final class ManualMatchTests: XCTestCase {
+    func testPitchPreparationHoldsBallUntilExplicitReleaseForBothHands() {
+        for hand in ["left", "right"] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 320))
+            scene.configure(hand: hand, kit: 0, role: .pitcher)
+            for phase in [0.0, 0.3, 0.68, 0.95] {
+                scene.preparePitch(phase: phase, reduced: false)
+                XCTAssertEqual(scene.pitchStage, .preparing)
+                XCTAssertNil(scene.action(forKey: "delivery"))
+            }
+            XCTAssertTrue(scene.demonstrate(reduceMotion: false, preparedRelease: true))
+            XCTAssertEqual(scene.pitchStage, .flight)
+            scene.preparePitch(phase: 0.7, reduced: false)
+            XCTAssertEqual(scene.pitchStage, .flight)
+            scene.cancelDelivery(); XCTAssertEqual(scene.pitchStage, .idle)
+            scene.preparePitch(phase: 0.68, reduced: true)
+            XCTAssertEqual(scene.pitchStage, .preparing)
+            XCTAssertTrue(scene.demonstrate(reduceMotion: true, preparedRelease: true))
+            XCTAssertEqual(scene.pitchStage, .flight)
+        }
+    }
+
+    func testFreePracticeAllKindsAndPositionsLeaveCareerStoreUnchanged() throws {
+        let real = try CareerStore.makeContainer(inMemory: true)
+        let (player, calendar, matchRecord) = try fixture(in: real.mainContext)
+        let date = player.gameDate, fatigue = player.fatigue, revision = calendar.revision
+        let original = matchRecord.payload
+        let memory = try CareerStore.makeContainer(inMemory: true)
+        let samples = try TrainingPractice.samples(in: memory.mainContext)
+        XCTAssertEqual(Set(samples.map(\.role)), Set(PlayerRole.allCases))
+        XCTAssertTrue(samples.allSatisfy { $0.fatigue == 0 })
+        for role in PlayerRole.allCases {
+            for kind in TrainingKind.allCases where kind.allows(role.rawValue) {
+                for _ in 0..<2 {
+                    var round = TrainingPractice.round(role: role, kind: kind, code: "four-seam")
+                    for _ in 0..<5 {
+                        let input: TrainingInput
+                        switch kind {
+                        case .contact: input = TrainingInput(x: 0.5, y: 0.5, timing: 0.82)
+                        case .pitch: input = TrainingInput(release: 0.68)
+                        case .power, .velocity, .stuff: input = TrainingInput(force: 70, angle: 35)
+                        case .discipline: input = TrainingInput(calledStrike: true)
+                        case .mental: input = TrainingInput(choice: 0)
+                        case .speed, .stamina: input = TrainingInput(footfalls: [])
+                        case .arm: input = TrainingInput(force: 70, angle: 35, base: 1)
+                        case .control, .defense: input = TrainingInput(x: 0.5, y: 0.5)
+                        }
+                        try round.attempt(input)
+                    }
+                    XCTAssertTrue(round.completed)
+                    XCTAssertEqual(round.before, 60); XCTAssertEqual(round.fatigue, 0)
+                    XCTAssertThrowsError(try round.attempt(TrainingInput()))
+                }
+            }
+        }
+        for position in FieldPosition.allCases {
+            var round = TrainingPractice.round(role: .batter, kind: .defense, position: position)
+            XCTAssertEqual(try CareerTrainingRecord(round).snapshot(), round)
+            for _ in 0..<5 { try round.attempt(TrainingInput(x: 0.5, y: 0.5, force: 50, angle: 270, base: 1)) }
+            XCTAssertTrue(round.completed)
+        }
+        XCTAssertEqual(player.gameDate, date); XCTAssertEqual(player.fatigue, fatigue)
+        XCTAssertEqual(calendar.revision, revision); XCTAssertEqual(matchRecord.payload, original)
+        XCTAssertEqual(try real.mainContext.fetchCount(FetchDescriptor<CareerTrainingRecord>()), 0)
+        XCTAssertEqual(try memory.mainContext.fetchCount(FetchDescriptor<CareerTrainingRecord>()), 0)
+        XCTAssertEqual(try memory.mainContext.fetchCount(FetchDescriptor<CareerMatchRecord>()), 0)
+        XCTAssertEqual(try real.mainContext.fetchCount(FetchDescriptor<CareerPlayer>()), 1)
+    }
+
     private func match(role: PlayerRole = .batter, seed: UInt64 = 42, mastery: Double = 72) -> CareerMatch {
         var match = CareerMatch(random: seed, isHome: role == .batter, role: role.rawValue,
                                 appearance: true, contact: 65, power: 75, discipline: 60,

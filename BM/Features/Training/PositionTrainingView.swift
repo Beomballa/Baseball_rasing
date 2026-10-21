@@ -145,10 +145,11 @@ private struct PositionMeter: View {
     }
 }
 
-private struct PositionDrillLiveView: View {
+struct PositionDrillLiveView: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
     let record: CareerTrainingRecord
+    var practice = false
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -169,7 +170,7 @@ private struct PositionDrillLiveView: View {
     private var endpoint: TrainingTarget { PositionTrainingRules.endpoint(x: x, y: y, angle: angle, force: force) }
     private func load(reset: Bool = false) {
         do {
-            let saved = try record.snapshot(); guard let position = saved.position else { throw TrainingError.invalidRecord }
+            let saved = try (practice ? training ?? record.snapshot() : record.snapshot()); guard let position = saved.position else { throw TrainingError.invalidRecord }
             training = saved
             if reset { let origin = PositionTrainingRules.origin(position); x = origin.x; y = origin.y; phase = saved.completed ? 3 : 0 }
             errorMessage = nil
@@ -178,8 +179,14 @@ private struct PositionDrillLiveView: View {
     private func saveInput() {
         guard let input = pendingInput, let revision = pendingRevision else { return }
         do {
-            try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: revision, input: input, in: context)
-            load(); phase = 3; pendingInput = nil; pendingRevision = nil
+            if practice {
+                guard var round = training else { return }
+                try round.attempt(input); training = round
+            } else {
+                try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: revision, input: input, in: context)
+                load()
+            }
+            phase = 3; pendingInput = nil; pendingRevision = nil
         } catch { errorMessage = error.localizedDescription }
     }
     private func submit() {
@@ -207,6 +214,7 @@ private struct PositionDrillLiveView: View {
                     if let training, let position = training.position {
                         let index = min(4, max(0, training.scores.count - (phase == 3 ? 1 : 0)))
                         let target = training.targets[index]
+                        if practice { Text("자유 연습 · 성장·저장 없음").font(.caption).foregroundStyle(GameTheme.gold) }
                         Text(position.label + " · " + position.positionDrill.title).font(.subheadline.bold())
                         Text("\(training.scores.count) / 5").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("positionAttemptCount")
                         HStack(spacing: 6) {
@@ -253,24 +261,29 @@ private struct PositionDrillLiveView: View {
                             }
                             Button(position == .first ? "포구 확정" : "송구 확정") { submit() }.buttonStyle(GameButtonStyle(onBoard: true)).disabled(errorMessage != nil).accessibilityIdentifier("positionThrow")
                         } else if phase == 2 {
-                            Text(position == .first ? "포구 중 · 확정 입력 저장 대기" : "송구 중 · 확정 입력 저장 대기")
+                            Text(practice ? "연습 동작 재생 · 점수 판정 중" : position == .first ? "포구 중 · 확정 입력 저장 대기" : "송구 중 · 확정 입력 저장 대기")
                                 .font(.caption).foregroundStyle(GameTheme.gold)
                         } else if phase == 3 {
                             if let score = training.scores.last { TrainingGradeBanner(score: score) }
-                            Text(training.completed ? "훈련 완료 · 저장됨" : "\(training.scores.last ?? 0)점 · 시도 저장됨").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("positionFeedback")
+                            Text(practice ? "연습 점수 · 실제 저장 없음" : training.completed ? "훈련 완료 · 저장됨" : "\(training.scores.last ?? 0)점 · 시도 저장됨").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("positionFeedback")
                             if training.completed {
-                                GamePanel(title: "포지션 훈련 결과", onBoard: true) {
+                                if practice {
+                                    Text("평균 \(training.average, specifier: "%.1f")점 · XP·날짜·피로 변화 없음")
+                                    Button("다시 연습") { self.training = nil; load(reset: true) }
+                                        .buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("practicePositionRetry")
+                                } else { GamePanel(title: "포지션 훈련 결과", onBoard: true) {
                                     Text("평균 \(training.average, specifier: "%.1f")점 · XP +\(training.positionGainXP, specifier: "%.1f")").font(.headline).accessibilityIdentifier("positionXPGain")
                                     Text("숙련 \(training.before, specifier: "%.1f") → \(training.after, specifier: "%.1f") / 잔여 XP \(training.positionAfter.xp, specifier: "%.1f")").font(.subheadline).accessibilityIdentifier("positionGrowth")
                                     Text("피로 \(training.fatigue) → \(min(100, training.fatigue + 6)) · 오늘 행동 완료").font(.caption).accessibilityIdentifier("positionFatigue")
                                     Text("선택 위치만 성장 · 해당 위치로 출전하는 새 경기부터 반영").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                                }
                                 }
                             } else {
                                 Button("다음 시도") { load(reset: true) }.buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("positionNextAttempt")
                             }
                         }
                     }
-                    Button("훈련 화면으로") { dismiss() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("closePositionTraining")
+                    Button(practice ? "연습 메뉴로" : "훈련 화면으로") { dismiss() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("closePositionTraining")
                 }.padding(12)
             }
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).preferredColorScheme(.dark)

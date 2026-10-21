@@ -11,6 +11,7 @@ struct CareerTrainingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduced
     let player: CareerPlayer
     let calendar: CareerCalendarState
+    var practice = false
     @State private var record: CareerTrainingRecord?
     @State private var training: CareerTraining?
     @State private var code = ""
@@ -46,16 +47,22 @@ struct CareerTrainingView: View {
     private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? "구종") : selectedKind.label }
     private func load() {
         do {
-            record = try CareerTrainingStore.record(player: player, in: context)
-            training = try record?.snapshot()
+            if !practice {
+                record = try CareerTrainingStore.record(player: player, in: context)
+                training = try record?.snapshot()
+            }
             angle = selectedKind.initialDirection
             if code.isEmpty { code = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "" }
         } catch { errorMessage = error.localizedDescription }
     }
     private func start() {
         do {
-            record = try CareerTrainingStore.start(player: player, state: calendar, pitchCode: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
-            training = try record?.snapshot()
+            if practice {
+                training = TrainingPractice.round(role: player.role, kind: selectedKind, code: code)
+            } else {
+                record = try CareerTrainingStore.start(player: player, state: calendar, pitchCode: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
+                training = try record?.snapshot()
+            }
             angle = selectedKind.initialDirection
         } catch { errorMessage = error.localizedDescription }
     }
@@ -74,25 +81,37 @@ struct CareerTrainingView: View {
             return
         }
         scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role)
-        scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: training.targets[training.scores.count].x,
-                          y: training.targets[training.scores.count].y, pitchCode: training.pitchCode ?? "four-seam")
-        clock.start(windup: 0.35, duration: 1.6) {
+        if selectedKind == .pitch { scene.preparePitch(phase: 0, reduced: reduced) }
+        else { scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: training.targets[training.scores.count].x,
+                          y: training.targets[training.scores.count].y, pitchCode: training.pitchCode ?? "four-seam") }
+        clock.start(windup: selectedKind == .pitch ? 0 : 0.35, duration: 1.6) {
             submit(isPitcher ? TrainingInput(release: 0) : TrainingInput())
         }
     }
     private func submit(_ input: TrainingInput) {
-        guard !inputLocked, let record else { return }
+        guard !inputLocked, training != nil, practice || record != nil else { return }
         clock.stop(); judging = false
         replay = training; replayStarted = Date()
-        retryInput = input; retryRevision = record.revision
+        retryInput = input; retryRevision = record?.revision ?? 0
         saveAttempt()
     }
     private func saveAttempt() {
-        guard let record, let input = retryInput, let revision = retryRevision else { return }
+        guard let input = retryInput, let revision = retryRevision else { return }
         if replay == nil { replay = training; replayStarted = Date() }
         do {
-            try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: revision, input: input, in: context)
-            training = try record.snapshot()
+            if practice {
+                guard var round = training else { return }
+                try round.attempt(input); training = round
+            } else {
+                guard let record else { return }
+                try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: revision, input: input, in: context)
+                training = try record.snapshot()
+            }
+            if selectedKind == .pitch, let previous = replay {
+                let target = previous.targets[previous.scores.count]
+                scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: target.x, y: target.y,
+                                  pitchCode: previous.pitchCode ?? "four-seam", preparedRelease: true)
+            }
             if selectedKind == .power, let force = input.force, let angle = input.angle { lastDistance = TrainingRules.distance(force: force, angle: angle) }
             retryInput = nil; retryRevision = nil; errorMessage = nil
             replayScore = training?.scores.last; feedbackTick += 1
@@ -104,7 +123,7 @@ struct CareerTrainingView: View {
             }
             replayTask?.cancel()
             replayTask = Task { @MainActor in
-                let remaining = selectedKind == .pitch ? max(1.1, (1 - (input.release ?? 1)) * 1.6 + 0.35)
+                let remaining = selectedKind == .pitch ? 1.6 * MatchDelivery.contactPhase + 0.3
                     : selectedKind == .contact ? max(1.1, (MatchDelivery.contactPhase - (input.timing ?? 1)) * 1.6 + 0.7) : 1.1
                 try? await Task.sleep(for: .seconds(reduced ? 0.15 : remaining))
                 guard !Task.isCancelled else { return }
@@ -130,7 +149,7 @@ struct CareerTrainingView: View {
                                     PixelPlayer(appearance: player.appearance).frame(width: 28, height: 36).accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(pitchName).font(.headline)
-                                        Text(training == nil ? "5회 도전 · 피로 +6 · 하루 행동 1회" : "도전 기록은 시도마다 저장됩니다")
+                                        Text(practice ? "자유 연습 · 성장·날짜·피로 변화 없음" : training == nil ? "5회 도전 · 피로 +6 · 하루 행동 1회" : "도전 기록은 시도마다 저장됩니다")
                                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                                     }
                                     Spacer(minLength: 0)
@@ -167,9 +186,20 @@ struct CareerTrainingView: View {
         }
         .sensoryFeedback(.impact(weight: .light), trigger: feedbackTick)
         .onDisappear { cancelUncommitted() }
+        .toolbar {
+            if practice { Button("훈련 바꾸기") { resetPractice() }.accessibilityIdentifier("practiceChangeTraining") }
+        }
+        .onChange(of: clock.phase) { _, phase in
+            if selectedKind == .pitch && clock.running { scene.preparePitch(phase: phase, reduced: reduced) }
+        }
         .onChange(of: scenePhase) { _, phase in if phase != .active { cancelUncommitted() } }
     }
 
+    private func resetPractice() {
+        cancelUncommitted(); training = nil; record = nil; retryInput = nil; retryRevision = nil
+        replayScore = nil; errorMessage = nil; footfalls = []; lastDistance = nil
+        x = 0.5; y = 0.5; force = 70; angle = selectedKind.initialDirection
+    }
     private func fieldHeight(in size: CGSize) -> CGFloat {
         max(150, min(size.width - 24, size.height - chromeHeights.values.reduce(0, +) - 40))
     }
@@ -227,7 +257,8 @@ struct CareerTrainingView: View {
                 MatchTimingGauge(phase: clock.phase, center: isPitcher ? ManualMatchRules.releaseCenter : MatchDelivery.contactPhase,
                                  good: isPitcher ? ManualMatchRules.goodWidth(mastery: training.before) : ManualMatchRules.timingWidth(contact: training.before),
                                  perfect: isPitcher ? ManualMatchRules.perfectWidth(mastery: training.before) : TrainingRules.contactPerfectWidth,
-                                 label: isPitcher ? "릴리스 · 노란 구간에 던지기" : "노란 구간 · 타이밍 100점")
+                                 label: isPitcher ? (replay != nil ? "릴리스 확정 · 공 비행 중" : clock.running ? "팔 준비 중 · 노란 구간에 릴리스" : "공을 쥐고 투구 준비") : "노란 구간 · 타이밍 100점")
+                    .accessibilityIdentifier("trainingTimingGauge")
             }
             if let result = self.training?.lastContact { ContactTrainingFeedback(result: result) }
             scores(self.training ?? training)
@@ -267,7 +298,7 @@ struct CareerTrainingView: View {
                     .accessibilityIdentifier("trainingAttempt")
             }
         } else {
-            Text("5회 도전 · 완료 시 피로 +6 / 오늘 행동 사용").font(.caption)
+            Text(practice ? "5회 도전 · 제한 없이 다시 연습" : "5회 도전 · 완료 시 피로 +6 / 오늘 행동 사용").font(.caption)
             Button("훈련 시작") { start() }.buttonStyle(MatchPixelButtonStyle(primary: true))
                 .disabled(errorMessage != nil).accessibilityIdentifier("startTraining")
         }
@@ -445,7 +476,13 @@ struct CareerTrainingView: View {
                 }
                 scores(value)
             }
-            GamePanel(title: "성장 기록", onBoard: true) {
+            if practice {
+                Text("연습 완료 · 점수만 확인하며 실제 선수에게 반영되지 않습니다.")
+                    .accessibilityIdentifier("practiceCompleted")
+                Button("다시 연습") { resetPractice(); start() }
+                    .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("practiceRetry")
+                Button("훈련 선택으로") { resetPractice() }.buttonStyle(MatchPixelButtonStyle())
+            } else { GamePanel(title: "성장 기록", onBoard: true) {
                 Text("\(value.before, specifier: "%.1f") → \(value.after, specifier: "%.1f")")
                     .font(.title.monospaced().bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("trainingGrowth")
                 Text("성장 +\(value.gain, specifier: "%.1f")").font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
@@ -453,8 +490,9 @@ struct CareerTrainingView: View {
                 Text("보상 저장 완료 · 다음 경기에 반영").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     .accessibilityIdentifier("trainingCompleted")
             }
+            }
             if let result = value.lastContact { ContactTrainingFeedback(result: result) }
-            Button("선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingReturnHome")
+            Button(practice ? "연습 메뉴로" : "선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingReturnHome")
         }
     }
 

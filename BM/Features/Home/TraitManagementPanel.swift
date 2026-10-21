@@ -494,7 +494,7 @@ struct TraitTrainingArena: View {
     }
 }
 
-private struct TraitDrillExperience: View {
+struct TraitDrillExperience: View {
     let trait: PlayerTrait
     var player: CareerPlayer? = nil
     var calendar: CareerCalendarState? = nil
@@ -658,7 +658,7 @@ private struct TraitDrillExperience: View {
                                 Text(training.after == 100 ? "특성 습득! 다음 날 준비 전에 활성화하세요." : "진척 저장 완료 · 다음 훈련에서 이어집니다.")
                                     .font(.subheadline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("traitAcquired")
                                 Text("피로 \(training.fatigue) → \(min(100, training.fatigue + 6)) · 오늘 행동 사용").font(.caption)
-                            } else { Text("실제 저장 연결 후 이 결과로 특성 진척이 증가합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted) }
+                            } else { Text("연습 점수만 표시 · 실제 특성·진척 변화 없음").font(.caption).foregroundStyle(GameTheme.boardMuted) }
                         } else {
                             Button("다음 시도 · \(scores.count + 1)/5") { self.feedback = nil; steps = 0; lastFoot = 0; feet = [] }
                                 .buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("traitDrillNext")
@@ -673,6 +673,10 @@ private struct TraitDrillExperience: View {
                             .buttonStyle(GameButtonStyle(onBoard: true)).disabled(running || errorMessage != nil).accessibilityIdentifier("traitDrillSubmit")
                     }
                     if finished {
+                        if record == nil {
+                            Button("다시 연습") { scores = []; feedback = nil; steps = 0; running = false; lastFoot = 0; feet = [] }
+                                .buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("practiceTraitRetry")
+                        }
                         Button("훈련 선택으로 돌아가기") { dismiss() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("traitDrillFinish")
                     }
                 }.padding(12)
