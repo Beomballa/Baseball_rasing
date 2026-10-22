@@ -799,11 +799,11 @@ import SwiftUI
     }
 
     func testPixelStadiumNativeResolutionAndImmersiveStageAllocation() throws {
-        let image=InplayStadiumArt.image
+        let image=try XCTUnwrap(InplayStadiumArt.image)
         XCTAssertEqual(image.scale,1)
-        XCTAssertEqual(try XCTUnwrap(image.cgImage).width,320)
-        XCTAssertEqual(try XCTUnwrap(image.cgImage).height,352)
-        XCTAssertEqual(FieldReplayPresentation.stageHeight(width:374,available:720),486.2,accuracy:0.01)
+        XCTAssertEqual(try XCTUnwrap(image.cgImage).width,1024)
+        XCTAssertEqual(try XCTUnwrap(image.cgImage).height,1536)
+        XCTAssertEqual(FieldReplayPresentation.stageHeight(width:374,available:720),597,accuracy:0.01)
         XCTAssertEqual(FieldReplayPresentation.stageHeight(width:304,available:420),320)
         XCTAssertEqual(FieldReplayPresentation.stageHeight(width:304,available:420,accessibility:true),480)
         let attachment=XCTAttachment(image:image);attachment.name="Pixel stadium native art";attachment.lifetime = .keepAlways;add(attachment)
@@ -895,13 +895,13 @@ import SwiftUI
         let size=CGSize(width:390,height:460)
         func point(_ p:FieldPoint) -> CGPoint {InplayFieldProjection.point(p,size:size)}
         let home=point(DetailedFieldRules.bases[0]),second=point(DetailedFieldRules.bases[2])
-        XCTAssertGreaterThan(home.y-second.y,size.height*0.48)
+        XCTAssertGreaterThan(home.y-second.y,InplayFieldProjection.viewport(size).height*0.33)
         let first=point(DetailedFieldRules.bases[1]),third=point(DetailedFieldRules.bases[3])
         XCTAssertGreaterThan(abs(first.x-third.x),size.width*0.42)
-        XCTAssertGreaterThan(home.y-point(DetailedFieldRules.positions[0]).y,110)
+        XCTAssertGreaterThan(home.y-point(DetailedFieldRules.positions[0]).y,95)
         for p in DetailedFieldRules.positions+DetailedFieldRules.bases {
             let screen=point(p)
-            XCTAssertGreaterThan(screen.x,15);XCTAssertLessThan(screen.x,size.width-15)
+            XCTAssertGreaterThan(screen.x,3);XCTAssertLessThan(screen.x,size.width-3)
             XCTAssertGreaterThan(screen.y,50);XCTAssertLessThan(screen.y,size.height)
             XCTAssertEqual(point(.init(x:-p.x,y:p.y)).x,size.width-screen.x,accuracy:0.000001)
         }
@@ -918,6 +918,60 @@ import SwiftUI
             let attachment=XCTAttachment(image:try XCTUnwrap(renderer.uiImage))
             attachment.name="Infield home plate camera \(play.fly == nil ? "ground":"air") \(play.relay != nil ? "relay":"direct")"
             attachment.lifetime = .keepAlways;add(attachment)
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+        }
+    }
+
+    func testSunsetBackdropLandmarksAndPerspectiveScaleMatchLiveLayers() throws {
+        let size=InplayStadiumArt.size
+        let landmarks:[(FieldPoint,CGPoint)]=[
+            (DetailedFieldRules.bases[0],CGPoint(x:512,y:1152)),
+            (DetailedFieldRules.bases[1],CGPoint(x:997,y:795)),
+            (DetailedFieldRules.bases[2],CGPoint(x:512,y:632)),
+            (DetailedFieldRules.bases[3],CGPoint(x:27,y:795)),
+            (DetailedFieldRules.positions[0],CGPoint(x:512,y:817))]
+        for (world,expected) in landmarks {
+            let screen=InplayFieldProjection.point(world,size:size)
+            let viewport=InplayFieldProjection.viewport(size)
+            XCTAssertEqual(screen.x,viewport.minX+expected.x*0.95,accuracy:8)
+            XCTAssertEqual(screen.y,viewport.minY+expected.y*0.95,accuracy:8)
+        }
+        let near=InplayFieldProjection.actorScale(.init(x:0,y:0),size:size)
+        let far=InplayFieldProjection.actorScale(.init(x:0,y:80),size:size)
+        XCTAssertGreaterThan(near,far)
+        XCTAssertEqual(InplayFieldProjection.actorScale(.init(x:0,y:80),size:.init(width:512,height:768)),far/2,accuracy:0.000001)
+        XCTAssertEqual(InplayFieldProjection.facing(.north,at:.init(x:32,y:62),size:size),.northWest)
+        XCTAssertNotNil(InplayStadiumArt.image)
+        let phone=CGSize(width:390,height:585)
+        for feet in DetailedFieldRules.bases+DetailedFieldRules.positions {
+            let point=InplayFieldProjection.point(feet,size:phone)
+            let reach=12*InplayFieldProjection.actorScale(feet,size:phone)
+            XCTAssertGreaterThan(point.x-reach,0)
+            XCTAssertLessThan(point.x+reach,phone.width)
+        }
+    }
+
+    func testProjectedBallStaysAtHandsAndGlovesAcrossBothHandsRelayAndDoublePlay() throws {
+        let size=CGSize(width:390,height:585)
+        for play in [doublePlay(),relayFly()] {
+            let data=try JSONEncoder().encode(play)
+            for event in FieldSpriteAnimation.throwsIn(play) {for left in [false,true] {
+                for (index,time,release) in [(event.fielder,event.releaseAt,true),(event.receiver,event.receivedAt,false)] {
+                    let feet=FieldNode.sample(play.fielders[index],at:time)
+                    let origin=InplayFieldProjection.point(feet,size:size),u=InplayFieldProjection.actorScale(feet,size:size)
+                    let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:feet,size:size)
+                    let anchor=release ? motion.throwingHand(left:left):motion.glove(left:left)
+                    let actual=FieldBallPresentation.point(play,time:time,size:size,leftIndex:left ? index:nil)
+                    XCTAssertEqual(actual.x,origin.x+(anchor.x+motion.bodyOffset.x)*u,accuracy:0.2)
+                    XCTAssertEqual(actual.y,origin.y+(anchor.y+motion.bodyOffset.y)*u,accuracy:0.2)
+                    let before=FieldBallPresentation.point(play,time:max(0,time-0.00001),size:size,leftIndex:left ? index:nil)
+                    XCTAssertLessThan(hypot(actual.x-before.x,actual.y-before.y),0.2)
+                }
+            }}
+            for step in 0...100 {
+                let p=FieldBallPresentation.point(play,time:play.duration*Double(step)/100,size:size,leftIndex:play.fielder)
+                XCTAssertTrue(p.x.isFinite && p.y.isFinite)
+            }
             XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
         }
     }

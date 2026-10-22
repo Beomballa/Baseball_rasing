@@ -322,7 +322,7 @@ struct CareerGameView: View {
                     DetailedFieldReplayBoard(play:play,appearance:player.appearance,animated:animateResultReplay,
                         jerseyNumber:player.jerseyNumber,ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(play.half%2 == 0) == match.isHome,scoreText:"H \(match.homeScore) : \(match.awayScore) A") { animateResultReplay=false }
-                        .id(resultReplayID).frame(height:420)
+                        .id(resultReplayID).frame(height:600)
                     if !animateResultReplay {FieldReplayDetails(play:play)}
                     Button("수비·주루 재생") { animateResultReplay=true;resultReplayID += 1 }
                         .buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayResultFieldPlay")

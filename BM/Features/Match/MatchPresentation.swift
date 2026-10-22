@@ -5,7 +5,7 @@ import SpriteKit
 // Presentation geometry never changes the saved pitch, timing window or RNG.
 enum MatchArt {
     static let names = ["batter-view-clean", "stadium-clean", "batter-actions", "pitcher-delivery-v2", "catcher-parts",
-                        "grip-fastball", "grip-slider", "grip-changeup", "grips-extra"]
+                        "grip-fastball", "grip-slider", "grip-changeup", "grips-extra", "inplay-stadium-sunset-v1"]
     private static let images: [String: UIImage] = Dictionary(uniqueKeysWithValues: names.compactMap { name in
         guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "MatchArt"),
               let image = UIImage(contentsOfFile: url.path) else { return nil }
@@ -347,7 +347,7 @@ struct MatchResultSummary {
 
 enum FieldReplayPresentation {
     static func stageHeight(width:CGFloat,available:CGFloat,accessibility:Bool=false) -> CGFloat {
-        max(320,min(width*1.3,available-112)) + (accessibility ? 160:0)
+        max(320,min(width*1.5+36,available-112)) + (accessibility ? 160:0)
     }
     static func seconds(_ play:MatchDetailedPlay,reduced:Bool,animated:Bool) -> Double {
         reduced || !animated ? 0.25:min(8,max(3,play.duration))
@@ -578,22 +578,25 @@ enum FieldSpriteAnimation {
             for i in 0...steps {let t=Double(i)/Double(steps);box(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,1,2,color,body)}
         }
         let side=motion.facing.side,width=side ? 7.0:motion.facing.diagonal ? 9:10
-        box(-8,2,16,3,0x244a38,false)
+        for step in 0..<7 {box(Double(-step)-5,Double(step)*0.7+2,10,2,0x31503a,false)}
+        box(-6,2,12,2,0x213d32,false)
         for (hip,phase) in [(side ? -2.0:-3,0.0),(side ? 1.0:3,Double.pi)] {
             let stride=motion.stage == .run ? sin(motion.gait+phase):0
             let foot=CGPoint(x:hip+motion.facing.vector.x*stride*4,y:3+(abs(motion.facing.vector.y)>0.4 ? stride*2:-max(0,stride)*3))
-            let knee=CGPoint(x:hip+motion.facing.vector.x*stride,y:-1-max(0,stride)*2)
-            limb(CGPoint(x:hip,y:-5),knee,pants,false);limb(knee,foot,pants,false)
+            let knee=CGPoint(x:hip+motion.facing.vector.x*stride,y:-4-max(0,stride)*2)
+            limb(CGPoint(x:hip,y:-8),knee,pants,false);limb(knee,foot,pants,false)
             box(foot.x-1,foot.y-1,3,2,kit,false)
             box(foot.x-(side && motion.facing.horizontal<0 ? 3:1),foot.y+1,4,2,outline,false)
             box(foot.x-1,foot.y+1,2,1,0x71817d,false)
         }
-        box(-width/2-1,-16,width+2,13,outline)
-        box(-width/2,-15,width,10,kit);box(-width/2,-15,1,10,0x294454)
-        box(width/2-1,-14,1,8,0x294454);box(-width/2+1,-15,width-2,1,0xd0d6c2)
-        box(-width/2,-5,width,2,0x182d3b);box(-1,-5,2,1,0xcbb17b)
+        box(-width/2-1,-20,width+2,14,outline)
+        box(-width/2,-19,width,12,kit);box(-width/2,-19,1,12,0x294454)
+        box(width/2-1,-18,1,10,0x294454);box(-width/2+1,-19,width-2,1,0xd0d6c2)
+        box(-2,-19,4,2,0xddd7bd);box(-1,-17,1,7,0x9aa899)
+        box(-width/2+1,-9,width-2,1,0x63756e)
+        box(-width/2,-7,width,2,0x182d3b);box(-1,-7,2,1,0xcbb17b)
         let headShift=motion.facing.diagonal ? motion.facing.horizontal:0
-        func head(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {box(x+headShift,y,w,h,hex)}
+        func head(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {box((x+headShift)*0.8,(y+25)*0.8-29,w*0.8,h*0.8,hex)}
         head(-5,-25,10,10,outline);head(-4,-23,8,7,skin)
         head(-4,-19,8,3,hair)
         if motion.facing.back {
@@ -611,153 +614,85 @@ enum FieldSpriteAnimation {
         head(Double(brim),-23,motion.facing == .south ? 10:6,2,kit)
         let hand=motion.throwingHand(left:left),glove=motion.glove(left:left)
         let anatomical=(left ? -1.0:1)*(motion.facing.back ? 1:-1)
-        limb(CGPoint(x:anatomical*width/2,y:-14),hand,skin)
-        limb(CGPoint(x:-anatomical*width/2,y:-14),glove,skin)
+        limb(CGPoint(x:anatomical*width/2,y:-18),hand,skin)
+        limb(CGPoint(x:-anatomical*width/2,y:-18),glove,skin)
         box(glove.x-2,glove.y-2,6,5,outline);box(glove.x-1,glove.y-2,4,4,0x986338)
         box(glove.x,glove.y-2,2,1,0xd1a471);box(glove.x+1,glove.y,1,2,0x5a3b28)
         if !side {
-            context.draw(Text("\(number)").font(.system(size:6.5*u,weight:.black,design:.monospaced)).foregroundStyle(Color(hex:kit == 0xf0ead9 ? 0x18344b:0xf3ecd3).opacity(out ? 0.38:1)),at:CGPoint(x:c.x+lean*u,y:c.y+(-10+bob)*u))
-        } else {box(-1,-14,1,7,0xc1c8b8)}
-        if selected {box(-2,-30,4,2,0xecc66b);box(-1,-28,2,1,0xecc66b)}
+            context.draw(Text("\(number)").font(.system(size:6.5*u,weight:.black,design:.monospaced)).foregroundStyle(Color(hex:kit == 0xf0ead9 ? 0x18344b:0xf3ecd3).opacity(out ? 0.38:1)),at:CGPoint(x:c.x+lean*u,y:c.y+(-12+bob)*u))
+        } else {box(-1,-18,1,9,0xc1c8b8)}
+        if selected {box(-2,-34,4,2,0xecc66b);box(-1,-32,2,1,0xecc66b)}
     }
 }
 
-// A home-plate camera expands the infield and foreshortens the distant outfield.
-// This projection is presentation-only; simulation distances and timestamps stay in metres.
+// Calibrated to the clean backdrop's home, first/third, second and mound landmarks.
+// Shared by actors, bases and the ball; it never changes simulation geometry.
 enum InplayFieldProjection {
+    static func viewport(_ size:CGSize) -> CGRect {
+        CGRect(x:size.width*0.025,y:size.height*0.025,width:size.width*0.95,height:size.height*0.95)
+    }
     static func point(_ p:FieldPoint,size:CGSize) -> CGPoint {
-        let depth=max(-6,p.y)
-        let distance=(1-exp(-depth/40))/(1-exp(-119.0/40))
-        return CGPoint(x:size.width*(0.5+p.x/(68+0.95*max(0,depth))),
-                       y:size.height*(0.90-0.78*distance))
+        let depth=max(-6,p.y),denominator=33+depth,frame=viewport(size)
+        return CGPoint(x:frame.minX+frame.width*(0.5+1.28*p.x/denominator),
+                       y:frame.minY+frame.height*(0.75-0.626*depth/denominator))
+    }
+    static func actorScale(_ p:FieldPoint,size:CGSize) -> Double {
+        viewport(size).width/310*(1.12-0.36*min(1,max(0,p.y)/80))
+    }
+    static func facing(_ facing:FieldFacing,at p:FieldPoint,size:CGSize) -> FieldFacing {
+        let a=point(p,size:size)
+        let b=point(.init(x:p.x+facing.vector.x,y:p.y-facing.vector.y),size:size)
+        return .direction(dx:b.x-a.x,dy:a.y-b.y)
+    }
+    static func motion(_ motion:FieldSpriteMotion,at p:FieldPoint,size:CGSize) -> FieldSpriteMotion {
+        var display=motion;display.facing=facing(motion.facing,at:p,size:size);return display
     }
 }
 
-// A fixed-resolution stadium keeps stepped edges and texture pixels at every display scale.
-@MainActor enum InplayStadiumArt {
-    static let size=CGSize(width:320,height:352)
-    static let image:UIImage = {
-        let format=UIGraphicsImageRendererFormat();format.scale=1;format.opaque=true
-        return UIGraphicsImageRenderer(size:size,format:format).image { renderer in
-            let c=renderer.cgContext;c.setShouldAntialias(false);c.interpolationQuality = .none
-            func color(_ hex:Int) -> CGColor {UIColor(red:CGFloat((hex>>16)&255)/255,green:CGFloat((hex>>8)&255)/255,blue:CGFloat(hex&255)/255,alpha:1).cgColor}
-            func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
-                c.setFillColor(color(hex));c.fill(CGRect(x:x.rounded(),y:y.rounded(),width:w.rounded(),height:h.rounded()))
-            }
-            func point(_ p:FieldPoint) -> CGPoint {
-                let projected=InplayFieldProjection.point(p,size:CGSize(width:320,height:352))
-                return CGPoint(x:projected.x.rounded(),y:projected.y.rounded())
-            }
-            func path(_ nodes:[FieldPoint]) -> CGPath {
-                let p=CGMutablePath()
-                guard let first=nodes.first else {return p}
-                p.move(to:point(first))
-                for (a,b) in zip(nodes,nodes.dropFirst()+[first]) {
-                    for step in 1...24 {
-                        let t=Double(step)/24
-                        p.addLine(to:point(.init(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)))
-                    }
+enum FieldBallPresentation {
+    static func handOffset(_ play:MatchDetailedPlay,time:Double,size:CGSize,leftIndex:Int?) -> CGPoint {
+        let position=FieldNode.sample(play.ball,at:time)
+        let motionIndex=play.fielders.indices.first {FieldNode.sample(play.fielders[$0],at:time).distance(to:position)<0.9}
+        let scale=InplayFieldProjection.actorScale(position,size:size)
+        var offset=FieldSpriteAnimation.ballOffset(play,time:time,leftIndex:leftIndex)
+        if let index=motionIndex {
+            let display=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:position,size:size)
+            // Preserve the gather interpolation while using the projected screen-facing pose.
+            let original=FieldSpriteAnimation.motion(play,index:index,time:time)
+            let left=index == leftIndex
+            func anchor(_ motion:FieldSpriteMotion) -> CGPoint {
+                var p=motion.glove(left:left)
+                if [.windup,.release].contains(motion.stage) {p=motion.throwingHand(left:left)}
+                else if motion.stage == .gather && motion.willThrow {
+                    let hand=motion.throwingHand(left:left)
+                    p=CGPoint(x:p.x+(hand.x-p.x)*motion.progress,y:p.y+(hand.y-p.y)*motion.progress)
                 }
-                p.closeSubpath();return p
+                return CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y)
             }
-            let edge:[FieldPoint]=[.init(x:0,y:-3),.init(x:64,y:61),.init(x:61,y:82),.init(x:50,y:101),.init(x:32,y:114),.init(x:0,y:119),.init(x:-32,y:114),.init(x:-50,y:101),.init(x:-61,y:82),.init(x:-64,y:61)]
-            let field=path(edge)
-            box(0,0,320,352,0x102735)
-            for row in 0..<26 {
-                let y=Double(row*9)
-                box(0,y+7,320,2,row%4 == 0 ? 0x69808a:0x273f52)
-                for column in 0..<40 {
-                    let x=Double(column*8)+(row%2 == 0 ? 0:3)
-                    let n=(row*37+column*19)%17
-                    box(x,y,6,6,0x263f56);box(x+1,y+4,5,2,0x42617c)
-                    if n<13 {
-                        let skin=[0xe4b987,0xc68b62,0x9b6749][n%3]
-                        box(x+2,y,3,3,skin);box(x+1,y+3,5,3,[0xc6cebd,0x8b4846,0x536f86,0xc9b36a][n%4])
-                        if n%3 == 0 {box(x+1,y-1,4,1,0x182e42)}
-                    }
-                }
-                if row%8 == 0 {box(24,y,3,8,0x8b9693);box(293,y,3,8,0x8b9693)}
+            if offset != .zero {
+                let a=anchor(original),b=anchor(display)
+                offset=CGPoint(x:offset.x+b.x-a.x,y:offset.y+b.y-a.y)
             }
-            // Quiet service concourse behind home plate: keep the crowd in the outfield tiers.
-            box(0,234,320,118,0x122b38)
-            box(0,234,320,4,0x314b59)
-            box(0,238,320,2,0x1e3948)
-            for x in [4.0,64,128,192,252,316] {box(x,242,1,43,0x1b3442)}
-            box(0,291,320,13,0x1c3541);box(0,304,320,2,0x29434e)
-            for x in [55.0,249] {
-                box(x,306,16,20,0x0c202b);box(x-1,304,18,2,0x3b545d)
-                box(x+3,309,1,15,0x213b48)
-            }
-            c.saveGState();c.addPath(field);c.clip()
-            box(0,0,320,352,0x39774b)
-            for y in stride(from:0,to:352,by:16) {box(0,Double(y),320,8,0x418452)}
-            for i in 0..<1600 {
-                let x=(i*73+31)%320,y=(i*47+19)%352
-                box(Double(x),Double(y),i%5 == 0 ? 2:1,1,i%2 == 0 ? 0x488759:0x347346)
-            }
-            c.addPath(field);c.setStrokeColor(color(0x986f43));c.setLineWidth(15);c.strokePath()
-            c.addPath(field);c.setStrokeColor(color(0xc39a63));c.setLineWidth(9);c.strokePath()
-            let diamond=path(DetailedFieldRules.bases)
-            c.addPath(diamond);c.setFillColor(color(0xb98a52));c.fillPath()
-            c.addPath(diamond);c.setStrokeColor(color(0xd2a66b));c.setLineWidth(8);c.strokePath()
-            let infield=path([.init(x:0,y:7),.init(x:12,y:19.4),.init(x:0,y:31.8),.init(x:-12,y:19.4)])
-            c.addPath(infield);c.setFillColor(color(0x3b7c4e));c.fillPath()
-            for i in 0..<170 {
-                let x=90+(i*17)%140,y=140+(i*11)%170
-                if diamond.contains(CGPoint(x:x,y:y)) && !infield.contains(CGPoint(x:x,y:y)) {box(Double(x),Double(y),1,1,0xc59b64)}
-            }
-            for (a,b) in [(FieldPoint(x:-64,y:64),FieldPoint(x:0,y:0)),(FieldPoint(x:0,y:0),FieldPoint(x:64,y:64))] {
-                c.move(to:point(a))
-                for step in 1...32 {
-                    let t=Double(step)/32
-                    c.addLine(to:point(.init(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)))
-                }
-                c.setStrokeColor(color(0xf0e6c8));c.setLineWidth(1);c.strokePath()
-            }
-            for p in DetailedFieldRules.bases {
-                let b=point(p);c.setFillColor(color(0xbf925c));c.fillEllipse(in:CGRect(x:b.x-6,y:b.y-4,width:12,height:8))
-            }
-            let mound=point(DetailedFieldRules.positions[0])
-            c.setFillColor(color(0xbe945f));c.fillEllipse(in:CGRect(x:mound.x-12,y:mound.y-7,width:24,height:14))
-            box(mound.x-3,mound.y-1,6,2,0xf7ebd2)
-            let home=point(DetailedFieldRules.bases[0])
-            c.setStrokeColor(color(0xe3d8b6));c.setLineWidth(1)
-            for side in [-1.0,1] {
-                c.stroke(CGRect(x:home.x+side*12-4,y:home.y-8,width:8,height:15))
-            }
-            c.restoreGState()
-            c.addPath(field);c.setStrokeColor(color(0x112b38));c.setLineWidth(6);c.strokePath()
-            c.addPath(field);c.setStrokeColor(color(0x6c9291));c.setLineWidth(2);c.strokePath()
-            for i in 0..<edge.count {
-                let p=point(edge[i]);box(p.x-1,p.y-2,2,5,0xd6bd79)
-            }
-            c.saveGState()
-            c.addRect(CGRect(origin:.zero,size:size));c.addPath(field);c.clip(using:.evenOdd)
-            let backstop=[FieldPoint(x:-58,y:48),.init(x:-38,y:18),.init(x:-21,y:-2),.init(x:0,y:-6),.init(x:21,y:-2),.init(x:38,y:18),.init(x:58,y:48)]
-            c.addLines(between:backstop.map(point));c.setStrokeColor(color(0x294451));c.setLineWidth(6);c.strokePath()
-            c.addLines(between:backstop.map(point));c.setStrokeColor(color(0x4b6570));c.setLineWidth(1);c.strokePath()
-            // Sparse, subdued netting stays outside the playing surface and behind the actors.
-            for x in stride(from:112,to:213,by:16) {box(Double(x),320,1,25,0x243f4c)}
-            box(110,328,104,1,0x243f4c);box(110,340,104,1,0x243f4c)
-            c.restoreGState()
-            // Open-front dugouts: a deep canopy, bench, players, rail and entrance steps.
-            for x in [7.0,267] {
-                box(x-1,267,47,30,0x091e29);box(x+2,271,41,23,0x1e3742)
-                box(x+3,287,39,6,0x354b4b);box(x+4,280,37,3,0x9c8157)
-                box(x+4,283,37,2,0x5b513d)
-                box(x+38,274,3,7,0x8a724c);box(x+40,273,1,8,0xc1a473)
-                box(x-3,263,51,6,0x4c6d75);box(x-1,263,46,1,0x7a9497)
-                box(x,269,45,3,0x102a35);box(x,270,2,24,0x72898b);box(x+43,270,2,24,0x72898b)
-                box(x+2,290,32,2,0x718480)
-                for rail in 0..<4 {box(x+3+Double(rail)*9,290,1,5,0x536d73)}
-                box(x+36,291,7,2,0x61736d);box(x+35,294,9,2,0x465e61)
-            }
-            box(111,3,98,35,0x091c2b);box(112,4,96,1,0x9bb2ac)
-            box(114,8,92,26,0x142d3d)
-            for x in stride(from:116,to:206,by:3) {box(Double(x),30,1,1,0x3a5260)}
-            box(148,342,24,2,0x819495)
         }
-    }()
+        return CGPoint(x:offset.x*scale,y:offset.y*scale)
+    }
+    static func point(_ play:MatchDetailedPlay,time:Double,size:CGSize,leftIndex:Int?) -> CGPoint {
+        let raw=InplayFieldProjection.point(FieldNode.sample(play.ball,at:time),size:size)
+        var offset=handOffset(play,time:time,size:size,leftIndex:leftIndex)
+        if let segment=zip(play.ball,play.ball.dropFirst()).first(where:{time >= $0.0.at && time < $0.1.at && $0.0.point != $0.1.point}) {
+            let a=handOffset(play,time:segment.0.at,size:size,leftIndex:leftIndex)
+            let b=handOffset(play,time:segment.1.at,size:size,leftIndex:leftIndex)
+            let f=(time-segment.0.at)/max(0.001,segment.1.at-segment.0.at)
+            offset=CGPoint(x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f)
+        }
+        return CGPoint(x:raw.x+offset.x,y:raw.y+offset.y-FieldReplayPresentation.lift(play,time:time,height:size.height))
+    }
+}
+
+// The bundled art contains no players, ball or score; live layers own every moving object.
+@MainActor enum InplayStadiumArt {
+    static let size=CGSize(width:1024,height:1536)
+    static let image=MatchArt.image("inplay-stadium-sunset-v1")
 }
 
 struct DetailedFieldReplayBoard: View {
@@ -788,30 +723,22 @@ struct DetailedFieldReplayBoard: View {
                     .lineLimit(typeSize.isAccessibilitySize ? nil:2).accessibilityIdentifier("fieldReplayPhase")
                 Canvas { context,size in
                     func point(_ p:FieldPoint) -> CGPoint {InplayFieldProjection.point(p,size:size)}
-                    context.draw(Image(uiImage:InplayStadiumArt.image).interpolation(.none),in:CGRect(origin:.zero,size:size))
-                    let scoreFrame=CGRect(x:size.width*0.28,y:4,width:size.width*0.44,height:34)
+                    if let image=InplayStadiumArt.image {
+                        context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))
+                    } else {
+                        context.draw(Text("구장 이미지를 불러오지 못했습니다").foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width/2,y:size.height/4))
+                    }
+                    let viewport=InplayFieldProjection.viewport(size)
+                    let scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.174,width:viewport.width*0.22,height:viewport.height*0.038)
                     context.fill(Path(scoreFrame),with:.color(Color(hex:0x0b2030)))
                     context.stroke(Path(scoreFrame),with:.color(GameTheme.gold),lineWidth:2)
-                    context.draw(Text(scoreText).font(.system(size:max(12,size.width*0.038),weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:scoreFrame.midX,y:scoreFrame.midY))
-                    for base in 0..<4 {
-                        let b=point(DetailedFieldRules.bases[base]),w=max(4,size.width*0.016)
-                        context.fill(Path(CGRect(x:b.x-w/2,y:b.y-w/2,width:w,height:w)),with:.color(base==target && time>=play.pickupAt ? GameTheme.gold:GameTheme.paper))
+                    context.draw(Text(scoreText).font(.system(size:max(12,size.width*0.028),weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:scoreFrame.midX,y:scoreFrame.midY))
+                    if time>=play.pickupAt {
+                        let b=point(DetailedFieldRules.bases[target]),w=max(7,size.width*0.025)
+                        context.stroke(Path(ellipseIn:CGRect(x:b.x-w,y:b.y-w/2,width:w*2,height:w)),with:.color(GameTheme.gold.opacity(0.8)),lineWidth:1)
                     }
                     let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
                     let defenseOwn=ownTeamFielding ?? !play.ownBatter
-                    let ownHome=defenseOwn == (play.half%2 == 0)
-                    for (dugout,x) in [7.0,267].enumerated() {
-                        let kit=(dugout == 0) == ownHome ? ownKit:opponent
-                        func seatBox(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
-                            context.fill(Path(CGRect(x:x*size.width/320,y:y*size.height/352,width:w*size.width/320,height:h*size.height/352)),with:.color(Color(hex:hex).opacity(0.8)))
-                        }
-                        for seat in 0..<3 {
-                            let sx=x+6+Double(seat)*10
-                            seatBox(sx,276,4,4,0xd2a97f);seatBox(sx-1,275,6,2,kit)
-                            seatBox(sx-1,280,6,4,kit);seatBox(sx,284,2,4,0xc5cebf);seatBox(sx+3,284,2,4,0xc5cebf)
-                            seatBox(sx,287,5,1,0x102735)
-                        }
-                    }
                     var actors:[(point:FieldPoint,motion:FieldSpriteMotion,own:Bool,teamOwn:Bool,number:Int,out:Bool)]=[]
                     for index in play.fielders.indices {
                         let own=defenseOwn && (ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index==play.fielder))
@@ -821,7 +748,7 @@ struct DetailedFieldReplayBoard: View {
                         actors.append((FieldNode.sample(runner.nodes,at:time),FieldSpriteAnimation.travel(runner.nodes,time:time),runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,finished && runner.out))
                     }
                     for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
-                        FieldActorArt.draw(in:context,at:point(actor.point),scale:max(1,size.width/260),motion:actor.motion,
+                        FieldActorArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),
                             kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
                             hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,
                             left:actor.own && throwingHand == "left",selected:actor.own,out:actor.out)
@@ -829,15 +756,7 @@ struct DetailedFieldReplayBoard: View {
                     let ownIndex=defenseOwn ? play.fielders.indices.first {index in ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index == play.fielder)}:nil
                     let leftIndex=throwingHand == "left" ? ownIndex:nil
                     func ballPoint(_ t:Double) -> CGPoint {
-                        let raw=point(FieldNode.sample(play.ball,at:t)),u=max(1,size.width/260)
-                        var offset=FieldSpriteAnimation.ballOffset(play,time:t,leftIndex:leftIndex)
-                        if let segment=zip(play.ball,play.ball.dropFirst()).first(where:{t >= $0.0.at && t < $0.1.at && $0.0.point != $0.1.point}) {
-                            let a=FieldSpriteAnimation.ballOffset(play,time:segment.0.at,leftIndex:leftIndex)
-                            let b=FieldSpriteAnimation.ballOffset(play,time:segment.1.at,leftIndex:leftIndex)
-                            let f=(t-segment.0.at)/max(0.001,segment.1.at-segment.0.at)
-                            offset=CGPoint(x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f)
-                        }
-                        return CGPoint(x:raw.x+offset.x*u,y:raw.y+offset.y*u-FieldReplayPresentation.lift(play,time:t,height:size.height))
+                        FieldBallPresentation.point(play,time:t,size:size,leftIndex:leftIndex)
                     }
                     let groundBall=point(FieldNode.sample(play.ball,at:time))
                     context.fill(Path(ellipseIn:CGRect(x:groundBall.x-3,y:groundBall.y-1,width:6,height:2)),with:.color(.black.opacity(0.4)))
@@ -845,7 +764,7 @@ struct DetailedFieldReplayBoard: View {
                         let p=ballPoint(max(0,time-Double(i)*0.04))
                         context.fill(Path(CGRect(x:p.x,y:p.y,width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
                     }
-                    PixelBaseball.draw(in:context,at:ballPoint(time),diameter:max(7,size.width*0.022))
+                    PixelBaseball.draw(in:context,at:ballPoint(time),diameter:max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size)))
                     if finished {
                         let label=play.misplay != nil ? "ERROR":play.secondThrow?.out == true ? "DOUBLE PLAY":play.fly?.caught == true && play.targetRunner == nil ? "CATCH · OUT":play.out ? "OUT":"SAFE"
                         let frame=CGRect(x:size.width*0.18,y:size.height*0.27,width:size.width*0.64,height:32)
@@ -853,7 +772,7 @@ struct DetailedFieldReplayBoard: View {
                         context.stroke(Path(frame),with:.color(GameTheme.gold),lineWidth:2)
                         context.draw(Text(label).font(.system(size:18,weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:frame.midX,y:frame.midY))
                     }
-                }.accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
+                }.aspectRatio(2.0/3,contentMode:.fit).accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
                     .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
             }.padding(4).background(GameTheme.board)
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
