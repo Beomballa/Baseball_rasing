@@ -37,6 +37,10 @@ enum CareerSchemaV3: VersionedSchema {
                     guard let mastery = stats.positionMastery, mastery.isFinite, (0...100).contains(mastery), FieldPosition(rawValue: stats.position) != nil else { throw MatchError.invalidRecord }
                 }
             }
+            if let performance = match.scoutingPerformance {
+                guard let role = PlayerRole(rawValue:match.role) else {throw MatchError.invalidRecord}
+                try performance.validate(line:match.line,role:role)
+            }
             try match.validatePitching()
             try match.validateDetailedField()
             try match.positionExperience?.validate(match: match)
@@ -117,6 +121,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
                 fatigue: player.fatigue, before: values, annualBefore: try annualAbilityXP(playerID: player.id, year: year, in: context))
             try match.abilityExperience?.validate(match: match)
         }
+        match.scoutingPerformance = MatchScoutingPerformance()
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"

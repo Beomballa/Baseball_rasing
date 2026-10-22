@@ -4,6 +4,7 @@ import SwiftData
 struct ScoutingSampleGroup: Identifiable, Codable {
     let id: String
     var totals = PersonalSeasonTotals()
+    var performance: MatchScoutingPerformance?
     var hasBatterMinimum: Bool { totals.line.plateAppearances >= 40 }
     var hasPitcherMinimum: Bool { totals.line.pitchingOuts >= 45 }
 }
@@ -62,6 +63,7 @@ struct ScoutingObservationHomePanel: View {
 struct SavedScoutingObservationView: View {
     let value: ScoutingObservation
     @State private var showOriginals = false
+    @State private var showClubs = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -101,9 +103,44 @@ struct SavedScoutingObservationView: View {
                     }
                     if value.groups.isEmpty { Text("자료 대기 · 완료한 개인 출전이 없습니다.").font(.caption) }
                 }
+                if let fit = value.contractFit {
+                    GamePanel(title: "동일 환경 성적 비교", onBoard: true, contentSpacing: 16) {
+                        Text("고교 원소속 수준 · 지원 사건 지표 v1 · 실제 리그 평균이 아닌 게임 엔진 NPC 기준").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        if fit.comparisons.isEmpty {Text("완료 개인 경기 자료가 없어 P=0 중립입니다.").font(.subheadline)}
+                        ForEach(Array(fit.comparisons.enumerated()), id: \.element.id) { index, row in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("환경 \(index+1) · 성적 보정 P \(row.correction.formatted(.number.precision(.fractionLength(1))))").font(.subheadline.bold()).accessibilityIdentifier("scoutComparison-\(index)")
+                                Text("내 지표 \(row.value.map { $0.formatted(.number.precision(.fractionLength(3))) } ?? "—") / NPC \(row.reference?.value.map { $0.formatted(.number.precision(.fractionLength(3))) } ?? "—")").font(.caption.monospaced())
+                                if let ref = row.reference {Text("NPC \(ref.totals.games)경기 · " + (value.role == .batter ? "\(ref.totals.line.plateAppearances)타석" : "\(ref.totals.innings)이닝 / \(ref.performance.battersFaced)BF")).font(.caption)}
+                                Text(row.reason).font(.caption).foregroundStyle(row.verified ? GameTheme.growth:GameTheme.gold)
+                            }
+                        }
+                    }
+                    GamePanel(title: "구단별 모집 · 계약 적합도 참고", onBoard: true, contentSpacing: 16) {
+                        Text("가상 국내6구단의 초기 모집 자료입니다. F=H−C+P는 기량 참고값이며 정식 제의/출전을 보장하지 않습니다.").font(.caption).foregroundStyle(GameTheme.gold)
+                        Text("비교 검증된 환경 중 표본이 가장 큰1개만 사용합니다. 직접 조작·구형 자료만 있으면 P=0 중립이며 서로 다른 환경을 합치지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        HomeDetailButton(title: "모집 역할·기준·적합도 \(fit.clubs.count)건", expanded: $showClubs, identifier: "scoutClubDetails")
+                        if showClubs {
+                            ForEach(fit.clubs) { club in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(club.recruitment.name + " · " + (value.grades.first{$0.id == club.recruitment.roleID}?.label ?? club.recruitment.roleID)).font(.headline)
+                                    Text(club.recruitment.demand.label + " · " + club.stage).font(.subheadline).foregroundStyle(GameTheme.gold)
+                                    Text("H \(number(club.h)) / C \(number(club.c)) / P \(number(club.p)) / F \(number(club.f))").font(.subheadline.monospaced()).accessibilityIdentifier("scoutClub-\(club.id)")
+                                    ForEach(club.blockers, id: \.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
+                                    Text(club.recruitment.demand == .none ? "모집이 없어 후보 판정을 보류합니다." : club.c == nil ? "경쟁자 자료 미확인 · 빈자리로 가정하지 않습니다." : club.recruitment.confirmedEmpty ? "확인된 공석 · 리그 역할 기준 사용" : "리그 기준과 같은 역할 경쟁자 기량+보강 여유 중 높은 값이 기준입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                                }.padding(.vertical,8)
+                            }
+                        }
+                        Text("수비 역할의 숙련/원본 수비 조건, 표본·20세/진로·권리/등록·예산/경쟁 심사는 별도입니다. 현재 고교 성적을 프로 즉시 전력 표본으로 대체하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
+                } else {
+                    GamePanel(title: "이전 버전 보고서", onBoard: true) {
+                        Text("이 보고서의 확정 당시에는 구단/비교 성적을 기록하지 않았습니다. 원문을 유지하며 다음28일 보고서부터 새 평가 자료를 저장합니다.").font(.subheadline).accessibilityIdentifier("scoutLegacyFit")
+                    }
+                }
                 GamePanel(title: "평가 대기 사유", onBoard: true, contentSpacing: 16) {
                     ForEach(value.evaluationPending, id: \.self) { Text($0).font(.subheadline) }
-                    Text("구단 기준 C·동일 환경 비교 성적 Vref가 준비되지 않아 P/F·육성 전망과 계약 적합도를 확정하지 않습니다.").font(.subheadline).accessibilityIdentifier("scoutFrozenPending")
+                    Text(value.contractFit == nil ? "구단 기준/비교 성적 미기록 · 당시 평가 대기 상태를 보존합니다." : "역할 기량과 성적 적합도는 참고 자료입니다. 육성 전망·진로/권리·등록/예산을 심사한 정식 제의는 아직 생성하지 않습니다.").font(.subheadline).accessibilityIdentifier("scoutFrozenPending")
                     Text("28일 관찰과 계약 평가 창은 별개입니다. 재조회·시즌 결산으로 제의를 재추첨하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 }
             }.padding(12)
@@ -112,6 +149,7 @@ struct SavedScoutingObservationView: View {
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar).tint(GameTheme.gold)
     }
+    private func number(_ value: Double?) -> String {value.map{$0.formatted(.number.precision(.fractionLength(1)))} ?? "—"}
 }
 
 enum ScoutingReportError: LocalizedError {
@@ -167,8 +205,13 @@ enum ScoutingReportError: LocalizedError {
             // Keep legacy/control/training/field/substitution environments separate. No Vref is invented.
             let versions = [match.controlVersion, match.trainingEffectsVersion, match.detailedFieldVersion, match.fieldStats?.version]
                 .map { $0.map(String.init) ?? "legacy" }.joined(separator: "/")
-            let source = record.rulesVersion + "/" + versions + (match.pitching == nil ? "/starter" : "/relief-v1")
+            let legacySource = record.rulesVersion + "/" + versions + (match.pitching == nil ? "/starter" : "/relief-v1")
+            let source = match.scoutingPerformance == nil ? legacySource : match.scoutingEnvironment ?? (legacySource + "/events1-unverified")
             var group = bySource[source] ?? ScoutingSampleGroup(id: source)
+            if let perf = match.scoutingPerformance {
+                if group.performance == nil {group.performance=MatchScoutingPerformance()}
+                try group.performance?.add(perf)
+            }
             try group.totals.add(match.line); bySource[source] = group
             try total.add(match.line)
         }
@@ -230,8 +273,8 @@ struct ScoutingReportView: View {
                     GamePanel(title: "평가 준비 · 연결할 조건", onBoard: true, contentSpacing: gap) {
                         Text(report.age < 20 ? "나이 조건 대기 · 프로 계약 검토는 20세부터입니다." : "나이 조건 20세 이상 · 진로/권리 심사는 연결 전입니다.")
                             .font(.subheadline).accessibilityIdentifier("scoutAgeCondition")
-                        Text("역할 기량 H는 확정 보고서에서 확인합니다. 구단 기준 C·성적 보정 P·적합도 F는 평가 자료 연결 전입니다.").font(.subheadline).accessibilityIdentifier("scoutEvaluationPending")
-                        Text("동일 환경의 비교 성적(Vref)이 아직 없어 성적 보정과 합격 여부를 산출하지 않습니다. 관심 구단·다음 관찰일·제의도 생성하지 않습니다.")
+                        Text("역할 H·구단 기준 C·성적 보정 P·적합도 F는 확정 보고서의 당시 버전 자료에서 확인합니다.").font(.subheadline).accessibilityIdentifier("scoutEvaluationPending")
+                        Text("같은 주기의 확정 보고서는 갱신하지 않습니다. 구형 보고서는 원문을 유지하며 다음 주기부터 새 비교 기준을 적용합니다. 실제 관심/제의·진로 발효는 후속입니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                         if report.age >= 19 {
                             Text("졸업 시즌 성적 심사·대학/무소속 진로는 후속 단계입니다. 최근 365일 표본만으로 진로를 확정하지 않습니다.")

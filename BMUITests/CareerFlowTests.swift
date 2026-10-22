@@ -2015,3 +2015,59 @@ extension CareerFlowTests {
         }
     }
 }
+
+extension CareerFlowTests {
+    @MainActor private func revealFit(_ element:XCUIElement,in app:XCUIApplication) {
+        for _ in 0..<48 {
+            if element.isHittable {return}
+            if element.exists && element.frame.maxY < app.windows.firstMatch.frame.midY {app.swipeDown()} else {app.swipeUp()}
+        }
+    }
+    @MainActor func testClubFitBothRolesReferenceCriteriaFrozenOnDisk() throws {
+        let app=XCUIApplication();app.launchArguments=["-offseason-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
+        for pitcher in [false,true] {
+            let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
+            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+            reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.staticTexts["scoutComparison-0"],in:app);XCTAssertTrue(app.staticTexts["scoutComparison-0"].exists)
+            XCTAssertTrue(app.staticTexts["같은 엔진·자동입력·고교 수준의 NPC 비교 시뮬레이션"].exists)
+            let comparison=app.staticTexts["scoutComparison-0"].label
+            revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
+            let row=app.staticTexts[pitcher ? "scoutClub-comets/starter":"scoutClub-comets/slugger"]
+            revealFit(row,in:app);XCTAssertTrue(row.label.contains("H "));XCTAssertTrue(row.label.contains("/ C "));XCTAssertTrue(row.label.contains("/ F "))
+            let expected=row.label
+            let image=XCTAttachment(screenshot:app.screenshot());image.name=pitcher ? "Pitcher club criteria H C P F":"Batter club criteria H C P F";image.lifetime = .keepAlways;add(image)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.staticTexts["calendarDate"],in:app);XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+            app.terminate();app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
+            let restored=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(restored,in:app);restored.tap()
+            reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.staticTexts["scoutComparison-0"],in:app);XCTAssertEqual(app.staticTexts["scoutComparison-0"].label,comparison)
+            revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
+            revealFit(row,in:app);XCTAssertEqual(row.label,expected)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+    }
+    @MainActor func testClubFitBothRolesLargeTextAndHistoricalPeriod() throws {
+        let app=XCUIApplication();app.launchArguments=["-season-summary-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
+        for pitcher in [false,true] {
+            let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
+            reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.staticTexts["scoutComparison-0"],in:app);XCTAssertTrue(app.staticTexts["scoutComparison-0"].isHittable)
+            let sample=XCTAttachment(screenshot:app.screenshot());sample.name=pitcher ? "Pitcher NPC comparison accessibility XXXL":"Batter NPC comparison accessibility XXXL";sample.lifetime = .keepAlways;add(sample)
+            revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
+            let row=app.staticTexts[pitcher ? "scoutClub-comets/starter":"scoutClub-comets/slugger"]
+            revealFit(row,in:app);XCTAssertTrue(row.isHittable);XCTAssertLessThanOrEqual(row.frame.maxX,app.windows.firstMatch.frame.maxX)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            revealFit(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            reveal(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
+            revealFit(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
+            XCTAssertTrue(app.staticTexts["scoutFrozenDate"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["scoutFrozenDate"].label.contains("2026-04-01"))
+            revealFit(app.buttons["scoutClubDetails"],in:app);XCTAssertTrue(app.buttons["scoutClubDetails"].isHittable)
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+    }
+}

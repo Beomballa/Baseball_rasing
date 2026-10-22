@@ -24,6 +24,7 @@ struct CareerMatch: Codable, Equatable {
     let appearance: Bool
     let contact: Double, power: Double, discipline: Double, mastery: [String: Double]
     var line = MatchLine()
+    var scoutingPerformance: MatchScoutingPerformance?
     var fatigueCost = 0.0
     var appliedFatigueCost: Int { Int(((fatigueCost * 10_000).rounded() / 10_000).rounded(.up)) }
     var message = "경기 시작"
@@ -104,6 +105,7 @@ struct CareerMatch: Codable, Equatable {
             try control.validate(for: input, role: role)
             controlVersion = 2
         }
+        if input != .automatic { scoutingPerformance?.manual = true }
         if input == .automatic {
             while !completed { step(role == "batter" ? .swing : .pitch, pitchCode: mastery.keys.sorted().first); settle() }
         } else {
@@ -261,6 +263,7 @@ struct CareerMatch: Codable, Equatable {
                 lastFieldPlay = play; result = play.safe ? "안타" : "범타"
             }
         }
+        scoutingPerformance?.record(result, batter:batter, pitcher:pitcher)
         message = detailed?.summary ?? result
         var runs = 0
         let beforeProfiles=runnerProfiles

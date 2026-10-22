@@ -739,7 +739,8 @@ extension PlayerAbilitiesTests {
             let first = try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
             let bytes = first.payload, value = try first.snapshot()
             XCTAssertEqual(value.period,0);XCTAssertEqual(value.nextDate,"2026-04-29");XCTAssertEqual(value.totals.games,0)
-            XCTAssertEqual(value.evaluationPending.count,6)
+            XCTAssertEqual(value.version,2);XCTAssertNotNil(value.contractFit)
+            XCTAssertTrue(value.evaluationPending.contains { $0.contains("20세 미만") })
             try finish(p,s,c)
             let match = try CareerMatchStore.start(player:p,state:s,in:c)
             try CareerMatchStore.advance(player:p,state:s,record:match,revision:match.revision,input:.automatic,in:c)
@@ -883,5 +884,151 @@ extension PlayerAbilitiesTests {
             XCTAssertEqual(row.payload,frozen[row.playerID]);XCTAssertEqual(try row.snapshot().totals.games,0)
         }
         XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),2);XCTAssertFalse(c.hasChanges)
+    }
+    func testContractContributionUsesExplicitHitsAndBFAndNeverInfersOuts() throws {
+        var line=MatchLine();line.plateAppearances=31;line.atBats=25;line.hits=15;line.homeRuns=2;line.walks=5;line.strikeouts=4
+        var perf=MatchScoutingPerformance()
+        for _ in 0..<10 {perf.record("안타",batter:true,pitcher:false)}
+        for _ in 0..<3 {perf.record("2루타",batter:true,pitcher:false)}
+        for _ in 0..<2 {perf.record("홈런",batter:true,pitcher:false)}
+        perf.record("희생플라이",batter:true,pitcher:false)
+        try perf.validate(line:line,role:.batter)
+        XCTAssertEqual(try XCTUnwrap(perf.contribution(line,role:.batter)),19.4/31,accuracy:0.0000001)
+        var pitching=MatchLine();pitching.pitchingOuts=20;pitching.hitsAllowed=8;pitching.pitchingWalks=3;pitching.pitchingStrikeouts=8
+        var p=MatchScoutingPerformance();for i in 0..<25 {p.record(i < 2 ? "홈런":"범타",batter:false,pitcher:true)}
+        try p.validate(line:pitching,role:.pitcher)
+        XCTAssertEqual(p.sample(pitching,role:.pitcher),25);XCTAssertEqual(p.contribution(pitching,role:.pitcher),0.04)
+        var doublePlay=MatchLine();doublePlay.pitchingOuts=2
+        var one=MatchScoutingPerformance();one.record("범타",batter:false,pitcher:true)
+        try one.validate(line:doublePlay,role:.pitcher);XCTAssertEqual(one.battersFaced,1)
+        XCTAssertNil(MatchScoutingPerformance().contribution(MatchLine(),role:.pitcher))
+        p.battersFaced = -1;XCTAssertThrowsError(try p.validate(line:pitching,role:.pitcher))
+    }
+    func testContractCriteriaAndFitBoundariesUseUnroundedValuesAndMissingIsNotVacancy() throws {
+        let values=PlayerInitialValues(contact:70,power:70,discipline:70,speed:70,defense:70,arm:70,mental:70)
+        func rule(_ demand:RecruitmentDemand,_ competitor:PlayerInitialValues?,empty:Bool=false) -> ClubRoleRecruitment {
+            ClubRoleRecruitment(id:"oracle/slugger",name:"검증 구단",roleID:"slugger",demand:demand,leagueMinimum:65,competitor:competitor,confirmedEmpty:empty)
+        }
+        XCTAssertEqual(try rule(.depth,values).criterion(role:.batter),71)
+        XCTAssertEqual(try rule(.vacancy,values).criterion(role:.batter),72)
+        XCTAssertEqual(try rule(.vacancy,nil,empty:true).criterion(role:.batter),65)
+        XCTAssertNil(try rule(.vacancy,nil).criterion(role:.batter));XCTAssertNil(try rule(.none,values).criterion(role:.batter))
+        let invalid=PlayerInitialValues(contact:.nan,power:70,discipline:70,speed:70,defense:70,arm:70)
+        XCTAssertThrowsError(try rule(.depth,invalid).criterion(role:.batter))
+        XCTAssertEqual(ScoutingContractFit.correction(value:1,reference:0,n:200),4)
+        XCTAssertEqual(ScoutingContractFit.correction(value:0,reference:1,n:200),-4)
+        XCTAssertEqual(ScoutingContractFit.correction(value:0.6,reference:0.5,n:200),1)
+        XCTAssertEqual(ScoutingContractFit.correction(value:2,reference:1,n:0),0)
+        for (f,expected) in [(-8.0001,"기량 보완 필요"),(-8,"관찰 구간"),(-3.0001,"관찰 구간"),(-3,"보완·테스트 구간"),(-0.0001,"보완·테스트 구간"),(0,"기량상 계약 후보")] {
+            XCTAssertEqual(ScoutingContractFit.stage(f:f),expected)
+        }
+    }
+    func testContractReferenceIsDeterministicAndUsesSameEngineForExplicitAndAutomaticInputs() throws {
+        for role in PlayerRole.allCases {
+            let position=role == .batter ? "CF":"P",values=PlayerArchetype.initial(for:role).values
+            let original=ScoutingReferenceSimulation.fixture(role:role,position:position,values:values,seed:8841,home:true)
+            var batch=original,step=original,legacy=original
+            legacy.scoutingPerformance=nil;try legacy.advance(.automatic)
+            try batch.advance(.automatic)
+            var limit=0
+            while !step.completed && limit < 5000 {
+                if role == .pitcher && !step.ownPitcherActive {try step.advance(.automatic);break}
+                let input:MatchInput=role == .batter ? .swing:.pitch,code=step.mastery.keys.sorted().first
+                try step.advance(input,pitchCode:code,control:step.automaticControl(input,pitchCode:code));limit += 1
+            }
+            XCTAssertTrue(step.completed);XCTAssertEqual(step.line,batch.line);XCTAssertEqual(step.random,batch.random)
+            XCTAssertEqual(legacy.line,batch.line);XCTAssertEqual(legacy.random,batch.random)
+            XCTAssertEqual(legacy.fieldPlays,batch.fieldPlays)
+            let env=try XCTUnwrap(original.scoutingEnvironment)
+            let first=try XCTUnwrap(ScoutingReferenceSimulation.make(environment:env,role:role,position:position))
+            let again=try XCTUnwrap(ScoutingReferenceSimulation.make(environment:env,role:role,position:position))
+            XCTAssertEqual(first,again);try first.validate()
+            XCTAssertEqual(first.totals.games,role == .batter ? 60:18)
+            XCTAssertGreaterThan(first.performance.sample(first.totals.line,role:role),0)
+            XCTAssertNil(try ScoutingReferenceSimulation.make(environment:env.replacingOccurrences(of:"auto-v1",with:"manual-unverified"),role:role,position:position))
+        }
+    }
+    private func insertFitRecord(_ player:CareerPlayer,_ state:CareerCalendarState,_ fixture:SeasonFixture,_ c:ModelContext,manual:Bool=false,legacy:Bool=false) throws {
+        let date=player.gameDate;player.gameDate=fixture.date.description
+        defer {player.gameDate=date}
+        var match=ScoutingReferenceSimulation.fixture(role:player.role,position:player.role == .batter ? player.positionRaw:"P",
+            values:PlayerArchetype.initial(for:player.role).values,seed:UInt64(200+fixture.number),home:fixture.homeID == player.schoolID)
+        try match.advance(.automatic)
+        if manual {match.scoutingPerformance?.manual=true}
+        if legacy {match.scoutingPerformance=nil}
+        let row=try CareerMatchRecord(player:player,fixture:fixture,match:match)
+        row.completed=true;row.rulesVersion="native-match-v2";c.insert(row)
+    }
+    func testContractReportUsesActualAutoSamplesAndSeparatesManualLegacyAndMissingCriteria() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        defer {withExtendedLifetime(container){}}
+        for role in PlayerRole.allCases {
+            let (p,s)=try scoutingSetup(role,context:c)
+            let fixtures=try s.fixtures(for:p,year:2026).filter{$0.isAppearance(for:role)}
+            try insertFitRecord(p,s,fixtures[0],c)
+            try insertFitRecord(p,s,fixtures[1],c,manual:true)
+            try insertFitRecord(p,s,fixtures[2],c,legacy:true)
+            p.gameDate=fixtures[2].date.adding(days:1).description;try c.save()
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let report=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot()
+            // Batter's fixtures lie within period0, so capture current inputs explicitly in the next period.
+            if role == .batter {
+                p.gameDate="2026-04-29";try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            }
+            let value=role == .batter ? try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot():report
+            let fit=try XCTUnwrap(value.contractFit);try fit.validate(observation:value)
+            XCTAssertEqual(fit.comparisons.count,3);XCTAssertEqual(fit.comparisons.filter(\.verified).count,1)
+            let selected=try XCTUnwrap(fit.selectedEnvironment);XCTAssertTrue(selected.hasSuffix("auto-v1"))
+            XCTAssertEqual(fit.comparisons.filter{!$0.verified}.map(\.correction),[0,0])
+            XCTAssertTrue(fit.clubs.contains{$0.recruitment.demand == .none && $0.f == nil})
+            XCTAssertTrue(fit.clubs.contains{$0.recruitment.confirmedEmpty && $0.c == $0.recruitment.leagueMinimum})
+            XCTAssertTrue(fit.clubs.contains{$0.recruitment.demand != .none && $0.recruitment.competitor == nil && !$0.recruitment.confirmedEmpty && $0.c == nil})
+            for club in fit.clubs {
+                if let h=club.h,let criterion=club.c {XCTAssertEqual(club.f,ScoutingContractFit.round(h-criterion+club.p))}
+                XCTAssertTrue(club.blockers.contains{$0.contains("20세 미만")})
+            }
+            XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testContractV1ReportAndLegacyGameBytesPreservedUntilNextPeriodOnDisk() throws {
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:folder)}
+        let url=folder.appendingPathComponent("fit-v8.store");var oldData=Data(),gameData=Data()
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (p,s)=try scoutingSetup(context:c)
+            let row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+            var value=try row.snapshot();value.version=1;value.contractFit=nil
+            value.evaluationPending=ScoutingObservation.pendingReasons(age:value.age,role:value.role,groups:value.groups)
+            row.payload=try JSONEncoder().encode(value);oldData=row.payload
+            try insertFitRecord(p,s,XCTUnwrap(s.fixtures(for:p,year:2026).first),c,legacy:true);try c.save()
+            gameData=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first).payload
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in XCTFail("old period rewritten")})
+            let old=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+            XCTAssertEqual(old.payload,oldData);XCTAssertNil(try old.snapshot().contractFit)
+            p.gameDate="2026-04-28";try c.save()
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
+            let newest=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot()
+            XCTAssertEqual(newest.version,2);XCTAssertEqual(newest.contractFit?.comparisons.first?.verified,false)
+            XCTAssertEqual(newest.contractFit?.comparisons.first?.correction,0)
+            XCTAssertEqual(old.payload,oldData);XCTAssertEqual(try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first).payload,gameData)
+        }
+    }
+    func testContractRejectsTamperedFitAndMetricsWithoutRepairingSavedData() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        defer {withExtendedLifetime(container){}}
+        let (p,s)=try scoutingSetup(context:c)
+        let row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+        var object=try XCTUnwrap(JSONSerialization.jsonObject(with:row.payload) as? [String:Any])
+        var fit=try XCTUnwrap(object["contractFit"] as? [String:Any]),clubs=try XCTUnwrap(fit["clubs"] as? [[String:Any]])
+        clubs[1]["f"]=999;fit["clubs"]=clubs;object["contractFit"]=fit
+        row.payload=try JSONSerialization.data(withJSONObject:object);try c.save()
+        let bytes=row.payload,before=preserved(p)
+        XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c))
+        XCTAssertEqual(row.payload,bytes);XCTAssertEqual(preserved(p),before);XCTAssertFalse(c.hasChanges)
     }
 }

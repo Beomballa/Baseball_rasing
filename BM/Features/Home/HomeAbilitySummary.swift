@@ -14,6 +14,10 @@ struct HomeAbilitySummary: Codable {
     let pitches: [HomeAbilityValue]
     let hasInitialValues: Bool
 
+    init(axes: [HomeAbilityValue], originals: [HomeAbilityValue], pitches: [HomeAbilityValue], hasInitialValues: Bool) {
+        self.axes=axes;self.originals=originals;self.pitches=pitches;self.hasInitialValues=hasInitialValues
+    }
+
     @MainActor init(player: CareerPlayer, abilities: PlayerAbilities?) {
         let initial = abilities?.initialValues.flatMap { try? JSONDecoder().decode(PlayerInitialValues.self, from: $0) }
         hasInitialValues = initial != nil
