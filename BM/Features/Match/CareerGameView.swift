@@ -103,12 +103,12 @@ struct CareerGameView: View {
                 if player.role == .pitcher {
                     let started = scene.demonstrate(reduceMotion: reduced, flightDuration: previous.delivery(pitchCode: result.pitchCode).duration,
                                           x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
-                                          outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, onArrival: showCall, completion: showResult)
+                                          outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, onArrival: showCall, completion: showResult)
                     if !started { showResult() }
                 } else {
                     // Saved fair contact drives the barrel motion; localized multi-base labels are not contact flags.
                     scene.finishBat(action: result.action, outcome: added.contains(where: \.ownBatter) ? "안타" : result.outcome,
-                                    reduced: reduced, onArrival: showCall, completion: showResult)
+                                    reduced: reduced, matchJudgment: true, onArrival: showCall, completion: showResult)
                 }
             }
         } catch { retrySave = pending; self.error = error.localizedDescription; scene.cancelDelivery() }

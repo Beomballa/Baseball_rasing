@@ -180,7 +180,7 @@ struct PowerPracticeBoard: View {
                     }
                     let ball = pathPoint(playing ? motion : 0)
                     box(ball.x - 3, 184, 8, 2, 0x245039)
-                    box(ball.x - 2, ball.y - 2, 5, 5, 0xfff5d4)
+                    PixelBaseball.draw(in:context,at:ball,diameter:9)
                     if playing && motion < 0.2 {
                         for d in [-1.0, 1] { box(48 + d * 12, 158 + d * 6, 5, 3, 0xecc66b) }
                     }
@@ -247,7 +247,7 @@ struct RawPracticeBackdrop: View {
                     box(60 + (end.x - 60) * t, 150 + (end.y - 150) * t, 3, 2, 0xecc66b)
                 }
                 let t = playing ? motion : 0
-                box(60 + (end.x - 60) * t, 150 + (end.y - 150) * t, 6, 6, 0xfff5d4)
+                PixelBaseball.draw(in:context,at:CGPoint(x:60+(end.x-60)*t,y:150+(end.y-150)*t),diameter:9)
             } else if kind == .mental {
                 box(28, 160, 264, 12, 0x9b724a); box(40, 172, 8, 30, 0x634d39); box(270, 172, 8, 30, 0x634d39)
                 for i in 0..<7 { box(43 + Double(i * 37), 75, 21, 38, 0x244b44) }

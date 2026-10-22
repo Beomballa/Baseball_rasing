@@ -473,7 +473,7 @@ struct TraitTrainingArena: View {
                             let trail = max(0, phase - Double(i) * 0.055)
                             box(hand.x + (end.x - hand.x) * trail, hand.y + (end.y - hand.y) * trail - sin(trail * .pi) * 22, 2, 2, 0xc0c89e)
                         }
-                        box(x - 2, y - 2, 5, 5, 0xfff6d5)
+                        PixelBaseball.draw(in:context,at:CGPoint(x:x,y:y),diameter:9)
                     }
                 } else {
                     let p = point(player)
@@ -481,7 +481,7 @@ struct TraitTrainingArena: View {
                     box(p.x + 8, p.y - (moving ? 13 : 3), 8, 7, 0xc99759)
                     let height = moving || success != nil ? (1 - motion) * 65 : 65
                     box(t.x - 5, t.y + 4, 11, 3, 0x245039)
-                    box(t.x - 2, t.y - height - sin(motion * .pi) * 30, 5, 5, 0xfff5d4)
+                    PixelBaseball.draw(in:context,at:CGPoint(x:t.x,y:t.y-height-sin(motion * .pi)*30+2),diameter:9)
                     if moving && motion > 0.82 && hypot(target.x - player.x, target.y - player.y) < 0.1 {
                         for d in [-1.0, 1] { box(p.x + 11 + d * 10, p.y - 10 + d * 5, 4, 3, 0xecc66b) }
                     }

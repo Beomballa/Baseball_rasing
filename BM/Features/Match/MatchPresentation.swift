@@ -422,7 +422,7 @@ struct DetailedFieldReplayBoard: View {
                         context.fill(Path(CGRect(x:groundBall.x-2,y:groundBall.y-1,width:4,height:2)),with:.color(.black.opacity(0.4)))
                     }
                     let ball=CGPoint(x:groundBall.x,y:groundBall.y-loft),w=max(3,size.width*0.012)
-                    context.fill(Path(CGRect(x:ball.x-w/2,y:ball.y-w/2,width:w,height:w)),with:.color(.white))
+                    PixelBaseball.draw(in:context,at:ball,diameter:max(7,w))
                     func call(_ base:Int,_ out:Bool) {
                         let b=point(DetailedFieldRules.bases[base])
                         context.draw(Text(out ? "OUT" : "SAFE").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(out ? Color(hex:0xff9d83) : GameTheme.growth),at:CGPoint(x:b.x,y:b.y-18))
@@ -511,7 +511,7 @@ struct PitcherChangePanel: View {
 // These intervals affect presentation only; input windows, pitch speed and saved outcomes stay unchanged.
 enum DeliveryPresentation {
     static func flight(_ duration: Double, reduced: Bool, role: PlayerRole = .batter) -> Double { reduced && role == .batter ? 0.15 : duration }
-    static func receipt(reduced: Bool) -> Double { reduced ? 0.8 : 1.1 }
+    static func receipt(reduced: Bool, match: Bool = false) -> Double { (reduced ? 0.8 : 1.1) + (match ? 1:0) }
     static func trainingMotion(reduced: Bool) -> Double { reduced ? 0.15 : 0.9 }
     static func trainingRead(reduced: Bool) -> Double { reduced ? 0.8 : 1.1 }
     static func call(_ outcome: String) -> String {
@@ -558,7 +558,7 @@ struct PitchLocationBoard: View {
                 }
                 if let result {
                     let p = Self.marker(x:result.x,y:result.y,size:size)
-                    context.fill(Path(CGRect(x:p.x-3,y:p.y-3,width:6,height:6)),with:.color(GameTheme.gold))
+                    PixelBaseball.draw(in:context,at:p,diameter:8)
                 }
             }.aspectRatio(1,contentMode:.fit).accessibilityHidden(true)
             Text(result == nil ? "도착 대기" : "실제 도착 코스")
@@ -571,5 +571,27 @@ struct PitchLocationBoard: View {
             .accessibilityValue(result.map { "실제 도착 가로 \(Int(($0.x*100).rounded())), 세로 \(Int(($0.y*100).rounded())), \(ManualMatchRules.isStrike(x:$0.x,y:$0.y) ? "존 안" : "존 밖")" } ?? "도착 대기")
             .accessibilityIdentifier("pitchLocationBoard")
             .allowsHitTesting(false)
+    }
+}
+
+// One code-drawn pixel asset shared by SpriteKit and SwiftUI; transparent corners keep it round.
+@MainActor enum PixelBaseball {
+    static let rows = ["....oooo....","..oowwwwoo..",".owrwwwwrwo.",".owwrwwrwwwo","owwwwrrwwwwo","owwwwwwwwwwo","owwwwwwwwwwo","owwwwrrwwwwo",".owwrwwrwwwo",".owrwwwwrwo.","..oossssoo..","....oooo...."]
+    static let image: UIImage = {
+        let format=UIGraphicsImageRendererFormat();format.scale=1;format.opaque=false
+        return UIGraphicsImageRenderer(size:CGSize(width:12,height:12),format:format).image {renderer in
+            let colors:[Character:UIColor] = ["o":UIColor(red:0.26,green:0.34,blue:0.39,alpha:1),"w":UIColor(red:0.98,green:0.98,blue:0.93,alpha:1),"r":UIColor(red:0.78,green:0.24,blue:0.22,alpha:1),"s":UIColor(red:0.72,green:0.78,blue:0.78,alpha:1)]
+            for (y,row) in rows.enumerated() {for (x,key) in row.enumerated() {
+                guard let color=colors[key] else {continue};renderer.cgContext.setFillColor(color.cgColor)
+                renderer.cgContext.fill(CGRect(x:x,y:y,width:1,height:1))
+            }}
+        }
+    }()
+    static let texture: SKTexture = {let t=SKTexture(image:image);t.filteringMode = .nearest;return t}()
+    static func draw(in context: GraphicsContext, at point: CGPoint, diameter: CGFloat) {
+        let transform=context.transform
+        let scaleX=hypot(transform.a,transform.b),scaleY=hypot(transform.c,transform.d)
+        let height=scaleY > 0 ? diameter*scaleX/scaleY:diameter
+        context.draw(Image(uiImage:image).interpolation(.none),in:CGRect(x:point.x-diameter/2,y:point.y-height/2,width:diameter,height:height))
     }
 }

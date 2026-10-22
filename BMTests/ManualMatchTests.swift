@@ -134,7 +134,7 @@ import SwiftData
                 let time = ProcessInfo.processInfo.systemUptime - started
                 elapsed.append(time)
                 XCTAssertGreaterThanOrEqual(time,duration * MatchDelivery.contactPhase - 0.04)
-                let ball = scene.children.compactMap { $0 as? SKShapeNode }.first
+                let ball = scene.childNode(withName:"baseball")
                 XCTAssertEqual(ball?.position.x ?? -1,320 * (0.54 + 0.25 * 0.22),accuracy:0.01)
                 XCTAssertEqual(ball?.position.y ?? -1,scene.size.height * (1 - (0.43 - 0.2 * 0.24)),accuracy:0.01)
                 XCTAssertEqual(scene.pitchStage,.received); arrival.fulfill()
@@ -165,7 +165,7 @@ import SwiftData
                     times.append(ProcessInfo.processInfo.systemUptime-start);arrived=true;event.fulfill()
                 },completion:{finished=true}))
                 try await Task.sleep(for:.seconds(duration*0.45))
-                let ball=try XCTUnwrap(scene.children.compactMap{$0 as? SKShapeNode}.first)
+                let ball=try XCTUnwrap(scene.childNode(withName:"baseball"))
                 XCTAssertEqual(scene.pitchStage,.flight);XCTAssertFalse(arrived);XCTAssertFalse(finished);XCTAssertFalse(ball.isHidden)
                 let end=CGPoint(x:scene.size.width*0.54,y:scene.size.height*0.57)
                 XCTAssertGreaterThan(hypot(ball.position.x-end.x,ball.position.y-end.y),10)
@@ -640,5 +640,53 @@ import SwiftData
         scene.configure(hand: "left", kit: 0, role: .pitcher)
         XCTAssertTrue(scene.demonstrate(reduceMotion: false, pitchCode: "slider"))
         scene.cancelDelivery()
+    }
+}
+
+extension ManualMatchTests {
+    func testPixelBaseballHasTransparentCornersWhiteLeatherAndRedSeams() throws {
+        XCTAssertEqual(PixelBaseball.rows.count,12)
+        XCTAssertTrue(PixelBaseball.rows.allSatisfy {$0.count == 12})
+        XCTAssertTrue(PixelBaseball.rows.contains {$0.contains("r")})
+        let image=try XCTUnwrap(PixelBaseball.image.cgImage)
+        XCTAssertEqual(image.width,12);XCTAssertEqual(image.height,12)
+        XCTAssertEqual(PixelBaseball.texture.filteringMode,.nearest)
+        let bytes=try XCTUnwrap(image.dataProvider?.data)
+        let data=try XCTUnwrap(CFDataGetBytePtr(bytes))
+        XCTAssertEqual(data[3],0)
+        XCTAssertEqual(data[6*image.bytesPerRow+6*(image.bitsPerPixel/8)+3],255)
+    }
+    func testStrikeZoneUsesSameArrivalCoordinatesBothRolesAndReceiptIsMatchOnlyLonger() throws {
+        for role in PlayerRole.allCases {
+            let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:"left",kit:0,role:role)
+            let zone=try XCTUnwrap(scene.childNode(withName:"pitchStrikeZone") as? SKShapeNode)
+            let a=scene.arrivalPoint(x:0.2,y:0.2),b=scene.arrivalPoint(x:0.8,y:0.8)
+            XCTAssertEqual(zone.path?.boundingBox.width ?? 0,b.x-a.x,accuracy:0.01)
+            XCTAssertEqual(zone.path?.boundingBox.height ?? 0,a.y-b.y,accuracy:0.01)
+            XCTAssertTrue(try XCTUnwrap(scene.childNode(withName:"receivedBaseball")).isHidden)
+            XCTAssertTrue(scene.childNode(withName:"baseball") is SKSpriteNode)
+        }
+        for reduced in [true,false] {
+            XCTAssertEqual(DeliveryPresentation.receipt(reduced:reduced,match:true)-DeliveryPresentation.receipt(reduced:reduced),1,accuracy:0.001)
+        }
+        XCTAssertEqual(DeliveryPresentation.receipt(reduced:false),1.1)
+        XCTAssertEqual(DeliveryPresentation.trainingRead(reduced:false),1.1)
+    }
+    func testRenderedCatchMarkerOnlyAppearsAtArrivalAndMatchesActualPitch() async throws {
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:windowScene),controller=UIViewController()
+        let view=SKView(frame:CGRect(x:0,y:0,width:320,height:340));controller.view=view;window.rootViewController=controller;window.makeKeyAndVisible()
+        defer {view.presentScene(nil);window.isHidden=true;previous?.makeKey()}
+        let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:"left",kit:0)
+        view.presentScene(scene)
+        let marker=try XCTUnwrap(scene.childNode(withName:"receivedBaseball")),arrival=expectation(description:"arrival")
+        var finished=false
+        XCTAssertTrue(scene.demonstrate(reduceMotion:false,flightDuration:0.4,x:0.9,y:0.1,preparedRelease:true,matchJudgment:true,onArrival:{arrival.fulfill()},completion:{finished=true}))
+        XCTAssertTrue(marker.isHidden)
+        await fulfillment(of:[arrival],timeout:2)
+        XCTAssertFalse(marker.isHidden);XCTAssertEqual(marker.position.x,scene.arrivalPoint(x:0.9,y:0.1).x,accuracy:0.01);XCTAssertEqual(marker.position.y,scene.arrivalPoint(x:0.9,y:0.1).y,accuracy:0.01)
+        try await Task.sleep(for:.seconds(1.2));XCTAssertFalse(finished)
+        try await Task.sleep(for:.seconds(1.1));XCTAssertTrue(finished)
+        scene.cancelDelivery();XCTAssertTrue(marker.isHidden)
     }
 }

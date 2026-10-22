@@ -300,16 +300,16 @@ struct PositionPracticeField: View {
                     let groundY = home.y + (catchPoint.y - home.y) * t
                     let rise = position == .left || position == .center || position == .right ? sin(t * .pi) * 38 : abs(sin(t * .pi * 3)) * 7
                     box(ballX - 3, groundY + 2, 8, 2, 0x245039)
-                    box(ballX - 2, groundY - rise - 5, 5, 5, 0xfff5d4)
+                    PixelBaseball.draw(in:context,at:CGPoint(x:ballX,y:groundY-rise-3),diameter:9)
                     for i in 1...4 { let trail = max(0, t - Double(i) * 0.05); box(home.x + (catchPoint.x - home.x) * trail, home.y + (catchPoint.y - home.y) * trail, 2, 2, 0xa3b68c) }
-                } else if phase == 1 { box(catchPoint.x + 6, catchPoint.y - 11, 5, 5, 0xfff5d4) }
+                } else if phase == 1 { PixelBaseball.draw(in:context,at:CGPoint(x:catchPoint.x+8,y:catchPoint.y-9),diameter:9) }
                 else {
                     for step in 1..<8 {
                         let t = Double(step) / 8
                         box(catchPoint.x + (destination.x - catchPoint.x) * t, catchPoint.y + (destination.y - catchPoint.y) * t, 3, 2, 0xecc66b)
                     }
                     let flight = position == .first && location != nil ? 1 - motion : motion
-                    box(p.x + (destination.x - p.x) * flight - 2, p.y + (destination.y - p.y) * flight - sin(flight * .pi) * 20 - 8, 5, 5, 0xfff5d4)
+                    PixelBaseball.draw(in:context,at:CGPoint(x:p.x+(destination.x-p.x)*flight,y:p.y+(destination.y-p.y)*flight-sin(flight * .pi)*20-6),diameter:9)
                     context.stroke(Path(CGRect(x: destination.x - 13, y: destination.y - 12, width: 26, height: 24)), with: .color(GameTheme.growth), lineWidth: 2)
                 }
                 player(p, selected: true, receiving: phase > 0)

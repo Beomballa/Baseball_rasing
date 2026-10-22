@@ -405,7 +405,7 @@ struct CareerTrainingView: View {
                         Rectangle().strokeBorder(Color(hex: 0xf3edcf), lineWidth: 3)
                             .frame(width: geometry.size.width * 0.6, height: geometry.size.height * 0.6)
                         if judging {
-                            Rectangle().fill(GameTheme.gold).frame(width: 12, height: 12)
+                            Image(uiImage:PixelBaseball.image).interpolation(.none).resizable().frame(width:12,height:12)
                                 .scaleEffect(reduced ? 1 : 0.35 + min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)) * 0.65)
                                 .position(x: geometry.size.width * (0.5 + (target.x - 0.5) * (reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)))),
                                           y: geometry.size.height * (0.5 + (target.y - 0.5) * (reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)))))
