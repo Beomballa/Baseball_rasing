@@ -42,12 +42,13 @@ struct GameButtonStyle: ButtonStyle {
 struct GamePanel<Content: View>: View {
     let title: String
     var onBoard = false
+    var contentSpacing: CGFloat?
     @ViewBuilder var content: Content
-    init(title: String, onBoard: Bool = false, @ViewBuilder content: () -> Content) {
-        self.title = title; self.onBoard = onBoard; self.content = content()
+    init(title: String, onBoard: Bool = false, contentSpacing: CGFloat? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title; self.onBoard = onBoard; self.contentSpacing = contentSpacing; self.content = content()
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: onBoard ? 8 : 14) {
+        VStack(alignment: .leading, spacing: contentSpacing ?? (onBoard ? 8 : 14)) {
             Text(title).font(.system(.headline, design: .monospaced)).foregroundStyle(onBoard ? GameTheme.boardInk : GameTheme.navy)
             content
         }

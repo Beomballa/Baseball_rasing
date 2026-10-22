@@ -1,5 +1,7 @@
 # BM iOS 작업 기준
 
+- 스카우트 시안의 텍스트/정보 묶음 간격은 기본8/16pt·Dynamic Type 최대16/24pt, 설명 줄 간격3/큰 글자5pt다. 선택 GamePanel.contentSpacing은 시안에서만 지정하고 기존 화면의 기본8/14pt를 유지한다. 여백 작업으로 글자/값/저장·계약 규칙을 변경하지 않는다.
+
 - scout-immersive-v2는 DEBUG 스카우트 시안의 관찰실 아트/종이 문서 표시 보강이다. scout-office-v1.png는 검수한 오리지널 아트이며 고정 SHA만 Git에 허용한다. 캡처/개인 이미지는 허용하지 않는다. 문서250ms 등장은 동작 줄이기에서 즉시 표시하고 실제 저장/평가·계약/날짜/보상은 호출하지 않는다. 시안 설정은 접힌 보조 메뉴에 유지한다.
 
 - ui-scout-contract-preview-v1은 DEBUG 전용 샘플 화면이다. 실제 홈의 별도 시안 링크/독립 -scouting-contract-preview에서만 열고 독립 진입은 bootstrap/store를 열지 않는다. ScoutingContractPreview에는 ModelContext·SwiftData/평가·달력/보상 Store를 연결하지 않는다. 고교16세 관찰과20세 제의/무제의·타자/투수의 모든 샘플 표시를 유지한다. 수락/거절/진로 확인은 로컬 UI상태이며 실제 소속·날짜·능력/기록을 변경하지 않는다. 이 화면 검증을 contracts-v1 실제 엔진/계약 저장/1회 발효 완료로 기록하지 않는다.

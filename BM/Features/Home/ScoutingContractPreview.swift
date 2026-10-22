@@ -16,6 +16,10 @@ struct ScoutingContractPreview: View {
     @State private var receipt: String?
     @State private var careerChoice: String?
     @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .subheadline) private var scaledTextGap: CGFloat = 8
+    @ScaledMetric(relativeTo: .body) private var scaledSectionGap: CGFloat = 16
+    private var textGap: CGFloat { min(scaledTextGap, 16) }
+    private var sectionGap: CGFloat { min(scaledSectionGap, 24) }
     private let clubs = ["인천 하버스", "대전 코멧츠"]
     private var large: Bool { typeSize.isAccessibilitySize }
     private var role: String { pitcher ? "선발 투수" : "유격수 · 우타" }
@@ -25,7 +29,7 @@ struct ScoutingContractPreview: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: sectionGap) {
                 notice
                 Button(showControls ? "시안 설정 접기 −" : "시안 설정 · \(scenario.rawValue) / \(pitcher ? "투수" : "타자") +") { showControls.toggle() }
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutPreviewControls")
@@ -53,7 +57,7 @@ struct ScoutingContractPreview: View {
                 } else if isSchool {
                     Text("성장 관찰 단계 · 20세 이전에는 계약 대신 보고서를 확인하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 } else {
-                    GamePanel(title: "이번 평가 · 정식 제의 없음", onBoard: true) {
+                    GamePanel(title: "이번 평가 · 정식 제의 없음", onBoard: true, contentSpacing: sectionGap) {
                         Text(isSchool ? "16세 · 프로 계약은 20세부터 검토" : "기량 조건 충족 · 전력 심사 표본 부족").font(.subheadline.bold())
                         Text(isSchool ? "관심 보고서를 보고 다음 훈련 목표를 정하세요." : "미달 이유와 다음 진로를 확인할 수 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         NavigationLink { destination(isSchool ? .report : .career) } label: { Text(isSchool ? "관찰 보고서 보기" : "제의 없음 · 진로 확인") }
@@ -62,6 +66,7 @@ struct ScoutingContractPreview: View {
                 }
             }.padding(12)
         }
+        .lineSpacing(large ? 5 : 3)
         .background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
         .navigationTitle("선수 홈 · 스카우트 시안").navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
@@ -85,13 +90,13 @@ struct ScoutingContractPreview: View {
                     .accessibilityHidden(true)
             }
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: textGap) {
                     Text("SCOUTING ROOM").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                     Text(scenario == .offers ? "당신에게 도착한 새로운 기회" : "한 경기 너머의 가능성을 봅니다").font(.subheadline.bold())
                 }
                 Spacer(minLength: 4)
                 Image(systemName: scenario == .offers ? "envelope.badge.fill" : "binoculars.fill").foregroundStyle(GameTheme.gold)
-            }.padding(10).background(GameTheme.boardPanel)
+            }.padding(14).background(GameTheme.boardPanel)
         }.overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
             .accessibilityElement(children: .ignore).accessibilityLabel("스카우트 관찰실 · 구장과 관찰 노트")
             .accessibilityIdentifier("scoutOfficeScene")
@@ -103,18 +108,18 @@ struct ScoutingContractPreview: View {
                 .background(index == 0 ? ScoutDossierInk.green : Color(red:0.52,green:0.23,blue:0.17))
                 .overlay(Rectangle().strokeBorder(paper ? ScoutDossierInk.ink : GameTheme.boardLine))
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: textGap) {
                 Text(index == 0 ? "HARBORS  /  PLAYER DEVELOPMENT" : "COMETS  /  FIRST TEAM").font(.caption2.monospaced().bold())
                 Text(index == 0 ? "함께 성장할 선수를 찾습니다" : "다음 시즌의 경쟁에 초대합니다").font(.caption)
             }.foregroundStyle(paper ? ScoutDossierInk.ink : GameTheme.boardInk)
         }
     }
     private func paperRow(_ key: String, _ value: String) -> some View {
-        (large ? AnyLayout(VStackLayout(alignment:.leading,spacing:3)) : AnyLayout(HStackLayout(alignment:.top,spacing:10))) {
+        (large ? AnyLayout(VStackLayout(alignment:.leading,spacing:textGap)) : AnyLayout(HStackLayout(alignment:.top,spacing:10))) {
             Text(key).font(.caption).foregroundStyle(ScoutDossierInk.muted).frame(minWidth: large ? 0 : 82, alignment: .leading)
             if !large { Spacer(minLength: 0) }
             Text(value).font(.subheadline.monospaced()).foregroundStyle(ScoutDossierInk.ink).multilineTextAlignment(large ? .leading : .trailing)
-        }.fixedSize(horizontal:false,vertical:true).padding(.vertical,3).accessibilityElement(children:.combine)
+        }.fixedSize(horizontal:false,vertical:true).padding(.vertical,4).accessibilityElement(children:.combine)
     }
     private struct Decision: Identifiable { let title: String; var id: String { title } }
     private var notice: some View {
@@ -125,22 +130,22 @@ struct ScoutingContractPreview: View {
     private var profile: some View {
         HStack(spacing: 12) {
             PixelPlayer(appearance: PlayerAppearance()).frame(width: 38, height: 54).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: textGap) {
                 Text("박루키  #17").font(.title3.monospaced().bold())
                 Text("\(isSchool ? "16세 · 한빛고(가상)" : "20세 · 무소속") / \(role)").font(.subheadline)
                 Text(date + " · 샘플 날짜").font(.caption.monospaced()).foregroundStyle(GameTheme.boardMuted)
             }
-        }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.boardPanel)
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.boardPanel)
             .overlay(Rectangle().strokeBorder(GameTheme.boardLine))
     }
     private var interest: some View {
-        GamePanel(title: "관찰 파일 · 관심 구단", onBoard: true) {
-            HStack(alignment: .top) {
+        GamePanel(title: "관찰 파일 · 관심 구단", onBoard: true, contentSpacing: sectionGap) {
+            HStack(alignment: .top, spacing: 16) {
                 ScoutPixelEmblem().frame(width: 40, height: 44).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: textGap) {
                     Text("\(scenario == .none ? "1" : "2")개 구단 · \(scenario == .offers ? "제의 검토" : "관찰 중")").font(.headline).foregroundStyle(GameTheme.gold)
                     Text(clubs[0] + " · " + (pitcher ? "선발 육성" : "내야 수비 / 출루")).font(.subheadline)
-                    Text(isSchool ? "아직 완성형은 아니지만 성장 가능성을 지켜보고 있습니다." : "최근 경기와 성장 추이를 함께 검토하고 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    Text(isSchool ? "아직 완성형은 아니지만 성장 가능성을 지켜보고 있습니다." : "최근 경기와 성장 추이를 함께 검토하고 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted).padding(.top,4)
                 }
             }
             row("다음 관찰 보고서", nextReport + " · 28일 주기")
@@ -152,7 +157,7 @@ struct ScoutingContractPreview: View {
     }
     private func destination(_ route: Route) -> AnyView {
         AnyView(ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: sectionGap) {
                 notice
                 switch route {
                 case .report: report
@@ -162,7 +167,7 @@ struct ScoutingContractPreview: View {
                 case .career: career
                 }
             }.padding(12)
-        }.defaultScrollAnchor(.top).id(route).background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+        }.lineSpacing(large ? 5 : 3).defaultScrollAnchor(.top).id(route).background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
             .navigationTitle(title(route)).navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar))
@@ -181,7 +186,7 @@ struct ScoutingContractPreview: View {
                 metric("2년 육성 전망", value: 76.2, target: 72)
                 Text("진한 선은 구단 기준 · 초록은 샘플 평가값").font(.caption).foregroundStyle(ScoutDossierInk.muted)
             }
-            GamePanel(title: "평가 근거 · 조건 확인", onBoard: true) {
+            GamePanel(title: "평가 근거 · 조건 확인", onBoard: true, contentSpacing: sectionGap) {
                 row("구단 기준 C", "70.0 · 샘플 모집 기준")
                 row("실전 보정 P", isSchool ? "산정 대기" : "+1.2 · 같은 수준 성적")
                 row("적합 여유 F", isSchool ? "계약 심사 전" : "+3.0 · 참고 표시")
@@ -190,7 +195,7 @@ struct ScoutingContractPreview: View {
                 row("권리·자격", isSchool ? "20세 미만 · 정식 제의 불가" : "국내 신규 계약 검토 가능")
                 Text("육성 심사와 즉시 전력 심사의 표본 기준은 다릅니다. 수치와 제의는 화면 설명용이며 엔진 산출 결과가 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
             }
-            GamePanel(title: "다음 관찰까지 보완할 것", onBoard: true) {
+            GamePanel(title: "다음 관찰까지 보완할 것", onBoard: true, contentSpacing: sectionGap) {
                 Text(pitcher ? "01 제구 보완\n02 실제 등판 표본 축적\n03 지구력 성장 확인" : "01 선구안 보완\n02 실제 출전 표본 축적\n03 유격수 수비 성장 확인").font(.subheadline).lineSpacing(7)
                 Text("다음 보고서 " + nextReport + " · 열람/재접속으로 평가를 다시 뽑지 않음").font(.caption).foregroundStyle(GameTheme.gold)
             }
@@ -202,7 +207,7 @@ struct ScoutingContractPreview: View {
                 .transition(.opacity.combined(with: .offset(y: reduced ? 0 : 8)))
             Text("발행 2030.04.01 · 04.07까지 회신").font(.caption.monospaced()).foregroundStyle(GameTheme.boardMuted)
             ForEach(0..<2, id: \.self) { index in
-                GamePanel(title: clubs[index], onBoard: true) {
+                GamePanel(title: clubs[index], onBoard: true, contentSpacing: sectionGap) {
                     clubIdentity(index)
                     row("모집", role)
                     row("조건", index == 0 ? "육성 · 1년 / 지수118" : "전력 경쟁 · 2년 / 지수130")
@@ -235,7 +240,7 @@ struct ScoutingContractPreview: View {
         }
     }
     private var comparison: some View {
-        GamePanel(title: "제의 비교 · 국내 2개 구단", onBoard: true) {
+        GamePanel(title: "제의 비교 · 국내 2개 구단", onBoard: true, contentSpacing: sectionGap) {
             ForEach(0..<2,id:\.self) { index in
                 NavigationLink { destination(.detail(index)) } label: { Text(clubs[index] + " 상세") }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutCompareDetail-\(index)")
             }
@@ -253,7 +258,7 @@ struct ScoutingContractPreview: View {
     }
     private var career: some View {
         Group {
-            GamePanel(title: "이번 창 · 제의가 없습니다", onBoard: true) {
+            GamePanel(title: "이번 창 · 제의가 없습니다", onBoard: true, contentSpacing: sectionGap) {
                 Text("게임은 계속됩니다").font(.title3.bold()).foregroundStyle(GameTheme.gold)
                 row("충족", "20세 · 국내 신규 계약 자격 / 기량 기준")
                 row("전력 심사 대기", pitcher ? "18.0 / 25.0이닝" : "62 / 100타석")
@@ -261,7 +266,7 @@ struct ScoutingContractPreview: View {
                 row("다음 기회", "관찰 05.06 / 계약 창 07.01")
                 Text("다시 열어도 이번 창의 결과는 바뀌지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
             }
-            GamePanel(title: "다음 진로 · 화면 선택", onBoard: true) {
+            GamePanel(title: "다음 진로 · 화면 선택", onBoard: true, contentSpacing: sectionGap) {
                 ForEach(["대학 진학 검토", "무소속으로 재도전"],id:\.self) { option in
                     Button(option) { careerChoice = option }.buttonStyle(MatchPixelButtonStyle(primary: careerChoice == option)).accessibilityIdentifier("scoutCareer-" + option)
                 }
@@ -272,14 +277,14 @@ struct ScoutingContractPreview: View {
         }
     }
     private func row(_ key: String, _ value: String) -> some View {
-        (large ? AnyLayout(VStackLayout(alignment:.leading,spacing:3)) : AnyLayout(HStackLayout(alignment:.top,spacing:10))) {
+        (large ? AnyLayout(VStackLayout(alignment:.leading,spacing:textGap)) : AnyLayout(HStackLayout(alignment:.top,spacing:10))) {
             Text(key).font(.caption).foregroundStyle(GameTheme.boardMuted).frame(minWidth: large ? 0 : 82,alignment:.leading)
             if !large { Spacer(minLength: 0) }
             Text(value).font(.subheadline.monospaced()).multilineTextAlignment(large ? .leading : .trailing)
-        }.fixedSize(horizontal:false,vertical:true).padding(.vertical,3).accessibilityElement(children:.combine)
+        }.fixedSize(horizontal:false,vertical:true).padding(.vertical,4).accessibilityElement(children:.combine)
     }
     private func metric(_ label: String, value: Double, target: Double) -> some View {
-        VStack(alignment:.leading,spacing:5) {
+        VStack(alignment:.leading,spacing:textGap) {
             paperRow(label,String(format:"%.1f / 100",value))
             GeometryReader { g in
                 ZStack(alignment:.leading) {
@@ -291,9 +296,9 @@ struct ScoutingContractPreview: View {
         }
     }
     private func compareRow(_ key: String, _ left: String, _ right: String) -> some View {
-        VStack(alignment:.leading,spacing:5) {
+        VStack(alignment:.leading,spacing:textGap) {
             Text(key).font(.caption).foregroundStyle(GameTheme.boardMuted)
-            (large ? AnyLayout(VStackLayout(alignment:.leading,spacing:6)) : AnyLayout(HStackLayout(alignment:.top,spacing:12))) {
+            (large ? AnyLayout(VStackLayout(alignment:.leading,spacing:textGap)) : AnyLayout(HStackLayout(alignment:.top,spacing:16))) {
                 Text(large ? clubs[0]+" · "+left : left).frame(maxWidth:.infinity,alignment:.leading)
                 Text(large ? clubs[1]+" · "+right : right).frame(maxWidth:.infinity,alignment:.leading)
             }.font(.subheadline.monospaced())
@@ -332,8 +337,10 @@ private struct ScoutDossier<Content: View>: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduced
     @State private var opened = false
+    @ScaledMetric(relativeTo: .body) private var scaledSectionGap: CGFloat = 16
+    private var sectionGap: CGFloat { min(scaledSectionGap, 24) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: sectionGap) {
             (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:6)) : AnyLayout(HStackLayout(alignment:.top))) {
                 Text(code).font(.caption2.monospaced().bold()).foregroundStyle(ScoutDossierInk.muted)
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
@@ -348,7 +355,7 @@ private struct ScoutDossier<Content: View>: View {
                 Spacer(minLength: 0)
                 Text("시안").font(.caption2.bold()).foregroundStyle(ScoutDossierInk.muted)
             }.padding(.top,4)
-        }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
+        }.padding(18).frame(maxWidth:.infinity,alignment:.leading)
             .foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
             .overlay(Rectangle().strokeBorder(ScoutDossierInk.rule,lineWidth:2))
             .padding(.bottom,4).background(alignment:.bottom) { Rectangle().fill(ScoutDossierInk.rule).padding(.horizontal,4) }
