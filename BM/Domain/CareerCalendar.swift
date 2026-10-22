@@ -24,6 +24,7 @@ struct GameDate: Comparable, Hashable, Sendable, CustomStringConvertible {
         let parts = Self.calendar.dateComponents([.year, .month, .day], from: value)
         return String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
     }
+    func days(to date: GameDate) -> Int { Self.calendar.dateComponents([.day], from: value, to: date.value).day! }
     func adding(days: Int) -> GameDate {
         GameDate(value: Self.calendar.date(byAdding: .day, value: days, to: value)!)
     }
@@ -202,7 +203,7 @@ enum LeagueError: LocalizedError {
     }
 }
 
-struct PersonalSeasonTotals: Equatable {
+struct PersonalSeasonTotals: Equatable, Codable {
     var games = 0
     var line = MatchLine()
     var average: String { line.atBats == 0 ? "—" : String(format: "%.3f", Double(line.hits) / Double(line.atBats)) }

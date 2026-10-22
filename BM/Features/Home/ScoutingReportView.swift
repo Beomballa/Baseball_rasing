@@ -1,11 +1,117 @@
 import SwiftUI
 import SwiftData
 
-struct ScoutingSampleGroup: Identifiable {
+struct ScoutingSampleGroup: Identifiable, Codable {
     let id: String
     var totals = PersonalSeasonTotals()
     var hasBatterMinimum: Bool { totals.line.plateAppearances >= 40 }
     var hasPitcherMinimum: Bool { totals.line.pitchingOuts >= 45 }
+}
+
+struct ScoutingObservationHomePanel: View {
+    let player: CareerPlayer
+    let calendar: CareerCalendarState
+    var archive = false
+    @Environment(\.modelContext) private var context
+    @Query(sort: \CareerScoutingReport.period, order: .reverse) private var saved: [CareerScoutingReport]
+    @State private var error: String?
+    @State private var showHistory = false
+    private var own: [CareerScoutingReport] { saved.filter { $0.playerID == player.id } }
+    private func refresh() {
+        do {
+            try ScoutingObservationStore.ensureCurrent(player: player, calendar: calendar, in: context)
+            _ = try ScoutingObservationStore.reports(player: player, calendar: calendar, in: context)
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+    var body: some View {
+        GamePanel(title: archive ? "28일 관찰 · 저장한 보고서" : "스카우트 관찰 · 내 기록", onBoard: true, contentSpacing: 16) {
+            if let error {
+                Text(error).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutArchiveError")
+                Button("보고서 저장 다시 확인", action: refresh).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutArchiveRetry")
+            } else if let row = own.first, let value = try? row.snapshot() {
+                Text("\(value.period + 1)차 관찰 · \(value.observedDate) 확정").font(.subheadline.bold()).accessibilityIdentifier("scoutSavedPeriod")
+                Text("다음 관찰 \(value.nextDate) · 게임 날짜 기준").font(.caption.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutNextObservation")
+                Text("보고서 \(own.count)건 · 같은 주기의 자료는 다시 뽑지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("scoutSavedCount")
+                NavigationLink { SavedScoutingObservationView(value: value) } label: { Text("확정 보고서 보기") }
+                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openSavedScoutingReport")
+                if archive && own.count > 1 {
+                    HomeDetailButton(title: "지난 보고서 \(own.count - 1)건", expanded: $showHistory, identifier: "scoutHistoryDetails")
+                    if showHistory {
+                        ForEach(own.dropFirst()) { old in
+                            if let snapshot = try? old.snapshot() {
+                                NavigationLink { SavedScoutingObservationView(value: snapshot) } label: {
+                                    Text("\(snapshot.period + 1)차 · \(snapshot.observedDate)")
+                                }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutHistory-\(snapshot.period)")
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text("현재 주기 보고서 확인 중").font(.subheadline)
+            }
+            if !archive {
+                NavigationLink { ScoutingReportView(player: player, calendar: calendar) } label: { Text("내 관찰 보고서 · 현재 자료/이력") }
+                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openScoutingReport")
+            }
+            Text("구단 관심·제의 생성은 아직 연결 전입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+        }.task(id: "\(player.id)-\(player.gameDate)") { refresh() }
+    }
+}
+
+struct SavedScoutingObservationView: View {
+    let value: ScoutingObservation
+    @State private var showOriginals = false
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ScoutDossier(title: "\(value.period + 1)차 관찰 보고서", code: "OBSERVATION / FIXED RECORD", stamp: "관찰 확정", isPreview: false) {
+                    HStack(alignment: .top, spacing: 16) {
+                        PixelPlayer(appearance: value.appearance).frame(width: 38, height: 54).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("\(value.name) #\(value.number)").font(.headline)
+                            Text("\(value.age)세 · \(value.role.label) · " + (value.role == .batter ? FieldPosition(rawValue: value.position)?.label ?? value.position : value.hand == "left" ? "좌투" : "우투")).font(.subheadline)
+                            Text(value.age <= 18 ? value.school : "등록 학교 · \(value.school)").font(.subheadline)
+                        }
+                    }
+                    Text("관찰일 \(value.observedDate)").font(.subheadline.bold()).accessibilityIdentifier("scoutFrozenDate")
+                    Text("주기 \(value.periodStart) ~ \((try? GameDate(value.nextDate).adding(days: -1).description) ?? "—")").font(.caption.monospaced())
+                    Text("당시 자료를 보존한 보고서입니다. 현재 능력·출전 기록과 다를 수 있습니다.").font(.caption).foregroundStyle(ScoutDossierInk.muted)
+                }
+                GamePanel(title: "역할별 기량 H · 당시 영구 능력", onBoard: true, contentSpacing: 16) {
+                    ForEach(value.grades) { grade in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(grade.label + "  " + (grade.score.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "평가 대기"))
+                                .font(.headline.monospaced()).accessibilityIdentifier("scoutGrade-\(grade.id)")
+                            Text(grade.detail).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        }
+                    }
+                    Text("H = 역할 기초점수95% + 멘탈5% · 게임 내 기량 참고값이며 계약 합격을 뜻하지 않습니다.").font(.caption).foregroundStyle(GameTheme.gold)
+                    HomeRadarChart(values: value.abilities.axes)
+                    HomeDetailButton(title: "관찰 당시 원본 능력·구종", expanded: $showOriginals, identifier: "scoutFrozenAbilities")
+                    if showOriginals { ForEach(value.abilities.originals + value.abilities.pitches) { HomeGrowthRow(value: $0) } }
+                }
+                GamePanel(title: "관찰 당시 출전 표본", onBoard: true, contentSpacing: 16) {
+                    Text("\(value.sampleStart) ~ \(value.observedDate)").font(.caption.monospaced())
+                    SeasonPersonalRecord(totals: value.totals, role: value.role)
+                    Text("완료 개인 경기 \(value.totals.games)건 · 미완료 \(value.pending)건 제외").font(.subheadline).accessibilityIdentifier("scoutFrozenSample")
+                    ForEach(Array(value.groups.enumerated()), id: \.element.id) { index, group in
+                        Text("환경 \(index + 1) · " + (value.role == .batter ? "\(group.totals.line.plateAppearances)/40타석" : "\(group.totals.innings)/15.0이닝") + " · " + ((value.role == .batter ? group.hasBatterMinimum : group.hasPitcherMinimum) ? "최소 표본 참고 기준 도달" : "표본 부족"))
+                            .font(.caption).foregroundStyle(GameTheme.gold)
+                    }
+                    if value.groups.isEmpty { Text("자료 대기 · 완료한 개인 출전이 없습니다.").font(.caption) }
+                }
+                GamePanel(title: "평가 대기 사유", onBoard: true, contentSpacing: 16) {
+                    ForEach(value.evaluationPending, id: \.self) { Text($0).font(.subheadline) }
+                    Text("구단 기준 C·동일 환경 비교 성적 Vref가 준비되지 않아 P/F·육성 전망과 계약 적합도를 확정하지 않습니다.").font(.subheadline).accessibilityIdentifier("scoutFrozenPending")
+                    Text("28일 관찰과 계약 평가 창은 별개입니다. 재조회·시즌 결산으로 제의를 재추첨하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }
+            }.padding(12)
+        }.lineSpacing(3).background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+            .navigationTitle("확정 관찰 보고서").navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar).tint(GameTheme.gold)
+    }
 }
 
 enum ScoutingReportError: LocalizedError {
@@ -95,6 +201,7 @@ struct ScoutingReportView: View {
                         Button("다시 확인", action: load).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutReportRetry")
                     }
                 } else if let report {
+                    ScoutingObservationHomePanel(player: player, calendar: calendar, archive: true)
                     identity(report)
                     GamePanel(title: "현재 능력 · 개인 성장", onBoard: true, contentSpacing: gap) {
                         HomeRadarChart(values: report.abilities.axes)
@@ -123,7 +230,7 @@ struct ScoutingReportView: View {
                     GamePanel(title: "평가 준비 · 연결할 조건", onBoard: true, contentSpacing: gap) {
                         Text(report.age < 20 ? "나이 조건 대기 · 프로 계약 검토는 20세부터입니다." : "나이 조건 20세 이상 · 진로/권리 심사는 연결 전입니다.")
                             .font(.subheadline).accessibilityIdentifier("scoutAgeCondition")
-                        Text("종합 기량 H·구단 기준 C·성적 보정 P·적합도 F: 평가 엔진 연결 전").font(.subheadline).accessibilityIdentifier("scoutEvaluationPending")
+                        Text("역할 기량 H는 확정 보고서에서 확인합니다. 구단 기준 C·성적 보정 P·적합도 F는 평가 자료 연결 전입니다.").font(.subheadline).accessibilityIdentifier("scoutEvaluationPending")
                         Text("동일 환경의 비교 성적(Vref)이 아직 없어 성적 보정과 합격 여부를 산출하지 않습니다. 관심 구단·다음 관찰일·제의도 생성하지 않습니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                         if report.age >= 19 {

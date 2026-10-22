@@ -1,6 +1,6 @@
 import Foundation
 
-struct HomeAbilityValue: Identifiable {
+struct HomeAbilityValue: Identifiable, Codable {
     let id: String
     let label: String
     let current: Double
@@ -8,13 +8,13 @@ struct HomeAbilityValue: Identifiable {
     var growth: Double? { initial.map { current - $0 } }
 }
 
-@MainActor struct HomeAbilitySummary {
+struct HomeAbilitySummary: Codable {
     let axes: [HomeAbilityValue]
     let originals: [HomeAbilityValue]
     let pitches: [HomeAbilityValue]
     let hasInitialValues: Bool
 
-    init(player: CareerPlayer, abilities: PlayerAbilities?) {
+    @MainActor init(player: CareerPlayer, abilities: PlayerAbilities?) {
         let initial = abilities?.initialValues.flatMap { try? JSONDecoder().decode(PlayerInitialValues.self, from: $0) }
         hasInitialValues = initial != nil
         var values = [HomeAbilityValue]()

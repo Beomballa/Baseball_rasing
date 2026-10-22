@@ -697,4 +697,191 @@ extension PlayerAbilitiesTests {
             XCTAssertFalse(context.hasChanges)
         }
     }
+    private func scoutingSetup(_ role: PlayerRole = .batter, context: ModelContext) throws -> (CareerPlayer,CareerCalendarState) {
+        let player = try CareerStore.create(draft(.initial(for: role)),schools:SchoolCatalog.load(),in:context)
+        return (player,try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }))
+    }
+    func testObservationPeriod28DaysInclusiveOriginLeapAndYearBoundaries() throws {
+        let origin = try GameDate("2026-04-01")
+        for (date,index,start,next) in [("2026-04-01",0,"2026-04-01","2026-04-29"),("2026-04-28",0,"2026-04-01","2026-04-29"),("2026-04-29",1,"2026-04-29","2026-05-27"),("2026-05-27",2,"2026-05-27","2026-06-24")] {
+            let cycle = try ScoutingPeriod(origin:origin,today:GameDate(date))
+            XCTAssertEqual(cycle.index,index); XCTAssertEqual(cycle.start.description,start); XCTAssertEqual(cycle.next.description,next)
+            XCTAssertEqual(cycle.start.days(to:cycle.end),27)
+        }
+        XCTAssertEqual(try ScoutingPeriod(origin:GameDate("2028-02-01"),today:GameDate("2028-02-29")).index,1)
+        XCTAssertEqual(try ScoutingPeriod(origin:GameDate("2026-12-20"),today:GameDate("2027-01-17")).next.description,"2027-02-14")
+        XCTAssertThrowsError(try ScoutingPeriod(origin:origin,today:GameDate("2026-03-31")))
+    }
+    func testObservationRoleGradesIndependentFormulaAndMissingPitchData() throws {
+        let container = try CareerStore.makeContainer(inMemory:true), c = container.mainContext
+        defer { withExtendedLifetime(container) {} }
+        let (b,_) = try scoutingSetup(context:c), bp = try profile(b,c)
+        let initial = try ScoutingRoleEvaluation.grades(role:.batter,abilities:HomeAbilitySummary(player:b,abilities:bp),positionMastery:60)
+        XCTAssertEqual(try XCTUnwrap(initial[0].score),52.15,accuracy:0.00001)
+        XCTAssertEqual(try XCTUnwrap(initial[1].score),56.71,accuracy:0.00001)
+        XCTAssertEqual(try XCTUnwrap(initial[2].score),55.855,accuracy:0.00001)
+        b.contact=65;b.power=92;b.discipline=75;bp.mental=65;b.fatigue=100
+        XCTAssertEqual(try ScoutingRoleEvaluation.grades(role:.batter,abilities:HomeAbilitySummary(player:b,abilities:bp),positionMastery:60)[0].score,80.2)
+        b.fatigue=0
+        XCTAssertEqual(try ScoutingRoleEvaluation.grades(role:.batter,abilities:HomeAbilitySummary(player:b,abilities:bp),positionMastery:60)[0].score,80.2)
+        let (p,_) = try scoutingSetup(.pitcher,context:c), pp = try profile(p,c)
+        let grade = try ScoutingRoleEvaluation.grades(role:.pitcher,abilities:HomeAbilitySummary(player:p,abilities:pp),positionMastery:nil)[0]
+        XCTAssertEqual(try XCTUnwrap(grade.score),57.128,accuracy:0.00001)
+        XCTAssertTrue(grade.detail.contains("포심"));XCTAssertTrue(grade.detail.contains("슬라이더"))
+        p.pitches[0].code="unknown-pitch"
+        XCTAssertNil(try ScoutingRoleEvaluation.grades(role:.pitcher,abilities:HomeAbilitySummary(player:p,abilities:pp),positionMastery:nil)[0].score)
+    }
+    func testObservationCreationAndSamePeriodStayFrozenAfterTrainingMatchAndRefresh() throws {
+        let container = try CareerStore.makeContainer(inMemory:true), c = container.mainContext
+        defer { withExtendedLifetime(container) {} }
+        for role in PlayerRole.allCases {
+            let (p,s) = try scoutingSetup(role,context:c)
+            let first = try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+            let bytes = first.payload, value = try first.snapshot()
+            XCTAssertEqual(value.period,0);XCTAssertEqual(value.nextDate,"2026-04-29");XCTAssertEqual(value.totals.games,0)
+            XCTAssertEqual(value.evaluationPending.count,6)
+            try finish(p,s,c)
+            let match = try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:match,revision:match.revision,input:.automatic,in:c)
+            let raw=match.payload, before=preserved(p), revision=s.revision
+            for _ in 0..<3 {
+                try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in XCTFail("same period saved again")})
+            }
+            XCTAssertEqual(first.payload,bytes);XCTAssertEqual(try first.snapshot().totals.games,0)
+            XCTAssertEqual(try ScoutingReportSnapshot.load(player:p,calendar:s,in:c).totals.games,1)
+            XCTAssertEqual(match.payload,raw);XCTAssertEqual(preserved(p),before);XCTAssertEqual(s.revision,revision);XCTAssertFalse(c.hasChanges)
+        }
+        XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),2)
+    }
+    func testObservationDayBoundaryAtomicallyFreezesActualSamplesAndNoDuplicate() throws {
+        let container = try CareerStore.makeContainer(inMemory:true), c=container.mainContext
+        defer { withExtendedLifetime(container) {} }
+        for role in PlayerRole.allCases {
+            let (p,s)=try scoutingSetup(role,context:c)
+            while p.gameDate < "2026-04-29" {
+                if try CalendarProgression.hasGameToday(player:p,state:s) {
+                    if !s.hasAction(on:p.gameDate) {try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)}
+                    let r=try CareerMatchStore.start(player:p,state:s,in:c)
+                    if !r.completed {try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)}
+                }
+                var calls=0
+                try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c,save:{ctx in calls += 1;try ctx.save()})
+                XCTAssertEqual(calls,1)
+            }
+            let rows=try ScoutingObservationStore.reports(player:p,calendar:s,in:c)
+            XCTAssertEqual(rows.map(\.period),[1,0]);XCTAssertEqual(rows[0].observedDate,"2026-04-29")
+            let live=try ScoutingReportSnapshot.load(player:p,calendar:s,in:c), frozen=try rows[0].snapshot()
+            XCTAssertEqual(frozen.totals,live.totals);XCTAssertEqual(frozen.totals.games,role == .batter ? 5:1)
+            XCTAssertEqual(frozen.abilities.originals.map(\.current),live.abilities.originals.map(\.current))
+            let bytes=rows[0].payload
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
+            XCTAssertEqual(try ScoutingObservationStore.reports(player:p,calendar:s,in:c).count,2)
+            XCTAssertEqual(rows[0].payload,bytes)
+        }
+    }
+    func testObservationBoundarySaveFailureRollsBackDayAndRetryCreatesOnce() throws {
+        enum Failure:Error {case injected}
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        defer {withExtendedLifetime(container){}}
+        let (p,s)=try scoutingSetup(context:c)
+        p.gameDate="2026-04-28";p.fatigue=76;try c.save()
+        let before=preserved(p),revision=s.revision
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,in:c,save:{_ in throw Failure.injected}))
+        XCTAssertEqual(preserved(p),before);XCTAssertEqual(s.revision,revision)
+        XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),1);XCTAssertFalse(c.hasChanges)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,in:c)
+        XCTAssertEqual(p.gameDate,"2026-04-29");XCTAssertEqual(p.fatigue,54)
+        XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),2)
+        try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in XCTFail("duplicate save")})
+    }
+    func testObservationPartialBatchPreservesSuccessfulReportAndFailedDayOnly() async throws {
+        enum Failure:Error {case injected}
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        defer {withExtendedLifetime(container){}}
+        let (p,s)=try scoutingSetup(context:c)
+        p.gameDate="2026-04-26";try c.save();var calls=0
+        do {
+            _=try await CalendarProgression.advanceOffDays(player:p,state:s,in:c,save:{ctx in calls += 1;if calls == 4 {throw Failure.injected};try ctx.save()})
+            XCTFail("expected partial failure")
+        } catch let error as CalendarAdvanceFailure {
+            XCTAssertEqual(error.summary.days,3);XCTAssertEqual(error.summary.lastSavedDate,"2026-04-29")
+        }
+        XCTAssertEqual(p.gameDate,"2026-04-29")
+        let rows=try ScoutingObservationStore.reports(player:p,calendar:s,in:c)
+        XCTAssertEqual(rows.map(\.period),[1,0]);XCTAssertEqual(rows[0].observedDate,"2026-04-29")
+        let bytes=rows[0].payload
+        _=try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
+        XCTAssertEqual(p.gameDate,"2026-05-01");XCTAssertEqual(rows[0].payload,bytes)
+        XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),2)
+    }
+    func testObservationCatchUpCreatesOnlyCurrentPeriodAndRejectsDamagedReport() throws {
+        enum Failure:Error {case injected}
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        defer {withExtendedLifetime(container){}}
+        let (p,s)=try scoutingSetup(context:c)
+        p.gameDate="2027-04-01";try c.save()
+        XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in throw Failure.injected}))
+        XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),1);XCTAssertFalse(c.hasChanges)
+        try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+        let rows=try ScoutingObservationStore.reports(player:p,calendar:s,in:c)
+        XCTAssertEqual(rows.map(\.period),[13,0]);XCTAssertEqual(rows[0].observedDate,"2027-04-01")
+        rows[0].payload=Data([0]);try c.save()
+        let raw=rows[0].payload,before=preserved(p)
+        XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c))
+        XCTAssertEqual(rows[0].payload,raw);XCTAssertEqual(preserved(p),before);XCTAssertFalse(c.hasChanges)
+    }
+    func testObservationV7MigrationPreservesPendingTrainingMatchAndRewardsOnceOnDisk() throws {
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:folder)}
+        let url=folder.appendingPathComponent("v7-observation.store")
+        var players:[UUID:[String]]=[:],trainingData:Data?,matchData:Data?
+        try autoreleasepool {
+            let schema=Schema(versionedSchema:CareerSchemaV7.self)
+            let container=try ModelContainer(for:schema,configurations:[ModelConfiguration("Career",schema:schema,url:url,cloudKitDatabase:.none)])
+            let c=container.mainContext;c.autosaveEnabled=false
+            let (b,bs)=try scoutingSetup(context:c)
+            b.gameDate="2026-04-02";try c.save()
+            let t=try CareerTrainingStore.start(player:b,state:bs,in:c)
+            let target=try t.snapshot().targets[0]
+            try CareerTrainingStore.attempt(player:b,state:bs,record:t,revision:t.revision,input:TrainingInput(x:target.x,y:target.y,timing:0.82),in:c)
+            let (p,ps)=try scoutingSetup(.pitcher,context:c)
+            try CalendarProgression.rest(player:p,state:ps,revision:ps.revision,in:c)
+            let m=try CareerMatchStore.start(player:p,state:ps,in:c)
+            trainingData=t.payload;matchData=m.payload;players[b.id]=preserved(b);players[p.id]=preserved(p)
+        }
+        var frozen:[UUID:Data]=[:]
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            defer {withExtendedLifetime(container){}}
+            XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),0)
+            for p in try c.fetch(FetchDescriptor<CareerPlayer>()) {
+                let s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first{$0.playerID==p.id})
+                XCTAssertEqual(preserved(p),players[p.id])
+                try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+                let row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+                frozen[p.id]=row.payload;XCTAssertEqual(row.observedDate,p.gameDate)
+                if p.role == .batter {
+                    let t=try XCTUnwrap(CareerTrainingStore.record(player:p,in:c));XCTAssertEqual(t.payload,trainingData)
+                    try finish(p,s,c);let awarded=preserved(p)
+                    try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+                    XCTAssertEqual(preserved(p),awarded)
+                } else {
+                    let m=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first{$0.playerID==p.id})
+                    XCTAssertEqual(m.payload,matchData)
+                    try CareerMatchStore.advance(player:p,state:s,record:m,revision:m.revision,input:.automatic,in:c)
+                    let awarded=preserved(p),payload=m.payload
+                    XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:m,revision:m.revision,input:.automatic,in:c))
+                    try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+                    XCTAssertEqual(preserved(p),awarded);XCTAssertEqual(m.payload,payload)
+                }
+                XCTAssertEqual(row.payload,frozen[p.id])
+            }
+        }
+        let reopened=try CareerStore.makeContainer(url:url),c=reopened.mainContext
+        defer {withExtendedLifetime(reopened){}}
+        for row in try c.fetch(FetchDescriptor<CareerScoutingReport>()) {
+            XCTAssertEqual(row.payload,frozen[row.playerID]);XCTAssertEqual(try row.snapshot().totals.games,0)
+        }
+        XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),2);XCTAssertFalse(c.hasChanges)
+    }
 }

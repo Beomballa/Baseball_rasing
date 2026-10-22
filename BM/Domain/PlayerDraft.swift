@@ -29,7 +29,7 @@ enum ThrowingHand: String, CaseIterable, Identifiable {
     var label: String { self == .right ? "우투" : "좌투" }
 }
 
-struct PlayerAppearance: Equatable {
+struct PlayerAppearance: Equatable, Codable {
     var skin = 0
     var hair = 0
     var kit = 0

@@ -1944,3 +1944,74 @@ extension CareerFlowTests {
         }
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testObservationFrozenBothRolesDiskResumeAndActualGameRemainSeparate() throws {
+        let app=XCUIApplication();app.launch()
+        for pitcher in [false,true] {
+            if pitcher {reveal(app.buttons["createOtherRole"],in:app);app.buttons["createOtherRole"].tap();app.buttons["hand-left"].tap()}
+            createDashboardSample(app,name:pitcher ? "ObservePitch":"ObserveBat")
+            reveal(app.staticTexts["scoutNextObservation"],in:app)
+            XCTAssertTrue(app.staticTexts["scoutNextObservation"].label.contains("2026-04-29"))
+            XCTAssertTrue(app.staticTexts["scoutSavedCount"].label.contains("보고서 1건"))
+            app.buttons["openSavedScoutingReport"].tap()
+            XCTAssertTrue(app.staticTexts["scoutFrozenDate"].waitForExistence(timeout:5))
+            let grade=app.staticTexts[pitcher ? "scoutGrade-starter":"scoutGrade-slugger"]
+            reveal(grade,in:app);XCTAssertTrue(grade.exists);let score=grade.label
+            let image=XCTAttachment(screenshot:app.screenshot());image.name=pitcher ? "Frozen pitcher role grade":"Frozen batter role grade";image.lifetime = .keepAlways;add(image)
+            reveal(app.staticTexts["scoutFrozenSample"],in:app);XCTAssertTrue(app.staticTexts["scoutFrozenSample"].label.contains("경기 0건"))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            let start=app.buttons[pitcher ? "gamePitch":"requestGamePitch"];XCTAssertTrue(start.waitForExistence(timeout:5));start.tap()
+            if pitcher {app.buttons["gameRelease"].tap()} else {XCTAssertTrue(app.buttons["gameHit"].waitForExistence(timeout:2));app.buttons["gameHit"].tap()}
+            waitForEnabled(app.buttons["gameAutomatic"],timeout:15)
+            app.terminate();app.launch()
+            let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"]
+            if role.exists {reveal(role,in:app);role.tap()}
+            reveal(app.buttons["openCareerGame"],in:app);XCTAssertTrue(app.buttons["openCareerGame"].label.contains("이어하기"));app.buttons["openCareerGame"].tap()
+            app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
+            reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
+            let fatigue=app.staticTexts["homeFatigue"].label,action=app.staticTexts["calendarAction"].label
+            reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            reveal(grade,in:app);XCTAssertEqual(grade.label,score)
+            reveal(app.staticTexts["scoutFrozenSample"],in:app);XCTAssertTrue(app.staticTexts["scoutFrozenSample"].label.contains("경기 0건"))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            reveal(app.staticTexts["scoutSample-1"],in:app);XCTAssertTrue(app.staticTexts["scoutSample-1"].label.contains(pitcher ? "1등판":"1경기"))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.staticTexts["calendarDate"],in:app);XCTAssertEqual(app.staticTexts["calendarDate"].label,"2026-04-01")
+            XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue);XCTAssertEqual(app.staticTexts["calendarAction"].label,action)
+        }
+    }
+    @MainActor func testObservationSeasonOffseasonBoundaryArchiveAndLargeTextBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-season-summary-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
+        for pitcher in [false,true] {
+            let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
+            reveal(app.staticTexts["scoutSavedPeriod"],in:app)
+            XCTAssertTrue(app.staticTexts["scoutSavedPeriod"].label.contains("7차 관찰 · 2026-09-16"))
+            XCTAssertTrue(app.staticTexts["scoutSavedCount"].label.contains("보고서 7건"))
+            reveal(app.buttons["openSeasonSummary"],in:app);app.buttons["openSeasonSummary"].tap()
+            let next=app.buttons["advanceOffseason"];reveal(next,in:app);next.tap()
+            let arrived=XCTNSPredicateExpectation(predicate:NSPredicate(format:"label BEGINSWITH %@","2026-10-23"),object:app.staticTexts["offseasonDates"])
+            XCTAssertEqual(XCTWaiter.wait(for:[arrived],timeout:20),.completed)
+            let settled=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:app.otherElements["careerTransition"])
+            XCTAssertEqual(XCTWaiter.wait(for:[settled],timeout:10),.completed)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.staticTexts["scoutSavedPeriod"],in:app)
+            XCTAssertTrue(app.staticTexts["scoutSavedPeriod"].label.contains("8차 관찰 · 2026-10-14"))
+            XCTAssertTrue(app.staticTexts["scoutSavedCount"].label.contains("보고서 8건"))
+            let fatigue=app.staticTexts["homeFatigue"].label
+            reveal(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            reveal(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
+            reveal(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
+            XCTAssertTrue(app.staticTexts["scoutFrozenDate"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["scoutFrozenDate"].label.contains("2026-04-01"))
+            let old=XCTAttachment(screenshot:app.screenshot());old.name=pitcher ? "Archived pitcher identity accessibility XXXL":"Archived batter identity accessibility XXXL";old.lifetime = .keepAlways;add(old)
+            reveal(app.staticTexts["scoutFrozenSample"],in:app);XCTAssertTrue(app.staticTexts["scoutFrozenSample"].label.contains("경기 0건"))
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.staticTexts["calendarDate"],in:app);XCTAssertEqual(app.staticTexts["calendarDate"].label,"2026-10-23");XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+        }
+    }
+}

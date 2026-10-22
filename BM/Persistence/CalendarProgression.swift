@@ -75,13 +75,19 @@ struct CalendarAdvanceFailure: LocalizedError {
         }
         let prepared = state.hasAction(on: player.gameDate)
         guard prepared || automaticRest else { throw CalendarError.preparationRequired }
-        let nextDate = try GameDate(player.gameDate).adding(days: 1).description
+        let today = try GameDate(player.gameDate)
+        let nextDate = today.adding(days: 1).description
+        let observationDue = try ScoutingPeriod(origin: GameDate(state.originDate), today: today).index
+            != ScoutingPeriod(origin: GameDate(state.originDate), today: GameDate(nextDate)).index
         if !prepared { player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest) }
         player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.sleep)
         player.gameDate = nextDate
         state.actionDate = nil
         state.revision += 1
-        do { try save(context) } catch { context.rollback(); throw error }
+        do {
+            if observationDue { _ = try ScoutingObservationStore.insertIfNeeded(player: player, calendar: state, in: context) }
+            try save(context)
+        } catch { context.rollback(); throw error }
     }
 
     static func advanceOffDays(player: CareerPlayer, state: CareerCalendarState,

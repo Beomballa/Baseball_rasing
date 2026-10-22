@@ -802,6 +802,8 @@ import SwiftData
     }
     func testOffseasonUsesLegacyAnniversaryRatherThanUnconditionallyAgingAtOpening() async throws {
         let (container, p, s) = try offseasonFixture(), c = container.mainContext
+        // Seed the pre-observation legacy fixture before assigning its original anniversary.
+        for report in try c.fetch(FetchDescriptor<CareerScoutingReport>()) { c.delete(report) }
         s.originDate = "2026-02-01"; p.gameDate = "2027-01-20"; try c.save()
         let plan = try XCTUnwrap(CareerSeasonStore.offseason(player: p, state: s, in: c))
         XCTAssertEqual(plan.seasonYear, 2026); XCTAssertEqual(plan.age, 16); XCTAssertEqual(plan.targetAge, 17)
