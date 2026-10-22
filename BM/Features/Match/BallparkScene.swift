@@ -33,13 +33,14 @@ import SpriteKit
             return texture
         }
     }
-    func configure(hand: String, kit: Int, role: PlayerRole = .pitcher, appearance: PlayerAppearance? = nil, jerseyNumber: Int = 1) {
+    func configure(hand: String, kit: Int, role: PlayerRole = .pitcher, appearance: PlayerAppearance? = nil, jerseyNumber: Int = 1, batterSide: OpponentBatterSide = .left) {
         cancelDelivery(); self.hand = hand; self.role = role
         size = CGSize(width: 320, height: role == .batter ? 320 : 320 * 1290 / 1219)
         removeAllChildren()
         guard let image = MatchArt.image(role == .batter ? "batter-view-clean" : "stadium-clean") else { ready = false; return }
         let texture = SKTexture(image: image); texture.filteringMode = .nearest
         let field = SKSpriteNode(texture: texture, size: size); field.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        field.xScale = role == .pitcher && batterSide == .right ? -1 : 1
         addChild(field)
         let style = appearance ?? PlayerAppearance(kit: kit)
         pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : textures("pitcher-delivery-v2", columns: 3, rows: 2)
@@ -115,44 +116,43 @@ import SpriteKit
             : point(0.54 + (x - 0.5) * 0.22, 0.43 + (y - 0.5) * 0.24)
         let release = role == .batter ? point(0.458, 0.237) : handPoint(3)
         ball.position = role == .batter ? release : handPoint(0); ball.isHidden = false
-        if preparedRelease && role == .pitcher {
-            pitchStage = .flight; pitcherPose(3); ball.position = release
-            let duration = DeliveryPresentation.flight(flight, reduced: reduceMotion)
-            ball.run(fly(to: destination, duration: duration, code: pitchCode))
-            if !["안타", "홈런", "범타"].contains(outcome ?? "") { mitt.run(.move(to: destination, duration: duration * 0.8)) }
-            run(.sequence([
-                .wait(forDuration: duration * 0.25), .run { [weak self] in if !reduceMotion { self?.pitcherPose(4) } },
-                .wait(forDuration: duration * 0.75), .run { [weak self] in
-                    self?.pitcherPose(5); self?.finishPitch(outcome: outcome, reduced: reduceMotion); onArrival?()
+        let duration = DeliveryPresentation.flight(flight, reduced: reduceMotion)
+        func launch() {
+            self.pitchStage = .flight; self.pitcherPose(3); self.ball.position = release
+            self.pitcher.run(.sequence([.wait(forDuration: duration * 0.25), .run { [weak self] in
+                if !reduceMotion { self?.pitcherPose(4) }
+            }]))
+            if self.role == .pitcher && !["안타", "홈런", "범타"].contains(outcome ?? "") {
+                self.mitt.run(.move(to: self.destination, duration: duration * 0.8))
+            }
+            // Receipt belongs to the ball's movement action, never a parallel scene timer.
+            self.ball.run(.sequence([
+                self.fly(to: self.destination, duration: duration, code: pitchCode),
+                .run { [weak self] in
+                    guard let self else { return }
+                    self.ball.position = self.destination; self.pitcherPose(5)
+                    if self.role == .pitcher { self.finishPitch(outcome: outcome, reduced: reduceMotion) }
+                    onArrival?()
                 },
                 .wait(forDuration: DeliveryPresentation.receipt(reduced: reduceMotion)), .run { completion?() }
-            ]), withKey: "delivery")
-            return true
+            ]), withKey: "ballDelivery")
         }
-        run(.sequence([
-            .run { [weak self] in
-                guard let self else { return }
-                if !reduceMotion { self.pitcherPose(1) }
-                if self.role == .pitcher { self.ball.position = self.handPoint(reduceMotion ? 0 : 1) }
-            },
-            .wait(forDuration: MatchDelivery.windup * 0.55),
-            .run { [weak self] in
-                guard let self else { return }; if !reduceMotion { self.pitcherPose(2) }
-                if self.role == .pitcher { self.ball.position = self.handPoint(2) }
-            },
-            .wait(forDuration: MatchDelivery.windup * 0.45),
-            .run { [weak self] in
-                guard let self else { return }; self.pitchStage = .flight; self.pitcherPose(3); self.ball.position = release
-                self.ball.run(self.fly(to: self.destination, duration: flight, code: pitchCode))
-            },
-            .wait(forDuration: flight * 0.25), .run { [weak self] in if !reduceMotion { self?.pitcherPose(4) } },
-            .wait(forDuration: flight * 0.75),
-            .run { [weak self] in
-                guard let self else { return }; self.pitcherPose(5)
-                if self.role == .pitcher { self.finishPitch(outcome: outcome, reduced: reduceMotion) }; onArrival?()
-            },
-            .wait(forDuration: DeliveryPresentation.receipt(reduced: reduceMotion)), .run { completion?() }
-        ]), withKey: "delivery")
+        if preparedRelease && role == .pitcher { launch() }
+        else {
+            run(.sequence([
+                .run { [weak self] in
+                    guard let self else { return }
+                    if !reduceMotion { self.pitcherPose(1) }
+                    if self.role == .pitcher { self.ball.position = self.handPoint(reduceMotion ? 0 : 1) }
+                },
+                .wait(forDuration: MatchDelivery.windup * 0.55),
+                .run { [weak self] in
+                    guard let self else { return }; if !reduceMotion { self.pitcherPose(2) }
+                    if self.role == .pitcher { self.ball.position = self.handPoint(2) }
+                },
+                .wait(forDuration: MatchDelivery.windup * 0.45), .run { launch() }
+            ]), withKey: "delivery")
+        }
         return true
     }
     private func finishPitch(outcome: String?, reduced: Bool) {

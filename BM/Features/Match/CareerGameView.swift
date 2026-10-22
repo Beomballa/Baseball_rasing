@@ -45,6 +45,11 @@ struct CareerGameView: View {
     @State private var pulseAt = Date.distantPast
 
     private var inputLocked: Bool { clock.running || presenting || retrySave != nil }
+    private var opponentSide: OpponentBatterSide { (visualSnapshot ?? (try? record?.snapshot()))?.opponentBatterSide ?? .right }
+    private func configureScene() {
+        scene.configure(hand: player.throwingHandRaw, kit: player.kit, role: player.role, appearance: player.appearance,
+                        jerseyNumber: player.jerseyNumber, batterSide: opponentSide)
+    }
     private func load() {
         do {
             record = try CareerMatchStore.start(player: player, state: calendar, in: context)
@@ -214,6 +219,11 @@ struct CareerGameView: View {
                 .accessibilityLabel(player.role == .batter ? "도트 타자 경기장" : "도트 투수 경기장")
                 .accessibilityIdentifier("careerMatchField")
                 .overlay {
+                    if player.role == .pitcher, replay == nil, !typeSize.isAccessibilitySize {
+                        PitchLocationBoard(result: judgment ?? match.lastManual, side: match.opponentBatterSide)
+                            .frame(width: field.width * 0.24)
+                            .position(x: field.width * (match.opponentBatterSide.mapOnRight ? 0.85 : 0.15), y: field.height * 0.20)
+                    }
                     if let judgment, replay == nil, !typeSize.isAccessibilitySize {
                         PitchJudgmentToast(title: DeliveryPresentation.call(judgment.outcome),
                                            detail: "\(MatchPresentation.pitchName(judgment)) · \(judgment.speed) km/h")
@@ -384,6 +394,13 @@ struct CareerGameView: View {
                                 VStack(spacing: 6) {
                                     if match.pitching != nil {Text("현재 투수 · " + (arrivedSnapshot ?? match).pitchingLabel).font(.caption.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("activePitcherLabel")}
                                     MatchScoreStrip(match: arrivedSnapshot ?? match, pitchCount: player.role == .pitcher ? (arrivedSnapshot ?? match).line.pitches : nil, pulse: pulse, pulseAt: pulseAt)
+                                    if player.role == .pitcher, typeSize.isAccessibilitySize, replay == nil {
+                                        HStack {
+                                            if match.opponentBatterSide.mapOnRight { Spacer(minLength: 0) }
+                                            PitchLocationBoard(result: judgment ?? (arrivedSnapshot ?? match).lastManual, side: match.opponentBatterSide).frame(width: 140)
+                                            if !match.opponentBatterSide.mapOnRight { Spacer(minLength: 0) }
+                                        }
+                                    }
                                     if let judgment, typeSize.isAccessibilitySize {
                                         PitchJudgmentToast(title: DeliveryPresentation.call(judgment.outcome),
                                                            detail: "\(MatchPresentation.pitchName(judgment)) · \(judgment.speed) km/h")
@@ -423,7 +440,8 @@ struct CareerGameView: View {
                 }
             }
         }
-        .onAppear { scene.configure(hand: player.throwingHandRaw, kit: player.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber); load() }
+        .onAppear { load(); configureScene() }
+        .onChange(of: opponentSide) { _, _ in configureScene() }
         .task(id: pulseAt) {
             guard pulse != nil else { return }
             do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }

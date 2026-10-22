@@ -4,6 +4,7 @@ import SwiftData
 
 struct MatchView: View {
     let player: CareerPlayer
+    @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingDelivery = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -29,10 +30,15 @@ struct MatchView: View {
             Button(showingDelivery ? "포수 수신 확인 중…" : "투구 연습 보기") {
                 guard !showingDelivery else { return }
                 showingDelivery = true; cue = "손에서 릴리스 → 포수 수신 · 동작 진행 중"
-                let started = scene.demonstrate(reduceMotion: reduceMotion,
-                    onArrival: { cue = "포수 수신 완료 · 기록/피로 변화 없음" },
-                    completion: { showingDelivery = false })
-                if !started { showingDelivery = false }
+                do {
+                    let code = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "four-seam"
+                    let velocity = player.role == .pitcher ? try CareerTrainingStore.value(player: player, code: nil, kind: .velocity, in: context) : 62.5
+                    let delivery = MatchDelivery.pitch(code: code, velocity: velocity)
+                    let started = scene.demonstrate(reduceMotion: reduceMotion, flightDuration: delivery.duration, pitchCode: code,
+                        onArrival: { cue = "포수 수신 완료 · \(delivery.speed) km/h · 기록/피로 변화 없음" },
+                        completion: { showingDelivery = false })
+                    if !started { showingDelivery = false }
+                } catch { showingDelivery = false; cue = "시연 속도 조회 실패 · " + error.localizedDescription }
             }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(showingDelivery).accessibilityIdentifier("demoPitch")
             Text("이곳은 동작 시연입니다. 공식 카운트·성적은 홈의 경기에서 확인하세요.")
                 .font(.caption).foregroundStyle(GameTheme.boardMuted)

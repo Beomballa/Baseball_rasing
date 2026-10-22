@@ -116,6 +116,36 @@ import SwiftData
         }
     }
 
+    func testRenderedVelocityOrdersActualReceiptAndReachesEndpointBeforeCall() async throws {
+        let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = windowScene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: windowScene), controller = UIViewController()
+        let view = SKView(frame:CGRect(x:0,y:0,width:320,height:340))
+        controller.view = view; window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { view.presentScene(nil); window.isHidden = true; previous?.makeKey() }
+        var elapsed: [Double] = []
+        for code in ["four-seam","changeup"] {
+            let scene = BallparkScene(size:CGSize(width:320,height:340)); scene.configure(hand:"right",kit:0)
+            view.presentScene(scene)
+            let duration = MatchDelivery.pitch(code:code,velocity:60).duration
+            let started = ProcessInfo.processInfo.systemUptime
+            let arrival = expectation(description:code + " actual arrival")
+            scene.demonstrate(reduceMotion:false,flightDuration:duration,x:0.75,y:0.3,pitchCode:code,preparedRelease:true,onArrival:{
+                let time = ProcessInfo.processInfo.systemUptime - started
+                elapsed.append(time)
+                XCTAssertGreaterThanOrEqual(time,duration * MatchDelivery.contactPhase - 0.04)
+                let ball = scene.children.compactMap { $0 as? SKShapeNode }.first
+                XCTAssertEqual(ball?.position.x ?? -1,320 * (0.54 + 0.25 * 0.22),accuracy:0.01)
+                XCTAssertEqual(ball?.position.y ?? -1,scene.size.height * (1 - (0.43 - 0.2 * 0.24)),accuracy:0.01)
+                XCTAssertEqual(scene.pitchStage,.received); arrival.fulfill()
+            })
+            try await Task.sleep(for:.seconds(0.2)); XCTAssertEqual(scene.pitchStage,.flight)
+            await fulfillment(of:[arrival],timeout:3)
+            scene.cancelDelivery()
+        }
+        XCTAssertGreaterThan(elapsed[1]-elapsed[0],0.09)
+    }
+
     func testPitchPreparationHoldsBallUntilExplicitReleaseForBothHands() {
         for hand in ["left", "right"] {
             let scene = BallparkScene(size: CGSize(width: 320, height: 320))
@@ -476,6 +506,23 @@ import SwiftData
 }
 
 @MainActor final class MatchPresentationTests: XCTestCase {
+    func testPitchLocationCoordinatesSideAndVelocityArePresentationOnly() throws {
+        XCTAssertTrue(OpponentBatterSide.left.mapOnRight); XCTAssertFalse(OpponentBatterSide.right.mapOnRight)
+        XCTAssertEqual((0..<9).map { OpponentBatterSide.at(order:$0) },[.right,.left,.right,.right,.left,.right,.right,.left,.right])
+        XCTAssertEqual(OpponentBatterSide.at(order:10),.left)
+        let size=CGSize(width:100,height:100)
+        let inside=PitchLocationBoard.marker(x:0.2,y:0.8,size:size)
+        XCTAssertEqual(inside.x,24.8,accuracy:0.00001); XCTAssertEqual(inside.y,75.2,accuracy:0.00001)
+        let outside=PitchLocationBoard.marker(x:1.2,y:-0.2,size:size)
+        XCTAssertEqual(outside.x,92,accuracy:0.00001); XCTAssertEqual(outside.y,8,accuracy:0.00001)
+        let fast=MatchDelivery.pitch(code:"four-seam",velocity:60), slow=MatchDelivery.pitch(code:"changeup",velocity:60)
+        XCTAssertEqual(fast.exactSpeed,144); XCTAssertEqual(slow.exactSpeed,124)
+        XCTAssertEqual(slow.duration/fast.duration,144.0/124,accuracy:0.00001)
+        var game=CareerMatch(random:10,isHome:true,role:"pitcher",appearance:true,contact:60,power:60,discipline:60,mastery:["four-seam":60])
+        game.awayOrder=1;let original=game
+        XCTAssertEqual(game.opponentBatterSide,.left);_ = PitchLocationBoard(result:nil,side:game.opponentBatterSide)
+        XCTAssertEqual(game,original)
+    }
     func testContactUsesTheSwingAndBuntAtlasBarrels() {
         let swing = MatchPresentation.batContact(action: "swing")
         let bunt = MatchPresentation.batContact(action: "bunt")

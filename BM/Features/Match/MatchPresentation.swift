@@ -535,3 +535,41 @@ struct PitchJudgmentToast: View {
             .allowsHitTesting(false)
     }
 }
+
+struct PitchLocationBoard: View {
+    let result: ManualMatchResult?
+    let side: OpponentBatterSide
+    @Environment(\.dynamicTypeSize) private var typeSize
+    static func marker(x: Double, y: Double, size: CGSize) -> CGPoint {
+        CGPoint(x: size.width * (0.08 + 0.84 * min(1, max(0, x))),
+                y: size.height * (0.08 + 0.84 * min(1, max(0, y))))
+    }
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(side.label).foregroundStyle(GameTheme.gold)
+            Canvas { context, size in
+                let a = Self.marker(x: 0.2, y: 0.2, size: size), b = Self.marker(x: 0.8, y: 0.8, size: size)
+                context.stroke(Path(CGRect(x: a.x, y: a.y, width: b.x-a.x, height: b.y-a.y)), with: .color(GameTheme.boardInk), lineWidth: 1)
+                for value in [0.4,0.6] {
+                    let x = Self.marker(x:value,y:0,size:size).x, y = Self.marker(x:0,y:value,size:size).y
+                    var line = Path(); line.move(to:CGPoint(x:x,y:a.y)); line.addLine(to:CGPoint(x:x,y:b.y))
+                    line.move(to:CGPoint(x:a.x,y:y)); line.addLine(to:CGPoint(x:b.x,y:y))
+                    context.stroke(line,with:.color(GameTheme.boardLine),lineWidth:0.5)
+                }
+                if let result {
+                    let p = Self.marker(x:result.x,y:result.y,size:size)
+                    context.fill(Path(CGRect(x:p.x-3,y:p.y-3,width:6,height:6)),with:.color(GameTheme.gold))
+                }
+            }.aspectRatio(1,contentMode:.fit).accessibilityHidden(true)
+            Text(result == nil ? "도착 대기" : "실제 도착 코스")
+                .foregroundStyle(GameTheme.boardInk)
+        }.font(typeSize.isAccessibilitySize ? .caption2 : .system(size:10,weight:.bold,design:.monospaced))
+            .padding(5).background(GameTheme.board.opacity(0.94))
+            .overlay(Rectangle().strokeBorder(GameTheme.boardLine))
+            .accessibilityElement(children:.ignore)
+            .accessibilityLabel("\(side.label) · \(side.mapOnRight ? "오른쪽" : "왼쪽") 코스 보드")
+            .accessibilityValue(result.map { "실제 도착 가로 \(Int(($0.x*100).rounded())), 세로 \(Int(($0.y*100).rounded())), \(ManualMatchRules.isStrike(x:$0.x,y:$0.y) ? "존 안" : "존 밖")" } ?? "도착 대기")
+            .accessibilityIdentifier("pitchLocationBoard")
+            .allowsHitTesting(false)
+    }
+}

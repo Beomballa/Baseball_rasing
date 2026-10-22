@@ -9,10 +9,15 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
         assertArenaFits(app, button: "gamePitch", ratio: 1219.0 / 1290)
         let initialPitchCount = app.staticTexts["boardPitchCount"].label
+        let location = app.descendants(matching:.any).matching(identifier:"pitchLocationBoard").firstMatch
+        XCTAssertTrue(location.exists); XCTAssertEqual(location.value as? String,"도착 대기")
+        XCTAssertTrue(location.label.contains("우타 상대 · 왼쪽"))
+        XCTAssertLessThan(location.frame.midX,app.otherElements["careerMatchField"].frame.midX)
         app.buttons["gamePitch"].tap(); app.buttons["gameRelease"].tap()
         XCTAssertFalse(app.buttons["gameAutomatic"].isEnabled)
         let toast = app.descendants(matching: .any).matching(identifier: "pitchJudgmentToast").firstMatch
         XCTAssertTrue(toast.waitForExistence(timeout: 3))
+        XCTAssertTrue((location.value as? String)?.contains("실제 도착") == true)
         XCTAssertFalse(app.buttons["gamePitch"].isEnabled)
         let field = app.otherElements["careerMatchField"].frame
         XCTAssertLessThan(toast.frame.maxY, field.minY + field.height * 0.35)
@@ -21,13 +26,22 @@ final class CareerFlowTests: XCTestCase {
         let savedCount = app.otherElements["careerGameCount"].label
         XCTAssertNotEqual(app.staticTexts["boardPitchCount"].label, initialPitchCount)
         let savedPitchCount = app.staticTexts["boardPitchCount"].label
+        let savedLocation = location.value as? String
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.otherElements["careerGameCount"].label, savedCount)
         XCTAssertEqual(app.staticTexts["boardPitchCount"].label, savedPitchCount)
+        XCTAssertEqual(location.value as? String,savedLocation)
         XCTAssertFalse(toast.exists)
+        for _ in 0..<12 where !location.label.contains("좌타 상대") {
+            app.buttons["gamePitch"].tap(); app.buttons["gameRelease"].tap()
+            waitForEnabled(app.buttons["gamePitch"], timeout: 15)
+        }
+        XCTAssertTrue(location.label.contains("좌타 상대 · 오른쪽"))
+        XCTAssertGreaterThan(location.frame.midX,app.otherElements["careerMatchField"].frame.midX)
+        let leftSide = XCTAttachment(screenshot:app.screenshot()); leftSide.name = "Left opponent actual pitch board on right"; leftSide.lifetime = .keepAlways; add(leftSide)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         reveal(app.buttons["openMatch"], in: app); app.buttons["openMatch"].tap()
         let demo = app.buttons["demoPitch"]

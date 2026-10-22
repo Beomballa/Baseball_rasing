@@ -33,6 +33,11 @@ struct MatchDelivery: Equatable {
     let y: Double
     let speed: Int
     var exactSpeed: Double? = nil
+    static func pitch(code: String, velocity: Double) -> MatchDelivery {
+        let stats = MatchAbilityStats(mental: 60, velocity: velocity, control: nil, stuff: nil, stamina: nil, fatigue: 0)
+        let speed = stats.speedValue(code: code)
+        return MatchDelivery(x: 0.5, y: 0.5, speed: Int(speed.rounded()), exactSpeed: speed)
+    }
     static let windup = 0.35
     static let contactPhase = 0.82
     var duration: Double { 1.35 * 145 / (exactSpeed ?? Double(speed)) }
@@ -82,4 +87,15 @@ struct MatchAbilityStats: Codable, Equatable {
         let base: Double = 120 + (velocity ?? 62.5) * 0.4
         return base + (offsets[code] ?? -10)
     }
+}
+
+// Presentation-only provisional lineup; the saved batting order makes it stable on resume.
+enum OpponentBatterSide: String, CaseIterable {
+    case left, right
+    var label: String { self == .left ? "좌타 상대" : "우타 상대" }
+    var mapOnRight: Bool { self == .left }
+    static func at(order: Int) -> Self { [1,4,7].contains(order % 9) ? .left : .right }
+}
+extension CareerMatch {
+    var opponentBatterSide: OpponentBatterSide { .at(order: isHome ? awayOrder : homeOrder) }
 }

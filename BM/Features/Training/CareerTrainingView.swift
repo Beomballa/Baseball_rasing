@@ -15,6 +15,8 @@ struct CareerTrainingView: View {
     @State private var record: CareerTrainingRecord?
     @State private var training: CareerTraining?
     @State private var code = ""
+    @State private var pitchVelocity = 62.5
+    private func delivery(code: String) -> MatchDelivery { .pitch(code: code, velocity: pitchVelocity) }
     @State private var kind = TrainingKind.contact
     @State private var category = 0
     @State private var footfalls: [SprintFoot] = []
@@ -53,6 +55,7 @@ struct CareerTrainingView: View {
     private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? "구종") : selectedKind.label }
     private func load() {
         do {
+            if isPitcher { pitchVelocity = try CareerTrainingStore.value(player: player, code: nil, kind: .velocity, in: context) }
             if !practice {
                 record = try CareerTrainingStore.record(player: player, in: context)
                 training = try record?.snapshot()
@@ -122,7 +125,7 @@ struct CareerTrainingView: View {
                 let release = input.release ?? 0
                 releaseHint = abs(release - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: previous.before)
                     ? "정확한 릴리스" : release < ManualMatchRules.releaseCenter ? "릴리스 빠름" : "릴리스 늦음"
-                let started = scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: target.x, y: target.y,
+                let started = scene.demonstrate(reduceMotion: reduced, flightDuration: delivery(code: previous.pitchCode ?? "four-seam").duration, x: target.x, y: target.y,
                                                pitchCode: previous.pitchCode ?? "four-seam", preparedRelease: true,
                                                onArrival: { showFeedback() }, completion: { finishReplay() })
                 if !started { scheduleFeedback() }
@@ -303,7 +306,7 @@ struct CareerTrainingView: View {
             if let result = (feedbackVisible || replay == nil ? self.training : replay)?.lastContact { ContactTrainingFeedback(result: result) }
             scores((feedbackVisible || replay == nil ? self.training : replay) ?? training)
             if selectedKind == .pitch, feedbackVisible, dynamicTypeSize.isAccessibilitySize, let replayScore {
-                PitchJudgmentToast(title: "포구 완료", detail: "\(replayScore)점 · \(releaseHint)")
+                PitchJudgmentToast(title: "포구 완료", detail: "\(delivery(code: training.pitchCode ?? code).speed) km/h · \(replayScore)점 · \(releaseHint)")
                     .accessibilityIdentifier("trainingCatchToast")
             }
             if let score = training.scores.last, replay == nil { TrainingGradeBanner(score: score) }
@@ -424,7 +427,7 @@ struct CareerTrainingView: View {
                 }.padding(8)
             }
             if selectedKind == .pitch, replay != nil, feedbackVisible, !reviewReady, !dynamicTypeSize.isAccessibilitySize, let replayScore {
-                PitchJudgmentToast(title: "포구 완료", detail: "\(replayScore)점 · \(releaseHint)")
+                PitchJudgmentToast(title: "포구 완료", detail: "\(delivery(code: training?.pitchCode ?? code).speed) km/h · \(replayScore)점 · \(releaseHint)")
                     .frame(maxWidth: height * 0.8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, height * 0.13)
                     .accessibilityIdentifier("trainingCatchToast")
