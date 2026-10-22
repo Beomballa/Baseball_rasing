@@ -137,6 +137,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(location.label.contains("우타 상대 · 왼쪽"))
         XCTAssertLessThan(location.frame.midX,app.otherElements["careerMatchField"].frame.midX)
         app.buttons["gamePitch"].tap(); app.buttons["gameRelease"].tap()
+        let flying=XCTAttachment(screenshot:app.screenshot());flying.name="Pitch ball in flight before receipt";flying.lifetime = .keepAlways;add(flying)
         XCTAssertFalse(app.buttons["gameAutomatic"].isEnabled)
         let toast = app.descendants(matching: .any).matching(identifier: "pitchJudgmentToast").firstMatch
         XCTAssertTrue(toast.waitForExistence(timeout: 3))

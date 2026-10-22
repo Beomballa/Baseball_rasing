@@ -17,6 +17,40 @@ import SpriteKit
     private(set) var pitchStage = PitchStage.idle
     private var contactAt = 0.0
     private var destination = CGPoint.zero
+    private struct PitchFlight {
+        let start: CGPoint, end: CGPoint
+        let started: Double, duration: Double
+        let code: String
+        let reduced: Bool
+        let outcome: String?
+        let arrival: (@MainActor () -> Void)?
+        let completion: (@MainActor () -> Void)?
+    }
+    private var pitchFlight: PitchFlight?
+    private var pitchReceipt: (deadline:Double, completion:(@MainActor () -> Void)?)?
+
+    override func update(_ currentTime: TimeInterval) {
+        let now=ProcessInfo.processInfo.systemUptime
+        if let flight=pitchFlight {
+            let t=min(1,max(0,(now-flight.started)/flight.duration))
+            if flight.reduced {
+                ball.position=CGPoint(x:flight.start.x+(flight.end.x-flight.start.x)*t,y:flight.start.y+(flight.end.y-flight.start.y)*t)
+                ball.setScale(0.9)
+            } else {
+                ball.position=MatchBallPath.point(from:flight.start,to:flight.end,size:size,role:.pitcher,hand:hand,code:flight.code,progress:t)
+                ball.setScale(1.1-(2.4*t/(1+1.4*t))*0.4)
+            }
+            if t >= 1 {
+                pitchFlight=nil;ball.position=flight.end;pitcherPose(5)
+                finishPitch(outcome:flight.outcome,reduced:flight.reduced)
+                pitchReceipt=(now+DeliveryPresentation.receipt(reduced:flight.reduced),flight.completion)
+                flight.arrival?()
+            }
+        }
+        if let receipt=pitchReceipt, now >= receipt.deadline {
+            pitchReceipt=nil;receipt.completion?()
+        }
+    }
 
     override init(size: CGSize) {
         super.init(size: size); scaleMode = .aspectFit; backgroundColor = UIColor(red: 0.09, green: 0.20, blue: 0.29, alpha: 1)
@@ -58,6 +92,8 @@ import SpriteKit
             batter.zPosition = 4; addChild(batter); batterPose(0)
         }
         ball.fillColor = .init(red: 1, green: 0.97, blue: 0.80, alpha: 1); ball.strokeColor = .clear; ball.zPosition = 8
+        let diameter:CGFloat=role == .pitcher ? 8:5
+        ball.path=CGPath(rect:CGRect(x:-diameter/2,y:-diameter/2,width:diameter,height:diameter),transform:nil)
         ball.isHidden = true; addChild(ball); ready = true
     }
     private func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * size.width, y: (1 - y) * size.height) }
@@ -75,9 +111,10 @@ import SpriteKit
         batter.position = point(0.305, 0.34 + 0.61 * (1 - feet[frame] / 512) + 0.305)
     }
     func cancelDelivery() {
+        pitchFlight=nil;pitchReceipt=nil
         removeAllActions(); ball.removeAllActions(); pitcher.removeAllActions(); batter.removeAllActions(); mitt.removeAllActions()
         pitchStage = .idle
-        ball.isHidden = true; pitcherPose(0); batterPose(0)
+        ball.isHidden = true; ball.setScale(1); pitcherPose(0); batterPose(0)
         if catcherFrames.count >= 2 {
             catcher.texture = catcherFrames[0]; mitt.texture = mittFrames[0]
             mitt.position = point(0.55, 0.475)
@@ -110,22 +147,29 @@ import SpriteKit
                                        pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false, onArrival: (@MainActor () -> Void)? = nil, completion: (@MainActor () -> Void)? = nil) -> Bool {
         guard ready else { return false }
         cancelDelivery()
-        let flight = (flightDuration ?? 1.1) * MatchDelivery.contactPhase
+        // The batting input clock reaches contact at 82%; a pitcher's full trip has no batting phase.
+        let flight = (flightDuration ?? 1.1) * (role == .batter ? MatchDelivery.contactPhase:1)
         contactAt = ProcessInfo.processInfo.systemUptime + MatchDelivery.windup + flight
         destination = role == .batter ? point(0.5 + (x - 0.5) * 0.16, 0.68 + (y - 0.5) * 0.22)
             : point(0.54 + (x - 0.5) * 0.22, 0.43 + (y - 0.5) * 0.24)
         let release = role == .batter ? point(0.458, 0.237) : handPoint(3)
         ball.position = role == .batter ? release : handPoint(0); ball.isHidden = false
-        let duration = DeliveryPresentation.flight(flight, reduced: reduceMotion)
+        let duration = DeliveryPresentation.flight(flight, reduced: reduceMotion, role:role)
         func launch() {
             self.pitchStage = .flight; self.pitcherPose(3); self.ball.position = release
             self.pitcher.run(.sequence([.wait(forDuration: duration * 0.25), .run { [weak self] in
                 if !reduceMotion { self?.pitcherPose(4) }
             }]))
             if self.role == .pitcher && !["안타", "홈런", "범타"].contains(outcome ?? "") {
-                self.mitt.run(.move(to: self.destination, duration: duration * 0.8))
+                if reduceMotion {self.mitt.position=self.destination}
+                else {self.mitt.run(.move(to: self.destination, duration: duration * 0.8))}
             }
-            // Receipt belongs to the ball's movement action, never a parallel scene timer.
+            // Movement and receipt share elapsed time; an early first SKAction tick cannot shorten a pitch.
+            if self.role == .pitcher {
+                self.pitchFlight=PitchFlight(start:release,end:self.destination,started:ProcessInfo.processInfo.systemUptime,
+                    duration:duration,code:pitchCode,reduced:reduceMotion,outcome:outcome,arrival:onArrival,completion:completion)
+                return
+            }
             self.ball.run(.sequence([
                 self.fly(to: self.destination, duration: duration, code: pitchCode),
                 .run { [weak self] in

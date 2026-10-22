@@ -146,6 +146,39 @@ import SwiftData
         XCTAssertGreaterThan(elapsed[1]-elapsed[0],0.09)
     }
 
+    func testPitchFlightKeepsVelocityDurationAndVisibleBallUntilActualArrivalIncludingReducedMotion() async throws {
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:windowScene),controller=UIViewController()
+        let view=SKView(frame:CGRect(x:0,y:0,width:320,height:340))
+        controller.view=view;window.rootViewController=controller;window.makeKeyAndVisible()
+        defer{view.presentScene(nil);window.isHidden=true;previous?.makeKey()}
+        for reduced in [false,true] {
+            var times=[Double]()
+            for code in ["four-seam","changeup"] {
+                let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:reduced ? "left":"right",kit:0)
+                view.presentScene(scene)
+                let duration=MatchDelivery.pitch(code:code,velocity:60).duration
+                XCTAssertEqual(DeliveryPresentation.flight(duration,reduced:reduced,role:.pitcher),duration)
+                var arrived=false,finished=false
+                let start=ProcessInfo.processInfo.systemUptime,event=expectation(description:"full "+code)
+                XCTAssertTrue(scene.demonstrate(reduceMotion:reduced,flightDuration:duration,pitchCode:code,preparedRelease:true,onArrival:{
+                    times.append(ProcessInfo.processInfo.systemUptime-start);arrived=true;event.fulfill()
+                },completion:{finished=true}))
+                try await Task.sleep(for:.seconds(duration*0.45))
+                let ball=try XCTUnwrap(scene.children.compactMap{$0 as? SKShapeNode}.first)
+                XCTAssertEqual(scene.pitchStage,.flight);XCTAssertFalse(arrived);XCTAssertFalse(finished);XCTAssertFalse(ball.isHidden)
+                let end=CGPoint(x:scene.size.width*0.54,y:scene.size.height*0.57)
+                XCTAssertGreaterThan(hypot(ball.position.x-end.x,ball.position.y-end.y),10)
+                XCTAssertGreaterThanOrEqual(ball.frame.width,5)
+                await fulfillment(of:[event],timeout:3)
+                XCTAssertGreaterThanOrEqual(times.last!,duration-0.04)
+                XCTAssertEqual(scene.pitchStage,.received);XCTAssertFalse(finished)
+                scene.cancelDelivery();try await Task.sleep(for:.seconds(1.2));XCTAssertFalse(finished)
+            }
+            XCTAssertGreaterThan(times[1]-times[0],0.15)
+        }
+    }
+
     func testPitchPreparationHoldsBallUntilExplicitReleaseForBothHands() {
         for hand in ["left", "right"] {
             let scene = BallparkScene(size: CGSize(width: 320, height: 320))

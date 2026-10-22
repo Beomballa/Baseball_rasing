@@ -510,7 +510,7 @@ struct PitcherChangePanel: View {
 
 // These intervals affect presentation only; input windows, pitch speed and saved outcomes stay unchanged.
 enum DeliveryPresentation {
-    static func flight(_ duration: Double, reduced: Bool) -> Double { reduced ? 0.15 : duration }
+    static func flight(_ duration: Double, reduced: Bool, role: PlayerRole = .batter) -> Double { reduced && role == .batter ? 0.15 : duration }
     static func receipt(reduced: Bool) -> Double { reduced ? 0.8 : 1.1 }
     static func trainingMotion(reduced: Bool) -> Double { reduced ? 0.15 : 0.9 }
     static func trainingRead(reduced: Bool) -> Double { reduced ? 0.8 : 1.1 }
