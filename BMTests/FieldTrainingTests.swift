@@ -752,9 +752,9 @@ import SwiftUI
         let ground=doublePlay(),air=fly()
         XCTAssertLessThanOrEqual(FieldReplayPresentation.lift(ground,time:ground.flight/2,height:300),3)
         XCTAssertGreaterThan(FieldReplayPresentation.lift(air,time:air.flight/2,height:300),50)
-        XCTAssertEqual(FieldReplayPresentation.pose(ground,index:ground.fielder,time:ground.pickupAt,moving:false),"catch")
-        XCTAssertEqual(FieldReplayPresentation.pose(ground,index:ground.fielder,time:ground.releaseAt,moving:false),"throw")
-        XCTAssertEqual(FieldReplayPresentation.pose(ground,index:8,time:0,moving:true),"run")
+        XCTAssertEqual(FieldSpriteAnimation.motion(ground,index:ground.fielder,time:ground.pickupAt).stage,.catchBall)
+        XCTAssertEqual(FieldSpriteAnimation.motion(ground,index:ground.fielder,time:ground.releaseAt).stage,.release)
+        XCTAssertEqual(FieldSpriteAnimation.travel([.init(at:0,point:.init(x:0,y:0)),.init(at:1,point:.init(x:10,y:0))],time:0.5).stage,.run)
         XCTAssertEqual(FieldReplayPresentation.seconds(ground,reduced:true,animated:true),0.25)
         XCTAssertGreaterThanOrEqual(FieldReplayPresentation.seconds(air,reduced:false,animated:true),3)
         for color in PlayerAppearance.kitColors {XCTAssertNotEqual(FieldReplayPresentation.opponentKit(color),color)}
@@ -807,6 +807,88 @@ import SwiftUI
         XCTAssertEqual(FieldReplayPresentation.stageHeight(width:304,available:420),320)
         XCTAssertEqual(FieldReplayPresentation.stageHeight(width:304,available:420,accessibility:true),480)
         let attachment=XCTAttachment(image:image);attachment.name="Pixel stadium native art";attachment.lifetime = .keepAlways;add(attachment)
+    }
+
+    func testFieldSpriteEightHeadingsAndStoppedRunnerPreservesLastDirection() {
+        let vectors:[(Double,Double,FieldFacing)]=[(0,1,.north),(1,1,.northEast),(1,0,.east),(1,-1,.southEast),(0,-1,.south),(-1,-1,.southWest),(-1,0,.west),(-1,1,.northWest)]
+        for (x,y,direction) in vectors {
+            let nodes=[FieldNode(at:0,point:.init(x:0,y:0)),FieldNode(at:1,point:.init(x:x*10,y:y*10)),FieldNode(at:2,point:.init(x:x*10,y:y*10))]
+            XCTAssertEqual(FieldSpriteAnimation.travel(nodes,time:0.5).facing,direction)
+            XCTAssertEqual(FieldSpriteAnimation.travel(nodes,time:1.5).facing,direction)
+            XCTAssertEqual(FieldSpriteAnimation.travel(nodes,time:1.5).stage,.ready)
+        }
+        XCTAssertEqual(FieldFacing.turn(from:.northWest,to:.northEast,fraction:0.5),.north)
+        XCTAssertEqual(FieldFacing.turn(from:.northEast,to:.northWest,fraction:0.5),.north)
+    }
+
+    func testFieldSpriteTransfersFollowBothThrowsAndRelayWithoutChangingSavedPlay() throws {
+        for play in [doublePlay(),relayFly()] {
+            let data=try JSONEncoder().encode(play)
+            for event in FieldSpriteAnimation.throwsIn(play) {
+                XCTAssertEqual(FieldSpriteAnimation.motion(play,index:event.fielder,time:event.caughtAt).stage,.catchBall)
+                XCTAssertEqual(FieldSpriteAnimation.motion(play,index:event.fielder,time:event.releaseAt-0.01).stage,.windup)
+                XCTAssertEqual(FieldSpriteAnimation.motion(play,index:event.fielder,time:event.releaseAt).stage,.release)
+                XCTAssertEqual(FieldSpriteAnimation.motion(play,index:event.fielder,time:event.releaseAt+0.15).stage,.followThrough)
+                XCTAssertEqual(FieldSpriteAnimation.motion(play,index:event.receiver,time:event.receivedAt).stage,.catchBall)
+            }
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+        }
+        let noThrow=fly(outs:2,before:[nil,nil,nil])
+        XCTAssertTrue(FieldSpriteAnimation.throwsIn(noThrow).isEmpty)
+        XCTAssertEqual(FieldSpriteAnimation.motion(noThrow,index:noThrow.fielder,time:noThrow.pickupAt).stage,.catchBall)
+    }
+
+    func testFieldSpriteHandIsContinuousAtReleaseAndReturnsAfterFollowThroughForBothHands() {
+        for facing in FieldFacing.allCases {for left in [false,true] {
+            let windup=FieldSpriteMotion(facing:facing,stage:.windup,progress:1)
+            let release=FieldSpriteMotion(facing:facing,stage:.release)
+            let follow=FieldSpriteMotion(facing:facing,stage:.followThrough,progress:0)
+            XCTAssertEqual(windup.throwingHand(left:left).x,release.throwingHand(left:left).x,accuracy:0.000001)
+            XCTAssertEqual(windup.throwingHand(left:left).y,release.throwingHand(left:left).y,accuracy:0.000001)
+            XCTAssertEqual(follow.throwingHand(left:left),release.throwingHand(left:left))
+            XCTAssertEqual(FieldSpriteMotion(facing:facing,stage:.followThrough,progress:1).glove(left:left),FieldSpriteMotion(facing:facing,stage:.ready).glove(left:left))
+            XCTAssertEqual(FieldSpriteMotion(facing:facing,stage:.gather,progress:1).glove(left:left),FieldSpriteMotion(facing:facing,stage:.ready).glove(left:left))
+            XCTAssertEqual(FieldSpriteMotion(facing:facing,stage:.followThrough,progress:1).throwingHand(left:left),FieldSpriteMotion(facing:facing,stage:.ready).throwingHand(left:left))
+        }}
+        XCTAssertNotEqual(FieldSpriteMotion(facing:.south,stage:.windup,progress:0.5).throwingHand(left:true),FieldSpriteMotion(facing:.south,stage:.windup,progress:0.5).throwingHand(left:false))
+    }
+
+    func testDirectionalSpriteContactSheetAndDugoutRender() throws {
+        let view=Canvas { context,size in
+            context.fill(Path(CGRect(origin:.zero,size:size)),with:.color(GameTheme.navy))
+            for (i,facing) in FieldFacing.allCases.enumerated() {
+                FieldActorArt.draw(in:context,at:CGPoint(x:35+i*68,y:75),scale:2,motion:.init(facing:facing,stage:.run,gait:.pi/2),kit:0x80464b,skin:0xefbe91,hair:0x68432e,number:47,left:false,selected:i==0)
+                context.draw(Text(String(describing:facing)).font(.system(size:10)).foregroundStyle(.white),at:CGPoint(x:35+i*68,y:95))
+            }
+            let stages:[FieldSpriteStage]=[.catchBall,.gather,.windup,.release,.followThrough,.ready]
+            for (i,stage) in stages.enumerated() {
+                FieldActorArt.draw(in:context,at:CGPoint(x:45+i*85,y:180),scale:2,motion:.init(facing:.southEast,stage:stage,progress:stage == .windup ? 0.5:0.8),kit:0x214e72,skin:0xc88d62,hair:0x242b35,number:18,left:i%2 == 0,selected:false)
+                context.draw(Text(String(describing:stage)).font(.system(size:11)).foregroundStyle(.white),at:CGPoint(x:45+i*85,y:203))
+            }
+        }.frame(width:550,height:230)
+        let renderer=ImageRenderer(content:view);renderer.scale=2
+        let image=try XCTUnwrap(renderer.uiImage),attachment=XCTAttachment(image:image)
+        attachment.name="Eight-direction running and catch-transfer-throw sprites";attachment.lifetime = .keepAlways;add(attachment)
+        XCTAssertEqual(image.size.width,550)
+    }
+
+    func testSavedBallUsesThrowingHandAtReleaseAndGloveAtReceiptForBothHands() throws {
+        for play in [doublePlay(),relayFly()] {
+            let data=try JSONEncoder().encode(play)
+            for event in FieldSpriteAnimation.throwsIn(play) {for left in [false,true] {
+                let release=FieldSpriteAnimation.motion(play,index:event.fielder,time:event.releaseAt)
+                let hand=release.throwingHand(left:left)
+                let actual=FieldSpriteAnimation.ballOffset(play,time:event.releaseAt,leftIndex:left ? event.fielder:nil)
+                XCTAssertEqual(actual.x,hand.x+release.bodyOffset.x,accuracy:0.000001)
+                XCTAssertEqual(actual.y,hand.y+release.bodyOffset.y,accuracy:0.000001)
+                let received=FieldSpriteAnimation.motion(play,index:event.receiver,time:event.receivedAt)
+                let glove=received.glove(left:left)
+                let caught=FieldSpriteAnimation.ballOffset(play,time:event.receivedAt,leftIndex:left ? event.receiver:nil)
+                XCTAssertEqual(caught.x,glove.x+received.bodyOffset.x,accuracy:0.000001)
+                XCTAssertEqual(caught.y,glove.y+received.bodyOffset.y,accuracy:0.000001)
+            }}
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+        }
     }
 
 }

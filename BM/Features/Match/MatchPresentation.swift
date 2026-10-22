@@ -368,12 +368,12 @@ enum FieldReplayPresentation {
     static func lift(_ play:MatchDetailedPlay,time:Double,height:Double) -> Double {
         if time < play.flight {
             let t=max(0,min(1,time/max(0.001,play.flight)))
-            return play.fly == nil ? abs(sin(t * .pi * 4))*3:sin(t * .pi)*height*0.19 + (play.fly?.caught == true ? t*height*0.035:0)
+            return play.fly == nil ? abs(sin(t * .pi * 4))*3:sin(t * .pi)*height*0.19
         }
         for (a,b) in zip(play.ball,play.ball.dropFirst()) where time>=a.at && time<b.at && a.at>=play.releaseAt && a.point != b.point {
-            return height*0.035 + sin(.pi*(time-a.at)/max(0.001,b.at-a.at))*height*0.035
+            return sin(.pi*(time-a.at)/max(0.001,b.at-a.at))*height*0.035
         }
-        return time>=play.pickupAt ? height*0.035:0
+        return 0
     }
     static func opponentKit(_ own:Int) -> Int {
         [0x294c77,0xf0ead9,0x9a3e39].max {a,b in
@@ -383,12 +383,242 @@ enum FieldReplayPresentation {
             return distance(a)<distance(b)
         }!
     }
-    static func pose(_ play:MatchDetailedPlay,index:Int,time:Double,moving:Bool) -> String {
-        let throwEvents=[(play.fielder,play.releaseAt),(play.receiver,play.secondThrow?.releaseAt ?? -10),(play.relay?.fielder ?? -1,play.relay?.releaseAt ?? -10)]
-        if throwEvents.contains(where:{$0.0 == index && abs(time-$0.1)<0.26}) {return "throw"}
-        let catches=[(play.fielder,play.pickupAt),(play.receiver,play.ballAt),(play.relay?.fielder ?? -1,play.relay?.receiveAt ?? -10)]
-        if catches.contains(where:{$0.0 == index && abs(time-$0.1)<0.22}) {return "catch"}
-        return moving ? "run":"ready"
+
+}
+
+enum FieldFacing: Int,CaseIterable,Equatable {
+    case north,northEast,east,southEast,south,southWest,west,northWest
+    var back:Bool {[.north,.northEast,.northWest].contains(self)}
+    var side:Bool {self == .east || self == .west}
+    var diagonal:Bool {[.northEast,.southEast,.southWest,.northWest].contains(self)}
+    var horizontal:Double {[.northWest,.west,.southWest].contains(self) ? -1:1}
+    var vector:CGPoint {
+        switch self {
+        case .north:CGPoint(x:0,y:-1)
+        case .northEast:CGPoint(x:0.707,y:-0.707)
+        case .east:CGPoint(x:1,y:0)
+        case .southEast:CGPoint(x:0.707,y:0.707)
+        case .south:CGPoint(x:0,y:1)
+        case .southWest:CGPoint(x:-0.707,y:0.707)
+        case .west:CGPoint(x:-1,y:0)
+        case .northWest:CGPoint(x:-0.707,y:-0.707)
+        }
+    }
+    static func turn(from:Self,to:Self,fraction:Double) -> Self {
+        var delta=to.rawValue-from.rawValue
+        if delta>4 {delta-=8};if delta < -4 {delta+=8}
+        let step=Int((Double(delta)*max(0,min(1,fraction))).rounded())
+        return Self(rawValue:(from.rawValue+step+8)%8) ?? to
+    }
+    static func direction(dx:Double,dy:Double) -> Self {
+        if abs(dx)+abs(dy)<0.000001 {return .south}
+        if abs(dx)<abs(dy)*0.414 {return dy>0 ? .north:.south}
+        if abs(dy)<abs(dx)*0.414 {return dx>0 ? .east:.west}
+        if dx>0 {return dy>0 ? .northEast:.southEast}
+        return dy>0 ? .northWest:.southWest
+    }
+}
+
+enum FieldSpriteStage: Equatable {case ready,run,catchBall,gather,windup,release,followThrough}
+struct FieldSpriteMotion {
+    var facing:FieldFacing
+    var stage:FieldSpriteStage
+    var progress:Double = 0
+    var gait:Double = 0
+    var airCatch=false
+    var willThrow=false
+
+    var bodyOffset:CGPoint {
+        let lean=stage == .followThrough ? facing.vector.x*sin(progress * .pi)*2:stage == .run ? facing.vector.x*1.2:0
+        let bob=stage == .run ? -abs(cos(gait))*1.4:stage == .catchBall && !airCatch ? sin(progress * .pi/2)*3:stage == .gather && !airCatch ? (1-progress)*3:0
+        return CGPoint(x:lean,y:bob)
+    }
+    func throwingHand(left:Bool) -> CGPoint {
+        let side=(left ? -1.0:1)*(facing.back ? 1:-1)
+        let rest=CGPoint(x:side*6,y:-12)
+        let direction=facing.vector,extended=CGPoint(x:direction.x*11,y:-17+direction.y*4)
+        func blend(_ a:CGPoint,_ b:CGPoint,_ t:Double) -> CGPoint {CGPoint(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)}
+        switch stage {
+        case .run:return CGPoint(x:side*6+sin(gait)*2,y:-12+cos(gait)*3)
+        case .gather:return willThrow ? blend(rest,CGPoint(x:0,y:-15),progress):rest
+        case .windup:
+            let cocked=CGPoint(x:-direction.x*7+side*2,y:-26)
+            return progress<0.55 ? blend(CGPoint(x:0,y:-15),cocked,progress/0.55):blend(cocked,extended,(progress-0.55)/0.45)
+        case .release:return extended
+        case .followThrough:
+            let crossed=CGPoint(x:-direction.x*4,y:-8)
+            return progress<0.65 ? blend(extended,crossed,progress/0.65):blend(crossed,rest,(progress-0.65)/0.35)
+        default:return rest
+        }
+    }
+    func glove(left:Bool) -> CGPoint {
+        let side=(left ? 1.0:-1)*(facing.back ? 1:-1)
+        let rest=CGPoint(x:side*7,y:-12)
+        let caught=CGPoint(x:airCatch ? side*4:side*7,y:airCatch ? -27:-7)
+        switch stage {
+        case .catchBall:
+            let reach=sin(min(1,progress)*Double.pi/2)
+            return CGPoint(x:rest.x+(caught.x-rest.x)*reach,y:rest.y+(caught.y-rest.y)*reach)
+        case .gather:
+            if willThrow {return CGPoint(x:caught.x*(1-progress),y:caught.y+(-15-caught.y)*progress)}
+            if progress<0.5 {return CGPoint(x:caught.x*(1-progress*2),y:caught.y+(-15-caught.y)*progress*2)}
+            return CGPoint(x:rest.x*(progress-0.5)*2,y:-15+(rest.y+15)*(progress-0.5)*2)
+        case .windup,.release:return CGPoint(x:side*3,y:-15)
+        case .followThrough:return CGPoint(x:side*3+(rest.x-side*3)*progress,y:-15+(rest.y+15)*progress)
+        case .run:return CGPoint(x:side*7-sin(gait)*2,y:-12-cos(gait)*3)
+        default:return rest
+        }
+    }
+}
+
+enum FieldSpriteAnimation {
+    struct ThrowEvent {
+        let fielder:Int
+        let caughtAt:Double
+        let releaseAt:Double
+        let receivedAt:Double
+        let receiver:Int
+    }
+    static func throwsIn(_ play:MatchDetailedPlay) -> [ThrowEvent] {
+        var events:[ThrowEvent]=[]
+        if play.releaseAt>play.pickupAt {
+            events.append(.init(fielder:play.fielder,caughtAt:play.pickupAt,releaseAt:play.releaseAt,
+                receivedAt:play.relay?.receiveAt ?? play.ballAt,receiver:play.relay?.fielder ?? play.receiver))
+        }
+        if let relay=play.relay {events.append(.init(fielder:relay.fielder,caughtAt:relay.receiveAt,releaseAt:relay.releaseAt,receivedAt:play.ballAt,receiver:play.receiver))}
+        if let second=play.secondThrow {events.append(.init(fielder:play.receiver,caughtAt:play.ballAt,releaseAt:second.releaseAt,receivedAt:second.ballAt,receiver:second.receiver))}
+        return events
+    }
+    static func travel(_ nodes:[FieldNode],time:Double) -> FieldSpriteMotion {
+        var last:FieldFacing = .south
+        for (a,b) in zip(nodes,nodes.dropFirst()) where a.point != b.point {
+            let direction=FieldFacing.direction(dx:b.point.x-a.point.x,dy:b.point.y-a.point.y)
+            if time>=a.at && time<b.at {return .init(facing:direction,stage:.run,gait:time*17)}
+            if time>=b.at {last=direction}
+        }
+        return .init(facing:last,stage:.ready)
+    }
+    static func motion(_ play:MatchDetailedPlay,index:Int,time:Double) -> FieldSpriteMotion {
+        let nodes=play.fielders[index],at=FieldNode.sample(nodes,at:time)
+        let events=throwsIn(play)
+        var motion=travel(nodes,time:time)
+        if let event=events.first(where:{$0.fielder == index && time >= $0.caughtAt-0.12 && time<=$0.releaseAt+0.38}) {
+            let receiver=FieldNode.sample(play.fielders[event.receiver],at:event.receivedAt)
+            motion.willThrow=true
+            motion.facing=FieldFacing.direction(dx:receiver.x-at.x,dy:receiver.y-at.y)
+            let transfer=max(0.001,event.releaseAt-event.caughtAt)
+            let catchEnd=event.caughtAt+min(0.10,transfer*0.25)
+            let windup=event.releaseAt-min(0.20,transfer*0.50)
+            if time<catchEnd {motion.stage = .catchBall;motion.progress=min(1,max(0,(time-event.caughtAt+0.12)/(catchEnd-event.caughtAt+0.12)))}
+            else if time<windup {motion.stage = .gather;motion.progress=(time-catchEnd)/max(0.001,windup-catchEnd)}
+            else if time<event.releaseAt {motion.stage = .windup;motion.progress=(time-windup)/max(0.001,event.releaseAt-windup)}
+            else if time<event.releaseAt+0.08 {motion.stage = .release;motion.progress=(time-event.releaseAt)/0.08}
+            else {motion.stage = .followThrough;motion.progress=min(1,(time-event.releaseAt-0.08)/0.30)}
+            let incoming=FieldNode.sample(play.ball,at:max(0,event.caughtAt-0.12))
+            let catchFacing=FieldFacing.direction(dx:incoming.x-at.x,dy:incoming.y-at.y)
+            if motion.stage == .catchBall {motion.facing=catchFacing}
+            else if motion.stage == .gather {motion.facing=FieldFacing.turn(from:catchFacing,to:motion.facing,fraction:motion.progress)}
+            motion.airCatch=index == play.fielder && play.fly?.caught == true
+            return motion
+        }
+        let catches=[(play.fielder,play.pickupAt)]+events.map {($0.receiver,$0.receivedAt)}
+        if let caught=catches.last(where:{$0.0 == index && time >= $0.1-0.12 && time < $0.1+0.35}) {
+            let incoming=FieldNode.sample(play.ball,at:max(0,caught.1-0.12))
+            motion.facing=FieldFacing.direction(dx:incoming.x-at.x,dy:incoming.y-at.y)
+            motion.stage=time<caught.1+0.10 ? .catchBall:.gather
+            motion.progress=time<caught.1+0.10 ? min(1,max(0,(time-caught.1+0.12)/0.22)):min(1,(time-caught.1-0.10)/0.25)
+            motion.airCatch=index == play.fielder && play.fly?.caught == true
+        }
+        if motion.stage == .ready {
+            if let last=events.last(where:{$0.fielder == index && time>$0.releaseAt}) {
+                let target=FieldNode.sample(play.fielders[last.receiver],at:last.receivedAt)
+                motion.facing=FieldFacing.direction(dx:target.x-at.x,dy:target.y-at.y)
+            } else if let caught=catches.last(where:{$0.0 == index && time>=$0.1}) {
+                let incoming=FieldNode.sample(play.ball,at:max(0,caught.1-0.12))
+                motion.facing=FieldFacing.direction(dx:incoming.x-at.x,dy:incoming.y-at.y)
+            }
+        }
+        return motion
+    }
+    static func ballOffset(_ play:MatchDetailedPlay,time:Double,leftIndex:Int?) -> CGPoint {
+        let events=throwsIn(play)
+        let catches=[(play.fielder,play.pickupAt)]+events.map {($0.receiver,$0.receivedAt)}
+        let ball=FieldNode.sample(play.ball,at:time)
+        for index in play.fielders.indices {
+            let at=FieldNode.sample(play.fielders[index],at:time)
+            guard ball.distance(to:at)<0.9 else {continue}
+            let motion=motion(play,index:index,time:time),left=index == leftIndex
+            let active=events.contains {$0.fielder == index && time >= $0.caughtAt && time <= $0.releaseAt+0.0001}
+            let caught=catches.contains {$0.0 == index && time >= $0.1}
+            guard active || caught else {continue}
+            var p=motion.glove(left:left)
+            if active && [.windup,.release].contains(motion.stage) {p=motion.throwingHand(left:left)}
+            else if active && motion.stage == .gather {
+                let hand=motion.throwingHand(left:left)
+                p=CGPoint(x:p.x+(hand.x-p.x)*motion.progress,y:p.y+(hand.y-p.y)*motion.progress)
+            }
+            return CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y)
+        }
+        return .zero
+    }
+}
+
+@MainActor enum FieldActorArt {
+    static func draw(in context:GraphicsContext,at c:CGPoint,scale u:Double,motion:FieldSpriteMotion,
+                     kit:Int,skin:Int,hair:Int,number:Int,left:Bool,selected:Bool,out:Bool=false) {
+        let outline=0x102735,pants=0xe8e9dd
+        let bob=motion.bodyOffset.y,lean=motion.bodyOffset.x
+        func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int,_ body:Bool=true) {
+            let rect=CGRect(x:(c.x+(x+(body ? lean:0))*u).rounded(),y:(c.y+(y+(body ? bob:0))*u).rounded(),width:max(1,(w*u).rounded()),height:max(1,(h*u).rounded()))
+            context.fill(Path(rect),with:.color(Color(hex:hex).opacity(out ? 0.38:1)))
+        }
+        func limb(_ a:CGPoint,_ b:CGPoint,_ color:Int,_ body:Bool=true) {
+            let steps=max(1,Int(max(abs(b.x-a.x),abs(b.y-a.y))))
+            for i in 0...steps {let t=Double(i)/Double(steps);box(a.x+(b.x-a.x)*t-1,a.y+(b.y-a.y)*t-1,3,3,outline,body)}
+            for i in 0...steps {let t=Double(i)/Double(steps);box(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,1,2,color,body)}
+        }
+        let side=motion.facing.side,width=side ? 7.0:motion.facing.diagonal ? 9:10
+        box(-8,2,16,3,0x244a38,false)
+        for (hip,phase) in [(side ? -2.0:-3,0.0),(side ? 1.0:3,Double.pi)] {
+            let stride=motion.stage == .run ? sin(motion.gait+phase):0
+            let foot=CGPoint(x:hip+motion.facing.vector.x*stride*4,y:3+(abs(motion.facing.vector.y)>0.4 ? stride*2:-max(0,stride)*3))
+            let knee=CGPoint(x:hip+motion.facing.vector.x*stride,y:-1-max(0,stride)*2)
+            limb(CGPoint(x:hip,y:-5),knee,pants,false);limb(knee,foot,pants,false)
+            box(foot.x-1,foot.y-1,3,2,kit,false)
+            box(foot.x-(side && motion.facing.horizontal<0 ? 3:1),foot.y+1,4,2,outline,false)
+            box(foot.x-1,foot.y+1,2,1,0x71817d,false)
+        }
+        box(-width/2-1,-16,width+2,13,outline)
+        box(-width/2,-15,width,10,kit);box(-width/2,-15,1,10,0x294454)
+        box(width/2-1,-14,1,8,0x294454);box(-width/2+1,-15,width-2,1,0xd0d6c2)
+        box(-width/2,-5,width,2,0x182d3b);box(-1,-5,2,1,0xcbb17b)
+        let headShift=motion.facing.diagonal ? motion.facing.horizontal:0
+        func head(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {box(x+headShift,y,w,h,hex)}
+        head(-5,-25,10,10,outline);head(-4,-23,8,7,skin)
+        head(-4,-19,8,3,hair)
+        if motion.facing.back {
+            head(-3,-23,6,5,hair);head(-2,-18,4,2,skin)
+            if motion.facing.diagonal {head(motion.facing.horizontal*3,-21,1,3,skin)}
+        } else {
+            head(-3,-21,6,4,skin)
+            let eye=side || motion.facing.diagonal ? motion.facing.horizontal*2:2
+            head(eye,-21,1,1,outline);if !side && !motion.facing.diagonal {head(-2,-21,1,1,outline)}
+            head(side || motion.facing.diagonal ? motion.facing.horizontal*4:-1,-20,side ? 2:1,2,skin)
+            head(-1,-18,2,1,0xaa7457)
+        }
+        head(-5,-25,10,3,kit);head(-3,-25,6,1,0x819b98)
+        let brim=motion.facing == .north ? -3:motion.facing == .south ? -5:motion.facing.horizontal>0 ? 2:-8
+        head(Double(brim),-23,motion.facing == .south ? 10:6,2,kit)
+        let hand=motion.throwingHand(left:left),glove=motion.glove(left:left)
+        let anatomical=(left ? -1.0:1)*(motion.facing.back ? 1:-1)
+        limb(CGPoint(x:anatomical*width/2,y:-14),hand,skin)
+        limb(CGPoint(x:-anatomical*width/2,y:-14),glove,skin)
+        box(glove.x-2,glove.y-2,6,5,outline);box(glove.x-1,glove.y-2,4,4,0x986338)
+        box(glove.x,glove.y-2,2,1,0xd1a471);box(glove.x+1,glove.y,1,2,0x5a3b28)
+        if !side {
+            context.draw(Text("\(number)").font(.system(size:6.5*u,weight:.black,design:.monospaced)).foregroundStyle(Color(hex:kit == 0xf0ead9 ? 0x18344b:0xf3ecd3).opacity(out ? 0.38:1)),at:CGPoint(x:c.x+lean*u,y:c.y+(-10+bob)*u))
+        } else {box(-1,-14,1,7,0xc1c8b8)}
+        if selected {box(-2,-30,4,2,0xecc66b);box(-1,-28,2,1,0xecc66b)}
     }
 }
 
@@ -477,11 +707,17 @@ enum FieldReplayPresentation {
             for x in stride(from:112,to:213,by:16) {box(Double(x),320,1,25,0x243f4c)}
             box(110,328,104,1,0x243f4c);box(110,340,104,1,0x243f4c)
             c.restoreGState()
-            // Dugouts, roof shadows and benches frame the field without covering the play.
-            for x in [8.0,268] {
-                box(x,267,44,24,0x0a202c);box(x-2,264,48,5,0x496e78)
-                box(x,269,44,2,0x7e9a96);box(x+4,282,36,3,0xb29363)
-                for seat in 0..<6 {box(x+5+Double(seat)*6,275,3,5,0x466775)}
+            // Open-front dugouts: a deep canopy, bench, players, rail and entrance steps.
+            for x in [7.0,267] {
+                box(x-1,267,47,30,0x091e29);box(x+2,271,41,23,0x1e3742)
+                box(x+3,287,39,6,0x354b4b);box(x+4,280,37,3,0x9c8157)
+                box(x+4,283,37,2,0x5b513d)
+                box(x+38,274,3,7,0x8a724c);box(x+40,273,1,8,0xc1a473)
+                box(x-3,263,51,6,0x4c6d75);box(x-1,263,46,1,0x7a9497)
+                box(x,269,45,3,0x102a35);box(x,270,2,24,0x72898b);box(x+43,270,2,24,0x72898b)
+                box(x+2,290,32,2,0x718480)
+                for rail in 0..<4 {box(x+3+Double(rail)*9,290,1,5,0x536d73)}
+                box(x+36,291,7,2,0x61736d);box(x+35,294,9,2,0x465e61)
             }
             box(111,3,98,35,0x091c2b);box(112,4,96,1,0x9bb2ac)
             box(114,8,92,26,0x142d3d)
@@ -530,50 +766,53 @@ struct DetailedFieldReplayBoard: View {
                     }
                     let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
                     let defenseOwn=ownTeamFielding ?? !play.ownBatter
-                    func actor(_ at:FieldPoint,own:Bool,teamOwn:Bool,moving:Bool,pose:String,number:Int,out:Bool=false) {
-                        let c=point(at),u=max(1,size.width/280)
-                        let stride=moving ? sin(time*17)*2:0
-                        let shirt=teamOwn ? ownKit:opponent
-                        let skin=own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91
-                        func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
-                            context.fill(Path(CGRect(x:(c.x+x*u).rounded(),y:(c.y+y*u).rounded(),width:max(1,(w*u).rounded()),height:max(1,(h*u).rounded()))),with:.color(Color(hex:hex).opacity(out ? 0.4:1)))
+                    let ownHome=defenseOwn == (play.half%2 == 0)
+                    for (dugout,x) in [7.0,267].enumerated() {
+                        let kit=(dugout == 0) == ownHome ? ownKit:opponent
+                        func seatBox(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
+                            context.fill(Path(CGRect(x:x*size.width/320,y:y*size.height/352,width:w*size.width/320,height:h*size.height/352)),with:.color(Color(hex:hex).opacity(0.8)))
                         }
-                        box(-6,3,13,3,0x244b38)
-                        box(-5,-17,10,7,0x102735);box(-5,-11,10,10,0x102735)
-                        box(-3,-15,6,5,skin);box(-4,-16,8,3,shirt);box(-4,-13,3,1,own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48)
-                        box(3,-14,3,2,shirt);box(-3,-16,5,1,0x86a5a0)
-                        box(-4,-10,8,8,shirt);box(-4,-10,1,7,0x203b49);box(3,-9,1,6,0x203b49)
-                        box(-3,-10,6,1,0xe6e3cd);box(-4,-3,8,1,0xf0ead9)
-                        box(-4,-2,3,5+stride,0xe8e9dd);box(1,-2,3,5-stride,0xe8e9dd)
-                        box(-4,-1,1,4+stride,0xa8b6b0);box(3,-1,1,4-stride,0xa8b6b0)
-                        box(-4,3+stride,3,2,0x102a3f);box(1,3-stride,3,2,0x102a3f)
-                        let armX=pose == "throw" ? 6.0:pose == "catch" ? 5:4
-                        let armY=pose == "throw" ? -16.0:pose == "catch" ? -10:-8
-                        let left=own && throwingHand == "left"
-                        box(left ? 4:-6,pose == "catch" ? -12:-9+stride,2,4,skin);box(left ? -armX-2:armX,armY,2,5,skin)
-                        let gloveX=pose == "catch" ? -8.0:-7
-                        box(left ? -gloveX-4:gloveX,pose == "catch" ? -12:-6,4,4,0x976037)
-                        box(left ? -gloveX-3:gloveX+1,pose == "catch" ? -11:-5,2,2,0xc99b5e)
-                        context.draw(Text("\(number)").font(.system(size:5*u,weight:.black,design:.monospaced)).foregroundStyle(Color(hex:shirt == 0xf0ead9 ? 0x18344b:0xf3ecd3)),at:CGPoint(x:c.x,y:c.y-6*u))
-                        if own {box(-1,-20,2,2,0xecc66b)}
+                        for seat in 0..<3 {
+                            let sx=x+6+Double(seat)*10
+                            seatBox(sx,276,4,4,0xd2a97f);seatBox(sx-1,275,6,2,kit)
+                            seatBox(sx-1,280,6,4,kit);seatBox(sx,284,2,4,0xc5cebf);seatBox(sx+3,284,2,4,0xc5cebf)
+                            seatBox(sx,287,5,1,0x102735)
+                        }
                     }
+                    var actors:[(point:FieldPoint,motion:FieldSpriteMotion,own:Bool,teamOwn:Bool,number:Int,out:Bool)]=[]
                     for index in play.fielders.indices {
-                        let nodes=play.fielders[index],p=FieldNode.sample(nodes,at:time)
-                        let moving=p.distance(to:FieldNode.sample(nodes,at:time+0.06))>0.001
                         let own=defenseOwn && (ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index==play.fielder))
-                        actor(p,own:own,teamOwn:defenseOwn,moving:moving,pose:FieldReplayPresentation.pose(play,index:index,time:time,moving:moving),number:own ? jerseyNumber:index+1)
+                        actors.append((FieldNode.sample(play.fielders[index],at:time),FieldSpriteAnimation.motion(play,index:index,time:time),own,defenseOwn,own ? jerseyNumber:index+1,false))
                     }
                     for runner in play.runners {
-                        let p=FieldNode.sample(runner.nodes,at:time),moving=p.distance(to:FieldNode.sample(runner.nodes,at:time+0.06))>0.001
-                        actor(p,own:runner.profile.own,teamOwn:!defenseOwn,moving:moving,pose:"run",number:runner.profile.own ? jerseyNumber:runner.from+10,out:finished && runner.out)
+                        actors.append((FieldNode.sample(runner.nodes,at:time),FieldSpriteAnimation.travel(runner.nodes,time:time),runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,finished && runner.out))
                     }
-                    let groundBall=point(FieldNode.sample(play.ball,at:time)),loft=FieldReplayPresentation.lift(play,time:time,height:size.height)
+                    for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
+                        FieldActorArt.draw(in:context,at:point(actor.point),scale:max(1,size.width/260),motion:actor.motion,
+                            kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
+                            hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,
+                            left:actor.own && throwingHand == "left",selected:actor.own,out:actor.out)
+                    }
+                    let ownIndex=defenseOwn ? play.fielders.indices.first {index in ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index == play.fielder)}:nil
+                    let leftIndex=throwingHand == "left" ? ownIndex:nil
+                    func ballPoint(_ t:Double) -> CGPoint {
+                        let raw=point(FieldNode.sample(play.ball,at:t)),u=max(1,size.width/260)
+                        var offset=FieldSpriteAnimation.ballOffset(play,time:t,leftIndex:leftIndex)
+                        if let segment=zip(play.ball,play.ball.dropFirst()).first(where:{t >= $0.0.at && t < $0.1.at && $0.0.point != $0.1.point}) {
+                            let a=FieldSpriteAnimation.ballOffset(play,time:segment.0.at,leftIndex:leftIndex)
+                            let b=FieldSpriteAnimation.ballOffset(play,time:segment.1.at,leftIndex:leftIndex)
+                            let f=(t-segment.0.at)/max(0.001,segment.1.at-segment.0.at)
+                            offset=CGPoint(x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f)
+                        }
+                        return CGPoint(x:raw.x+offset.x*u,y:raw.y+offset.y*u-FieldReplayPresentation.lift(play,time:t,height:size.height))
+                    }
+                    let groundBall=point(FieldNode.sample(play.ball,at:time))
                     context.fill(Path(ellipseIn:CGRect(x:groundBall.x-3,y:groundBall.y-1,width:6,height:2)),with:.color(.black.opacity(0.4)))
                     for i in 1...3 where time<Double(play.ball.last?.at ?? 0) {
-                        let before=max(0,time-Double(i)*0.04),p=point(FieldNode.sample(play.ball,at:before))
-                        context.fill(Path(CGRect(x:p.x,y:p.y-FieldReplayPresentation.lift(play,time:before,height:size.height),width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
+                        let p=ballPoint(max(0,time-Double(i)*0.04))
+                        context.fill(Path(CGRect(x:p.x,y:p.y,width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
                     }
-                    PixelBaseball.draw(in:context,at:CGPoint(x:groundBall.x,y:groundBall.y-loft),diameter:max(7,size.width*0.022))
+                    PixelBaseball.draw(in:context,at:ballPoint(time),diameter:max(7,size.width*0.022))
                     if finished {
                         let label=play.misplay != nil ? "ERROR":play.secondThrow?.out == true ? "DOUBLE PLAY":play.fly?.caught == true && play.targetRunner == nil ? "CATCH · OUT":play.out ? "OUT":"SAFE"
                         let frame=CGRect(x:size.width*0.18,y:size.height*0.27,width:size.width*0.64,height:32)
