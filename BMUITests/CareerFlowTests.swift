@@ -1,6 +1,68 @@
 import XCTest
 
 final class CareerFlowTests: XCTestCase {
+    @MainActor func testScoutingPreviewFlowsPreserveCareer() throws {
+        let app = XCUIApplication(); app.launch(); createDashboardSample(app,name:"ScoutSafe")
+        let fatigue = app.staticTexts["homeFatigue"].label
+        let playerName = app.staticTexts["homePlayerName"].label
+        let date = app.staticTexts["calendarDate"].label
+        let action = app.staticTexts["calendarAction"].label
+        reveal(app.buttons["openScoutingPreview"],in:app); app.buttons["openScoutingPreview"].tap()
+        XCTAssertTrue(app.staticTexts["scoutPreviewNotice"].waitForExistence(timeout:5))
+        XCTAssertFalse(app.buttons["scoutOpenOffers"].exists)
+        let capture: (String) -> Void = { name in
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name=name;shot.lifetime = .keepAlways;self.add(shot)
+        }
+        capture("Scout home high school sample")
+        app.buttons["scoutOpenReport"].tap()
+        XCTAssertTrue(app.staticTexts["인천 하버스 · 관찰 보고서"].waitForExistence(timeout:5))
+        capture("Scout report batter")
+        app.navigationBars.buttons.element(boundBy:0).tap()
+        app.buttons["scoutScenario-제의 도착"].tap()
+        reveal(app.buttons["scoutOpenOffers"],in:app);app.buttons["scoutOpenOffers"].tap()
+        capture("Scout offers list")
+        app.buttons["scoutOffer-0"].tap();capture("Scout offer detail")
+        reveal(app.buttons["scoutAccept"],in:app);app.buttons["scoutAccept"].tap()
+        XCTAssertTrue(app.buttons["scoutConfirmDecision"].waitForExistence(timeout:5));reveal(app.buttons["scoutConfirmDecision"],in:app);app.buttons["scoutConfirmDecision"].tap()
+        XCTAssertTrue(app.staticTexts["scoutDecisionReceipt"].waitForExistence(timeout:5))
+        app.navigationBars.buttons.element(boundBy:0).tap()
+        reveal(app.buttons["scoutCompare"],in:app);app.buttons["scoutCompare"].tap()
+        XCTAssertTrue(app.staticTexts["제의 비교 · 국내 2개 구단"].exists)
+        capture("Scout two offer comparison")
+        app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        app.buttons["scoutScenario-제의 없음"].tap()
+        reveal(app.buttons["scoutOpenCareer"],in:app);app.buttons["scoutOpenCareer"].tap()
+        capture("Scout no offer and career")
+        reveal(app.buttons["scoutCareer-무소속으로 재도전"],in:app);app.buttons["scoutCareer-무소속으로 재도전"].tap()
+        XCTAssertTrue(app.staticTexts["scoutCareerReceipt"].exists)
+        app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        reveal(app.staticTexts["homeFatigue"],in:app);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+        app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:5))
+        XCTAssertEqual(app.staticTexts["homePlayerName"].label,playerName)
+        XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+        XCTAssertEqual(app.staticTexts["calendarDate"].label,date)
+        XCTAssertEqual(app.staticTexts["calendarAction"].label,action)
+    }
+
+    @MainActor func testScoutingPreviewLargePitcherWithoutStore() throws {
+        let app=XCUIApplication();app.launchArguments=["-scouting-contract-preview","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["scoutPreviewNotice"].waitForExistence(timeout:5))
+        app.buttons["scoutRole-pitcher"].tap()
+        app.buttons["scoutScenario-제의 도착"].tap()
+        reveal(app.buttons["scoutOpenReport"],in:app);app.buttons["scoutOpenReport"].tap()
+        let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Scout pitcher report accessibility XXXL";shot.lifetime = .keepAlways;add(shot)
+        app.navigationBars.buttons.element(boundBy:0).tap()
+        reveal(app.buttons["scoutOpenOffers"],in:app);app.buttons["scoutOpenOffers"].tap()
+        reveal(app.buttons["scoutCompare"],in:app);app.buttons["scoutCompare"].tap()
+        reveal(app.buttons["scoutCompareDetail-1"],in:app)
+        let comparison=XCTAttachment(screenshot:app.screenshot());comparison.name="Scout comparison accessibility XXXL";comparison.lifetime = .keepAlways;add(comparison)
+        let button=app.buttons["scoutCompareDetail-1"]
+        XCTAssertLessThanOrEqual(button.frame.maxX,app.frame.maxX);XCTAssertGreaterThanOrEqual(button.frame.minX,app.frame.minX)
+        button.tap();reveal(app.buttons["scoutDecline"],in:app);app.buttons["scoutDecline"].tap()
+        XCTAssertTrue(app.buttons["scoutConfirmDecision"].waitForExistence(timeout:5));reveal(app.buttons["scoutConfirmDecision"],in:app);app.buttons["scoutConfirmDecision"].tap()
+        XCTAssertTrue(app.staticTexts["scoutDecisionReceipt"].waitForExistence(timeout:5))
+    }
+
     @MainActor func testPitchCatchJudgmentLocksNextPitchAndResumesSavedCount() throws {
         let app = XCUIApplication(); app.launch()
         app.buttons["role-pitcher"].tap(); app.buttons["hand-left"].tap(); createDashboardSample(app, name: "CatchPitch", motionStyle: true)

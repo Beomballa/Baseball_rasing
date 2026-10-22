@@ -1,5 +1,7 @@
 # BM iOS 작업 기준
 
+- ui-scout-contract-preview-v1은 DEBUG 전용 샘플 화면이다. 실제 홈의 별도 시안 링크/독립 -scouting-contract-preview에서만 열고 독립 진입은 bootstrap/store를 열지 않는다. ScoutingContractPreview에는 ModelContext·SwiftData/평가·달력/보상 Store를 연결하지 않는다. 고교16세 관찰과20세 제의/무제의·타자/투수의 모든 샘플 표시를 유지한다. 수락/거절/진로 확인은 로컬 UI상태이며 실제 소속·날짜·능력/기록을 변경하지 않는다. 이 화면 검증을 contracts-v1 실제 엔진/계약 저장/1회 발효 완료로 기록하지 않는다.
+
 - ui-pitch-arrival-map-v1: 실제 공 이동 액션의 완료 콜백에서만 포구/판정을 공개한다. 경기·구종 훈련·투구 보기는 개인 구속/구종별 감속의 기존 비행 배율을 사용하며 입력 채점 창은 바꾸지 않는다. 도착 후1.1초/동작 줄이기 비행150ms·확인800ms와 기존 코칭/직접 다음 시도를 유지한다. 투수 코스 보드는 저장된 실제 도착 x/y·첫 공 대기/마지막 점 유지, 좌타 오른쪽/우타 왼쪽·큰 글자 조작부 배치다. 상대 좌우타는 저장된 타순2·5·8 좌타의 임시 표시이고 정식 로스터/생성 타격 손은 후속이다. 표시에서 RNG/원장·성장/보상/날짜·피로를 변경하거나 재저장하지 않는다. 상세 정본은 gameplay-spec v0.68이다.
 
 - 이 폴더는 SwiftUI·SpriteKit·SwiftData 네이티브 프로젝트다. `../pitching-prototype`는 별도 웹 구현으로 보존한다.

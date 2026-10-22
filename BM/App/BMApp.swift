@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-season-summary-verification") || ProcessInfo.processInfo.arguments.contains("-offseason-verification") {
+            if ProcessInfo.processInfo.arguments.contains("-scouting-contract-preview") {
+                NavigationStack { ScoutingContractPreview() }
+            } else if ProcessInfo.processInfo.arguments.contains("-season-summary-verification") || ProcessInfo.processInfo.arguments.contains("-offseason-verification") {
                 SeasonSummaryVerification()
             } else if ProcessInfo.processInfo.arguments.contains("-position-training-preview") {
                 NavigationStack { PositionTrainingPreview() }
