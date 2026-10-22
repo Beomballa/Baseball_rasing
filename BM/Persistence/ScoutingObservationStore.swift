@@ -202,7 +202,7 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
         let mastery = try position.flatMap { try profile?.snapshot().skill($0).mastery }
         var value = ScoutingObservation(playerID: player.id, origin: calendar.originDate, period: cycle.index,
             periodStart: cycle.start.description, observedDate: live.date.description, nextDate: cycle.next.description,
-            name: player.name, number: player.jerseyNumber, school: player.schoolName, role: player.role,
+            name: player.name, number: player.jerseyNumber, school: try calendar.registration(for:player)?.name ?? player.schoolName, role: player.role,
             position: player.positionRaw, hand: player.throwingHandRaw, appearance: player.appearance, age: live.age,
             sampleStart: live.start.description, abilities: live.abilities, groups: live.groups, totals: live.totals,
             pending: live.pending, positionMastery: mastery,
@@ -303,6 +303,7 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         let rows = try records(player:player,calendar:calendar,in:context)
         guard let window = ContractEvaluationWindow.containing(try GameDate(player.gameDate)) else {return false}
         guard !rows.contains(where:{$0.key == CareerContractEvaluation.key(player.id,window.id)}) else {return false}
+        if try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).current(on:GameDate(player.gameDate)) != nil {return false}
         guard let history = try CareerPathStore.record(player:player,calendar:calendar,in:context)?.snapshot(player:player,calendar:calendar) else {throw ContractEvaluationError.invalid}
         let routes = window.routes(age:try calendar.age(of:player),affiliation:history.current.stage)
         guard !routes.isEmpty else {return false}
@@ -363,6 +364,7 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
             let calendars = try context.fetch(FetchDescriptor<CareerCalendarState>())
             for player in try context.fetch(FetchDescriptor<CareerPlayer>()) {
                 guard let calendar = calendars.first(where:{$0.playerID == player.id}) else {throw ContractEvaluationError.invalid}
+                _ = try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
                 _ = try captureIfDue(player:player,calendar:calendar,in:context)
                 _ = try ContractOfferStore.insertCurrent(player:player,calendar:calendar,in:context)
             }
@@ -427,5 +429,79 @@ typealias CareerContractOffer = CareerSchemaV11.ContractOffer
         let value=try DomesticOfferPacket.make(evaluation:snapshot,key:key,on:date)
         try value.validate(evaluation:snapshot,key:key,today:date)
         context.insert(try CareerContractOffer(playerID:player.id,value:value));return true
+    }
+}
+
+
+enum CareerSchemaV12:VersionedSchema {
+    static let versionIdentifier=Schema.Version(12,0,0)
+    static var models:[any PersistentModel.Type] {CareerSchemaV11.models+[ContractRegistration.self]}
+    @Model final class ContractRegistration {
+        @Attribute(.unique) var playerID:UUID
+        var payload:Data
+        init(_ value:CareerContractJournal) throws {playerID=value.playerID;payload=try JSONEncoder().encode(value)}
+    }
+}
+typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
+
+@MainActor enum ContractRegistrationStore {
+    static func row(player:CareerPlayer,in context:ModelContext) throws -> CareerContractRegistration? {
+        guard context.container.schema.entities.contains(where:{$0.name == "ContractRegistration"}) else {return nil}
+        let id=player.id,rows=try context.fetch(FetchDescriptor<CareerContractRegistration>(predicate:#Predicate {$0.playerID == id}))
+        guard rows.count <= 1 else {throw ContractRegistrationError.invalid};return rows.first
+    }
+    static func journal(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> CareerContractJournal {
+        guard calendar.playerID == player.id else {throw ContractRegistrationError.invalid}
+        guard let row=try row(player:player,in:context) else {return CareerContractJournal(playerID:player.id)}
+        guard let value=try? JSONDecoder().decode(CareerContractJournal.self,from:row.payload) else {throw ContractRegistrationError.invalid}
+        let evaluations=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context)
+        let offers=try ContractOfferStore.records(player:player,calendar:calendar,in:context).flatMap {row in
+            guard let evaluation=evaluations.first(where:{$0.key == row.key}) else {throw ContractRegistrationError.invalid}
+            return try row.snapshot(evaluation:evaluation,player:player,calendar:calendar).offers
+        }
+        try value.validate(player:player,calendar:calendar,offers:offers);return value
+    }
+    static func decide(player:CareerPlayer,calendar:CareerCalendarState,offerID:String,accept:Bool,date:String,revision:Int,
+                       in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        guard !context.hasChanges else {throw ContractRegistrationError.busy}
+        var value=try journal(player:player,calendar:calendar,in:context)
+        let kind:DomesticOfferDecisionKind=accept ? .accepted:.rejected
+        if let old=value.decisions.first(where:{$0.offerID == offerID}) {
+            guard old.kind == kind else {throw ContractRegistrationError.closed};return
+        }
+        guard date == player.gameDate,revision == calendar.revision else {throw ContractRegistrationError.stale}
+        try CareerTrainingStore.requireNoPending(player:player,in:context)
+        let id=player.id,records=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
+        for record in records {guard try record.snapshot().completed else {throw ContractRegistrationError.busy}}
+        let evaluations=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context)
+        let packets=try ContractOfferStore.records(player:player,calendar:calendar,in:context).map {row -> DomesticOfferPacket in
+            guard let evaluation=evaluations.first(where:{$0.key == row.key}) else {throw ContractRegistrationError.invalid}
+            return try row.snapshot(evaluation:evaluation,player:player,calendar:calendar)
+        }
+        let offers=packets.flatMap(\.offers),today=try GameDate(date)
+        guard let offer=offers.first(where:{$0.id == offerID}) else {throw ContractRegistrationError.invalid}
+        guard !(try offer.isExpired(on:today)) else {throw ContractRegistrationError.expired}
+        if accept {
+            guard try value.current(on:today) == nil else {throw ContractRegistrationError.registered}
+            guard (20...23).contains(try calendar.age(of:player)) else {throw ContractRegistrationError.invalid}
+            value.memberships.append(try CareerMembership.make(offer:offer,on:today,origin:GameDate(calendar.originDate),startAge:player.startAge))
+        }
+        value.decisions.append(DomesticOfferDecision(offerID:offerID,kind:kind,date:date))
+        if accept {
+            for other in offers where other.id != offerID && !value.decisions.contains(where:{$0.offerID == other.id}) {
+                if !(try other.isExpired(on:today)) {value.decisions.append(DomesticOfferDecision(offerID:other.id,kind:.closed,date:date))}
+            }
+        }
+        value.revision += 1
+        try value.validate(player:player,calendar:calendar,offers:offers)
+        do {
+            if let row=try row(player:player,in:context) {row.payload=try JSONEncoder().encode(value)}
+            else {context.insert(try CareerContractRegistration(value))}
+            for packet in packets where packet.offers.contains(where:{offer in value.decisions.contains {$0.offerID == offer.id}}) {
+                evaluations.first(where:{$0.key == packet.evaluationKey})?.acknowledged=true
+            }
+            calendar.revision += 1
+            try save(context)
+        } catch {context.rollback();throw error}
     }
 }

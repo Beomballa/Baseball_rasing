@@ -153,9 +153,9 @@ struct AnnualLeague: Equatable {
         }
     }
     static func make(playerID:UUID,schoolIDs:[String],origin:GameDate,startAge:Int,today:GameDate,year:Int,
-                     official:[LeagueOfficialResult],pending:Set<String>=[]) throws -> AnnualLeague {
+                     official:[LeagueOfficialResult],pending:Set<String>=[],competitionFixtures:[SeasonFixture]?=nil) throws -> AnnualLeague {
         guard today >= origin,(origin.year...today.year).contains(year) else {throw LeagueError.invalidRecord}
-        let fixtures=try SeasonSchedule.fixtures(year:year,schoolIDs:schoolIDs).filter {
+        let fixtures=try competitionFixtures ?? SeasonSchedule.fixtures(year:year,schoolIDs:schoolIDs).filter {
             $0.date >= origin && origin.age(startingAt:startAge,on:$0.date) <= 18
         }
         let eligible=Dictionary(uniqueKeysWithValues:fixtures.map {($0.id,$0)})

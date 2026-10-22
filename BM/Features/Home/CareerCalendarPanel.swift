@@ -18,7 +18,7 @@ struct CareerCalendarPanel: View {
 
     @State private var scheduleRetry = 0
     private var hasAction: Bool { state.hasAction(on: player.gameDate) }
-    private func teamName(_ id: String) -> String { schools.first { $0.id == id }?.name ?? id }
+    private func teamName(_ id: String) -> String { CareerTeamDirectory.name(id,schools:schools) }
     @Query private var trainingRecords: [CareerTrainingRecord]
     private var trainingPending: Bool { trainingRecords.contains { $0.playerID == player.id && !$0.completed } }
     private var trainedToday: Bool { trainingRecords.contains { $0.playerID == player.id && $0.gameDate == player.gameDate && $0.completed } }
@@ -26,7 +26,8 @@ struct CareerCalendarPanel: View {
     @Query private var evaluations: [CareerContractEvaluation]
     private var evaluationUnread: Bool {evaluations.contains {$0.playerID == player.id && !$0.acknowledged}}
     private func detail(_ fixture: SeasonFixture) -> String {
-        "\(fixture.date) · \(teamName(fixture.opponent(of: player.schoolID))) · \(fixture.homeID == player.schoolID ? "홈" : "원정")"
+        let id=(try? state.teamID(for:player,on:fixture.date)) ?? player.schoolID
+        return "\(fixture.date) · \(teamName(fixture.opponent(of:id))) · \(fixture.homeID == id ? "홈" : "원정")"
     }
     private func run(_ action: () throws -> Void) {
         do { try action() } catch { errorMessage = error.localizedDescription }
@@ -61,6 +62,7 @@ struct CareerCalendarPanel: View {
     }
 
     var body: some View {
+        let _=state.revision
         let status = CalendarScheduleStatus(player: player, state: state)
         let schedule = status.schedule
         let today = schedule?.today

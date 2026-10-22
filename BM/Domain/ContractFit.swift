@@ -129,7 +129,7 @@ extension CareerMatch {
               abilityStats?.version == 1, pitching?.version == 1,
               fieldStats?.version == (role == .batter ? 3:2),
               let position = fieldStats?.position else { return nil }
-        return "highschool/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
+        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
     }
 }
 
@@ -620,6 +620,100 @@ enum ContractOfferError: LocalizedError {
         switch self {
         case .invalid:"저장된 제의 자료를 확인하지 못했습니다. 기존 제의와 평가 원장을 유지하고 다시 확인해 주세요."
         case .pendingChanges:"다른 저장 작업이 진행 중입니다. 완료한 뒤 제의를 다시 확인해 주세요."
+        }
+    }
+}
+
+
+// Offer originals remain immutable. Explicit decisions and registrations are a separate journal.
+enum DomesticOfferDecisionKind:String,Codable {case accepted,rejected,closed}
+struct DomesticOfferDecision:Codable,Equatable {
+    let offerID:String
+    let kind:DomesticOfferDecisionKind
+    let date:String
+}
+struct CareerMembership:Codable,Equatable {
+    let offerID:String
+    let route:DomesticSelectionRoute
+    let teamID:String
+    let name:String
+    let since:String
+    let economicEnd:String
+    let enrollmentEnd:String?
+    let economicIndex:Int
+    var level:String {route == .rookie ? "domestic-development":"college"}
+    var label:String {route == .rookie ? "국내 육성팀":"대학 소속"}
+    func contains(_ date:GameDate) throws -> Bool {
+        try date >= GameDate(since) && (enrollmentEnd.map {try date <= GameDate($0)} ?? true)
+    }
+    static func make(offer:DomesticContractOffer,on date:GameDate,origin:GameDate,startAge:Int) throws -> Self {
+        let parts=offer.resultID.components(separatedBy:"/")
+        guard parts.count >= 3,date.year < 9995 else {throw ContractRegistrationError.invalid}
+        let ids=offer.route == .rookie ? CareerTeamDirectory.domesticIDs:CareerTeamDirectory.collegeIDs
+        let id=offer.route == .rookie ? "dev-"+parts[1]:"college-"+parts[1]
+        guard ids.contains(id) else {throw ContractRegistrationError.invalid}
+        let economicEnd=date.anniversary(in:date.year+1).adding(days:-1)
+        let graduation=min(date.anniversary(in:date.year+4),origin.anniversary(in:origin.year+24-startAge)).adding(days:-1)
+        return Self(offerID:offer.id,route:offer.route,teamID:id,name:CareerTeamDirectory.name(id),since:date.description,
+            economicEnd:economicEnd.description,enrollmentEnd:offer.route == .college ? graduation.description:nil,economicIndex:offer.economicIndex)
+    }
+}
+enum CareerTeamDirectory {
+    static let domesticIDs=["harbors","comets","tides","stars","foxes","falcons"].map {"dev-"+$0}
+    static let collegeIDs=(0..<6).map {"college-\($0)"}
+    static let domesticNames=["인천 하버스 육성","대전 코멧츠 육성","부산 타이즈 육성","서울 스타즈 육성","광주 폭시스 육성","대구 팔콘스 육성"]
+    static let collegeNames=["해솔대","한빛대","푸른대","다온대","누리대","가온대"]
+    static func name(_ id:String,schools:[School]=[]) -> String {
+        if let i=domesticIDs.firstIndex(of:id) {return domesticNames[i]}
+        if let i=collegeIDs.firstIndex(of:id) {return collegeNames[i]}
+        return schools.first {$0.id == id}?.name ?? id
+    }
+}
+struct CareerContractJournal:Codable,Equatable {
+    var version=1
+    let playerID:UUID
+    var revision=0
+    var decisions:[DomesticOfferDecision]=[]
+    var memberships:[CareerMembership]=[]
+    func current(on date:GameDate) throws -> CareerMembership? {try memberships.last(where:{try $0.contains(date)})}
+    func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer]) throws {
+        let today=try GameDate(player.gameDate),origin=try GameDate(calendar.originDate)
+        guard version == 1,playerID == player.id,revision >= 0,
+              Set(decisions.map(\.offerID)).count == decisions.count,Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractRegistrationError.invalid}
+        for decision in decisions {
+            guard let offer=offers.first(where:{$0.id == decision.offerID}) else {throw ContractRegistrationError.invalid}
+            let date=try GameDate(decision.date)
+            guard date <= today,date >= (try GameDate(offer.issuedDate)),!(try offer.isExpired(on:date)),
+                  (20...23).contains(origin.age(startingAt:player.startAge,on:date)) else {throw ContractRegistrationError.invalid}
+            if decision.kind == .accepted {
+                guard memberships.contains(try CareerMembership.make(offer:offer,on:date,origin:origin,startAge:player.startAge)) else {throw ContractRegistrationError.invalid}
+            }
+        }
+        for (index,member) in memberships.enumerated() {
+            guard decisions.contains(where:{$0.offerID == member.offerID && $0.kind == .accepted && $0.date == member.since}) else {throw ContractRegistrationError.invalid}
+            if index > 0 {
+                let date=try GameDate(member.since),previous=try GameDate(memberships[index-1].since)
+                guard try !memberships[index-1].contains(date),previous < date else {throw ContractRegistrationError.invalid}
+            }
+        }
+    }
+}
+struct CareerCompetitionPlan {
+    let teamID:String
+    let teamIDs:[String]
+    let fixtures:[SeasonFixture]
+    let membership:CareerMembership?
+}
+enum ContractRegistrationError:LocalizedError {
+    case invalid,stale,closed,expired,busy,registered
+    var errorDescription:String? {
+        switch self {
+        case .invalid:"계약 결정/소속 등록 자료를 확인하지 못했습니다. 기존 자료를 유지합니다."
+        case .stale:"날짜나 제의 상태가 바뀌었습니다. 최신 조건을 확인한 뒤 다시 선택해 주세요."
+        case .closed:"이미 결정되거나 닫힌 제의입니다. 같은 창에서 다시 발행하지 않습니다."
+        case .expired:"제의가 만료되었습니다. 다음 허용 창을 준비해 주세요."
+        case .busy:"진행 중인 경기·훈련 또는 다른 저장을 마친 뒤 소속을 변경해 주세요."
+        case .registered:"유효한 소속/보유 권리가 있습니다. 중복 입단할 수 없습니다."
         }
     }
 }

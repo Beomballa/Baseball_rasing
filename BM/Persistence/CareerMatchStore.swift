@@ -20,9 +20,12 @@ enum CareerSchemaV3: VersionedSchema {
         var fatigueAfter: Int
         var rulesVersion: String
 
-        init(player: CareerPlayer, fixture: SeasonFixture, match: CareerMatch) throws {
+        @MainActor init(player: CareerPlayer, fixture: SeasonFixture, match: CareerMatch) throws {
             key = Self.key(player.id, fixture.id); playerID = player.id
-            fixtureID = fixture.id; gameDate = player.gameDate; opponentID = fixture.opponent(of: player.schoolID)
+            fixtureID = fixture.id; gameDate = player.gameDate; opponentID = fixture.opponent(of: try player.modelContext.map {context in
+                guard let state=try context.fetch(FetchDescriptor<CareerCalendarState>()).first(where:{$0.playerID == player.id}) else {throw CalendarError.staleState}
+                return try state.teamID(for:player,on:fixture.date)
+            } ?? player.schoolID)
             appearance = match.appearance; payload = try JSONEncoder().encode(match)
             revision = 0; completed = false; fatigueBefore = player.fatigue; fatigueAfter = player.fatigue
             rulesVersion = "native-match-v1"
@@ -37,6 +40,7 @@ enum CareerSchemaV3: VersionedSchema {
                     guard let mastery = stats.positionMastery, mastery.isFinite, (0...100).contains(mastery), FieldPosition(rawValue: stats.position) != nil else { throw MatchError.invalidRecord }
                 }
             }
+            guard match.competition == nil || ["college","domestic-development"].contains(match.competition!) else {throw MatchError.invalidRecord}
             if let performance = match.scoutingPerformance {
                 guard let role = PlayerRole(rawValue:match.role) else {throw MatchError.invalidRecord}
                 try performance.validate(line:match.line,role:role)
@@ -77,9 +81,11 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         try CareerTrainingStore.requireNoPending(player: player, in: context)
         guard state.hasAction(on: player.gameDate) else { throw MatchError.preparation }
         let seed = (player.id.uuidString + fixture.id).utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
-        var match = CareerMatch(random: seed, isHome: fixture.homeID == player.schoolID, role: player.roleRaw,
+        let plan=try state.competition(for:player,year:fixture.date.year)
+        var match = CareerMatch(random: seed, isHome: fixture.homeID == plan.teamID, role: player.roleRaw,
                                 appearance: fixture.isAppearance(for: player.role), contact: player.contact, power: player.power,
                                 discipline: player.discipline, mastery: Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }))
+        match.competition=plan.membership?.level
         // Old schema fixtures and saved matches retain their original rules.
         if context.container.schema.entities.contains(where: { $0.name == "PlayerAbilities" }),
            let profile = try PlayerAbilityStore.profile(playerID: player.id, in: context) {

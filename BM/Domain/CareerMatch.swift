@@ -25,6 +25,7 @@ struct CareerMatch: Codable, Equatable {
     let contact: Double, power: Double, discipline: Double, mastery: [String: Double]
     var line = MatchLine()
     var scoutingPerformance: MatchScoutingPerformance?
+    var competition:String?
     var fatigueCost = 0.0
     var appliedFatigueCost: Int { Int(((fatigueCost * 10_000).rounded() / 10_000).rounded(.up)) }
     var message = "경기 시작"

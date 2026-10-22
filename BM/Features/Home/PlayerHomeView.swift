@@ -19,7 +19,15 @@ struct PlayerHomeView: View {
     private var todayTraining: CareerTrainingRecord? { trainingRecords.first { $0.playerID == player.id && $0.gameDate == player.gameDate } }
     private var age: Int { (try? calendar?.age(of: player)) ?? player.startAge }
 
+    private var affiliationLabel:String {
+        do {
+            if let calendar,let member=try calendar.registration(for:player) {return member.name+" · 출신 "+player.schoolName}
+            let age=(try? calendar?.age(of:player)) ?? player.startAge
+            return age <= 18 ? player.schoolName:"무소속 · 출신 "+player.schoolName
+        } catch {return "소속 조회 오류 · 출신 "+player.schoolName}
+    }
     var body: some View {
+        let _=calendar?.revision
         let summary = HomeAbilitySummary(player: player, abilities: abilities)
         ScrollView {
             VStack(spacing: 12) {
@@ -144,7 +152,7 @@ struct PlayerHomeView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(age <= 18 ? "HIGH SCHOOL" : "CAREER").font(.caption2.monospaced().bold()).foregroundStyle(GameTheme.gold)
                 Text("\(player.name)  #\(player.jerseyNumber)").font(.title3.bold()).accessibilityIdentifier("homePlayerName")
-                Text(age <= 18 ? player.schoolName : "무소속 · 출신 \(player.schoolName)").font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("homeSchool")
+                Text(affiliationLabel).font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("homeSchool")
                 Text("\(player.role.label) · \(player.roleDetail) · \(age)세 / \(SeasonSchedule.academicStatus(age: age))")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("homeAge")
                 if let abilities { Text(abilities.label).font(.caption.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homeArchetype") }
@@ -187,7 +195,7 @@ struct PlayerHomeView: View {
                             Text(record.gameDate).font(.caption.monospaced())
                             Spacer(); Text("\(match.teamScore) : \(match.opponentScore)").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
                         }
-                        Text(schools.first { $0.id == record.opponentID }?.name ?? record.opponentID).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Text(CareerTeamDirectory.name(record.opponentID,schools:schools)).font(.caption).foregroundStyle(GameTheme.boardMuted)
                         Text(record.appearance ? (player.role == .batter
                             ? "\(match.line.atBats)타수 \(match.line.hits)안타 · \(match.line.homeRuns)홈런"
                             : "\(match.line.pitchingOuts / 3).\(match.line.pitchingOuts % 3)이닝 · \(match.line.pitchingStrikeouts)K") : "비등판 · 팀 경기")
@@ -214,9 +222,10 @@ struct AnnualLeagueHomePanel: View {
             season=try CareerSeasonStore.load(player:player,state:state,year:GameDate(player.gameDate).year,in:context);error=nil
         } catch {season=nil;self.error=error.localizedDescription}
     }
+    private var ownTeamID:String {(try? state.competition(for:player,year:(try? GameDate(player.gameDate).year) ?? 2026).teamID) ?? player.schoolID}
     var body: some View {
         GamePanel(title:"연간 리그",onBoard:true) {
-            if let row=league?.standings.first(where:{$0.id == player.schoolID}) {
+            if let row=league?.standings.first(where:{$0.id == ownTeamID}) {
                 Text(row.rank.map {"\($0)위 · 내 팀"} ?? "순위 집계 전 · 내 팀").font(.headline).foregroundStyle(GameTheme.gold)
                 Text("\(row.games)경기 · \(row.wins)승 \(row.losses)패 \(row.draws)무 · 승률 \(row.percentage)")
                     .font(.subheadline.monospaced()).accessibilityIdentifier("homeLeagueRecord")
@@ -260,13 +269,14 @@ struct AnnualLeagueScreen: View {
     @State private var selectedYear: Int?
     @State private var league: AnnualLeague?
     @State private var error: String?
-    private func name(_ id:String) -> String {schools.first {$0.id == id}?.name ?? id}
+    private func name(_ id:String) -> String {CareerTeamDirectory.name(id,schools:schools)}
     private func reload() {
         do {
             let year=try selectedYear ?? GameDate(player.gameDate).year
             league=try AnnualLeagueStore.load(player:player,state:state,year:year,in:context);error=nil
         } catch {league=nil;self.error=error.localizedDescription}
     }
+    private var ownTeamID:String {(try? state.competition(for:player,year:league?.year ?? (try? GameDate(player.gameDate).year) ?? 2026).teamID) ?? player.schoolID}
     var body: some View {
         ScrollView {
             VStack(spacing:12) {
@@ -328,7 +338,7 @@ struct AnnualLeagueScreen: View {
     private func standingRow(_ row:LeagueStanding) -> some View {
         VStack(alignment:.leading,spacing:6) {
             if typeSize.isAccessibilitySize {
-                Text("\(row.rank.map {"\($0)위"} ?? "—") · \(name(row.id))\(row.id == player.schoolID ? " · 내 팀":"")").font(.headline)
+                Text("\(row.rank.map {"\($0)위"} ?? "—") · \(name(row.id))\(row.id == ownTeamID ? " · 내 팀":"")").font(.headline)
                 Text("\(row.games)경기 · \(row.wins)승 \(row.losses)패 \(row.draws)무\n승률 \(row.percentage)").font(.body.monospaced())
             } else {
                 HStack(spacing:4) {
@@ -339,11 +349,11 @@ struct AnnualLeagueScreen: View {
                 }.font(.caption.monospaced().bold())
             }
         }.padding(.vertical,10).padding(.horizontal,4).frame(maxWidth:.infinity,alignment:.leading)
-            .background(row.id == player.schoolID ? Color(hex:0x244e48):GameTheme.board)
-            .overlay(Rectangle().strokeBorder(row.id == player.schoolID ? GameTheme.gold:GameTheme.boardLine,lineWidth:row.id == player.schoolID ? 2:1))
+            .background(row.id == ownTeamID ? Color(hex:0x244e48):GameTheme.board)
+            .overlay(Rectangle().strokeBorder(row.id == ownTeamID ? GameTheme.gold:GameTheme.boardLine,lineWidth:row.id == ownTeamID ? 2:1))
             .accessibilityElement(children:.ignore)
-            .accessibilityLabel("\(name(row.id))\(row.id == player.schoolID ? " 내 팀":"") · 순위 \(row.rank.map(String.init) ?? "미정") · \(row.games)경기 \(row.wins)승 \(row.losses)패 \(row.draws)무 · 승률 \(row.percentage)")
-            .accessibilityIdentifier(row.id == player.schoolID ? "leagueOwnStanding":"leagueStanding-\(row.id)")
+            .accessibilityLabel("\(name(row.id))\(row.id == ownTeamID ? " 내 팀":"") · 순위 \(row.rank.map(String.init) ?? "미정") · \(row.games)경기 \(row.wins)승 \(row.losses)패 \(row.draws)무 · 승률 \(row.percentage)")
+            .accessibilityIdentifier(row.id == ownTeamID ? "leagueOwnStanding":"leagueStanding-\(row.id)")
     }
     private func gameRow(_ fixture:SeasonFixture,result:LeagueResult?,pending:Bool) -> some View {
         VStack(alignment:.leading,spacing:4) {
@@ -404,7 +414,7 @@ struct CareerSeasonScreen: View {
     @State private var selectedYear: Int?
     @State private var summary: CareerSeasonSummary?
     @State private var error: String?
-    private func name(_ id: String) -> String { schools.first { $0.id == id }?.name ?? id }
+    private func name(_ id: String) -> String { CareerTeamDirectory.name(id,schools:schools) }
     private func reload() {
         do {
             let year = try selectedYear ?? CareerSeasonStore.offseason(player: player, state: state, in: context)?.seasonYear ?? GameDate(player.gameDate).year
@@ -413,6 +423,7 @@ struct CareerSeasonScreen: View {
             error = nil
         } catch { summary = nil; self.error = error.localizedDescription }
     }
+    private var ownTeamID:String {(try? state.competition(for:player,year:summary?.league.year ?? (try? GameDate(player.gameDate).year) ?? 2026).teamID) ?? player.schoolID}
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
@@ -440,7 +451,7 @@ struct CareerSeasonScreen: View {
                             Text(league.fixtures.count == 90 ? "전체 일정이 끝나면 최종 순위와 우승팀을 확정합니다. 마지막 날 다른 팀 경기는 다음 날 처리됩니다." : "경력 시작 전/출전 연령 밖 일정을 제외한 부분 시즌입니다. 30경기 결산으로 확정하지 않습니다.")
                                 .font(.caption).foregroundStyle(GameTheme.boardMuted)
                         }
-                        Text("\(player.name) · \(player.schoolName) · \(player.role.label)").font(.caption).accessibilityIdentifier("seasonPlayer")
+                        Text("\(player.name) · \(name(ownTeamID)) · \(player.role.label)").font(.caption).accessibilityIdentifier("seasonPlayer")
                     }
                     GamePanel(title: "MY RECORD · 내 시즌 성적", onBoard: true) {
                         SeasonPersonalRecord(totals: summary.totals, role: player.role)
@@ -451,11 +462,11 @@ struct CareerSeasonScreen: View {
                     GamePanel(title: summary.finalized ? "FINAL TABLE · 최종 순위" : "TABLE · 현재 순위", onBoard: true) {
                         ForEach(summary.finalStandings) { row in
                             VStack(alignment: .leading, spacing: 5) {
-                                Text("\(row.rank.map { "\($0)위" } ?? "—") · \(name(row.id))\(row.id == player.schoolID ? " · 내 팀" : "")").font(.headline)
+                                Text("\(row.rank.map { "\($0)위" } ?? "—") · \(name(row.id))\(row.id == ownTeamID ? " · 내 팀" : "")").font(.headline)
                                 Text("\(row.games)경기 · \(row.wins)승 \(row.losses)패 \(row.draws)무 · 승률 \(row.percentage)").font(.caption.monospaced())
                             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(row.id == player.schoolID ? Color(hex: 0x244e48) : GameTheme.board)
-                                .overlay(Rectangle().strokeBorder(row.id == player.schoolID ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
+                                .background(row.id == ownTeamID ? Color(hex: 0x244e48) : GameTheme.board)
+                                .overlay(Rectangle().strokeBorder(row.id == ownTeamID ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
                                 .accessibilityElement(children: .combine).accessibilityIdentifier("seasonStanding-\(row.id)")
                         }
                         Text("승률 동률은 공동 순위·공동 우승\n전 경기 무승부일 때는 모든 팀 공동 우승·승률 —")
@@ -589,10 +600,10 @@ struct CareerPathHomePanel: View {
                 Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerPathError")
                 Button("다시 확인", action:load).buttonStyle(MatchPixelButtonStyle())
             } else if let history {
-                Text(history.current.stage.label).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerPathStage")
-                Text(history.current.stage == .school ? "현재 소속 · \(history.current.schoolName ?? player.schoolName)" : "현재 소속 · 무소속 아마추어 / 출신 · \(player.schoolName)")
+                Text((try? calendar.registration(for:player))?.label ?? history.current.stage.label).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerPathStage")
+                Text((try? calendar.registration(for:player)).map {"현재 소속 · "+$0.name+" / 출신 · "+player.schoolName} ?? (history.current.stage == .school ? "현재 소속 · \(history.current.schoolName ?? player.schoolName)" : "현재 소속 · 무소속 아마추어 / 출신 · \(player.schoolName)"))
                     .font(.caption).accessibilityIdentifier("careerPathAffiliation")
-                Text("관심 구단은 관찰 단계입니다. 정식 제의·입단 심사는 아직 연결되지 않았습니다.")
+                Text("관심·선발·제의와 실제 등록을 구분합니다. 수락한 소속과 제의 결정은 별도 이력으로 보관합니다.")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted)
                 HomeDetailButton(title:"신청 경로 · 소속 이력",expanded:$expanded,identifier:"careerPathDetails")
                 if expanded {
@@ -604,11 +615,18 @@ struct CareerPathHomePanel: View {
                             Text(route.detail).font(.caption).foregroundStyle(GameTheme.boardMuted)
                         }.padding(.vertical,4).accessibilityElement(children:.combine).accessibilityIdentifier("careerRoute-"+route.id)
                     }
-                    Text("표시된 자격은 나이 조건입니다. 신청·합격·계약 수락 버튼은 심사와 실제 배치 연결 후 제공합니다.")
+                    Text("표시된 경로는 기본 나이 조건입니다. 등록 중인 소속/보유 권리와 실제 제의 상태를 함께 확인하세요.")
                         .font(.caption).foregroundStyle(GameTheme.boardMuted)
                     ForEach(Array(history.entries.enumerated()),id:\.offset) { _, entry in
                         Text("\(entry.since) · \(entry.stage.label)\(entry.schoolName.map { " · " + $0 } ?? "")")
                             .font(.caption.monospaced()).accessibilityIdentifier("careerAffiliationHistory")
+                    }
+                    if let journal=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context) {
+                        ForEach(journal.memberships,id:\.offerID) {member in
+                            Text(member.since+" · "+member.label+" · "+member.name).font(.caption).accessibilityIdentifier("careerRegisteredHistory")
+                            Text(member.route == .rookie ? "경제 기간 종료 "+member.economicEnd+" · 보유 권리 자동 해제 없음":"학적 종료 "+(member.enrollmentEnd ?? "—"))
+                                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        }
                     }
                     if history.source == "legacy-v1" {
                         Text("기존 저장은 최초 등록 시점부터 이력을 보관합니다. 이전 졸업·프로 경력은 추정하지 않습니다.")
@@ -616,10 +634,11 @@ struct CareerPathHomePanel: View {
                     }
                 }
             }
-        }.task(id:player.gameDate) { load() }
+        }.task(id:calendar.revision) { load() }
     }
     private func load() {
         do {
+            _ = try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
             guard let row = try CareerPathStore.record(player:player,calendar:calendar,in:context) else { throw CareerPathError.invalid }
             history = try row.snapshot(player:player,calendar:calendar); failure = nil
         } catch { history = nil; failure = error.localizedDescription }

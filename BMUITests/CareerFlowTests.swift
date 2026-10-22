@@ -2259,7 +2259,7 @@ extension CareerFlowTests {
                     XCTAssertTrue(status.label.contains(scenario == "expired" ? "기간 만료":"검토 가능"))
                     for route in ["rookie","college"] {
                         let detail=app.buttons["liveOfferDetail-"+route];revealFit(detail,in:app);detail.tap()
-                        let pending=app.staticTexts["liveOfferAcceptancePending"];revealFit(pending,in:app);XCTAssertTrue(pending.exists)
+                        let pending=app.staticTexts[scenario == "expired" ? "liveOfferFinalDecision":"liveOfferDecisionGuide"];revealFit(pending,in:app);XCTAssertTrue(pending.exists)
                         let fit=app.staticTexts["liveOfferFit"];revealFit(fit,in:app);XCTAssertTrue(fit.label.hasPrefix(expectedH[route]!))
                         XCTAssertTrue(app.staticTexts["실제 선수 자료"].exists)
                         if scenario == "qualified" {
@@ -2281,5 +2281,50 @@ extension CareerFlowTests {
             }
             app.terminate()
         }
+    }
+}
+
+
+extension CareerFlowTests {
+    @MainActor func testAcceptRejectRegisterAdultTeamsAndPlayBothRolesWithoutDuplicateResults() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+            let open=app.buttons["openDomesticOffers"];revealFit(open,in:app);open.tap()
+            if role == "pitcher" {
+                let rookie=app.buttons["liveOfferDetail-rookie"];revealFit(rookie,in:app);rookie.tap()
+                let reject=app.buttons["rejectLiveOffer"];revealFit(reject,in:app);reject.tap()
+                app.buttons["거절 확정"].firstMatch.tap()
+                let receipt=app.staticTexts["liveOfferDecisionReceipt"];revealFit(receipt,in:app);XCTAssertTrue(receipt.label.contains("거절 완료"))
+                app.navigationBars.buttons.element(boundBy:0).tap()
+            }
+            let route=role == "batter" ? "rookie":"college",detail=app.buttons["liveOfferDetail-"+route]
+            revealFit(detail,in:app);detail.tap()
+            let accept=app.buttons["acceptLiveOffer"];revealFit(accept,in:app);accept.tap()
+            app.buttons["수락하고 소속 발효"].firstMatch.tap()
+            let receipt=app.staticTexts["liveOfferDecisionReceipt"];revealFit(receipt,in:app)
+            XCTAssertTrue(receipt.label.contains("수락/소속 발효 완료"));XCTAssertFalse(app.buttons["acceptLiveOffer"].exists)
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Registered decision "+role;shot.lifetime = .keepAlways;add(shot)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let other=app.staticTexts["liveOfferStatus-"+(route == "rookie" ? "college":"rookie")];revealFit(other,in:app)
+            XCTAssertTrue(other.label.contains(role == "batter" ? "다른 제의 수락으로 종료":"거절 완료"))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+            let school=app.staticTexts["homeSchool"];revealFit(school,in:app);XCTAssertTrue(school.label.contains(role == "batter" ? "육성":"대"))
+            let stage=app.staticTexts["careerPathStage"];revealFit(stage,in:app);XCTAssertTrue(stage.label.contains(role == "batter" ? "국내 육성팀":"대학 소속"))
+            let rest=app.buttons["restToday"];revealFit(rest,in:app);rest.tap()
+            let game=app.buttons["openCareerGame"];revealFit(game,in:app);XCTAssertTrue(game.isEnabled);game.tap()
+            XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:8));app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:12))
+            let home=app.buttons["gameReturnHome"];revealFit(home,in:app);home.tap()
+            let after=app.staticTexts["homeFatigue"].label
+            revealFit(game,in:app);game.tap();XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
+            revealFit(home,in:app);home.tap();XCTAssertEqual(app.staticTexts["homeFatigue"].label,after)
+            let next=app.buttons["advanceDay"];revealFit(next,in:app);XCTAssertTrue(next.isEnabled);next.tap()
+            let advanced=NSPredicate(format:"label == %@","2030-04-02")
+            expectation(for:advanced,evaluatedWith:app.staticTexts["calendarDate"]);waitForExpectations(timeout:6)
+        }
+        app.terminate()
     }
 }

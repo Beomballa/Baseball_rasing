@@ -84,7 +84,7 @@ enum CareerSchemaV1: VersionedSchema {
 typealias CareerPlayer = CareerSchemaV1.Player
 
 enum CareerMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [CareerSchemaV1.self, CareerSchemaV2.self, CareerSchemaV3.self, CareerSchemaV4.self, CareerSchemaV5.self, CareerSchemaV6.self, CareerSchemaV7.self, CareerSchemaV8.self, CareerSchemaV9.self, CareerSchemaV10.self, CareerSchemaV11.self] }
+    static var schemas: [any VersionedSchema.Type] { [CareerSchemaV1.self, CareerSchemaV2.self, CareerSchemaV3.self, CareerSchemaV4.self, CareerSchemaV5.self, CareerSchemaV6.self, CareerSchemaV7.self, CareerSchemaV8.self, CareerSchemaV9.self, CareerSchemaV10.self, CareerSchemaV11.self, CareerSchemaV12.self] }
     static var stages: [MigrationStage] {
         [.lightweight(fromVersion: CareerSchemaV1.self, toVersion: CareerSchemaV2.self),
          .lightweight(fromVersion: CareerSchemaV2.self, toVersion: CareerSchemaV3.self),
@@ -95,6 +95,7 @@ enum CareerMigrationPlan: SchemaMigrationPlan {
          .lightweight(fromVersion: CareerSchemaV7.self, toVersion: CareerSchemaV8.self),
          .lightweight(fromVersion: CareerSchemaV8.self, toVersion: CareerSchemaV9.self),
          .lightweight(fromVersion: CareerSchemaV9.self, toVersion: CareerSchemaV10.self),
-         .lightweight(fromVersion: CareerSchemaV10.self, toVersion: CareerSchemaV11.self)]
+         .lightweight(fromVersion: CareerSchemaV10.self, toVersion: CareerSchemaV11.self),
+         .lightweight(fromVersion: CareerSchemaV11.self, toVersion: CareerSchemaV12.self)]
     }
 }

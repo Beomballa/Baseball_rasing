@@ -28,16 +28,39 @@ enum CareerSchemaV2: VersionedSchema {
         func age(of player: CareerPlayer) throws -> Int {
             try GameDate(originDate).age(startingAt: player.startAge, on: GameDate(player.gameDate))
         }
-        func fixtures(for player: CareerPlayer, year: Int) throws -> [SeasonFixture] {
-            guard playerID == player.id else { throw CalendarError.staleState }
-            guard schoolIDs.contains(player.schoolID) else { throw CalendarError.invalidGroup }
-            let origin = try GameDate(originDate)
-            let fixtures = try SeasonSchedule.fixtures(year: year, schoolIDs: schoolIDs)
-            return fixtures.filter {
-                $0.includes(player.schoolID) && $0.date >= origin && origin.age(startingAt: player.startAge, on: $0.date) <= 18
+        @MainActor func registration(for player:CareerPlayer) throws -> CareerMembership? {
+            guard let context=modelContext else {return nil}
+            return try ContractRegistrationStore.journal(player:player,calendar:self,in:context).current(on:GameDate(player.gameDate))
+        }
+        @MainActor func competition(for player:CareerPlayer,year:Int) throws -> CareerCompetitionPlan {
+            guard playerID == player.id,schoolIDs.contains(player.schoolID) else {throw CalendarError.invalidGroup}
+            if let context=modelContext {
+                let journal=try ContractRegistrationStore.journal(player:player,calendar:self,in:context)
+                let first=try GameDate(String(format:"%04d-04-01",year)),last=first.adding(days:174)
+                let members=try journal.memberships.filter {member in
+                    try GameDate(member.since) <= last && (member.enrollmentEnd.map {try GameDate($0) >= first} ?? true)
+                }
+                guard members.count <= 1 else {throw ContractRegistrationError.invalid}
+                if let member=members.first {
+                    let ids=member.route == .rookie ? CareerTeamDirectory.domesticIDs:CareerTeamDirectory.collegeIDs
+                    return CareerCompetitionPlan(teamID:member.teamID,teamIDs:ids,fixtures:try SeasonSchedule.fixtures(year:year,schoolIDs:ids),membership:member)
+                }
+            }
+            let origin=try GameDate(originDate)
+            return CareerCompetitionPlan(teamID:player.schoolID,teamIDs:schoolIDs,
+                fixtures:try SeasonSchedule.fixtures(year:year,schoolIDs:schoolIDs).filter {
+                    $0.date >= origin && origin.age(startingAt:player.startAge,on:$0.date) <= 18
+                },membership:nil)
+        }
+        @MainActor func teamID(for player:CareerPlayer,on date:GameDate) throws -> String {try competition(for:player,year:date.year).teamID}
+        @MainActor func fixtures(for player: CareerPlayer, year: Int) throws -> [SeasonFixture] {
+            let plan=try competition(for:player,year:year)
+            return try plan.fixtures.filter {fixture in
+                guard fixture.includes(plan.teamID) else {return false}
+                return try plan.membership?.contains(fixture.date) ?? true
             }
         }
-        func upcoming(for player: CareerPlayer) throws -> [SeasonFixture] {
+        @MainActor func upcoming(for player: CareerPlayer) throws -> [SeasonFixture] {
             let today = try GameDate(player.gameDate)
             return try (today.year...min(today.year + 1, 9998)).flatMap { try fixtures(for: player, year: $0) }
                 .filter { $0.date >= today }
@@ -82,24 +105,24 @@ typealias CareerCalendarState = CareerSchemaV2.CalendarState
     static func snapshot(player:CareerPlayer,state:CareerCalendarState,year:Int,records:[CareerMatchRecord]) throws -> AnnualLeague {
         guard state.playerID == player.id,state.schoolIDs.contains(player.schoolID),state.rulesVersion == "career-core-v1" else {throw LeagueError.invalidRecord}
         let today=try GameDate(player.gameDate),origin=try GameDate(state.originDate)
-        let fixtures=try SeasonSchedule.fixtures(year:year,schoolIDs:state.schoolIDs).filter {
-            $0.date >= origin && origin.age(startingAt:player.startAge,on:$0.date) <= 18
-        }
+        let plan=try state.competition(for:player,year:year),fixtures=plan.fixtures
         let byID=Dictionary(uniqueKeysWithValues:fixtures.map {($0.id,$0)})
         var official:[LeagueOfficialResult]=[],pending:Set<String>=[]
         var seen:Set<String>=[]
         for record in records where record.playerID == player.id {
             guard try GameDate(record.gameDate).year == year else {continue}
-            guard let fixture=byID[record.fixtureID],fixture.includes(player.schoolID),fixture.date.description == record.gameDate,
-                  record.key == CareerMatchRecord.key(player.id,fixture.id),record.opponentID == fixture.opponent(of:player.schoolID),
+            guard let fixture=byID[record.fixtureID],fixture.includes(plan.teamID),fixture.date.description == record.gameDate,
+                  record.key == CareerMatchRecord.key(player.id,fixture.id),record.opponentID == fixture.opponent(of:plan.teamID),
                   seen.insert(record.fixtureID).inserted else {throw LeagueError.invalidRecord}
             let match=try record.snapshot()
-            guard match.isHome == (fixture.homeID == player.schoolID),match.role == player.roleRaw else {throw LeagueError.invalidRecord}
+            guard match.isHome == (fixture.homeID == plan.teamID),match.role == player.roleRaw else {throw LeagueError.invalidRecord}
+            guard match.competition == plan.membership?.level else {throw LeagueError.invalidRecord}
+            if let member=plan.membership {guard try member.contains(fixture.date) else {throw LeagueError.invalidRecord}}
             if record.completed {
                 official.append(LeagueOfficialResult(fixtureID:fixture.id,homeScore:match.homeScore,awayScore:match.awayScore))
             } else {pending.insert(fixture.id)}
         }
-        return try AnnualLeague.make(playerID:player.id,schoolIDs:state.schoolIDs,origin:origin,startAge:player.startAge,today:today,year:year,official:official,pending:pending)
+        return try AnnualLeague.make(playerID:player.id,schoolIDs:plan.teamIDs,origin:origin,startAge:player.startAge,today:today,year:year,official:official,pending:pending,competitionFixtures:fixtures)
     }
 }
 
