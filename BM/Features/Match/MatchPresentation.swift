@@ -410,7 +410,7 @@ enum FieldReplayPresentation {
             let edge:[FieldPoint]=[.init(x:0,y:-3),.init(x:64,y:61),.init(x:61,y:82),.init(x:50,y:101),.init(x:32,y:114),.init(x:0,y:119),.init(x:-32,y:114),.init(x:-50,y:101),.init(x:-61,y:82),.init(x:-64,y:61)]
             let field=path(edge)
             box(0,0,320,352,0x102735)
-            for row in 0..<38 {
+            for row in 0..<26 {
                 let y=Double(row*9)
                 box(0,y+7,320,2,row%4 == 0 ? 0x69808a:0x273f52)
                 for column in 0..<40 {
@@ -424,6 +424,16 @@ enum FieldReplayPresentation {
                     }
                 }
                 if row%8 == 0 {box(24,y,3,8,0x8b9693);box(293,y,3,8,0x8b9693)}
+            }
+            // Quiet service concourse behind home plate: keep the crowd in the outfield tiers.
+            box(0,234,320,118,0x122b38)
+            box(0,234,320,4,0x314b59)
+            box(0,238,320,2,0x1e3948)
+            for x in [4.0,64,128,192,252,316] {box(x,242,1,43,0x1b3442)}
+            box(0,291,320,13,0x1c3541);box(0,304,320,2,0x29434e)
+            for x in [55.0,249] {
+                box(x,306,16,20,0x0c202b);box(x-1,304,18,2,0x3b545d)
+                box(x+3,309,1,15,0x213b48)
             }
             c.saveGState();c.addPath(field);c.clip()
             box(0,0,320,352,0x39774b)
@@ -458,6 +468,15 @@ enum FieldReplayPresentation {
             for i in 0..<edge.count {
                 let p=point(edge[i]);box(p.x-1,p.y-2,2,5,0xd6bd79)
             }
+            c.saveGState()
+            c.addRect(CGRect(origin:.zero,size:size));c.addPath(field);c.clip(using:.evenOdd)
+            let backstop=[FieldPoint(x:-58,y:48),.init(x:-38,y:18),.init(x:-21,y:-2),.init(x:0,y:-6),.init(x:21,y:-2),.init(x:38,y:18),.init(x:58,y:48)]
+            c.addLines(between:backstop.map(point));c.setStrokeColor(color(0x294451));c.setLineWidth(6);c.strokePath()
+            c.addLines(between:backstop.map(point));c.setStrokeColor(color(0x4b6570));c.setLineWidth(1);c.strokePath()
+            // Sparse, subdued netting stays outside the playing surface and behind the actors.
+            for x in stride(from:112,to:213,by:16) {box(Double(x),320,1,25,0x243f4c)}
+            box(110,328,104,1,0x243f4c);box(110,340,104,1,0x243f4c)
+            c.restoreGState()
             // Dugouts, roof shadows and benches frame the field without covering the play.
             for x in [8.0,268] {
                 box(x,267,44,24,0x0a202c);box(x-2,264,48,5,0x496e78)
