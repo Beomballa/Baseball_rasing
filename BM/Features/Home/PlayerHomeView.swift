@@ -656,6 +656,7 @@ struct ContractEvaluationHomePanel: View {
                         Text("이 원장에는 선발 자료가 기록되지 않았습니다. 기존 자료를 유지하고 다음 허용 창에서 심사합니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractSelectionLegacy")
                     }
+                    DomesticOfferHomePanel(player:player,calendar:calendar,evaluation:row)
                     if !row.acknowledged {
                         Text("같은 창에서는 성장하거나 재실행해도 다시 평가하지 않습니다. 자료를 확인하면 날짜 진행을 계속할 수 있습니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -670,8 +671,9 @@ struct ContractEvaluationHomePanel: View {
                             Text("\(grade.label) H \(grade.score.map {String(format:"%.1f",$0)} ?? "—")")
                                 .font(.caption.monospaced()).accessibilityIdentifier("contractEvaluationGrade-"+grade.id)
                         }
-                        Text(value.selection == nil ? "선발 심사 자료 미기록 · 과거 원장은 다시 평가하지 않습니다.":"성적·모집 자리·예산·후보 순서는 평가일에 고정됩니다. 실제 계약 수락과 소속 전환은 후속입니다.")
+                        Text(value.selection == nil ? "선발 심사 자료 미기록 · 과거 원장은 다시 평가하지 않습니다.":"성적·모집 자리·예산·후보 순서는 평가일에 고정됩니다. 제의는 별도 보관하며 수락/소속 전환은 후속입니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Text("당시 평가에 기록된 후속 항목 · 현재 제의는 보관함 확인").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         ForEach(value.pending,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
                         ForEach(own) { record in
                             Button((record.key.components(separatedBy:":").last ?? "") + " · 고정 자료 보기") {selectedKey = record.key}.font(.caption.monospaced()).buttonStyle(MatchPixelButtonStyle())
@@ -716,7 +718,7 @@ struct DomesticSelectionHomeSummary: View {
                         Text("자리 \(row.availableSeats) · 예산 \(row.availableBudget)/필요\(row.cost)지수 · 경쟁 \(row.competition)명")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                         if row.selected {
-                            Text("\(route == .rookie ? "해당 창의 지명 협상 대상":"대학 입단 선택 대상") · 실제 제의/수락은 아직 연결 전입니다.").font(.caption).foregroundStyle(GameTheme.gold)
+                            Text("\(route == .rookie ? "해당 창의 지명 협상 대상":"대학 입단 선택 대상") · 실제 제의 조건은 보관함에서 확인하세요.").font(.caption).foregroundStyle(GameTheme.gold)
                         } else {
                             ForEach(Array(row.reasons.prefix(3)),id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
                         }

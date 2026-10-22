@@ -2229,3 +2229,57 @@ extension CareerFlowTests {
         }
     }
 }
+
+
+extension CareerFlowTests {
+    @MainActor func testDomesticLiveOffersDetailsComparisonAndEmptyExpiredBothRoles() throws {
+        let app=XCUIApplication()
+        for scenario in ["qualified","empty","expired"] {
+            app.launchArguments=["-career-path-verification","-career-age20"]
+            if scenario != "empty" {app.launchArguments += ["-selection-qualified"]}
+            if scenario == "expired" {app.launchArguments += ["-offer-expired"]}
+            app.launch()
+            for role in ["batter","pitcher"] {
+                let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+                let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+                let home=app.staticTexts["contractOffersHomeStatus"];revealFit(home,in:app)
+                XCTAssertTrue(home.label.contains(scenario == "empty" ? "실제 제의 0건":"실제 제의 2건"))
+                XCTAssertTrue(home.label.contains(scenario == "qualified" ? "유효 2건":"유효 0건"))
+                let expectedH=Dictionary(uniqueKeysWithValues:["rookie","college"].map {route in
+                    (route,app.staticTexts["contractSelectionFit-"+route].label.components(separatedBy:"/")[0].trimmingCharacters(in:.whitespaces))
+                })
+                let open=app.buttons["openDomesticOffers"];revealFit(open,in:app);open.tap()
+                XCTAssertTrue(app.staticTexts["liveOfferIssued"].waitForExistence(timeout:5))
+                if scenario == "empty" {
+                    XCTAssertTrue(app.staticTexts["liveOffersEmpty"].exists)
+                    XCTAssertFalse(app.buttons["liveOffersCompare"].exists)
+                    let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Live offers empty "+role;shot.lifetime = .keepAlways;add(shot)
+                } else {
+                    let status=app.staticTexts["liveOfferStatus-rookie"];revealFit(status,in:app)
+                    XCTAssertTrue(status.label.contains(scenario == "expired" ? "기간 만료":"검토 가능"))
+                    for route in ["rookie","college"] {
+                        let detail=app.buttons["liveOfferDetail-"+route];revealFit(detail,in:app);detail.tap()
+                        let pending=app.staticTexts["liveOfferAcceptancePending"];revealFit(pending,in:app);XCTAssertTrue(pending.exists)
+                        let fit=app.staticTexts["liveOfferFit"];revealFit(fit,in:app);XCTAssertTrue(fit.label.hasPrefix(expectedH[route]!))
+                        XCTAssertTrue(app.staticTexts["실제 선수 자료"].exists)
+                        if scenario == "qualified" {
+                            let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Live offer "+route+" "+role;shot.lifetime = .keepAlways;add(shot)
+                        }
+                        app.navigationBars.buttons.element(boundBy:0).tap()
+                    }
+                    let compare=app.buttons["liveOffersCompare"];revealFit(compare,in:app);compare.tap()
+                    let caution=app.staticTexts["liveOfferCompareCaution"];revealFit(caution,in:app);XCTAssertTrue(caution.exists)
+                    if scenario == "qualified" {
+                        let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Live offers comparison "+role;shot.lifetime = .keepAlways;add(shot)
+                    }
+                    app.navigationBars.buttons.element(boundBy:0).tap()
+                }
+                app.navigationBars.buttons.element(boundBy:0).tap()
+                XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+                let evaluation=app.staticTexts["contractEvaluationStatus"];revealFit(evaluation,in:app)
+                XCTAssertTrue(evaluation.label.contains("확인 필요"),"조회는 평가 확인/날짜 잠금을 변경하지 않는다")
+            }
+            app.terminate()
+        }
+    }
+}

@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 #if DEBUG
 // Value-only screen samples: no model context, career store, clock or evaluation engine.
@@ -366,5 +367,191 @@ struct ScoutDossier<Content: View>: View {
             .opacity(opened || reduced ? 1 : 0).offset(y: opened || reduced ? 0 : 8)
             .animation(reduced ? nil : .easeOut(duration:0.25), value: opened)
             .onAppear { opened = true }
+    }
+}
+
+
+struct DomesticOfferHomePanel: View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    let evaluation:CareerContractEvaluation
+    @Environment(\.modelContext) private var context
+    @Query private var packets:[CareerContractOffer]
+    @State private var refresh=0
+    private func load() -> Result<DomesticOfferPacket?,Error> {
+        do {
+            _ = packets.count
+            let row=try ContractOfferStore.records(player:player,calendar:calendar,in:context).first {$0.key == evaluation.key}
+            return .success(try row?.snapshot(evaluation:evaluation,player:player,calendar:calendar))
+        } catch {return .failure(error)}
+    }
+    var body: some View {
+        let _=refresh
+        switch load() {
+        case .failure(let error):
+            Text(error.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractOffersError")
+            Button("제의 다시 확인") {refresh += 1}.buttonStyle(MatchPixelButtonStyle())
+        case .success(let value):
+            if let value {
+                let today=try? GameDate(player.gameDate)
+                let active=value.offers.filter {offer in today.map {(try? offer.isExpired(on:$0)) == false} ?? false}.count
+                Text("실제 제의 \(value.offers.count)건 · 유효 \(active)건")
+                    .font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractOffersHomeStatus")
+                if value.offers.isEmpty {
+                    Text(value.emptyReasons.first ?? "이번 창의 제의 없음").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                } else {
+                    Text(value.offers.map {$0.name+" · "+$0.route.label}.joined(separator:" / ")).font(.caption)
+                }
+                NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation)} label: {
+                    Text(value.offers.isEmpty ? "제의 없음 · 부족 조건 확인":active > 0 ? "도착한 제의 · 상세/비교":"만료된 제의 기록 보기")
+                }.buttonStyle(MatchPixelButtonStyle(primary:active > 0)).accessibilityIdentifier("openDomesticOffers")
+            } else {
+                Text("제의 자료 미기록 · 과거 평가를 다시 심사하거나 지난 창에 제의를 소급 발행하지 않습니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractOffersUnrecorded")
+            }
+        }
+    }
+}
+struct DomesticOffersView: View {
+    enum Page {case list,detail(String),compare}
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    let evaluation:CareerContractEvaluation
+    var page:Page = .list
+    @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Query private var packets:[CareerContractOffer]
+    @State private var refresh=0
+    private func load() -> Result<(DomesticOfferPacket,ContractEvaluationSnapshot),Error> {
+        do {
+            _ = packets.count
+            guard let row=try ContractOfferStore.records(player:player,calendar:calendar,in:context).first(where:{$0.key == evaluation.key}) else {throw ContractOfferError.invalid}
+            return .success((try row.snapshot(evaluation:evaluation,player:player,calendar:calendar),try evaluation.snapshot(player:player,calendar:calendar)))
+        } catch {return .failure(error)}
+    }
+    var body: some View {
+        let _=refresh
+        ScrollView {
+            VStack(alignment:.leading,spacing:18) {
+                switch load() {
+                case .failure(let error):
+                    GamePanel(title:"제의 조회 오류",onBoard:true) {
+                        Text(error.localizedDescription).font(.subheadline)
+                        Button("다시 확인") {refresh += 1}.buttonStyle(MatchPixelButtonStyle())
+                    }
+                case .success(let pair):
+                    let packet=pair.0,value=pair.1
+                    Text("제의 원본 · \(packet.issuedDate) 발행 / \(value.evaluatedDate) 평가")
+                        .font(.caption.monospaced()).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("liveOfferIssued")
+                    switch page {
+                    case .list:list(packet,value)
+                    case .detail(let id):
+                        if let offer=packet.offers.first(where:{$0.id == id}) {detail(offer,value)}
+                        else {Text(ContractOfferError.invalid.localizedDescription)}
+                    case .compare:compare(packet)
+                    }
+                }
+            }.padding(14).frame(maxWidth:540,alignment:.leading).frame(maxWidth:.infinity)
+        }.background(GameTheme.navy).foregroundStyle(GameTheme.boardInk)
+            .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(GameTheme.navy,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar)
+            .toolbarColorScheme(.dark,for:.navigationBar).tint(GameTheme.gold)
+    }
+    private var title:String {switch page {case .list:"도착한 제의";case .detail:"제의 상세";case .compare:"제의 비교"}}
+    private func status(_ offer:DomesticContractOffer) -> String {
+        guard let date=try? GameDate(player.gameDate),let expired=try? offer.isExpired(on:date) else {return "날짜 확인 필요"}
+        return expired ? "기간 만료":"검토 가능"
+    }
+    @ViewBuilder private func list(_ packet:DomesticOfferPacket,_ value:ContractEvaluationSnapshot) -> some View {
+        if packet.offers.isEmpty {
+            GamePanel(title:"이번 평가 · 제의 없음",onBoard:true) {
+                Text("다음 기회를 준비할 수 있습니다").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOffersEmpty")
+                ForEach(packet.emptyReasons,id:\.self) {Text($0).font(.subheadline).lineSpacing(4)}
+                Text(value.window.month == 4 ? "다음 국내 신인 창은7월 · 대학은 다음 해4월입니다.":"다음 국내 신인·대학 창은 다음 해4월입니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Text("훈련으로 보완해도 이번 창의 결과는 다시 뽑지 않습니다.").font(.caption)
+            }
+        }
+        ForEach(packet.offers) {offer in
+            GamePanel(title:offer.route == .rookie ? "프로 진입 · 신인 지명":"학적 선택 · 대학 선발",onBoard:true,contentSpacing:12) {
+                Text(offer.name).font(.title3.bold()).foregroundStyle(GameTheme.gold)
+                Text(offer.kind+" / "+DomesticContractOffer.roleName(offer.roleID)).font(.subheadline)
+                Text(status(offer)+" · "+offer.expiresDate+"까지(포함)").font(.caption).accessibilityIdentifier("liveOfferStatus-"+offer.route.rawValue)
+                Text(offer.economicLabel+" \(offer.economicIndex) · "+offer.period).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation,page:.detail(offer.id))} label: {Text("제의 상세 보기")}
+                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("liveOfferDetail-"+offer.route.rawValue)
+            }
+        }
+        if packet.offers.count > 1 {
+            NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation,page:.compare)} label: {Text("제의 조건 비교")}
+                .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("liveOffersCompare")
+        }
+        Text("실제 선발 결과에서 발행된 저장 제의입니다. 수락/거절과 등록·소속 발효는 다음 단계이며,조회만으로 소속·능력·피로·날짜를 바꾸지 않습니다.")
+            .font(.caption).foregroundStyle(GameTheme.boardMuted).lineSpacing(4)
+    }
+    private func detail(_ offer:DomesticContractOffer,_ value:ContractEvaluationSnapshot) -> some View {
+        VStack(alignment:.leading,spacing:16) {
+            ScoutDossier(title:offer.name,code:"LIVE OFFER / "+offer.route.rawValue.uppercased(),stamp:status(offer),isPreview:false) {
+                detailRow("선수",value.observation.name+" · #\(value.observation.number) / "+value.observation.role.label)
+                detailRow("모집 역할",DomesticContractOffer.roleName(offer.roleID))
+                detailRow("종류 / 배치",offer.kind+" / "+offer.placement)
+                detailRow("기간",offer.period)
+                detailRow(offer.economicLabel,"\(offer.economicIndex) · 해당 경로 기준100")
+                detailRow("발행 / 만료",offer.issuedDate+" / "+offer.expiresDate+"까지 포함")
+                detailRow("발효 / 종료일","수락·일정/등록 확인 후 확정 · 현재 소속 유지")
+                detailRow("계약금/옵션/성과급","0 · 실제 통화 금액 아님")
+                detailRow("연간 예산","잔여\(offer.availableBudget) / 필요\(offer.economicIndex)지수")
+                detailRow("경쟁/선발","적격 경쟁\(offer.competition)명 · 고정F/ID 순으로 선발")
+                detailRow("필요 확인","성인 무소속 신규 지원 · 수락/등록은 별도")
+                detailRow("출전 보장","없음 · 입단 후 역할/선발 경쟁")
+            }
+            GamePanel(title:"선발 근거 · 고정 평가 자료",onBoard:true,contentSpacing:12) {
+                Text(String(format:"H %.1f / C %.1f / P %+.1f / F %+.1f",offer.h,offer.c,offer.p,offer.f))
+                    .font(.subheadline.monospaced()).accessibilityIdentifier("liveOfferFit")
+                if let sample=value.selection?.sample {
+                    Text(sample.kind+" · "+sample.endDate+" 종료").font(.subheadline)
+                    Text(value.observation.role == .batter ? "\(sample.comparison.totals.line.plateAppearances)타석 · 같은 환경40타석 이상":"\(sample.comparison.totals.innings)이닝 · 같은 환경15이닝 이상").font(.caption)
+                }
+                Text("발행 뒤 훈련/경기·재실행으로 제의 조건을 재계산하지 않습니다. 현재 능력과 당시 평가를 구분해 보세요.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+            Text("수락/등록·소속 변경 기능 연결 전입니다. 지금은 제의 조건을 확인·비교할 수 있습니다.")
+                .font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferAcceptancePending")
+        }
+    }
+    private func detailRow(_ label:String,_ value:String) -> some View {
+        VStack(alignment:.leading,spacing:7) {
+            Text(label).font(.caption.bold()).foregroundStyle(ScoutDossierInk.muted)
+            Text(value).font(.subheadline.monospaced()).fixedSize(horizontal:false,vertical:true)
+            Rectangle().fill(ScoutDossierInk.rule).frame(height:1).accessibilityHidden(true)
+        }.padding(.vertical,4).accessibilityElement(children:.combine)
+    }
+    private func compare(_ packet:DomesticOfferPacket) -> some View {
+        GamePanel(title:"제의 조건 · 나란히 비교",onBoard:true,contentSpacing:18) {
+            if packet.offers.count == 2 {
+                let a=packet.offers[0],b=packet.offers[1]
+                compareRow("구단 / 대학",a.name,b.name)
+                compareRow("종류",a.kind,b.kind)
+                compareRow("모집 역할",DomesticContractOffer.roleName(a.roleID),DomesticContractOffer.roleName(b.roleID))
+                compareRow("배치",a.placement,b.placement)
+                compareRow("기간",a.period,b.period)
+                compareRow("경제 조건",a.economicLabel+" \(a.economicIndex)",b.economicLabel+" \(b.economicIndex)")
+                compareRow("만료(포함)",a.expiresDate,b.expiresDate)
+                compareRow("현재 상태",status(a),status(b))
+                compareRow("고정 적합도 F",String(format:"%+.1f",a.f),String(format:"%+.1f",b.f))
+                Text("연봉지수와 대학 지원지수는 다른 기준입니다. 숫자를 실제 금액처럼 합산하거나 유불리 순위로 해석하지 않습니다.")
+                    .font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferCompareCaution")
+            } else {Text("비교할 제의가2개일 때 표시됩니다.")}
+        }
+    }
+    private func compareRow(_ label:String,_ a:String,_ b:String) -> some View {
+        VStack(alignment:.leading,spacing:9) {
+            Text(label).font(.caption.bold()).foregroundStyle(GameTheme.gold)
+            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:10)):AnyLayout(HStackLayout(alignment:.top,spacing:16))) {
+                Text(a).frame(maxWidth:.infinity,alignment:.leading)
+                Text(b).frame(maxWidth:.infinity,alignment:.leading)
+            }.font(.subheadline.monospaced()).fixedSize(horizontal:false,vertical:true)
+            Rectangle().fill(GameTheme.boardLine).frame(height:1).accessibilityHidden(true)
+        }
     }
 }

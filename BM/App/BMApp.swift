@@ -179,6 +179,7 @@ struct CareerPathVerification: View {
                         }
                     }
                     _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:c.mainContext)
+                    if args.contains("-offer-expired"),age == 20 {p.gameDate="2030-04-08"}
                     try c.mainContext.save()
                 }
                 self.schools = schools;self.container = c

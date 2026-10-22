@@ -324,7 +324,9 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
                 sample:sample,sampleReason:reason,seats:seats,candidates:candidates,carried:carried,picks:simulated.picks,results:simulated.results)
         }
         try value.validate(player:player,calendar:calendar)
-        context.insert(try CareerContractEvaluation(playerID:player.id,snapshot:value));return true
+        context.insert(try CareerContractEvaluation(playerID:player.id,snapshot:value))
+        _ = try ContractOfferStore.insertCurrent(player:player,calendar:calendar,in:context)
+        return true
     }
     static func graduationSample(player:CareerPlayer,calendar:CareerCalendarState,observation:ScoutingObservation,in context:ModelContext) throws -> DomesticSelectionSample? {
         guard observation.age == 20 else {return nil}
@@ -362,6 +364,7 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
             for player in try context.fetch(FetchDescriptor<CareerPlayer>()) {
                 guard let calendar = calendars.first(where:{$0.playerID == player.id}) else {throw ContractEvaluationError.invalid}
                 _ = try captureIfDue(player:player,calendar:calendar,in:context)
+                _ = try ContractOfferStore.insertCurrent(player:player,calendar:calendar,in:context)
             }
             if context.hasChanges {try save(context)}
         } catch {context.rollback();throw error}
@@ -374,5 +377,55 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         guard !row.acknowledged else {return}
         row.acknowledged = true
         do {try save(context)} catch {context.rollback();throw error}
+    }
+}
+
+
+// Offer issuance is independent of the immutable evaluation payload and acknowledgement flag.
+enum CareerSchemaV11: VersionedSchema {
+    static let versionIdentifier = Schema.Version(11,0,0)
+    static var models:[any PersistentModel.Type] {CareerSchemaV10.models+[ContractOffer.self]}
+    @Model final class ContractOffer {
+        @Attribute(.unique) var key:String
+        var playerID:UUID
+        var payload:Data
+        init(playerID:UUID,value:DomesticOfferPacket) throws {
+            self.playerID=playerID;key=value.evaluationKey;payload=try JSONEncoder().encode(value)
+        }
+        func snapshot(evaluation:CareerContractEvaluation,player:CareerPlayer,calendar:CareerCalendarState) throws -> DomesticOfferPacket {
+            guard playerID == player.id,key == evaluation.key else {throw ContractOfferError.invalid}
+            let value=try JSONDecoder().decode(DomesticOfferPacket.self,from:payload)
+            try value.validate(evaluation:evaluation.snapshot(player:player,calendar:calendar),key:key,today:GameDate(player.gameDate))
+            return value
+        }
+    }
+}
+typealias CareerContractOffer = CareerSchemaV11.ContractOffer
+
+@MainActor enum ContractOfferStore {
+    static func records(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> [CareerContractOffer] {
+        guard context.container.schema.entities.contains(where:{$0.name == "ContractOffer"}) else {return []}
+        let evaluations=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context),id=player.id
+        let rows=try context.fetch(FetchDescriptor<CareerContractOffer>(predicate:#Predicate {$0.playerID == id}))
+        guard Set(rows.map(\.key)).count == rows.count else {throw ContractOfferError.invalid}
+        for row in rows {
+            guard let evaluation=evaluations.first(where:{$0.key == row.key}) else {throw ContractOfferError.invalid}
+            _ = try row.snapshot(evaluation:evaluation,player:player,calendar:calendar)
+        }
+        return rows.sorted {$0.key > $1.key}
+    }
+    // Parent evaluation/date transaction owns the one save, including old active V10 imports.
+    @discardableResult static func insertCurrent(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> Bool {
+        guard context.container.schema.entities.contains(where:{$0.name == "ContractOffer"}) else {return false}
+        let rows=try records(player:player,calendar:calendar,in:context),date=try GameDate(player.gameDate)
+        guard let window=ContractEvaluationWindow.containing(date) else {return false}
+        let key=CareerContractEvaluation.key(player.id,window.id)
+        guard !rows.contains(where:{$0.key == key}),
+              let evaluation=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context).first(where:{$0.key == key}) else {return false}
+        let snapshot=try evaluation.snapshot(player:player,calendar:calendar)
+        guard snapshot.version == 2 else {return false}
+        let value=try DomesticOfferPacket.make(evaluation:snapshot,key:key,on:date)
+        try value.validate(evaluation:snapshot,key:key,today:date)
+        context.insert(try CareerContractOffer(playerID:player.id,value:value));return true
     }
 }

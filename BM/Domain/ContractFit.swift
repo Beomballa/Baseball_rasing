@@ -549,3 +549,77 @@ struct DomesticSelection: Codable, Equatable {
         guard replay.picks == picks,replay.results == results else {throw ContractEvaluationError.invalid}
     }
 }
+
+
+struct DomesticContractOffer: Codable, Equatable, Identifiable {
+    let id: String
+    let resultID: String
+    let route: DomesticSelectionRoute
+    let name: String
+    let roleID: String
+    let issuedDate: String
+    let expiresDate: String
+    let economicIndex: Int
+    let years: Int
+    let h: Double
+    let c: Double
+    let p: Double
+    let f: Double
+    let availableBudget: Int
+    let competition: Int
+    var kind: String {route == .rookie ? "국내 신인 육성 계약":"대학 입단안"}
+    var placement: String {route == .rookie ? "국내 육성 · 출전/승격 경쟁":"대학 야구부 · 학적/등록 심사"}
+    var economicLabel: String {route == .rookie ? "연봉지수":"선발 지원지수"}
+    var period: String {route == .rookie ? "1개 달력연도 · 발효일 수락 후 확정":"최초 입단 · 최대4개 달력 학년/24세 졸업 규칙"}
+    func isExpired(on date:GameDate) throws -> Bool {date > (try GameDate(expiresDate))}
+    static func roleName(_ id:String) -> String {
+        switch id {case "slugger":"장타";case "onBase":"출루";case "field":"수비";default:"선발 투수"}
+    }
+}
+struct DomesticOfferPacket: Codable, Equatable {
+    let version: Int
+    let rule: String
+    let evaluationKey: String
+    let issuedDate: String
+    let offers: [DomesticContractOffer]
+    let emptyReasons: [String]
+    static func make(evaluation:ContractEvaluationSnapshot,key:String,on date:GameDate) throws -> Self {
+        guard evaluation.version == 2,let selection=evaluation.selection,
+              key == evaluation.observation.playerID.uuidString+":"+evaluation.window.id,
+              date >= (try GameDate(evaluation.evaluatedDate)),ContractEvaluationWindow.containing(date) == evaluation.window else {throw ContractOfferError.invalid}
+        let expiry=min(date.adding(days:6),evaluation.window.end).description
+        let winners=selection.results.filter(\.selected)
+        guard winners.count <= 2,Set(winners.map(\.route)).count == winners.count else {throw ContractOfferError.invalid}
+        var offers:[DomesticContractOffer]=[]
+        for row in winners {
+            guard let h=row.h,let f=row.f,f >= 0,row.reasons.isEmpty,row.availableSeats == 1,row.cost <= row.availableBudget else {throw ContractOfferError.invalid}
+            offers.append(DomesticContractOffer(id:key+"/"+row.id,resultID:row.id,route:row.route,name:row.name,roleID:row.role,
+                issuedDate:date.description,expiresDate:expiry,economicIndex:row.cost,years:1,h:h,c:row.c,p:row.p,f:f,
+                availableBudget:row.availableBudget,competition:row.competition))
+        }
+        offers.sort {a,b in a.route == b.route ? a.id < b.id:a.route == .rookie}
+        var reasons:[String]=[]
+        if offers.isEmpty {
+            reasons=["이번 고정 평가에서 지명·대학 선발된 자리가 없습니다."]
+            for reason in selection.results.flatMap(\.reasons) where !reasons.contains(reason) {
+                reasons.append(reason)
+                if reasons.count == 4 {break}
+            }
+        }
+        return Self(version:1,rule:"domestic-offers-v1",evaluationKey:key,issuedDate:date.description,offers:offers,emptyReasons:reasons)
+    }
+    func validate(evaluation:ContractEvaluationSnapshot,key:String,today:GameDate) throws {
+        let issued=try GameDate(issuedDate)
+        guard version == 1,rule == "domestic-offers-v1",evaluationKey == key,issued <= today,
+              self == (try Self.make(evaluation:evaluation,key:key,on:issued)) else {throw ContractOfferError.invalid}
+    }
+}
+enum ContractOfferError: LocalizedError {
+    case invalid, pendingChanges
+    var errorDescription: String? {
+        switch self {
+        case .invalid:"저장된 제의 자료를 확인하지 못했습니다. 기존 제의와 평가 원장을 유지하고 다시 확인해 주세요."
+        case .pendingChanges:"다른 저장 작업이 진행 중입니다. 완료한 뒤 제의를 다시 확인해 주세요."
+        }
+    }
+}
