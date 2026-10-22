@@ -2328,3 +2328,47 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testRenewalEconomicRightsHomeAndFrozenOfferBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+            let team=app.staticTexts["contractCurrentTeam"];revealFit(team,in:app);XCTAssertTrue(team.label.contains("육성"))
+            XCTAssertTrue(app.staticTexts["contractEconomicStatus"].exists)
+            let rights=app.staticTexts["contractRightsStatus"];revealFit(rights,in:app);XCTAssertTrue(rights.label.contains("자동 FA 아님"))
+            let status=app.staticTexts["renewalReviewStatus"];revealFit(status,in:app);XCTAssertTrue(status.label.contains("실제 재계약 제의 1건"))
+            let fit=app.staticTexts["renewalReviewFit"].label
+            let open=app.buttons["openRenewalOffer"];revealFit(open,in:app);open.tap()
+            let pending=app.staticTexts["renewalAcceptancePending"];revealFit(pending,in:app);XCTAssertTrue(pending.exists)
+            XCTAssertTrue(app.staticTexts["renewalOfferValidity"].label.contains("검토 가능"))
+            XCTAssertTrue(app.staticTexts["renewalOfferEconomics"].exists)
+            XCTAssertFalse(app.buttons["acceptLiveOffer"].exists)
+            let stats=app.staticTexts["renewalActualStats"];revealFit(stats,in:app);XCTAssertTrue(stats.exists)
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Renewal offer "+role;shot.lifetime = .keepAlways;add(shot)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let ack=app.buttons["acknowledgeContractEvaluation"];revealFit(ack,in:app);ack.tap()
+            XCTAssertEqual(app.staticTexts["renewalReviewFit"].label,fit)
+            let homeDate=app.staticTexts["calendarDate"];revealFit(homeDate,in:app)
+            XCTAssertEqual(homeDate.label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+        }
+        app.terminate()
+    }
+    @MainActor func testRenewalNoOfferAndExpiryKeepRightsWithoutAcceptanceControls() throws {
+        let app=XCUIApplication()
+        for scenario in ["-renewal-empty","-renewal-expired"] {
+            app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification",scenario];app.launch()
+            let status=app.staticTexts["renewalReviewStatus"];revealFit(status,in:app)
+            XCTAssertTrue(status.label.contains(scenario == "-renewal-empty" ? "제의 없음":"제의 1건"))
+            let open=app.buttons["openRenewalOffer"];revealFit(open,in:app);open.tap()
+            if scenario == "-renewal-expired" {
+                let validity=app.staticTexts["renewalOfferValidity"];revealFit(validity,in:app);XCTAssertTrue(validity.label.contains("만료"))
+            } else {XCTAssertTrue(app.staticTexts["제의 없음 · 소속과 보유권리는 유지됩니다."].exists)}
+            XCTAssertFalse(app.buttons["acceptLiveOffer"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let rights=app.staticTexts["contractRightsStatus"];revealFit(rights,in:app);XCTAssertTrue(rights.label.contains("보유권리 유지"))
+            app.terminate()
+        }
+    }
+}

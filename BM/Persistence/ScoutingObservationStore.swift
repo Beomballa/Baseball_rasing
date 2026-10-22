@@ -236,20 +236,24 @@ struct ContractEvaluationSnapshot: Codable {
     let observation: ScoutingObservation
     let pending: [String]
     var selection: DomesticSelection?
+    var renewal: DomesticRenewalReview?
     func validate(player:CareerPlayer,calendar:CareerCalendarState) throws {
         let date = try GameDate(evaluatedDate)
-        guard [1,2].contains(version), rule == "contracts-window-v1", [4,7,11].contains(window.month),
+        guard [1,2,3].contains(version), rule == "contracts-window-v1", [4,7,11].contains(window.month),
               (1...9998).contains(window.year), window == ContractEvaluationWindow.containing(date),
               observation.playerID == player.id, observation.origin == calendar.originDate,
               observation.role == player.role, observation.observedDate == evaluatedDate,
               observation.age == (try GameDate(calendar.originDate).age(startingAt:player.startAge,on:date)),
               date <= (try GameDate(player.gameDate)), calendarRevision >= 0,
-              !routes.isEmpty, routes == window.routes(age:observation.age,affiliation:affiliation.stage),
+              !routes.isEmpty, routes == (version == 3 ? ["국내 육성팀 재계약"]:window.routes(age:observation.age,affiliation:affiliation.stage)),
               !pending.isEmpty else { throw ContractEvaluationError.invalid }
         try observation.validate()
-        if version == 1 {guard selection == nil else {throw ContractEvaluationError.invalid}}
+        if version == 3 {
+            guard let renewal,selection == nil else {throw ContractEvaluationError.invalid}
+            try renewal.validate(observation:observation,key:player.id.uuidString+":"+window.id,window:window)
+        } else if version == 1 {guard selection == nil,renewal == nil else {throw ContractEvaluationError.invalid}}
         else {
-            guard let selection, affiliation.stage == .unsigned else {throw ContractEvaluationError.invalid}
+            guard let selection,renewal == nil, affiliation.stage == .unsigned else {throw ContractEvaluationError.invalid}
             try selection.validate(observation:observation,window:window)
         }
     }
@@ -286,6 +290,14 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         let rows = try context.fetch(FetchDescriptor<CareerContractEvaluation>(predicate:#Predicate {$0.playerID == id}))
         guard Set(rows.map(\.key)).count == rows.count else {throw ContractEvaluationError.invalid}
         let snapshots=try rows.map {try $0.snapshot(player:player,calendar:calendar)}
+        for value in snapshots where value.version == 3 {
+            guard let review=value.renewal,let row=try ContractRegistrationStore.row(player:player,in:context),
+                  let journal=try? JSONDecoder().decode(CareerContractJournal.self,from:row.payload),journal.playerID == player.id,
+                  journal.version == 1,journal.memberships.contains(review.membership),journal.decisions.contains(where:{$0.offerID == review.membership.offerID && $0.kind == .accepted && $0.date == review.membership.since}) else {throw ContractEvaluationError.invalid}
+            let source=try context.fetch(FetchDescriptor<CareerContractOffer>(predicate:#Predicate {$0.playerID == id})).flatMap {try JSONDecoder().decode(DomesticOfferPacket.self,from:$0.payload).offers}
+            guard let original=source.first(where:{$0.id == review.membership.offerID}),original.roleID == review.roleID,
+                  review.membership == (try CareerMembership.make(offer:original,on:GameDate(review.membership.since),origin:GameDate(calendar.originDate),startAge:player.startAge)) else {throw ContractEvaluationError.invalid}
+        }
         for value in snapshots where value.window.month == 7 {
             if let selection=value.selection {
                 let april=snapshots.first {$0.window.year == value.window.year && $0.window.month == 4}?.selection
@@ -303,7 +315,24 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         let rows = try records(player:player,calendar:calendar,in:context)
         guard let window = ContractEvaluationWindow.containing(try GameDate(player.gameDate)) else {return false}
         guard !rows.contains(where:{$0.key == CareerContractEvaluation.key(player.id,window.id)}) else {return false}
-        if try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).current(on:GameDate(player.gameDate)) != nil {return false}
+        if let member=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).current(on:GameDate(player.gameDate)) {
+            guard member.route == .rookie,window.month == 11 else {return false}
+            guard let history=try CareerPathStore.record(player:player,calendar:calendar,in:context)?.snapshot(player:player,calendar:calendar) else {throw ContractEvaluationError.invalid}
+            let evaluations=try records(player:player,calendar:calendar,in:context)
+            let packets=try ContractOfferStore.records(player:player,calendar:calendar,in:context).map { row in
+                guard let evaluation=evaluations.first(where:{$0.key == row.key}) else {throw ContractEvaluationError.invalid}
+                return try row.snapshot(evaluation:evaluation,player:player,calendar:calendar)
+            }
+            guard let original=packets.flatMap(\.offers).first(where:{$0.id == member.offerID}) else {throw ContractEvaluationError.invalid}
+            let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
+            let key=CareerContractEvaluation.key(player.id,window.id)
+            let review=try DomesticRenewalReview.make(observation:observation,member:member,roleID:original.roleID,key:key,window:window)
+            let value=ContractEvaluationSnapshot(version:3,rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
+                calendarRevision:calendar.revision,affiliation:history.current,routes:["국내 육성팀 재계약"],observation:observation,
+                pending:["성인 경기 비교 기준 미검증 · 성적 보정 P=0 중립","재계약 수락/기간 갱신·권리 해제/방출은 후속입니다."],renewal:review)
+            try value.validate(player:player,calendar:calendar)
+            context.insert(try CareerContractEvaluation(playerID:player.id,snapshot:value));return true
+        }
         guard let history = try CareerPathStore.record(player:player,calendar:calendar,in:context)?.snapshot(player:player,calendar:calendar) else {throw ContractEvaluationError.invalid}
         let routes = window.routes(age:try calendar.age(of:player),affiliation:history.current.stage)
         guard !routes.isEmpty else {return false}

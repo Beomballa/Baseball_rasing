@@ -717,3 +717,83 @@ enum ContractRegistrationError:LocalizedError {
         }
     }
 }
+
+// Economic terms never imply a release of the club's registration rights.
+struct CareerContractStatus: Equatable {
+    let membership: CareerMembership
+    let economicExpired: Bool
+    let nextReview: String?
+    init(_ membership: CareerMembership, on date: GameDate) throws {
+        self.membership=membership
+        economicExpired=date > (try GameDate(membership.economicEnd))
+        nextReview=membership.route == .rookie ? ContractEvaluationWindow(year:date > ContractEvaluationWindow(year:date.year,month:11).end ? date.year+1:date.year,month:11).start.description:nil
+    }
+    var economicLabel: String {economicExpired ? "경제 기간 종료 · 갱신 미확정":"경제 계약 유효"}
+    var rightsLabel: String {membership.route == .rookie ? "구단 보유권리 유지 · 자동 FA 아님":"대학 학적 · 프로 구단 보유권리 없음"}
+}
+struct DomesticRenewalOffer: Codable, Equatable, Identifiable {
+    let id: String
+    let issuedDate: String
+    let expiresDate: String
+    let effectiveDate: String
+    let economicEnd: String
+    let economicIndex: Int
+    var years: Int {1}
+}
+struct DomesticRenewalReview: Codable, Equatable {
+    let rule: String
+    let membership: CareerMembership
+    let roleID: String
+    let h: Double?
+    let c: Double
+    let p: Double
+    let f: Double?
+    let competitorH: Double
+    let budget: Int
+    let sampleID: String?
+    let sampleCount: Int
+    let totals: PersonalSeasonTotals?
+    let reasons: [String]
+    let offer: DomesticRenewalOffer?
+    static func make(observation: ScoutingObservation, member: CareerMembership, roleID: String,
+                     key: String, window: ContractEvaluationWindow) throws -> Self {
+        let date=try GameDate(observation.observedDate)
+        guard member.route == .rookie,try member.contains(date),window.month == 11,
+              window == ContractEvaluationWindow.containing(date),observation.age >= 20,
+              observation.school == member.name,key == observation.playerID.uuidString+":"+window.id,
+              let club=CareerTeamDirectory.domesticIDs.firstIndex(of:member.teamID),
+              observation.grades.contains(where:{$0.id == roleID}) else {throw ContractEvaluationError.invalid}
+        // One fixed current-club role, one incumbent slot. These are development-team game data.
+        let bits=DomesticSelection.hash(key+"/renewal/"+member.teamID+"/"+roleID)
+        let competitor=Double(48+bits%19)
+        let c=max(DomesticSelection.minimum(roleID,route:.rookie),competitor+1)
+        let budget=330+club*12-Int(75+(bits/19)%101)
+        let groups=observation.groups.filter {$0.id.hasPrefix("domestic-development/") && $0.performance != nil}
+        let eligible=groups.filter {observation.role == .batter ? $0.hasBatterMinimum:$0.hasPitcherMinimum}
+        let sample=(eligible.isEmpty ? groups:eligible).sorted {
+            let a=$0.performance!.sample($0.totals.line,role:observation.role),b=$1.performance!.sample($1.totals.line,role:observation.role)
+            return a == b ? $0.id < $1.id:a > b
+        }.first
+        let n=sample.flatMap {group in group.performance.map {$0.sample(group.totals.line,role:observation.role)}} ?? 0
+        let enough=sample.map {observation.role == .batter ? $0.hasBatterMinimum:$0.hasPitcherMinimum} ?? false
+        let h=observation.grades.first {$0.id == roleID}?.score
+        // Adult Vref has not been calibrated. Actual sample is shown; no invented performance bonus.
+        let p=0.0,f=h.map {ScoutingContractFit.round($0-c+p)}
+        let cost=DomesticSelection.cost(f ?? 0)
+        var reasons:[String]=[]
+        if !enough {reasons.append(observation.role == .batter ? "동일 환경 육성 경기40타석 필요":"동일 환경 육성 경기15이닝 필요")}
+        if h == nil {reasons.append("모집 역할 기량 자료 부족")}
+        reasons += DomesticSelection.fieldCondition(roleID,route:.rookie,observation:observation)
+        if let f,f < 0 {reasons.append("역할/경쟁 기준 미달 · F 0 이상 필요")}
+        if cost > budget {reasons.append("갱신 예산 부족 · 필요\(cost)/잔여\(budget)지수")}
+        let start=max(try GameDate(member.economicEnd).adding(days:1),date)
+        let offer=reasons.isEmpty ? DomesticRenewalOffer(id:key+"/renewal/"+member.teamID,issuedDate:date.description,
+            expiresDate:min(date.adding(days:6),window.end).description,effectiveDate:start.description,
+            economicEnd:start.anniversary(in:start.year+1).adding(days:-1).description,economicIndex:cost):nil
+        return Self(rule:"domestic-renewal-v1",membership:member,roleID:roleID,h:h,c:c,p:p,f:f,competitorH:competitor,budget:budget,
+            sampleID:sample?.id,sampleCount:n,totals:sample?.totals,reasons:reasons,offer:offer)
+    }
+    func validate(observation: ScoutingObservation,key: String,window: ContractEvaluationWindow) throws {
+        guard self == (try Self.make(observation:observation,member:membership,roleID:roleID,key:key,window:window)) else {throw ContractEvaluationError.invalid}
+    }
+}

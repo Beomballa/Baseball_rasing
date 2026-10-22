@@ -58,6 +58,7 @@ struct PlayerHomeView: View {
                 if let calendar {
                     CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
                     playActions(calendar)
+                    CareerContractStatusPanel(player:player,calendar:calendar).id(player.id)
                     ContractEvaluationHomePanel(player:player,calendar:calendar).id(player.id)
                     CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
                     ScoutingObservationHomePanel(player: player, calendar: calendar)
@@ -669,13 +670,15 @@ struct ContractEvaluationHomePanel: View {
                     Text("\(value.evaluatedDate) 평가 자료 고정 · \(row.acknowledged ? "확인 완료":"확인 필요")")
                         .font(.caption).accessibilityIdentifier("contractEvaluationStatus")
                     Text(value.routes.joined(separator:" / ")).font(.caption).accessibilityIdentifier("contractEvaluationRoutes")
-                    if let selection=value.selection {
+                    if let renewal=value.renewal {
+                        DomesticRenewalSummary(player:player,value:renewal,evaluatedDate:value.evaluatedDate)
+                    } else if let selection=value.selection {
                         DomesticSelectionHomeSummary(value:selection)
                     } else {
                         Text("이 원장에는 선발 자료가 기록되지 않았습니다. 기존 자료를 유지하고 다음 허용 창에서 심사합니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractSelectionLegacy")
                     }
-                    DomesticOfferHomePanel(player:player,calendar:calendar,evaluation:row)
+                    if value.renewal == nil {DomesticOfferHomePanel(player:player,calendar:calendar,evaluation:row)}
                     if !row.acknowledged {
                         Text("같은 창에서는 성장하거나 재실행해도 다시 평가하지 않습니다. 자료를 확인하면 날짜 진행을 계속할 수 있습니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -690,7 +693,7 @@ struct ContractEvaluationHomePanel: View {
                             Text("\(grade.label) H \(grade.score.map {String(format:"%.1f",$0)} ?? "—")")
                                 .font(.caption.monospaced()).accessibilityIdentifier("contractEvaluationGrade-"+grade.id)
                         }
-                        Text(value.selection == nil ? "선발 심사 자료 미기록 · 과거 원장은 다시 평가하지 않습니다.":"성적·모집 자리·예산·후보 순서는 평가일에 고정됩니다. 제의는 별도 보관하며 수락/소속 전환은 후속입니다.")
+                        Text(value.renewal != nil ? "재계약 심사와 제의는 이 평가일에 함께 고정됩니다. 재계약 수락·기간 갱신은 다음 단계입니다.":value.selection == nil ? "선발 심사 자료 미기록 · 과거 원장은 다시 평가하지 않습니다.":"성적·모집 자리·예산·후보 순서는 평가일에 고정됩니다. 실제 입단 제의는 보관함에서 확인합니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                         Text("당시 평가에 기록된 후속 항목 · 현재 제의는 보관함 확인").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         ForEach(value.pending,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
@@ -703,8 +706,9 @@ struct ContractEvaluationHomePanel: View {
                 Text(((try? calendar.age(of:player)) ?? 16) < 20 ? "20세 전에는 정식 평가 자료를 만들지 않습니다.":"해당 경로의 평가 창에서 자료를 한 번 고정합니다.")
                     .font(.caption).accessibilityIdentifier("contractEvaluationWaiting")
             }
-            if let date = try? GameDate(player.gameDate), ContractEvaluationWindow.containing(date)?.month == 11 {
-                Text("11월은 프로 외부/갱신 창입니다. 현재 고교·진로 준비·무소속 선수는 대상이 아니며 프로 소속/권리 연결은 후속입니다.")
+            if let date = try? GameDate(player.gameDate), ContractEvaluationWindow.containing(date)?.month == 11,
+               (try? calendar.registration(for:player))?.route != .rookie {
+                Text("11월은 프로 외부/갱신 창입니다. 현재 고교·진로 준비·무소속·대학 선수는 대상이 아닙니다. 국내 육성팀 소속 선수만 재계약 평가를 진행합니다.")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractNovemberIneligible")
             }
         }
@@ -761,5 +765,117 @@ struct DomesticSelectionHomeSummary: View {
     }
     private func valueRole(_ id:String) -> String {
         switch id {case "slugger":"장타";case "onBase":"출루";case "field":"수비";default:"선발"}
+    }
+}
+
+struct CareerContractStatusPanel: View {
+    let player: CareerPlayer
+    let calendar: CareerCalendarState
+    var body: some View {
+        let _=calendar.revision
+        GamePanel(title:"계약 · 소속 · 보유권리",onBoard:true) {
+            switch status {
+            case .success(let value):
+                if let value {
+                    Text("현재 소속 · "+value.membership.name).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractCurrentTeam")
+                    Text(value.economicLabel).font(.subheadline.bold()).accessibilityIdentifier("contractEconomicStatus")
+                    Text(value.membership.since+" ~ "+value.membership.economicEnd+" · \(value.membership.economicIndex)\(value.membership.route == .rookie ? " 연봉지수":" 지원지수")")
+                        .font(.caption.monospaced()).accessibilityIdentifier("contractEconomicPeriod")
+                    Text(value.rightsLabel).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractRightsStatus")
+                    if value.membership.route == .rookie {
+                        Text("갱신 평가 창 · "+(value.nextReview ?? "—")+"부터 14일까지")
+                            .font(.caption).accessibilityIdentifier("contractNextRenewal")
+                        Text("11월 창 안에서는 최초 적격일의 평가·제의를 한 번 고정합니다. 경제 기간 종료나 제의 만료로 소속/권리가 자동 해제되지 않습니다.")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    } else {
+                        Text("학적 종료 · "+(value.membership.enrollmentEnd ?? "—")+" / 재학 중 프로 진출 심사는 후속")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
+                } else {
+                    Text("등록 경제 계약 없음 · 프로 구단 보유권리 없음").font(.caption).accessibilityIdentifier("contractNoRegistration")
+                    Text("현재 학적/진로 소속은 소속 이력에서 확인하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }
+            case .failure(let error):
+                Text(error.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractStatusError")
+            }
+        }
+    }
+    private var status: Result<CareerContractStatus?,Error> {
+        Result {try calendar.registration(for:player).map {try CareerContractStatus($0,on:GameDate(player.gameDate))}}
+    }
+}
+
+struct DomesticRenewalSummary: View {
+    let player: CareerPlayer
+    let value: DomesticRenewalReview
+    let evaluatedDate: String
+    var body: some View {
+        VStack(alignment:.leading,spacing:12) {
+            Text(value.membership.name+" · 재계약 평가").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+            Text(value.offer == nil ? "재계약 제의 없음":"실제 재계약 제의 1건 발행")
+                .font(.headline).accessibilityIdentifier("renewalReviewStatus")
+            Text(DomesticContractOffer.roleName(value.roleID)+" · H \(value.h.map {String(format:"%.1f",$0)} ?? "—") / C \(String(format:"%.1f",value.c)) / P +0.0 / F \(value.f.map {String(format:"%+.1f",$0)} ?? "—")")
+                .font(.caption.monospaced()).accessibilityIdentifier("renewalReviewFit")
+            Text("육성 표본 \(value.sampleCount)\(player.role == .batter ? "타석":"타자 상대") · 모집 자리 1 · 경쟁 기준 \(Int(value.competitorH)) · 가용 예산 \(value.budget)지수")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            ForEach(value.reasons,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.gold)}
+            NavigationLink {DomesticRenewalDetail(player:player,value:value,evaluatedDate:evaluatedDate)} label: {
+                Text(value.offer == nil ? "재계약 심사 근거 보기":"재계약 제의 상세 보기")
+            }.buttonStyle(MatchPixelButtonStyle(primary:value.offer != nil)).accessibilityIdentifier("openRenewalOffer")
+        }
+    }
+}
+struct DomesticRenewalDetail: View {
+    let player: CareerPlayer
+    let value: DomesticRenewalReview
+    let evaluatedDate: String
+    var body: some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:18) {
+                GamePanel(title:"재계약 제의 · 고정 자료",onBoard:true) {
+                    Text(value.membership.name).font(.title2.bold()).foregroundStyle(GameTheme.gold)
+                    Text(player.name+" · "+DomesticContractOffer.roleName(value.roleID)+" · 국내 육성/출전 경쟁")
+                        .font(.subheadline)
+                    Text(evaluatedDate+" 평가 · 같은 창 재평가 없음").font(.caption).accessibilityIdentifier("renewalFrozenDate")
+                    if let offer=value.offer {
+                        Text("발행 · "+offer.issuedDate+" / 유효 마감 · "+offer.expiresDate).font(.caption.monospaced())
+                        Text((try? GameDate(player.gameDate) > GameDate(offer.expiresDate)) == true ? "제의 만료 · 원본 이력 보관":"검토 가능한 재계약 제의")
+                            .font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("renewalOfferValidity")
+                        Text("예정 경제 기간 · "+offer.effectiveDate+" ~ "+offer.economicEnd).font(.caption.monospaced()).accessibilityIdentifier("renewalOfferPeriod")
+                        Text("1개 달력연도 · 연봉지수 \(offer.economicIndex)").font(.headline).accessibilityIdentifier("renewalOfferEconomics")
+                        Text("이 제의는 실제 평가 원장에 저장됐습니다. 수락·기간 갱신은 아직 연결하지 않았으며 현재 경제 계약/소속·권리를 변경하지 않습니다.")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("renewalAcceptancePending")
+                    } else {
+                        Text("제의 없음 · 소속과 보유권리는 유지됩니다.").font(.headline).foregroundStyle(GameTheme.gold)
+                        ForEach(value.reasons,id:\.self) {Text($0).font(.caption)}
+                    }
+                }
+                GamePanel(title:"심사 근거 · 역할/표본/예산",onBoard:true) {
+                    Text("H \(value.h.map {String(format:"%.1f",$0)} ?? "—") · C \(String(format:"%.1f",value.c)) · F \(value.f.map {String(format:"%+.1f",$0)} ?? "—")")
+                        .font(.subheadline.monospaced())
+                    Text("현재 구단 갱신 자리 1 / 고정 NPC 경쟁 기량 \(Int(value.competitorH)) / 가용 예산 \(value.budget)지수")
+                        .font(.caption)
+                    if let totals=value.totals {
+                        Text(player.role == .batter ? "\(totals.games)경기 · \(totals.line.plateAppearances)타석 · \(totals.line.hits)안타 · \(totals.line.homeRuns)홈런":"\(totals.games)경기 · \(totals.innings)이닝 · \(totals.line.pitchingStrikeouts)탈삼진 · \(totals.line.runsAllowed)실점")
+                            .font(.caption).accessibilityIdentifier("renewalActualStats")
+                    }
+                    Text("성적 출처 · "+sampleLabel).font(.caption).accessibilityIdentifier("renewalSampleSource")
+                    Text("성인 리그 비교 기준은 미검증이므로 P=0 중립입니다. 고교 성적/자동 팀 결과를 섞지 않으며 실제 육성 출전 표본이 부족하면 보류합니다.")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    Text("제의 없음/거절/만료만으로 방출 또는 FA를 확정하지 않습니다. 권리 유지·방출/재계약 수락은 다음 단계입니다.")
+                        .font(.caption).foregroundStyle(GameTheme.gold)
+                }
+            }.padding(14).frame(maxWidth:540,alignment:.leading).frame(maxWidth:.infinity)
+        }.background(GameTheme.navy).foregroundStyle(GameTheme.boardInk)
+            .navigationTitle("재계약 제의 상세").navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(GameTheme.navy,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar)
+            .toolbarColorScheme(.dark,for:.navigationBar).tint(GameTheme.gold)
+    }
+    private var sampleLabel: String {
+        guard let id=value.sampleID else {return "유효 육성 표본 없음"}
+        let position=id.split(separator:"/").dropLast().last.map(String.init)
+        let label=player.role == .pitcher ? "투수":position.flatMap {FieldPosition(rawValue:$0)?.label} ?? player.roleDetail
+        let mode=ScoutingInputMode.allCases.first {id.hasSuffix("/"+$0.suffix)}?.label ?? "조작 분류 미기록"
+        return "국내 육성 공식 경기 · "+label+" · "+mode
     }
 }
