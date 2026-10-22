@@ -116,7 +116,7 @@ struct ScoutingObservation: Codable {
     func validate() throws {
         let origin = try GameDate(origin), date = try GameDate(observedDate)
         let cycle = try ScoutingPeriod(origin: origin, today: date)
-        guard [1,2].contains(version), evaluationVersion == "contracts-role-v1", cycle.index == period,
+        guard [1,2,3].contains(version), evaluationVersion == "contracts-role-v1", cycle.index == period,
               cycle.start.description == periodStart, cycle.next.description == nextDate,
               try GameDate(sampleStart) == max(origin, date.adding(days: -364)),
               appearance.isValid, (0...99).contains(number), age >= 0, pending >= 0,
@@ -127,7 +127,7 @@ struct ScoutingObservation: Codable {
               }),
               positionMastery.map({ $0.isFinite && (0...100).contains($0) }) ?? true,
               groups.count <= 365, Set(groups.map(\.id)).count == groups.count,
-              evaluationPending == Self.pendingReasons(age: age, role: role, groups: groups, modern: version == 2, compared: contractFit?.selectedEnvironment != nil),
+              evaluationPending == Self.pendingReasons(age: age, role: role, groups: groups, modern: version >= 2, compared: contractFit?.selectedEnvironment != nil),
               grades == (try ScoutingRoleEvaluation.grades(role: role, abilities: abilities, positionMastery: positionMastery)) else {
             throw ScoutingObservationError.invalid
         }
@@ -140,7 +140,7 @@ struct ScoutingObservation: Codable {
         expected.games = groups.reduce(0) { $0 + $1.totals.games }
         guard expected == totals else { throw ScoutingObservationError.invalid }
         if version == 1 {guard contractFit == nil else {throw ScoutingObservationError.invalid}}
-        else {guard let contractFit else {throw ScoutingObservationError.invalid};try contractFit.validate(observation:self)}
+        else {guard let contractFit else {throw ScoutingObservationError.invalid};guard contractFit.version == (version == 2 ? 1:2) else {throw ScoutingObservationError.invalid};try contractFit.validate(observation:self)}
     }
 }
 
@@ -200,7 +200,7 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
             pending: live.pending, positionMastery: mastery,
             grades: try ScoutingRoleEvaluation.grades(role: player.role, abilities: live.abilities, positionMastery: mastery),
             evaluationPending: ScoutingObservation.pendingReasons(age: live.age, role: player.role, groups: live.groups))
-        value.version = 2
+        value.version = 3
         value.contractFit = try ScoutingContractFit.make(value)
         value.evaluationPending = ScoutingObservation.pendingReasons(age:live.age,role:player.role,groups:live.groups,modern:true,compared:value.contractFit?.selectedEnvironment != nil)
         try value.validate()

@@ -110,7 +110,7 @@ struct CareerMatch: Codable, Equatable {
             while !completed { step(role == "batter" ? .swing : .pitch, pitchCode: mastery.keys.sorted().first); settle() }
         } else {
             settle()
-            if !completed { step(input, pitchCode: pitchCode, control: control); settle() }
+            if !completed { step(input, pitchCode: pitchCode, control: control, direct: true); settle() }
         }
         if completed, let experience = abilityExperience {
             let reward = experience.reward(for: self)
@@ -124,7 +124,7 @@ struct CareerMatch: Codable, Equatable {
         }
     }
 
-    private mutating func step(_ input: MatchInput, pitchCode: String?, control: ManualMatchInput? = nil) {
+    private mutating func step(_ input: MatchInput, pitchCode: String?, control: ManualMatchInput? = nil, direct: Bool = false) {
         let defendingHome = half % 2 == 0, previousHalf = half
         let previousOrder = homeOrder + awayOrder
         pitching?.recordPitch(home:defendingHome)
@@ -134,6 +134,7 @@ struct CareerMatch: Codable, Equatable {
             }
         }
         let personal = appearance && (role == "batter" ? ownAtBat : ownPitcherActive && !offense)
+        if personal {scoutingPerformance?.inputs?.record(direct:direct)}
         if personal && controlVersion == 2 {
             manualStep(input, pitchCode: pitchCode, control: control ?? automaticControl(input, pitchCode: pitchCode))
             return

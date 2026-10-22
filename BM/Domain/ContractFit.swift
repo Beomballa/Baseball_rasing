@@ -1,9 +1,25 @@
 import Foundation
 
+enum ScoutingInputMode: String, Codable, CaseIterable {
+    case automatic, direct, mixed
+    var suffix: String { switch self {case .automatic: "auto-v2";case .direct: "direct-v1";case .mixed: "mixed-v1"} }
+    var label: String { switch self {case .automatic: "자동";case .direct: "직접";case .mixed: "직접+자동"} }
+}
+struct ScoutingInputUsage: Codable, Equatable {
+    var direct = 0, automatic = 0
+    var mode: ScoutingInputMode { direct == 0 ? .automatic : automatic == 0 ? .direct : .mixed }
+    mutating func record(direct: Bool) {if direct {self.direct += 1} else {automatic += 1}}
+    func validate() throws {
+        guard (0...100_000).contains(direct), (0...100_000).contains(automatic) else {throw ScoutingObservationError.invalid}
+    }
+}
+
 // Counts only completed personal plate appearances; never infer BF from outs (double plays/tag-ups).
 struct MatchScoutingPerformance: Codable, Equatable {
     var version = 1
     var manual = false
+    var inputs: ScoutingInputUsage?
+    static var tracked: Self {var value=Self();value.version=2;value.inputs=ScoutingInputUsage();return value}
     var singles = 0, doubles = 0, homers = 0, sacrificeFlies = 0
     var battersFaced = 0, homersAllowed = 0
     mutating func record(_ result: String, batter: Bool, pitcher: Bool) {
@@ -16,7 +32,13 @@ struct MatchScoutingPerformance: Codable, Equatable {
         if pitcher { battersFaced += 1; if result == "홈런" { homersAllowed += 1 } }
     }
     func validate(line: MatchLine, role: PlayerRole) throws {
-        guard version == 1, [singles,doubles,homers,sacrificeFlies,battersFaced,homersAllowed].allSatisfy({ (0...100_000).contains($0) }) else { throw ScoutingObservationError.invalid }
+        guard [1,2].contains(version), [singles,doubles,homers,sacrificeFlies,battersFaced,homersAllowed].allSatisfy({ (0...100_000).contains($0) }) else { throw ScoutingObservationError.invalid }
+        if version == 1 {guard inputs == nil else {throw ScoutingObservationError.invalid}}
+        else {
+            guard let inputs, manual == (inputs.direct > 0) else {throw ScoutingObservationError.invalid}
+            try inputs.validate()
+            if role == .pitcher {guard inputs.direct+inputs.automatic == line.pitches else {throw ScoutingObservationError.invalid}}
+        }
         var check = PersonalSeasonTotals(); try check.add(line)
         if role == .batter {
             guard singles+doubles+homers == line.hits, homers == line.homeRuns,
@@ -30,6 +52,12 @@ struct MatchScoutingPerformance: Codable, Equatable {
         }
     }
     mutating func add(_ value: Self) throws {
+        guard version == value.version else {throw ScoutingObservationError.invalid}
+        if version == 2 {
+            guard let own=inputs, let added=value.inputs else {throw ScoutingObservationError.invalid}
+            inputs=ScoutingInputUsage(direct:own.direct+added.direct,automatic:own.automatic+added.automatic)
+            try inputs?.validate()
+        }
         let keys: [WritableKeyPath<Self,Int>] = [\.singles,\.doubles,\.homers,\.sacrificeFlies,\.battersFaced,\.homersAllowed]
         for key in keys {
             let sum = self[keyPath:key].addingReportingOverflow(value[keyPath:key])
@@ -54,7 +82,7 @@ extension CareerMatch {
               abilityStats?.version == 1, pitching?.version == 1,
               fieldStats?.version == (role == .batter ? 3:2),
               let position = fieldStats?.position else { return nil }
-        return "highschool/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1-events\(perf.version)/\(position)/" + (perf.manual ? "manual-unverified":"auto-v1")
+        return "highschool/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
     }
 }
 
@@ -67,11 +95,20 @@ struct ScoutingReference: Codable, Equatable {
     let gamesPerProfile: Int
     let totals: PersonalSeasonTotals
     let performance: MatchScoutingPerformance
+    var inputPolicy: String?
+    var inputMode: ScoutingInputMode?
     var value: Double? { performance.contribution(totals.line,role:role) }
     func validate() throws {
-        guard version == 1, profiles.count == 3, gamesPerProfile == (role == .batter ? 20:6),
-              totals.games == profiles.count*gamesPerProfile, !performance.manual,
-              environment.hasSuffix("/\(position)/auto-v1"), value?.isFinite == true else { throw ScoutingObservationError.invalid }
+        guard [1,2].contains(version), profiles.count == 3, gamesPerProfile == (role == .batter ? 20:6),
+              totals.games == profiles.count*gamesPerProfile, value?.isFinite == true else { throw ScoutingObservationError.invalid }
+        if version == 1 {
+            guard performance.version == 1, !performance.manual, inputPolicy == nil, inputMode == nil,
+                  environment.hasSuffix("/\(position)/auto-v1") else {throw ScoutingObservationError.invalid}
+        } else {
+            guard inputPolicy == "standard-controls-v1", let inputMode, performance.version == 2,
+                  performance.inputs?.mode == inputMode,
+                  environment.hasSuffix("/\(position)/"+inputMode.suffix) else {throw ScoutingObservationError.invalid}
+        }
         try performance.validate(line:totals.line,role:role)
     }
 }
@@ -79,25 +116,42 @@ struct ScoutingReference: Codable, Equatable {
 @MainActor enum ScoutingReferenceSimulation {
     private static var cache: [String:ScoutingReference] = [:]
     static func make(environment: String, role: PlayerRole, position: String) throws -> ScoutingReference? {
-        guard environment.hasSuffix("/auto-v1"), role == .pitcher ? position == "P" : FieldPosition(rawValue:position) != nil else { return nil }
+        let mode=ScoutingInputMode.allCases.first{environment.hasSuffix("/"+$0.suffix)}
+        let tracked=mode != nil
+        guard (tracked || environment.hasSuffix("/auto-v1")), role == .pitcher ? position == "P" : FieldPosition(rawValue:position) != nil else { return nil }
         if let found = cache[environment] { return found }
         let profiles = PlayerArchetype.choices(for:role).map(\.values), count = role == .batter ? 20:6
-        var totals = PersonalSeasonTotals(), performance = MatchScoutingPerformance()
+        var totals = PersonalSeasonTotals(), performance = tracked ? MatchScoutingPerformance.tracked:MatchScoutingPerformance()
         for (index, profile) in profiles.enumerated() {
             for game in 0..<count {
-                var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0)
-                guard match.scoutingEnvironment == environment else { return nil }
-                try match.advance(.automatic)
+                var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0,tracked:tracked)
+                // Empty input counts initially identify automatic; match rules/position must still match exactly.
+                guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
+                try run(&match,mode:mode ?? .automatic)
                 let result = match.scoutingPerformance!
                 try result.validate(line:match.line,role:role)
                 try totals.add(match.line);try performance.add(result)
             }
         }
-        let reference = ScoutingReference(environment:environment,role:role,position:position,profiles:profiles,
+        var reference = ScoutingReference(environment:environment,role:role,position:position,profiles:profiles,
             gamesPerProfile:count,totals:totals,performance:performance)
+        if tracked {reference.version=2;reference.inputPolicy="standard-controls-v1";reference.inputMode=mode}
         try reference.validate();cache[environment] = reference;return reference
     }
-    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool) -> CareerMatch {
+    // The benchmark skill policy is unchanged across routes. Strategy and user precision are performance,
+    // not copied into the NPC benchmark. Route equivalence is tested on complete event streams.
+    static func run(_ match: inout CareerMatch, mode: ScoutingInputMode) throws {
+        var pitches=0
+        while !match.completed {
+            if mode == .automatic || (mode == .mixed && pitches >= 8) || (match.role == "pitcher" && !match.ownPitcherActive) {
+                try match.advance(.automatic);break
+            }
+            let action: MatchInput=match.role == "batter" ? .swing:.pitch, code=match.mastery.keys.sorted().first
+            try match.advance(action,pitchCode:code,control:match.automaticControl(action,pitchCode:code))
+            pitches += 1
+        }
+    }
+    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false) -> CareerMatch {
         var match = CareerMatch(random:seed,isHome:home,role:role.rawValue,appearance:true,
             contact:values.contact,power:values.power,discipline:values.discipline,mastery:values.pitches)
         match.controlVersion=2;match.trainingEffectsVersion=1;match.detailedFieldVersion=5
@@ -106,7 +160,7 @@ struct ScoutingReference: Codable, Equatable {
         match.fieldStats=MatchFieldStats(speed:values.speed,defense:values.defense,arm:values.arm,position:position)
         match.fieldStats?.version=role == .batter ? 3:2;match.fieldStats?.activeTraits=[]
         if role == .batter {match.fieldStats?.positionMastery=60}
-        match.pitching=MatchPitching(startingFatigue:24);match.scoutingPerformance=MatchScoutingPerformance()
+        match.pitching=MatchPitching(startingFatigue:24);match.scoutingPerformance=tracked ? .tracked:MatchScoutingPerformance()
         match.settle();return match
     }
 }
@@ -183,7 +237,7 @@ struct ScoutingClubFit: Codable, Equatable, Identifiable {
     let blockers: [String]
 }
 struct ScoutingContractFit: Codable, Equatable {
-    var version = 1
+    var version = 2
     var catalogVersion = "domestic-market-v1"
     let comparisons: [ScoutingPerformanceComparison]
     let selectedEnvironment: String?
@@ -222,10 +276,10 @@ struct ScoutingContractFit: Codable, Equatable {
             let perf=group.performance
             let ref=try ScoutingReferenceSimulation.make(environment:group.id,role:observation.role,position:observation.role == .batter ? observation.position:"P")
             let v=perf?.contribution(group.totals.line,role:observation.role)
-            let verified=perf?.manual == false && ref?.value != nil && v != nil
+            let verified=(perf?.version == 2 || perf?.manual == false) && ref?.value != nil && v != nil
             let p=verified ? correction(value:v!,reference:ref!.value!,n:perf!.sample(group.totals.line,role:observation.role)):0
             return ScoutingPerformanceComparison(id:group.id,totals:group.totals,performance:perf,reference:ref,value:v,
-                correction:p,verified:verified,reason:verified ? "같은 엔진·자동입력·고교 수준의 NPC 비교 시뮬레이션" : perf == nil ? "과거 경기의 사건 지표 미기록 · P=0 중립" : "직접 조작/미지원 환경 비교 미검증 · P=0 중립")
+                correction:p,verified:verified,reason:verified ? "같은 엔진·고교 수준 · \(perf?.inputs?.mode.label ?? "자동") / 표준 NPC 입력 기준" : perf == nil ? "과거 경기의 사건 지표 미기록 · P=0 중립" : "직접 조작/미지원 환경 비교 미검증 · P=0 중립")
         }
         let source=selected(rows,role:observation.role),p=source?.correction ?? 0
         let clubs=try ScoutingClubCatalog.roles(for:observation.role).map { rule -> ScoutingClubFit in
@@ -237,7 +291,7 @@ struct ScoutingContractFit: Codable, Equatable {
         return Self(comparisons:rows,selectedEnvironment:source?.id,clubs:clubs)
     }
     func validate(observation: ScoutingObservation) throws {
-        guard version == 1, catalogVersion == "domestic-market-v1", comparisons.count == observation.groups.count,
+        guard [1,2].contains(version), catalogVersion == "domestic-market-v1", comparisons.count == observation.groups.count,
               Set(comparisons.map(\.id)).count == comparisons.count,
               clubs.count == (observation.role == .batter ? 18:6),Set(clubs.map(\.id)).count == clubs.count else {throw ScoutingObservationError.invalid}
         for row in comparisons {
@@ -245,7 +299,7 @@ struct ScoutingContractFit: Codable, Equatable {
             if let perf=row.performance {try perf.validate(line:row.totals.line,role:observation.role)}
             if let ref=row.reference {try ref.validate();guard ref.environment == row.id,ref.role == observation.role else{throw ScoutingObservationError.invalid}}
             let v=row.performance?.contribution(row.totals.line,role:observation.role)
-            let verified=row.performance?.manual == false && row.reference?.value != nil && v != nil
+            let verified=(version == 2 && row.performance?.version == 2 || row.performance?.manual == false) && row.reference?.value != nil && v != nil
             let p=verified ? Self.correction(value:v!,reference:row.reference!.value!,n:row.performance!.sample(row.totals.line,role:observation.role)):0
             guard row.value == v,row.verified == verified,row.correction == p else {throw ScoutingObservationError.invalid}
         }

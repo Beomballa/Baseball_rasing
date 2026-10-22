@@ -2017,6 +2017,35 @@ extension CareerFlowTests {
 }
 
 extension CareerFlowTests {
+    @MainActor func testDirectMixedComparisonBothRolesFrozenAfterRelaunch() throws {
+        let app=XCUIApplication();app.launchArguments=["-offseason-verification","-input-fit-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:60))
+        for pitcher in [false,true] {
+            let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
+            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+            reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            var comparisons=[String]()
+            for index in 0..<2 {
+                let label=app.staticTexts["scoutComparison-\(index)"],usage=app.staticTexts["scoutInputUsage-\(index)"]
+                revealFit(label,in:app);XCTAssertTrue(label.exists);comparisons.append(label.label)
+                revealFit(usage,in:app);XCTAssertTrue(usage.label.contains("직접 "));XCTAssertFalse(usage.label.hasPrefix("직접 0구"))
+                XCTAssertTrue(usage.label.contains(index == 0 ? "자동 0구":"자동 "))
+            }
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "Pitcher direct mixed comparison":"Batter direct mixed comparison";shot.lifetime = .keepAlways;add(shot)
+            revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
+            let fit=app.staticTexts[pitcher ? "scoutClub-comets/starter":"scoutClub-comets/slugger"]
+            revealFit(fit,in:app);let expected=fit.label;XCTAssertTrue(expected.contains("/ P "))
+            app.terminate();app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
+            let restored=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(restored,in:app);restored.tap()
+            XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+            reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            for index in 0..<2 {let label=app.staticTexts["scoutComparison-\(index)"];revealFit(label,in:app);XCTAssertEqual(label.label,comparisons[index])}
+            revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
+            revealFit(fit,in:app);XCTAssertEqual(fit.label,expected)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+    }
     @MainActor private func revealFit(_ element:XCUIElement,in app:XCUIApplication) {
         for _ in 0..<48 {
             if element.isHittable {return}
@@ -2031,7 +2060,7 @@ extension CareerFlowTests {
             let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
             reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
             revealFit(app.staticTexts["scoutComparison-0"],in:app);XCTAssertTrue(app.staticTexts["scoutComparison-0"].exists)
-            XCTAssertTrue(app.staticTexts["같은 엔진·자동입력·고교 수준의 NPC 비교 시뮬레이션"].exists)
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","표준 NPC 입력 기준")).firstMatch.exists)
             let comparison=app.staticTexts["scoutComparison-0"].label
             revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
             let row=app.staticTexts[pitcher ? "scoutClub-comets/starter":"scoutClub-comets/slugger"]

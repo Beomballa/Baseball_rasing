@@ -83,6 +83,7 @@ private struct SeasonSummaryVerification: View {
         do {
             let schools = try SchoolCatalog.load()
             let diskQA = ProcessInfo.processInfo.arguments.contains("-offseason-verification")
+            let inputQA = ProcessInfo.processInfo.arguments.contains("-input-fit-verification")
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("offseason-verification.store")
             let store = try diskQA ? CareerStore.makeContainer(url: url) : CareerStore.makeContainer(inMemory: true)
             let c = store.mainContext
@@ -100,7 +101,17 @@ private struct SeasonSummaryVerification: View {
                     }
                     try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: c)
                     let record = try CareerMatchStore.start(player: player, state: state, in: c)
-                    try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision, input: .automatic, in: c)
+                    if inputQA && fixture.isAppearance(for:role) {
+                        var attempts=0
+                        while !record.completed {
+                            let match=try record.snapshot()
+                            if role == .pitcher && !match.ownPitcherActive || fixture.number%2 == 0 && attempts >= 8 {break}
+                            let action:MatchInput=role == .batter ? .swing:.pitch,code=match.mastery.keys.sorted().first
+                            try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:action,pitchCode:code,control:match.automaticControl(action,pitchCode:code),in:c)
+                            attempts += 1
+                        }
+                    }
+                    if !record.completed {try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision, input: .automatic, in: c)}
                 }
                 try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: c)
             }

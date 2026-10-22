@@ -271,6 +271,7 @@ import SwiftUI
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (p,s)=try setup(role:.pitcher,in:c),r=try ready(p,s,in:c)
             var m=try r.snapshot();m.line.pitches=93;m.pitching?.homePitches=m.isHome ? 93:0;m.pitching?.awayPitches=m.isHome ? 0:93
+            m.scoutingPerformance?.inputs?.automatic=93
             r.payload=try JSONEncoder().encode(m);try c.save()
             let fatigue=p.fatigue
             for _ in 0..<30 where try r.snapshot().ownPitcherChange == nil {

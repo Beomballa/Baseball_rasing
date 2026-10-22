@@ -112,13 +112,16 @@ struct SavedScoutingObservationView: View {
                                 Text("환경 \(index+1) · 성적 보정 P \(row.correction.formatted(.number.precision(.fractionLength(1))))").font(.subheadline.bold()).accessibilityIdentifier("scoutComparison-\(index)")
                                 Text("내 지표 \(row.value.map { $0.formatted(.number.precision(.fractionLength(3))) } ?? "—") / NPC \(row.reference?.value.map { $0.formatted(.number.precision(.fractionLength(3))) } ?? "—")").font(.caption.monospaced())
                                 if let ref = row.reference {Text("NPC \(ref.totals.games)경기 · " + (value.role == .batter ? "\(ref.totals.line.plateAppearances)타석" : "\(ref.totals.innings)이닝 / \(ref.performance.battersFaced)BF")).font(.caption)}
+                                if let inputs=row.performance?.inputs {
+                                    Text("직접 \(inputs.direct)구 · 자동 \(inputs.automatic)구").font(.caption).accessibilityIdentifier("scoutInputUsage-\(index)")
+                                }
                                 Text(row.reason).font(.caption).foregroundStyle(row.verified ? GameTheme.growth:GameTheme.gold)
                             }
                         }
                     }
                     GamePanel(title: "구단별 모집 · 계약 적합도 참고", onBoard: true, contentSpacing: 16) {
                         Text("가상 국내6구단의 초기 모집 자료입니다. F=H−C+P는 기량 참고값이며 정식 제의/출전을 보장하지 않습니다.").font(.caption).foregroundStyle(GameTheme.gold)
-                        Text("비교 검증된 환경 중 표본이 가장 큰1개만 사용합니다. 직접 조작·구형 자료만 있으면 P=0 중립이며 서로 다른 환경을 합치지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Text("비교 검증된 환경 중 표본이 가장 큰1개만 사용합니다. 입력 구분이 없는 과거 직접 조작·구형 자료는 P=0 중립이며 서로 다른 환경을 합치지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         HomeDetailButton(title: "모집 역할·기준·적합도 \(fit.clubs.count)건", expanded: $showClubs, identifier: "scoutClubDetails")
                         if showClubs {
                             ForEach(fit.clubs) { club in
@@ -206,10 +209,10 @@ enum ScoutingReportError: LocalizedError {
             let versions = [match.controlVersion, match.trainingEffectsVersion, match.detailedFieldVersion, match.fieldStats?.version]
                 .map { $0.map(String.init) ?? "legacy" }.joined(separator: "/")
             let legacySource = record.rulesVersion + "/" + versions + (match.pitching == nil ? "/starter" : "/relief-v1")
-            let source = match.scoutingPerformance == nil ? legacySource : match.scoutingEnvironment ?? (legacySource + "/events1-unverified")
+            let source = match.scoutingPerformance.map { match.scoutingEnvironment ?? (legacySource + "/events\($0.version)-unverified") } ?? legacySource
             var group = bySource[source] ?? ScoutingSampleGroup(id: source)
             if let perf = match.scoutingPerformance {
-                if group.performance == nil {group.performance=MatchScoutingPerformance()}
+                if group.performance == nil {group.performance=perf.version == 2 ? .tracked:MatchScoutingPerformance()}
                 try group.performance?.add(perf)
             }
             try group.totals.add(match.line); bySource[source] = group

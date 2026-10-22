@@ -121,7 +121,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
                 fatigue: player.fatigue, before: values, annualBefore: try annualAbilityXP(playerID: player.id, year: year, in: context))
             try match.abilityExperience?.validate(match: match)
         }
-        match.scoutingPerformance = MatchScoutingPerformance()
+        match.scoutingPerformance = .tracked
         if match.appearance { match.settle() }
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"

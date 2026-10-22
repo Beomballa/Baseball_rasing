@@ -739,7 +739,7 @@ extension PlayerAbilitiesTests {
             let first = try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
             let bytes = first.payload, value = try first.snapshot()
             XCTAssertEqual(value.period,0);XCTAssertEqual(value.nextDate,"2026-04-29");XCTAssertEqual(value.totals.games,0)
-            XCTAssertEqual(value.version,2);XCTAssertNotNil(value.contractFit)
+            XCTAssertEqual(value.version,3);XCTAssertNotNil(value.contractFit)
             XCTAssertTrue(value.evaluationPending.contains { $0.contains("20세 미만") })
             try finish(p,s,c)
             let match = try CareerMatchStore.start(player:p,state:s,in:c)
@@ -1013,7 +1013,7 @@ extension PlayerAbilitiesTests {
             p.gameDate="2026-04-28";try c.save()
             try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
             let newest=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot()
-            XCTAssertEqual(newest.version,2);XCTAssertEqual(newest.contractFit?.comparisons.first?.verified,false)
+            XCTAssertEqual(newest.version,3);XCTAssertEqual(newest.contractFit?.comparisons.first?.verified,false)
             XCTAssertEqual(newest.contractFit?.comparisons.first?.correction,0)
             XCTAssertEqual(old.payload,oldData);XCTAssertEqual(try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first).payload,gameData)
         }
@@ -1030,5 +1030,208 @@ extension PlayerAbilitiesTests {
         let bytes=row.payload,before=preserved(p)
         XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c))
         XCTAssertEqual(row.payload,bytes);XCTAssertEqual(preserved(p),before);XCTAssertFalse(c.hasChanges)
+    }
+
+    func testInputRoutesHaveIdenticalStandardNPCDistributionsAndRNG() throws {
+        for role in PlayerRole.allCases {
+            for preset in PlayerArchetype.choices(for:role) {
+                for seed in 1...6 {
+                    let original=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "CF":"P",values:preset.values,seed:UInt64(seed),home:seed%2 == 0,tracked:true)
+                    var auto=original;try ScoutingReferenceSimulation.run(&auto,mode:.automatic)
+                    for mode in [ScoutingInputMode.direct,.mixed] {
+                        var other=original;try ScoutingReferenceSimulation.run(&other,mode:mode)
+                        try other.scoutingPerformance?.validate(line:other.line,role:role)
+                        XCTAssertTrue(other.completed);XCTAssertEqual(other.line,auto.line)
+                        XCTAssertEqual(other.random,auto.random);XCTAssertEqual(other.fieldPlays,auto.fieldPlays)
+                        XCTAssertEqual(other.pitching,auto.pitching);XCTAssertEqual(other.fatigueCost,auto.fatigueCost)
+                        XCTAssertEqual(other.scoutingPerformance?.contribution(other.line,role:role),auto.scoutingPerformance?.contribution(auto.line,role:role))
+                        XCTAssertEqual(other.scoutingPerformance?.inputs?.mode,mode)
+                    }
+                }
+            }
+        }
+    }
+
+    func testDirectAndMixedReferencesAreFrozenVersionedAndMatchAutomaticBaseline() throws {
+        for role in PlayerRole.allCases {
+            let position=role == .batter ? "CF":"P"
+            let base=try XCTUnwrap(ScoutingReferenceSimulation.fixture(role:role,position:position,values:PlayerArchetype.initial(for:role).values,seed:3,home:true,tracked:true).scoutingEnvironment)
+            var refs=[ScoutingReference]()
+            for mode in ScoutingInputMode.allCases {
+                let env=base.replacingOccurrences(of:"auto-v2",with:mode.suffix)
+                let ref=try XCTUnwrap(ScoutingReferenceSimulation.make(environment:env,role:role,position:position))
+                try ref.validate();XCTAssertEqual(ref.version,2);XCTAssertEqual(ref.inputMode,mode)
+                XCTAssertEqual(ref.inputPolicy,"standard-controls-v1");XCTAssertEqual(ref.performance.inputs?.mode,mode)
+                XCTAssertEqual(try JSONDecoder().decode(ScoutingReference.self,from:JSONEncoder().encode(ref)),ref)
+                refs.append(ref)
+            }
+            XCTAssertEqual(refs[0].totals,refs[1].totals);XCTAssertEqual(refs[0].totals,refs[2].totals)
+            XCTAssertEqual(refs[0].value,refs[1].value);XCTAssertEqual(refs[0].value,refs[2].value)
+        }
+    }
+
+    func testUserPrecisionChangesPerformanceWithoutChangingNPCReference() throws {
+        for role in PlayerRole.allCases {
+            var good=PersonalSeasonTotals(),bad=PersonalSeasonTotals()
+            var goodPerformance=MatchScoutingPerformance.tracked,badPerformance=MatchScoutingPerformance.tracked
+            for seed in 1...20 {
+                for accurate in [true,false] {
+                    var game=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "CF":"P",values:PlayerArchetype.initial(for:role).values,seed:UInt64(seed),home:true,tracked:true)
+                    while !game.completed {
+                        if role == .pitcher && !game.ownPitcherActive {try game.advance(.automatic);break}
+                        let code=game.mastery.keys.sorted().first,delivery=game.delivery(pitchCode:code)
+                        let control=role == .batter ? ManualMatchInput(x:accurate ? delivery.x:0,y:accurate ? delivery.y:0,timing:accurate ? 0.82:0) : ManualMatchInput(release:accurate ? 0.68:0)
+                        try game.advance(role == .batter ? .swing:.pitch,pitchCode:code,control:control)
+                    }
+                    if accurate {try good.add(game.line);try goodPerformance.add(XCTUnwrap(game.scoutingPerformance))}
+                    else {try bad.add(game.line);try badPerformance.add(XCTUnwrap(game.scoutingPerformance))}
+                }
+            }
+            let g=try XCTUnwrap(goodPerformance.contribution(good.line,role:role)),b=try XCTUnwrap(badPerformance.contribution(bad.line,role:role))
+            XCTAssertGreaterThan(g,b)
+        }
+    }
+
+    func testDirectMixedReportsUseActualRecordsAndKeepOldUnclassifiedManualNeutral() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        defer {withExtendedLifetime(container){}}
+        for role in PlayerRole.allCases {
+            let (p,s)=try scoutingSetup(role,context:c),fixtures=try s.fixtures(for:p,year:2026).filter{$0.isAppearance(for:role)}
+            for (index,mode) in ScoutingInputMode.allCases.enumerated() {
+                let fixture=fixtures[index],date=p.gameDate;p.gameDate=fixture.date.description
+                var game=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",values:PlayerArchetype.initial(for:role).values,seed:UInt64(300+index),home:fixture.homeID == p.schoolID,tracked:true)
+                try ScoutingReferenceSimulation.run(&game,mode:mode)
+                let row=try CareerMatchRecord(player:p,fixture:fixture,match:game);row.completed=true;row.rulesVersion="native-match-v2";c.insert(row);p.gameDate=date
+            }
+            try insertFitRecord(p,s,fixtures[3],c,manual:true)
+            p.gameDate=fixtures[3].date.adding(days:28).description;try c.save()
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first),bytes=row.payload,value=try row.snapshot()
+            let fit=try XCTUnwrap(value.contractFit);XCTAssertEqual(value.version,3);XCTAssertEqual(fit.version,2)
+            XCTAssertEqual(fit.comparisons.filter(\.verified).count,3)
+            let old=try XCTUnwrap(fit.comparisons.first{$0.id.hasSuffix("manual-unverified")});XCTAssertFalse(old.verified);XCTAssertEqual(old.correction,0)
+            for comparison in fit.comparisons where comparison.verified {
+                let n=try XCTUnwrap(comparison.performance).sample(comparison.totals.line,role:role)
+                let expected=ScoutingContractFit.correction(value:try XCTUnwrap(comparison.value),reference:try XCTUnwrap(comparison.reference?.value),n:n)
+                XCTAssertEqual(comparison.correction,expected)
+            }
+            let selected=try XCTUnwrap(fit.comparisons.first{$0.id == fit.selectedEnvironment})
+            for club in fit.clubs {XCTAssertEqual(club.p,selected.correction)}
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in XCTFail("same period saved")})
+            XCTAssertEqual(row.payload,bytes);XCTAssertFalse(c.hasChanges)
+        }
+    }
+
+    func testInputUsageInvalidPayloadAndResumeAreIndependentOfRewards() throws {
+        for role in PlayerRole.allCases {
+            var game=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "CF":"P",values:PlayerArchetype.initial(for:role).values,seed:33,home:true,tracked:true)
+            let action:MatchInput=role == .batter ? .swing:.pitch,code=game.mastery.keys.sorted().first
+            let untouched=game
+            XCTAssertThrowsError(try game.advance(action,pitchCode:code,control:ManualMatchInput(x:.nan,release:role == .pitcher ? 0.68:nil)))
+            XCTAssertEqual(game,untouched)
+            try game.advance(action,pitchCode:code,control:game.automaticControl(action,pitchCode:code))
+            var resumed=try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(game))
+            try game.advance(.automatic);try resumed.advance(.automatic)
+            XCTAssertEqual(game,resumed);XCTAssertEqual(resumed.scoutingPerformance?.inputs?.mode,.mixed)
+            var bad=try XCTUnwrap(resumed.scoutingPerformance);bad.inputs?.direct = -1
+            XCTAssertThrowsError(try bad.validate(line:resumed.line,role:role))
+            let done=resumed;XCTAssertThrowsError(try resumed.advance(.automatic));XCTAssertEqual(resumed,done)
+        }
+    }
+
+    func testVersionTwoReportAndInFlightV1MetricsRemainUnchangedOnDisk() throws {
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:folder)}
+        let url=folder.appendingPathComponent("input-fit.store");var bytes=Data(),progress=Data()
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (p,s)=try scoutingSetup(context:c)
+            try insertFitRecord(p,s,XCTUnwrap(s.fixtures(for:p,year:2026).first),c,manual:true)
+            p.gameDate="2026-04-29";try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let report=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+            var value=try report.snapshot();value.version=2;value.contractFit?.version=1
+            report.payload=try JSONEncoder().encode(value);bytes=report.payload;try c.save()
+            let fixture=try XCTUnwrap(s.fixtures(for:p,year:2026).first{$0.date.description == "2026-05-01"})
+            p.gameDate=fixture.date.description
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            var match=ScoutingReferenceSimulation.fixture(role:.batter,position:p.positionRaw,values:PlayerArchetype.initial(for:.batter).values,seed:40,home:fixture.homeID == p.schoolID)
+            try match.advance(.swing,control:match.automaticControl(.swing,pitchCode:nil))
+            let record=try CareerMatchRecord(player:p,fixture:fixture,match:match);c.insert(record);try c.save();progress=record.payload
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let old=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+            XCTAssertEqual(old.payload,bytes);XCTAssertEqual(try old.snapshot().version,2)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in XCTFail("frozen report saved")})
+            let record=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first{$0.payload == progress})
+            let restored=try CareerMatchStore.start(player:p,state:s,in:c);XCTAssertEqual(record.id,restored.id);XCTAssertEqual(restored.payload,progress)
+            XCTAssertEqual(try restored.snapshot().scoutingPerformance?.version,1)
+            try CareerMatchStore.advance(player:p,state:s,record:restored,revision:restored.revision,input:.automatic,in:c)
+            XCTAssertEqual(try restored.snapshot().scoutingPerformance?.version,1);XCTAssertNil(try restored.snapshot().scoutingPerformance?.inputs)
+            let completed=restored.payload,values=preserved(p)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:restored,revision:restored.revision,input:.automatic,in:c))
+            XCTAssertEqual(restored.payload,completed);XCTAssertEqual(preserved(p),values)
+            p.gameDate="2026-05-27";try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let next=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot()
+            XCTAssertEqual(next.version,3);XCTAssertEqual(next.contractFit?.version,2)
+            XCTAssertTrue(next.contractFit?.comparisons.allSatisfy{!$0.verified && $0.correction == 0} == true)
+            XCTAssertEqual(old.payload,bytes)
+        }
+    }
+
+    func testTrackedInputStoreRollbackDiskResumeAndCompletionOnlyOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:folder)}
+            let url=folder.appendingPathComponent("tracked.store");var progress=Data()
+            try autoreleasepool {
+                let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+                let (p,s)=try scoutingSetup(role,context:c)
+                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let record=try CareerMatchStore.start(player:p,state:s,in:c),original=record.payload,revision=record.revision,values=preserved(p)
+                let match=try record.snapshot(),action:MatchInput=role == .batter ? .swing:.pitch,code=match.mastery.keys.sorted().first,control=match.automaticControl(role == .batter ? .swing:.pitch,pitchCode:code)
+                XCTAssertEqual(match.scoutingPerformance?.version,2)
+                XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:record,revision:revision,input:action,pitchCode:code,control:control,in:c,save:{_ in throw MatchError.invalidRecord}))
+                XCTAssertEqual(record.payload,original);XCTAssertEqual(record.revision,revision);XCTAssertEqual(preserved(p),values)
+                try CareerMatchStore.advance(player:p,state:s,record:record,revision:revision,input:action,pitchCode:code,control:control,in:c)
+                progress=record.payload;XCTAssertEqual(try record.snapshot().scoutingPerformance?.inputs?.direct,1)
+            }
+            try autoreleasepool {
+                let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+                let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let record=try CareerMatchStore.start(player:p,state:s,in:c);XCTAssertEqual(record.payload,progress)
+                let revision=record.revision
+                XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:record,revision:revision,input:.automatic,in:c,save:{_ in throw MatchError.invalidRecord}))
+                XCTAssertEqual(record.payload,progress);XCTAssertFalse(record.completed)
+                try CareerMatchStore.advance(player:p,state:s,record:record,revision:revision,input:.automatic,in:c)
+                XCTAssertEqual(try record.snapshot().scoutingPerformance?.inputs?.mode,.mixed)
+                let result=record.payload,values=preserved(p)
+                XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c))
+                XCTAssertEqual(record.payload,result);XCTAssertEqual(preserved(p),values)
+            }
+        }
+    }
+
+    func testUnsupportedEnvironmentKeepsOldAndTrackedEventVersionsSeparate() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        defer{withExtendedLifetime(container){}}
+        for role in PlayerRole.allCases {
+            let (p,s)=try scoutingSetup(role,context:c),fixtures=try s.fixtures(for:p,year:2026).filter{$0.isAppearance(for:role)}
+            for index in 0..<2 {
+                let fixture=fixtures[index],date=p.gameDate;p.gameDate=fixture.date.description
+                var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",values:PlayerArchetype.initial(for:role).values,seed:UInt64(901+index),home:fixture.homeID == p.schoolID,tracked:index == 1)
+                match.abilityStats=nil;XCTAssertNil(match.scoutingEnvironment)
+                try match.advance(.automatic)
+                let record=try CareerMatchRecord(player:p,fixture:fixture,match:match);record.completed=true;record.rulesVersion="native-match-v2";c.insert(record);p.gameDate=date
+            }
+            p.gameDate=fixtures[1].date.adding(days:28).description;try c.save()
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let value=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot()
+            XCTAssertEqual(value.groups.count,2)
+            XCTAssertEqual(Set(value.groups.compactMap{$0.performance?.version}),Set([1,2]))
+            XCTAssertTrue(value.contractFit?.comparisons.allSatisfy{!$0.verified && $0.correction == 0} == true)
+            XCTAssertFalse(c.hasChanges)
+        }
     }
 }
