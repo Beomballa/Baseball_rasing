@@ -1012,7 +1012,7 @@ extension CareerCalendarTests {
             XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
             XCTAssertEqual(row.payload,payload)
             XCTAssertEqual(try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reports)
-            XCTAssertTrue(saved.pending.contains(where:{$0.contains("심사 대기")}))
+            XCTAssertNotNil(saved.selection);XCTAssertTrue(saved.pending.contains(where:{$0.contains("후속")}))
         }
     }
     func testContractEvaluationBulkStopsAtArrivalAndConfirmationDoesNotConsumeDay() async throws {
@@ -1154,5 +1154,167 @@ extension CareerCalendarTests {
         let retry = try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
         XCTAssertEqual(retry.days,1);XCTAssertEqual(retry.stop,.evaluation)
         XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).count,1)
+    }
+}
+
+
+extension CareerCalendarTests {
+    private func selectionSeason(_ role:PlayerRole,modeSplit:Bool=false,count:Int?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+        let (store,p,s)=try evaluationFixture(date:"2030-04-01",role:role),c=store.mainContext
+        let fixtures=try s.fixtures(for:p,year:2028).filter {$0.isAppearance(for:role)}
+        for (index,fixture) in fixtures.prefix(count ?? (role == .batter ? 12:6)).enumerated() {
+            p.gameDate=fixture.date.description
+            var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",
+                values:PlayerArchetype.initial(for:role).values,seed:UInt64(700+index),home:fixture.homeID == p.schoolID,tracked:true)
+            try ScoutingReferenceSimulation.run(&match,mode:modeSplit && index%2 == 1 ? .direct:.automatic)
+            let row=try CareerMatchRecord(player:p,fixture:fixture,match:match);row.completed=true;row.rulesVersion="native-match-v2";c.insert(row)
+        }
+        p.gameDate="2030-04-01";p.contact=80;p.power=80;p.discipline=80;p.defense=80
+        let abilities=try XCTUnwrap(PlayerAbilityStore.profile(playerID:p.id,in:c));try abilities.grow(.mental,to:80)
+        if role == .pitcher {
+            for kind in [TrainingKind.velocity,.control,.stuff,.stamina] {try abilities.grow(kind,to:80)}
+            for pitch in p.pitches {pitch.mastery=80}
+        }
+        try c.save();return (store,p,s)
+    }
+    func testDomesticSelectionGraduationSourceAndBothRoutesUseEntryCriteria() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try selectionSeason(role),c=store.mainContext
+            let matchBytes=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            try ContractEvaluationStore.registerCurrent(in:c)
+            let row=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+            let value=try row.snapshot(player:p,calendar:s),selection=try XCTUnwrap(value.selection)
+            XCTAssertEqual(value.version,2);XCTAssertEqual(selection.sample?.kind,"졸업 고교 공식시즌")
+            XCTAssertTrue(value.observation.groups.isEmpty,"730일 졸업 예외와365일 관찰을 혼합하지 않는다")
+            XCTAssertEqual(Set(selection.results.filter(\.selected).map(\.route)),Set([.rookie,.college]))
+            XCTAssertEqual(selection.results.filter(\.selected).count,2)
+            XCTAssertTrue(selection.results.allSatisfy {$0.c == DomesticSelection.minimum($0.role,route:$0.route)})
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matchBytes)
+            let bytes=row.payload;p.contact=99;try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+            XCTAssertEqual(row.payload,bytes);XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testDomesticSelectionMissingSamplesNeverInventAdmission() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try evaluationFixture(date:"2030-04-01",role:role),c=store.mainContext
+            try ContractEvaluationStore.registerCurrent(in:c)
+            let selection=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first?.snapshot(player:p,calendar:s).selection)
+            XCTAssertNil(selection.sample);XCTAssertTrue(selection.results.allSatisfy {!$0.selected && $0.reasons.contains(where:{$0.contains("표본")})})
+            XCTAssertTrue(selection.picks.allSatisfy {$0.candidateID.hasPrefix("npc/")})
+        }
+    }
+    func testDomesticSelectionSourceCannotCombineModesAndAge21CannotUseGraduationException() throws {
+        let (store,p,s)=try selectionSeason(.batter,modeSplit:true,count:10),c=store.mainContext
+        let live=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        let selected=try ContractEvaluationStore.graduationSample(player:p,calendar:s,observation:live,in:c)
+        XCTAssertNil(selected,"직접/자동 각5경기를 합쳐40PA를 충족하지 않는다")
+        p.gameDate="2031-04-01";try c.save()
+        let age21=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        XCTAssertEqual(age21.age,21);XCTAssertNil(try ContractEvaluationStore.graduationSample(player:p,calendar:s,observation:age21,in:c))
+    }
+    func testDomesticSelectionJulyCarriesAprilNPCSeatsAndBudgetWithoutReselection() throws {
+        let (store,p,s)=try selectionSeason(.pitcher),c=store.mainContext
+        try ContractEvaluationStore.registerCurrent(in:c)
+        let april=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first),bytes=april.payload
+        let a=try XCTUnwrap(april.snapshot(player:p,calendar:s).selection)
+        try ContractEvaluationStore.acknowledge(player:p,calendar:s,key:april.key,date:p.gameDate,revision:s.revision,in:c)
+        p.gameDate="2030-07-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+        let july=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first?.snapshot(player:p,calendar:s).selection)
+        XCTAssertEqual(july.carried,a.picks.filter {$0.seatID.hasPrefix("rookie/") && $0.candidateID.hasPrefix("npc/")})
+        XCTAssertFalse(july.carried.contains {$0.candidateID.hasPrefix("player/")})
+        XCTAssertTrue(july.results.allSatisfy {$0.route == .rookie})
+        XCTAssertEqual(Set(july.picks.map(\.seatID)).count,july.picks.count)
+        for club in Set(july.seats.filter {$0.route == .rookie}.map(\.name)) {
+            let seats=july.seats.filter {$0.route == .rookie && $0.name == club}
+            let picks=july.picks.filter {pick in seats.contains {$0.id == pick.seatID}}
+            XCTAssertLessThanOrEqual(picks.count,3);XCTAssertLessThanOrEqual(picks.reduce(0){$0+$1.cost},seats[0].budget)
+        }
+        XCTAssertEqual(april.payload,bytes)
+    }
+    func testDomesticSelectionFieldThresholdsDifferFromProAndCollege() throws {
+        let (store,p,s)=try evaluationFixture(date:"2030-04-01",role:.batter),c=store.mainContext
+        var observation=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        // Real initial primary mastery60 and defense <70 must not inherit the pro70 gate.
+        XCTAssertEqual(observation.positionMastery,60)
+        XCTAssertTrue(DomesticSelection.fieldCondition("field",route:.college,observation:observation).isEmpty)
+        if p.defense >= 50 {XCTAssertTrue(DomesticSelection.fieldCondition("field",route:.rookie,observation:observation).isEmpty)}
+        observation=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        XCTAssertEqual(DomesticSelection.minimum("field",route:.rookie),50)
+        XCTAssertEqual(DomesticSelection.minimum("field",route:.college),45)
+        XCTAssertEqual(DomesticSelection.cost(0),100);XCTAssertEqual(DomesticSelection.cost(5),130);XCTAssertEqual(DomesticSelection.cost(100),200)
+    }
+    func testDomesticSelectionBudgetCompetitionAndTieOrder() throws {
+        let (store,p,s)=try selectionSeason(.pitcher),c=store.mainContext
+        let observation=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        let sample=try XCTUnwrap(ContractEvaluationStore.graduationSample(player:p,calendar:s,observation:observation,in:c))
+        let h=try XCTUnwrap(observation.grades[0].score),f=h-52+sample.comparison.correction
+        let seat=DomesticSelectionSeat(id:"rookie/test/1",name:"검증 구단",route:.rookie,order:0,roles:["starter"],budget:99)
+        let budget=DomesticSelection.simulate(observation:observation,seats:[seat],candidates:[],carried:[],sample:sample,sampleReason:"")
+        XCTAssertFalse(budget.results[0].selected);XCTAssertTrue(budget.results[0].reasons.contains {$0.contains("예산 부족")})
+        let funded=DomesticSelectionSeat(id:seat.id,name:seat.name,route:.rookie,order:0,roles:seat.roles,budget:500)
+        let npc=DomesticSelectionCandidate(id:"npc/first",role:"starter",h:h,p:sample.comparison.correction)
+        let tied=DomesticSelection.simulate(observation:observation,seats:[funded],candidates:[npc],carried:[],sample:sample,sampleReason:"")
+        XCTAssertEqual(tied.picks[0].candidateID,"npc/first");XCTAssertEqual(tied.picks[0].f,ScoutingContractFit.round(f));XCTAssertTrue(tied.results[0].reasons.contains {$0.contains("경쟁 탈락")})
+        let none=DomesticSelection.simulate(observation:observation,seats:[funded],candidates:[],carried:tied.picks,sample:sample,sampleReason:"")
+        XCTAssertFalse(none.results[0].selected);XCTAssertEqual(none.results[0].availableSeats,0)
+    }
+    func testDomesticSelectionOldV1PayloadIsNotRejudgedAndMalformedDecisionIsRejected() throws {
+        let (store,p,s)=try evaluationFixture(date:"2030-04-01"),c=store.mainContext
+        let observation=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        let old=ContractEvaluationSnapshot(rule:"contracts-window-v1",window:ContractEvaluationWindow(year:2030,month:4),evaluatedDate:p.gameDate,
+            calendarRevision:s.revision,affiliation:CareerAffiliationEntry(stage:.unsigned,since:p.gameDate,schoolID:nil,schoolName:nil),routes:["국내 신인","대학 입단"],observation:observation,pending:["선발 심사 대기"])
+        let row=try CareerContractEvaluation(playerID:p.id,snapshot:old);c.insert(row);try c.save();let bytes=row.payload
+        try ContractEvaluationStore.registerCurrent(in:c);XCTAssertEqual(row.payload,bytes);XCTAssertNil(try row.snapshot(player:p,calendar:s).selection)
+        p.gameDate="2030-07-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+        let new=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first),frozen=new.payload
+        var json=try XCTUnwrap(JSONSerialization.jsonObject(with:frozen) as? [String:Any])
+        var selection=try XCTUnwrap(json["selection"] as? [String:Any]);selection["picks"]=[];json["selection"]=selection
+        new.payload=try JSONSerialization.data(withJSONObject:json);try c.save()
+        XCTAssertThrowsError(try ContractEvaluationStore.registerCurrent(in:c));XCTAssertNotEqual(new.payload,frozen)
+    }
+}
+
+
+extension CareerCalendarTests {
+    func testDomesticSelectionExactSampleMinimumAndGraduation730DayBoundary() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try selectionSeason(role),c=store.mainContext
+            let observation=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+            let old=try XCTUnwrap(ContractEvaluationStore.graduationSample(player:p,calendar:s,observation:observation,in:c))
+            let ref=try XCTUnwrap(old.comparison.reference),date=try GameDate(p.gameDate),window=ContractEvaluationWindow(year:2030,month:4)
+            func decision(n:Int,days:Int) -> DomesticSelection {
+                var line=MatchLine(),perf=MatchScoutingPerformance.tracked
+                if role == .batter {line.plateAppearances=n;line.atBats=n;line.hits=10;perf.singles=10;perf.inputs?.automatic=40}
+                else {line.pitchingOuts=n;line.pitches=80;line.hitsAllowed=2;line.pitchingWalks=1;line.pitchingStrikeouts=5;perf.battersFaced=20;perf.inputs?.automatic=80}
+                let totals=PersonalSeasonTotals(games:1,line:line),v=perf.contribution(line,role:role)!
+                let comparison=ScoutingPerformanceComparison(id:ref.environment,totals:totals,performance:perf,reference:ref,value:v,
+                    correction:ScoutingContractFit.correction(value:v,reference:ref.value!,n:perf.sample(line,role:role)),verified:true,reason:"경계 검증")
+                let sample=DomesticSelectionSample(kind:"졸업 고교 공식시즌",endDate:date.adding(days:-days).description,comparison:comparison)
+                let seed=p.id.uuidString+"/2030",seats=DomesticSelection.market(seed:seed),candidates=DomesticSelection.candidates(seed:seed,month:4)
+                let result=DomesticSelection.simulate(observation:observation,seats:seats,candidates:candidates,carried:[],sample:sample,sampleReason:"")
+                return DomesticSelection(rule:"domestic-selection-v1",seed:seed,priorMarket:"연간 신규 시장",sample:sample,sampleReason:"",seats:seats,candidates:candidates,carried:[],picks:result.picks,results:result.results)
+            }
+            let minimum=role == .batter ? 40:45
+            XCTAssertNoThrow(try decision(n:minimum,days:730).validate(observation:observation,window:window))
+            XCTAssertThrowsError(try decision(n:minimum-1,days:730).validate(observation:observation,window:window))
+            XCTAssertThrowsError(try decision(n:minimum,days:731).validate(observation:observation,window:window))
+        }
+    }
+    func testDomesticSelectionAnnualCatalogIsFixedAndDoesNotReuseProRoleMinimums() throws {
+        let seed="career/2030",market=DomesticSelection.market(seed:seed)
+        XCTAssertEqual(market,DomesticSelection.market(seed:seed))
+        XCTAssertEqual(market.filter {$0.route == .rookie}.count,18)
+        XCTAssertEqual(market.filter {$0.route == .college}.count,24)
+        for route in DomesticSelectionRoute.allCases {
+            for name in Set(market.filter {$0.route == route}.map(\.name)) {
+                let rows=market.filter {$0.name == name}
+                XCTAssertEqual(rows.count,route == .rookie ? 3:4)
+                if route == .college {XCTAssertEqual(Set(rows.flatMap(\.roles)),Set(DomesticSelection.roles))}
+            }
+        }
+        XCTAssertEqual(DomesticSelection.candidates(seed:seed,month:4),DomesticSelection.candidates(seed:seed,month:4))
+        XCTAssertNotEqual(DomesticSelection.candidates(seed:seed,month:4),DomesticSelection.candidates(seed:seed,month:7))
+        XCTAssertEqual(DomesticSelection.minimum("starter",route:.rookie),52)
+        XCTAssertEqual(DomesticSelection.minimum("starter",route:.college),47)
     }
 }

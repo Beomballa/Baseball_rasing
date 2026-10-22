@@ -638,7 +638,7 @@ struct ContractEvaluationHomePanel: View {
     private var own: [CareerContractEvaluation] { evaluations.filter {$0.playerID == player.id}.sorted {$0.key > $1.key} }
     var body: some View {
         GamePanel(title:"계약 평가 · 연간 창",onBoard:true) {
-            Text("4월 1~14일 진로 · 7월 1~14일 무소속 · 11월 1~14일 프로")
+            Text(verbatim:"4월 1~14일 진로 · 7월 1~14일 무소속 · 11월 1~14일 프로")
                 .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractWindows")
             if let failure {
                 Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractEvaluationError")
@@ -650,6 +650,12 @@ struct ContractEvaluationHomePanel: View {
                     Text("\(value.evaluatedDate) 평가 자료 고정 · \(row.acknowledged ? "확인 완료":"확인 필요")")
                         .font(.caption).accessibilityIdentifier("contractEvaluationStatus")
                     Text(value.routes.joined(separator:" / ")).font(.caption).accessibilityIdentifier("contractEvaluationRoutes")
+                    if let selection=value.selection {
+                        DomesticSelectionHomeSummary(value:selection)
+                    } else {
+                        Text("이 원장에는 선발 자료가 기록되지 않았습니다. 기존 자료를 유지하고 다음 허용 창에서 심사합니다.")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractSelectionLegacy")
+                    }
                     if !row.acknowledged {
                         Text("같은 창에서는 성장하거나 재실행해도 다시 평가하지 않습니다. 자료를 확인하면 날짜 진행을 계속할 수 있습니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -664,7 +670,7 @@ struct ContractEvaluationHomePanel: View {
                             Text("\(grade.label) H \(grade.score.map {String(format:"%.1f",$0)} ?? "—")")
                                 .font(.caption.monospaced()).accessibilityIdentifier("contractEvaluationGrade-"+grade.id)
                         }
-                        Text("구단 모집·경쟁 기준과 동일 환경 성적은 평가일 자료로 보관합니다. 신인/대학 선발 심사는 아직 대기 상태입니다.")
+                        Text(value.selection == nil ? "선발 심사 자료 미기록 · 과거 원장은 다시 평가하지 않습니다.":"성적·모집 자리·예산·후보 순서는 평가일에 고정됩니다. 실제 계약 수락과 소속 전환은 후속입니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                         ForEach(value.pending,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
                         ForEach(own) { record in
@@ -681,5 +687,58 @@ struct ContractEvaluationHomePanel: View {
                     .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractNovemberIneligible")
             }
         }
+    }
+}
+
+struct DomesticSelectionHomeSummary: View {
+    let value: DomesticSelection
+    @State private var details=false
+    private func best(_ route:DomesticSelectionRoute) -> DomesticSelectionResult? {
+        value.results.filter {$0.route == route}.sorted {
+            if $0.selected != $1.selected {return $0.selected}
+            if $0.reasons.count != $1.reasons.count {return $0.reasons.count < $1.reasons.count}
+            return ($0.f ?? -1000) == ($1.f ?? -1000) ? $0.id < $1.id:($0.f ?? -1000) > ($1.f ?? -1000)
+        }.first
+    }
+    var body: some View {
+        VStack(alignment:.leading,spacing:12) {
+            Text("선발 심사 결과").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+            Text(value.sample.map {"\($0.kind) · \($0.endDate) 종료 · P \(String(format:"%+.1f",$0.comparison.correction))"} ?? "유효 성적 표본 없음 · 심사 보류")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractSelectionSample")
+            ForEach(DomesticSelectionRoute.allCases,id:\.rawValue) {route in
+                if let row=best(route) {
+                    VStack(alignment:.leading,spacing:8) {
+                        Text("\(route.label) · \(row.status)").font(.subheadline.bold())
+                            .foregroundStyle(row.selected ? GameTheme.gold:GameTheme.boardInk).accessibilityIdentifier("contractSelection-"+route.rawValue)
+                        Text(row.name+" · "+(valueRole(row.role))).font(.caption)
+                        Text("H \(row.h.map {String(format:"%.1f",$0)} ?? "—") / C \(Int(row.c)) / P \(String(format:"%+.1f",row.p)) / F \(row.f.map {String(format:"%+.1f",$0)} ?? "—")")
+                            .font(.caption.monospaced()).accessibilityIdentifier("contractSelectionFit-"+route.rawValue)
+                        Text("자리 \(row.availableSeats) · 예산 \(row.availableBudget)/필요\(row.cost)지수 · 경쟁 \(row.competition)명")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        if row.selected {
+                            Text("\(route == .rookie ? "해당 창의 지명 협상 대상":"대학 입단 선택 대상") · 실제 제의/수락은 아직 연결 전입니다.").font(.caption).foregroundStyle(GameTheme.gold)
+                        } else {
+                            ForEach(Array(row.reasons.prefix(3)),id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
+                        }
+                    }.padding(10).overlay(Rectangle().stroke(GameTheme.boardMuted.opacity(0.35),lineWidth:1))
+                }
+            }
+            HomeDetailButton(title:"모집·예산·경쟁 심사표",expanded:$details,identifier:"contractSelectionDetails")
+            if details {
+                Text("가상6구단 역순3라운드 · 가상6대학 역할별1자리 / 실제 구단 수요·입시 재현 아님")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Text(value.priorMarket).font(.caption)
+                ForEach(value.results) {row in
+                    VStack(alignment:.leading,spacing:6) {
+                        Text(row.name+" · "+valueRole(row.role)+" · "+row.status).font(.caption.bold())
+                        Text("F \(row.f.map {String(format:"%+.1f",$0)} ?? "—") · 자리\(row.availableSeats) · 예산\(row.availableBudget)/필요\(row.cost) · 경쟁\(row.competition)").font(.caption.monospaced())
+                        Text(row.reasons.isEmpty ? "모든 입단 조건 충족 · 고정 후보 순서로 선발":row.reasons.joined(separator:" / ")).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }.padding(.vertical,6)
+                }
+            }
+        }
+    }
+    private func valueRole(_ id:String) -> String {
+        switch id {case "slugger":"장타";case "onBase":"출루";case "field":"수비";default:"선발"}
     }
 }

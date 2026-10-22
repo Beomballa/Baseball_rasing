@@ -161,6 +161,23 @@ struct CareerPathVerification: View {
                     if age >= 20 {
                         p.gameDate = "2030-04-01";try CareerPathStore.synchronize(player:p,calendar:calendar,in:c.mainContext)
                     }
+                    if args.contains("-selection-qualified"),age == 20 {
+                        let context=c.mainContext
+                        for (index,fixture) in try calendar.fixtures(for:p,year:2028).filter({$0.isAppearance(for:role)}).prefix(role == .batter ? 12:6).enumerated() {
+                            p.gameDate=fixture.date.description
+                            var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",values:PlayerArchetype.initial(for:role).values,
+                                seed:UInt64(700+index),home:fixture.homeID == p.schoolID,tracked:true)
+                            try match.advance(.automatic)
+                            let row=try CareerMatchRecord(player:p,fixture:fixture,match:match);row.completed=true;row.rulesVersion="native-match-v2";context.insert(row)
+                        }
+                        p.gameDate="2030-04-01";p.contact=80;p.power=80;p.discipline=80;p.defense=80
+                        let abilities=try PlayerAbilityStore.profile(playerID:p.id,in:context)!
+                        try abilities.grow(.mental,to:80)
+                        if role == .pitcher {
+                            for kind in [TrainingKind.velocity,.control,.stuff,.stamina] {try abilities.grow(kind,to:80)}
+                            for pitch in p.pitches {pitch.mastery=80}
+                        }
+                    }
                     _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:c.mainContext)
                     try c.mainContext.save()
                 }

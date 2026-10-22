@@ -2201,3 +2201,31 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+
+extension CareerFlowTests {
+    @MainActor func testDomesticSelectionHomeBothRolesQualifiedAndMissingSamples() throws {
+        let app=XCUIApplication()
+        for qualified in [false,true] {
+            app.launchArguments=["-career-path-verification","-career-age20"]+(qualified ? ["-selection-qualified"]:[])
+            app.launch()
+            for role in ["batter","pitcher"] {
+                let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+                let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+                let rookie=app.staticTexts["contractSelection-rookie"];revealFit(rookie,in:app)
+                XCTAssertTrue(rookie.label.contains(qualified ? "신인 지명":"심사 보류"))
+                let college=app.staticTexts["contractSelection-college"];revealFit(college,in:app)
+                XCTAssertTrue(college.label.contains(qualified ? "대학 선발 합격":"심사 보류"))
+                let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Selection "+role+(qualified ? " qualified":" pending");shot.lifetime = .keepAlways;add(shot)
+                let detail=app.buttons["contractSelectionDetails"];revealFit(detail,in:app);detail.tap()
+                XCTAssertEqual(detail.value as? String,"펼침")
+                detail.tap()
+                let ack=app.buttons["acknowledgeContractEvaluation"];revealFit(ack,in:app);ack.tap()
+                XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+                let status=app.staticTexts["contractEvaluationStatus"];revealFit(status,in:app);XCTAssertTrue(status.label.contains("확인 완료"))
+                revealFit(rookie,in:app);XCTAssertTrue(rookie.label.contains(qualified ? "신인 지명":"심사 보류"))
+            }
+            app.terminate()
+        }
+    }
+}

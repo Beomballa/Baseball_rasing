@@ -235,9 +235,10 @@ struct ContractEvaluationSnapshot: Codable {
     let routes: [String]
     let observation: ScoutingObservation
     let pending: [String]
+    var selection: DomesticSelection?
     func validate(player:CareerPlayer,calendar:CareerCalendarState) throws {
         let date = try GameDate(evaluatedDate)
-        guard version == 1, rule == "contracts-window-v1", [4,7,11].contains(window.month),
+        guard [1,2].contains(version), rule == "contracts-window-v1", [4,7,11].contains(window.month),
               (1...9998).contains(window.year), window == ContractEvaluationWindow.containing(date),
               observation.playerID == player.id, observation.origin == calendar.originDate,
               observation.role == player.role, observation.observedDate == evaluatedDate,
@@ -246,6 +247,11 @@ struct ContractEvaluationSnapshot: Codable {
               !routes.isEmpty, routes == window.routes(age:observation.age,affiliation:affiliation.stage),
               !pending.isEmpty else { throw ContractEvaluationError.invalid }
         try observation.validate()
+        if version == 1 {guard selection == nil else {throw ContractEvaluationError.invalid}}
+        else {
+            guard let selection, affiliation.stage == .unsigned else {throw ContractEvaluationError.invalid}
+            try selection.validate(observation:observation,window:window)
+        }
     }
 }
 enum CareerSchemaV10: VersionedSchema {
@@ -279,7 +285,13 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         let id = player.id
         let rows = try context.fetch(FetchDescriptor<CareerContractEvaluation>(predicate:#Predicate {$0.playerID == id}))
         guard Set(rows.map(\.key)).count == rows.count else {throw ContractEvaluationError.invalid}
-        for row in rows {_ = try row.snapshot(player:player,calendar:calendar)}
+        let snapshots=try rows.map {try $0.snapshot(player:player,calendar:calendar)}
+        for value in snapshots where value.window.month == 7 {
+            if let selection=value.selection {
+                let april=snapshots.first {$0.window.year == value.window.year && $0.window.month == 4}?.selection
+                guard selection.carried == DomesticSelection.carried(seed:selection.seed,april:april) else {throw ContractEvaluationError.invalid}
+            }
+        }
         return rows.sorted {$0.key > $1.key}
     }
     static func unread(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> CareerContractEvaluation? {
@@ -295,11 +307,53 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         let routes = window.routes(age:try calendar.age(of:player),affiliation:history.current.stage)
         guard !routes.isEmpty else {return false}
         let observation = try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
-        let value = ContractEvaluationSnapshot(rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
+        var value = ContractEvaluationSnapshot(rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
             calendarRevision:calendar.revision,affiliation:history.current,routes:routes,observation:observation,
-            pending:["평가 자료 고정 · 선발 심사 대기","졸업 성적/인증 평가전·프로 경력/권리·모집/예산·경쟁 심사는 후속입니다.","관찰 H/C/P/F는 참고 자료이며 신인/대학 합격 판정이 아닙니다."])
+            pending:observation.age <= 23 ? ["실제 제의 발행·수락/등록·성인 소속/일정 전환은 후속입니다.","인증 평가전 원장 미연결 · 자료 누락 시 심사 보류"] : ["국내 전력/검증 테스트 선발 심사 대기"])
+        if (20...23).contains(observation.age) {
+            let seed=player.id.uuidString+"/\(window.year)",seats=DomesticSelection.market(seed:seed)
+            let april=try rows.first(where:{$0.key == CareerContractEvaluation.key(player.id,"\(window.year)-04")})?.snapshot(player:player,calendar:calendar).selection
+            let carried=window.month == 7 ? DomesticSelection.carried(seed:seed,april:april):[]
+            let sample=try graduationSample(player:player,calendar:calendar,observation:observation,in:context)
+            let reason="검증된 졸업 표본40PA/15IP 부족 또는 유효기간 경과 · 동일 형식 인증 평가전 자료 필요"
+            let candidates=DomesticSelection.candidates(seed:seed,month:window.month)
+            let simulated=DomesticSelection.simulate(observation:observation,seats:window.month == 7 ? seats.filter {$0.route == .rookie}:seats,
+                candidates:candidates,carried:carried,sample:sample,sampleReason:reason)
+            value.version=2
+            value.selection=DomesticSelection(rule:"domestic-selection-v1",seed:seed,priorMarket:window.month == 4 ? "연간 신규 시장":april == nil ? "고정 가상4월 NPC 충원 이월":"4월 고정 NPC 충원 이월 · 미수락 내 예약 해제",
+                sample:sample,sampleReason:reason,seats:seats,candidates:candidates,carried:carried,picks:simulated.picks,results:simulated.results)
+        }
         try value.validate(player:player,calendar:calendar)
         context.insert(try CareerContractEvaluation(playerID:player.id,snapshot:value));return true
+    }
+    static func graduationSample(player:CareerPlayer,calendar:CareerCalendarState,observation:ScoutingObservation,in context:ModelContext) throws -> DomesticSelectionSample? {
+        guard observation.age == 20 else {return nil}
+        let date=try GameDate(observation.observedDate),origin=try GameDate(calendar.originDate),id=player.id
+        let records=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
+        // Last completed high-school season only; never search older better performance or mix years/modes.
+        let lastYear=min(date.year,origin.year+18-player.startAge)
+        guard lastYear >= origin.year else {return nil}
+        let summary=try CareerSeasonStore.snapshot(player:player,state:calendar,year:lastYear,records:records)
+        guard summary.finalized,let end=summary.league.fixtures.map(\.date).max(),end <= date,end.days(to:date) <= 730 else {return nil}
+        var groups:[String:ScoutingSampleGroup]=[:]
+        for row in records where row.completed && row.appearance {
+            guard try GameDate(row.gameDate).year == lastYear else {continue}
+            let match=try row.snapshot()
+            guard let source=match.scoutingEnvironment,let perf=match.scoutingPerformance else {continue}
+            var group=groups[source] ?? ScoutingSampleGroup(id:source)
+            if group.performance == nil {group.performance=perf.version == 2 ? .tracked:MatchScoutingPerformance()}
+            try group.performance?.add(perf);try group.totals.add(match.line);groups[source]=group
+        }
+        let comparisons=try groups.values.compactMap { group -> ScoutingPerformanceComparison? in
+            guard let perf=group.performance,(perf.version == 2 || !perf.manual),
+                  player.role == .batter ? group.hasBatterMinimum:group.hasPitcherMinimum,
+                  let ref=try ScoutingReferenceSimulation.make(environment:group.id,role:player.role,position:player.role == .batter ? player.positionRaw:"P"),
+                  let v=perf.contribution(group.totals.line,role:player.role),let vr=ref.value else {return nil}
+            return ScoutingPerformanceComparison(id:group.id,totals:group.totals,performance:perf,reference:ref,value:v,
+                correction:ScoutingContractFit.correction(value:v,reference:vr,n:perf.sample(group.totals.line,role:player.role)),verified:true,reason:"졸업한 마지막 고교 공식시즌 · 동일 환경/표준 NPC")
+        }
+        guard let source=ScoutingContractFit.selected(comparisons,role:player.role) else {return nil}
+        return DomesticSelectionSample(kind:"졸업 고교 공식시즌",endDate:end.description,comparison:source)
     }
     static func registerCurrent(in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
         guard !context.hasChanges else {throw ContractEvaluationError.pendingChanges}

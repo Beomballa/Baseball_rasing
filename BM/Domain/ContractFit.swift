@@ -361,3 +361,191 @@ struct ScoutingContractFit: Codable, Equatable {
         }
     }
 }
+
+// Independent rookie/admission market; pro first-team competitors are never entry criteria.
+enum DomesticSelectionRoute: String, Codable, CaseIterable { case rookie, college
+    var label: String { self == .rookie ? "국내 신인" : "대학 입단" }
+}
+struct DomesticSelectionSample: Codable, Equatable {
+    let kind: String
+    let endDate: String
+    let comparison: ScoutingPerformanceComparison
+}
+struct DomesticSelectionSeat: Codable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let route: DomesticSelectionRoute
+    let order: Int
+    let roles: [String]
+    let budget: Int
+}
+struct DomesticSelectionCandidate: Codable, Equatable, Identifiable {
+    let id: String
+    let role: String
+    let h: Double
+    let p: Double
+}
+struct DomesticSelectionPick: Codable, Equatable {
+    let seatID: String
+    let candidateID: String
+    let role: String
+    let f: Double
+    let cost: Int
+}
+struct DomesticSelectionResult: Codable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let route: DomesticSelectionRoute
+    let role: String
+    let h: Double?
+    let c: Double
+    let p: Double
+    let f: Double?
+    let cost: Int
+    let availableBudget: Int
+    let availableSeats: Int
+    let competition: Int
+    let selected: Bool
+    let reasons: [String]
+    var status: String { selected ? (route == .rookie ? "신인 지명" : "대학 선발 합격") : reasons.contains(where: {$0.contains("자료") || $0.contains("표본")}) ? "심사 보류" : "미선발" }
+}
+struct DomesticSelection: Codable, Equatable {
+    let rule: String
+    let seed: String
+    let priorMarket: String
+    let sample: DomesticSelectionSample?
+    let sampleReason: String
+    let seats: [DomesticSelectionSeat]
+    let candidates: [DomesticSelectionCandidate]
+    let carried: [DomesticSelectionPick]
+    let picks: [DomesticSelectionPick]
+    let results: [DomesticSelectionResult]
+    static let roles = ["slugger","onBase","field","starter"]
+    static func minimum(_ role:String,route:DomesticSelectionRoute) -> Double {
+        (role == "slugger" || role == "starter" ? 52:50) - (route == .college ? 5:0)
+    }
+    static func cost(_ f:Double) -> Int {Int((100 * max(0.75,min(2,1+0.06*f))).rounded())}
+    static func hash(_ text:String) -> UInt64 {text.utf8.reduce(UInt64(14695981039346656037)) {($0 ^ UInt64($1)) &* 1099511628211}}
+    static func market(seed:String) -> [DomesticSelectionSeat] {
+        let ids=["harbors","comets","tides","stars","foxes","falcons"]
+        let clubs=["인천 하버스","대전 코멧츠","부산 타이즈","서울 스타즈","광주 폭시스","대구 팔콘스"]
+        let colleges=["해솔대","한빛대","푸른대","다온대","누리대","가온대"]
+        // Seeded initial previous-year order is fictional game configuration, not real standings.
+        let order=ids.indices.sorted {hash(seed+ids[$0]) < hash(seed+ids[$1])}
+        var seats:[DomesticSelectionSeat]=[]
+        for round in 0..<3 {for (index,club) in order.enumerated() {
+            let role=roles[(club+round)%4]
+            seats.append(DomesticSelectionSeat(id:"rookie/"+ids[club]+"/\(round+1)",name:clubs[club],route:.rookie,
+                order:round*6+index,roles:[role],budget:330+club*12))
+        }}
+        for club in ids.indices {for (index,role) in roles.enumerated() {
+            seats.append(DomesticSelectionSeat(id:"college/\(club)/"+role,name:colleges[club],route:.college,
+                order:club*4+index,roles:[role],budget:520+club*40))
+        }}
+        return seats
+    }
+    static func candidates(seed:String,month:Int) -> [DomesticSelectionCandidate] {
+        (0..<(month == 4 ? 20:8)).map { index in
+            let id="npc/\(month)/\(index)",bits=hash(seed+"/"+id)
+            return DomesticSelectionCandidate(id:id,role:roles[index%4],h:Double(46+bits%17),p:Double(Int((bits/17)%7)-3)*0.5)
+        }
+    }
+    static func carried(seed:String,april:DomesticSelection?) -> [DomesticSelectionPick] {
+        let picks=april?.picks ?? simulate(observation:nil,seats:market(seed:seed),candidates:candidates(seed:seed,month:4),carried:[],sample:nil,sampleReason:"").picks
+        return picks.filter {$0.seatID.hasPrefix("rookie/") && $0.candidateID.hasPrefix("npc/")}
+    }
+    static func fieldCondition(_ role:String,route:DomesticSelectionRoute,observation:ScoutingObservation) -> [String] {
+        guard role == "field" else {return []}
+        let mastery=route == .rookie ? 60.0:50.0
+        var reasons:[String]=[]
+        if (observation.positionMastery ?? -1) < mastery {reasons.append("주 포지션 숙련\(Int(mastery)) 필요")}
+        if route == .rookie && (observation.abilities.originals.first {$0.id == "homeDefense"}?.current ?? -1) < 50 {reasons.append("원본 수비50 필요")}
+        return reasons
+    }
+    static func simulate(observation:ScoutingObservation?,seats:[DomesticSelectionSeat],candidates:[DomesticSelectionCandidate],
+                         carried:[DomesticSelectionPick],sample:DomesticSelectionSample?,sampleReason:String) -> (picks:[DomesticSelectionPick],results:[DomesticSelectionResult]) {
+        let own=observation.map {"player/"+$0.playerID.uuidString},p=sample?.comparison.correction ?? 0
+        var picks=carried,results:[DomesticSelectionResult]=[]
+        for route in DomesticSelectionRoute.allCases {
+            var chosen:Set<String>
+            // Each route is an alternative application; one player may qualify for both, never twice within one route.
+            chosen=Set(carried.filter {pick in seats.first(where:{$0.id == pick.seatID})?.route == route}.map(\.candidateID))
+            let ordered=seats.filter {$0.route == route}.sorted {
+                if route == .college,let observation {
+                    func best(_ seat:DomesticSelectionSeat) -> Double {
+                        seat.roles.compactMap {role in observation.grades.first {$0.id == role}?.score.map {$0-minimum(role,route:route)}}.max() ?? -1000
+                    }
+                    let a=best($0),b=best($1)
+                    if a != b {return a > b}
+                }
+                return $0.order == $1.order ? $0.id < $1.id:$0.order < $1.order
+            }
+            for seat in ordered {
+                let occupied=picks.contains {$0.seatID == seat.id}
+                let spent=picks.filter {pick in seats.first(where:{$0.id == pick.seatID})?.name == seat.name}.reduce(0) {$0+$1.cost}
+                let budget=max(0,seat.budget-spent)
+                var pool=candidates.filter {!chosen.contains($0.id) && seat.roles.contains($0.role)}.filter {
+                    let f=$0.h-minimum($0.role,route:route)+$0.p
+                    return f >= 0 && cost(f) <= budget
+                }
+                var ownRows:[DomesticSelectionResult]=[]
+                if let observation,let own {
+                    for role in seat.roles where observation.grades.contains(where:{$0.id == role}) {
+                        let h=observation.grades.first {$0.id == role}?.score,c=minimum(role,route:route)
+                        let f=h.map {ScoutingContractFit.round($0-c+p)},price=cost(f ?? 0)
+                        var reasons:[String]=[]
+                        if sample == nil {reasons.append(sampleReason)}
+                        if h == nil {reasons.append("역할 기량 자료 부족")}
+                        reasons += fieldCondition(role,route:route,observation:observation)
+                        if let f,f < 0 {reasons.append(String(format:"기량 여유 F %.1f · 기준0 필요",f))}
+                        if occupied {reasons.append("연간 모집 자리 충원 완료")}
+                        if price > budget {reasons.append("예산 부족 · 필요\(price)/잔여\(budget)지수")}
+                        if chosen.contains(own) {reasons.append("동일 경로의 다른 자리에서 이미 선발")}
+                        ownRows.append(DomesticSelectionResult(id:seat.id+"/"+role,name:seat.name,route:route,role:role,h:h,c:c,p:p,f:f,
+                            cost:price,availableBudget:budget,availableSeats:occupied ? 0:1,competition:pool.count,selected:false,reasons:reasons))
+                        if reasons.isEmpty,let h {pool.append(DomesticSelectionCandidate(id:own,role:role,h:h,p:p))}
+                    }
+                }
+                let winner=occupied ? nil:pool.sorted {
+                    let a=ScoutingContractFit.round($0.h-minimum($0.role,route:route)+$0.p),b=ScoutingContractFit.round($1.h-minimum($1.role,route:route)+$1.p)
+                    return a == b ? $0.id < $1.id:a > b
+                }.first
+                if let winner {
+                    let f=ScoutingContractFit.round(winner.h-minimum(winner.role,route:route)+winner.p)
+                    picks.append(DomesticSelectionPick(seatID:seat.id,candidateID:winner.id,role:winner.role,f:f,cost:cost(f)))
+                    chosen.insert(winner.id)
+                }
+                for row in ownRows {
+                    let selected=winner?.id == own && winner?.role == row.role
+                    let reasons=row.reasons.isEmpty && !selected ? ["후보 경쟁 탈락 · F 내림차순/고정 ID 순"]:row.reasons
+                    results.append(DomesticSelectionResult(id:row.id,name:row.name,route:row.route,role:row.role,h:row.h,c:row.c,p:row.p,f:row.f,
+                        cost:row.cost,availableBudget:row.availableBudget,availableSeats:row.availableSeats,competition:row.competition,selected:selected,reasons:reasons))
+                }
+            }
+        }
+        return (picks,results)
+    }
+    func validate(observation:ScoutingObservation,window:ContractEvaluationWindow) throws {
+        guard rule == "domestic-selection-v1",seed == observation.playerID.uuidString+"/\(window.year)",
+              [4,7].contains(window.month),(20...23).contains(observation.age),
+              seats == Self.market(seed:seed),Set(candidates.map(\.id)).count == candidates.count,
+              candidates == Self.candidates(seed:seed,month:window.month),candidates.allSatisfy({$0.id.hasPrefix("npc/") && Self.roles.contains($0.role) && $0.h.isFinite && (0...100).contains($0.h) && $0.p.isFinite && (-4...4).contains($0.p)}),
+              Set(carried.map(\.seatID)).count == carried.count,Set(carried.map(\.candidateID)).count == carried.count,
+              carried.allSatisfy({pick in seats.contains(where:{$0.id == pick.seatID && $0.route == .rookie && $0.roles.contains(pick.role)}) && pick.candidateID.hasPrefix("npc/") && pick.f.isFinite && pick.f >= 0 && pick.cost == Self.cost(pick.f)}),
+              window.month == 7 || carried.isEmpty else {throw ContractEvaluationError.invalid}
+        if let sample {
+            let source=sample.comparison,end=try GameDate(sample.endDate),date=try GameDate(observation.observedDate)
+            guard source.verified,source.reference?.environment == source.id,source.reference?.role == observation.role,
+                  source.reference?.position == (observation.role == .batter ? observation.position:"P"),
+                  end <= date,(sample.kind == "졸업 고교 공식시즌" && observation.age == 20 && end.days(to:date) <= 730),
+                  observation.role == .batter ? source.totals.line.plateAppearances >= 40:source.totals.line.pitchingOuts >= 45,
+                  let perf=source.performance,let reference=source.reference,let v=perf.contribution(source.totals.line,role:observation.role) else {throw ContractEvaluationError.invalid}
+            try perf.validate(line:source.totals.line,role:observation.role);try reference.validate()
+            guard (perf.version == 2 || !perf.manual),source.value == v,
+                  source.correction == ScoutingContractFit.correction(value:v,reference:reference.value!,n:perf.sample(source.totals.line,role:observation.role)) else {throw ContractEvaluationError.invalid}
+        }
+        let replay=Self.simulate(observation:observation,seats:window.month == 7 ? seats.filter {$0.route == .rookie}:seats,
+            candidates:candidates,carried:carried,sample:sample,sampleReason:sampleReason)
+        guard replay.picks == picks,replay.results == results else {throw ContractEvaluationError.invalid}
+    }
+}
