@@ -766,7 +766,7 @@ import SwiftUI
             var appearance=PlayerAppearance();appearance.kit=2;appearance.skin=4;appearance.hair=4
             let view=DetailedFieldReplayBoard(play:play,appearance:appearance,animated:false,jerseyNumber:47,
                 ownPosition:"2B",throwingHand:"left",ownTeamFielding:ownFielding,scoreText:"H 2 : 1 A") {}
-                .frame(width:390,height:360)
+                .frame(width:390,height:500)
             let renderer=ImageRenderer(content:view);renderer.scale=2
             let image=try XCTUnwrap(renderer.uiImage)
             let attachment=XCTAttachment(image:image);attachment.name=ownFielding ? "Own defense pixel stadium":"Opponent defense pixel stadium"
@@ -796,6 +796,17 @@ import SwiftUI
         try await Task.sleep(for:.seconds(9))
         XCTAssertEqual(cancelledCallbacks,0)
         window.isHidden=true;window.rootViewController=nil
+    }
+
+    func testPixelStadiumNativeResolutionAndImmersiveStageAllocation() throws {
+        let image=InplayStadiumArt.image
+        XCTAssertEqual(image.scale,1)
+        XCTAssertEqual(try XCTUnwrap(image.cgImage).width,320)
+        XCTAssertEqual(try XCTUnwrap(image.cgImage).height,352)
+        XCTAssertEqual(FieldReplayPresentation.stageHeight(width:374,available:720),486.2,accuracy:0.01)
+        XCTAssertEqual(FieldReplayPresentation.stageHeight(width:304,available:420),320)
+        XCTAssertEqual(FieldReplayPresentation.stageHeight(width:304,available:420,accessibility:true),480)
+        let attachment=XCTAttachment(image:image);attachment.name="Pixel stadium native art";attachment.lifetime = .keepAlways;add(attachment)
     }
 
 }

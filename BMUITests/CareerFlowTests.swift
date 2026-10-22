@@ -928,6 +928,69 @@ extension CareerFlowTests {
         reveal(app.staticTexts["gameResultFatigue"], in: app); XCTAssertEqual(app.staticTexts["gameResultFatigue"].label, fatigue)
     }
 
+    @MainActor func testImmersiveInplayFieldLivePitcherBatterReplayAndLargeText() throws {
+        let app=XCUIApplication();app.launch()
+        app.buttons["role-pitcher"].tap();app.buttons["hand-left"].tap()
+        createDashboardSample(app,name:"FieldPitcher",motionStyle:true)
+        reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
+        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        let stage=app.descendants(matching:.any).matching(identifier:"inplayFieldStage").firstMatch
+        var found=false
+        for _ in 0..<16 {
+            waitForEnabled(app.buttons["gamePitch"],timeout:15)
+            app.buttons["gamePitch"].tap()
+            Thread.sleep(forTimeInterval:0.7)
+            app.buttons["gameRelease"].tap()
+            if stage.waitForExistence(timeout:5) {found=true;break}
+        }
+        XCTAssertTrue(found,"A live fair ball must enter the dedicated field stage")
+        verifyImmersiveField(app,name:"Immersive live pitcher field")
+        let ended=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
+        XCTAssertEqual(XCTWaiter.wait(for:[ended],timeout:15),.completed)
+        let count=app.otherElements["careerGameCount"].label
+        app.terminate();app.launch()
+        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
+        app.navigationBars.buttons.element(boundBy:0).tap()
+        reveal(app.buttons["createOtherRole"],in:app);app.buttons["createOtherRole"].tap()
+        createDashboardSample(app,name:"FieldBatter",motionStyle:true)
+        reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
+        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        for _ in 0..<12 {
+            if app.buttons["replayLastFieldPlay"].exists {break}
+            app.buttons["gameInput-watch"].tap();app.buttons["requestGamePitch"].tap()
+            waitForEnabled(app.buttons["requestGamePitch"],timeout:15)
+        }
+        let before=app.otherElements["careerGameCount"].label
+        reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
+        XCTAssertTrue(stage.waitForExistence(timeout:3))
+        verifyImmersiveField(app,name:"Immersive batter field replay")
+        let replayEnded=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
+        XCTAssertEqual(XCTWaiter.wait(for:[replayEnded],timeout:15),.completed)
+        XCTAssertEqual(app.otherElements["careerGameCount"].label,before)
+        app.terminate();app.launchArguments=["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        let role=app.buttons["homeRole-batter"];reveal(role,in:app);role.tap()
+        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
+        XCTAssertTrue(stage.waitForExistence(timeout:3))
+        XCTAssertTrue(app.buttons["inplayJumpField"].exists)
+        app.buttons["inplayJumpField"].tap()
+        verifyImmersiveField(app,name:"Immersive field accessibility size")
+    }
+
+    @MainActor private func verifyImmersiveField(_ app:XCUIApplication,name:String) {
+        let field=app.otherElements["fieldReplayCanvas"],window=app.windows.firstMatch.frame
+        XCTAssertTrue(field.exists)
+        let phase=app.staticTexts["fieldReplayPhase"].label
+        XCTAssertFalse(phase.contains("세이프"));XCTAssertFalse(phase.contains("아웃"))
+        XCTAssertGreaterThan(field.frame.width,window.width*0.9)
+        XCTAssertGreaterThan(field.frame.height,window.width*0.85)
+        XCTAssertLessThanOrEqual(field.frame.maxX,window.maxX+1)
+        XCTAssertFalse(app.otherElements["pitchJudgmentToast"].exists)
+        XCTAssertFalse(app.buttons["gamePitch"].isHittable)
+        let shot=XCTAttachment(screenshot:app.screenshot());shot.name=name;shot.lifetime = .keepAlways;add(shot)
+    }
+
     @MainActor func testMatchBoardBothRolesResumeAndLargeText() throws {
         let app = XCUIApplication(); app.launch()
         for pitcher in [false, true] {

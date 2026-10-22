@@ -346,6 +346,9 @@ struct MatchResultSummary {
 }
 
 enum FieldReplayPresentation {
+    static func stageHeight(width:CGFloat,available:CGFloat,accessibility:Bool=false) -> CGFloat {
+        max(320,min(width*1.3,available-112)) + (accessibility ? 160:0)
+    }
     static func seconds(_ play:MatchDetailedPlay,reduced:Bool,animated:Bool) -> Double {
         reduced || !animated ? 0.25:min(8,max(3,play.duration))
     }
@@ -389,6 +392,86 @@ enum FieldReplayPresentation {
     }
 }
 
+// A fixed-resolution stadium keeps stepped edges and texture pixels at every display scale.
+@MainActor enum InplayStadiumArt {
+    static let size=CGSize(width:320,height:352)
+    static let image:UIImage = {
+        let format=UIGraphicsImageRendererFormat();format.scale=1;format.opaque=true
+        return UIGraphicsImageRenderer(size:size,format:format).image { renderer in
+            let c=renderer.cgContext;c.setShouldAntialias(false);c.interpolationQuality = .none
+            func color(_ hex:Int) -> CGColor {UIColor(red:CGFloat((hex>>16)&255)/255,green:CGFloat((hex>>8)&255)/255,blue:CGFloat(hex&255)/255,alpha:1).cgColor}
+            func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
+                c.setFillColor(color(hex));c.fill(CGRect(x:x.rounded(),y:y.rounded(),width:w.rounded(),height:h.rounded()))
+            }
+            func point(_ p:FieldPoint) -> CGPoint {CGPoint(x:(320*(0.5+p.x/145)).rounded(),y:(352*(0.94-p.y/150)).rounded())}
+            func path(_ nodes:[FieldPoint]) -> CGPath {
+                let p=CGMutablePath();p.addLines(between:nodes.map(point));p.closeSubpath();return p
+            }
+            let edge:[FieldPoint]=[.init(x:0,y:-3),.init(x:64,y:61),.init(x:61,y:82),.init(x:50,y:101),.init(x:32,y:114),.init(x:0,y:119),.init(x:-32,y:114),.init(x:-50,y:101),.init(x:-61,y:82),.init(x:-64,y:61)]
+            let field=path(edge)
+            box(0,0,320,352,0x102735)
+            for row in 0..<38 {
+                let y=Double(row*9)
+                box(0,y+7,320,2,row%4 == 0 ? 0x69808a:0x273f52)
+                for column in 0..<40 {
+                    let x=Double(column*8)+(row%2 == 0 ? 0:3)
+                    let n=(row*37+column*19)%17
+                    box(x,y,6,6,0x263f56);box(x+1,y+4,5,2,0x42617c)
+                    if n<13 {
+                        let skin=[0xe4b987,0xc68b62,0x9b6749][n%3]
+                        box(x+2,y,3,3,skin);box(x+1,y+3,5,3,[0xc6cebd,0x8b4846,0x536f86,0xc9b36a][n%4])
+                        if n%3 == 0 {box(x+1,y-1,4,1,0x182e42)}
+                    }
+                }
+                if row%8 == 0 {box(24,y,3,8,0x8b9693);box(293,y,3,8,0x8b9693)}
+            }
+            c.saveGState();c.addPath(field);c.clip()
+            box(0,0,320,352,0x39774b)
+            for y in stride(from:0,to:352,by:16) {box(0,Double(y),320,8,0x418452)}
+            for i in 0..<1600 {
+                let x=(i*73+31)%320,y=(i*47+19)%352
+                box(Double(x),Double(y),i%5 == 0 ? 2:1,1,i%2 == 0 ? 0x488759:0x347346)
+            }
+            c.addPath(field);c.setStrokeColor(color(0x986f43));c.setLineWidth(15);c.strokePath()
+            c.addPath(field);c.setStrokeColor(color(0xc39a63));c.setLineWidth(9);c.strokePath()
+            let diamond=path(DetailedFieldRules.bases)
+            c.addPath(diamond);c.setFillColor(color(0xb98a52));c.fillPath()
+            c.addPath(diamond);c.setStrokeColor(color(0xd2a66b));c.setLineWidth(8);c.strokePath()
+            let infield=path([.init(x:0,y:7),.init(x:12,y:19.4),.init(x:0,y:31.8),.init(x:-12,y:19.4)])
+            c.addPath(infield);c.setFillColor(color(0x3b7c4e));c.fillPath()
+            for i in 0..<170 {
+                let x=144+(i*17)%35,y=273+(i*11)%43
+                if !infield.contains(CGPoint(x:x,y:y)) {box(Double(x),Double(y),1,1,0xc59b64)}
+            }
+            for (a,b) in [(FieldPoint(x:-64,y:64),FieldPoint(x:0,y:0)),(FieldPoint(x:0,y:0),FieldPoint(x:64,y:64))] {
+                c.move(to:point(a));c.addLine(to:point(b));c.setStrokeColor(color(0xf0e6c8));c.setLineWidth(1);c.strokePath()
+            }
+            for p in DetailedFieldRules.bases {
+                let b=point(p);c.setFillColor(color(0xbf925c));c.fillEllipse(in:CGRect(x:b.x-6,y:b.y-4,width:12,height:8))
+            }
+            let mound=point(DetailedFieldRules.positions[0])
+            c.setFillColor(color(0xbe945f));c.fillEllipse(in:CGRect(x:mound.x-8,y:mound.y-5,width:16,height:10))
+            box(mound.x-2,mound.y-1,4,1,0xf7ebd2)
+            c.restoreGState()
+            c.addPath(field);c.setStrokeColor(color(0x112b38));c.setLineWidth(6);c.strokePath()
+            c.addPath(field);c.setStrokeColor(color(0x6c9291));c.setLineWidth(2);c.strokePath()
+            for i in 0..<edge.count {
+                let p=point(edge[i]);box(p.x-1,p.y-2,2,5,0xd6bd79)
+            }
+            // Dugouts, roof shadows and benches frame the field without covering the play.
+            for x in [8.0,268] {
+                box(x,267,44,24,0x0a202c);box(x-2,264,48,5,0x496e78)
+                box(x,269,44,2,0x7e9a96);box(x+4,282,36,3,0xb29363)
+                for seat in 0..<6 {box(x+5+Double(seat)*6,275,3,5,0x466775)}
+            }
+            box(111,3,98,35,0x091c2b);box(112,4,96,1,0x9bb2ac)
+            box(114,8,92,26,0x142d3d)
+            for x in stride(from:116,to:206,by:3) {box(Double(x),30,1,1,0x3a5260)}
+            box(148,342,24,2,0x819495)
+        }
+    }()
+}
+
 struct DetailedFieldReplayBoard: View {
     let play: MatchDetailedPlay
     let appearance: PlayerAppearance
@@ -401,6 +484,7 @@ struct DetailedFieldReplayBoard: View {
     var onResolved: @MainActor () -> Void = {}
     let complete: @MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var start = Date()
     @State private var resolved = false
     private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
@@ -412,47 +496,15 @@ struct DetailedFieldReplayBoard: View {
             let second=play.secondThrow
             let target=time >= (second?.releaseAt ?? .infinity) ? 1:play.targetBase
             VStack(spacing:4) {
-                Text(phase).font(.system(.caption,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
-                    .lineLimit(2).accessibilityIdentifier("fieldReplayPhase")
+                Text(finished ? "플레이 완료":phase).font(.system(.headline,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil:2).accessibilityIdentifier("fieldReplayPhase")
                 Canvas { context,size in
                     func point(_ p:FieldPoint) -> CGPoint {CGPoint(x:size.width*(0.5+p.x/145),y:size.height*(0.94-p.y/150))}
-                    func path(_ points:[FieldPoint],closed:Bool=false) -> Path {
-                        Path {p in guard let first=points.first else {return};p.move(to:point(first))
-                            for next in points.dropFirst() {p.addLine(to:point(next))};if closed {p.closeSubpath()}}
-                    }
-                    func rect(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
-                        context.fill(Path(CGRect(x:x,y:y,width:w,height:h)),with:.color(Color(hex:hex)))
-                    }
-                    rect(0,0,size.width,size.height,0x17374d)
-                    // Pixel stands use the pitching scene's navy seats, warm skin and cream rails.
-                    let cell=max(8,size.width/38)
-                    for row in 0..<4 {for col in 0..<40 {
-                        let x=Double(col)*cell,y=Double(row)*cell*0.55
-                        let skin=[0xefbe91,0xc68a63,0xf0d0a3][(col+row)%3]
-                        rect(x,y,cell-1,cell*0.5,(col+row)%3 == 0 ? 0x42617c:0x274967)
-                        rect(x+cell*0.28,y+1,cell*0.42,cell*0.18,skin)
-                        rect(x+cell*0.2,y,cell*0.58,2,(col+row)%4 == 0 ? 0xefe9d6:0x153452)
-                        rect(x+cell*0.16,y+cell*0.22,cell*0.68,cell*0.26,(col+row)%5 == 0 ? 0xefe9d6:0x345e84)
-                    }}
-                    rect(0,size.height*0.14,size.width,3,0xa4b8b4)
-                    rect(0,size.height*0.15,size.width,size.height*0.07,0x13394f)
-                    rect(size.width*0.31,3,size.width*0.38,size.height*0.115,0x102a3f)
-                    context.stroke(Path(CGRect(x:size.width*0.31,y:3,width:size.width*0.38,height:size.height*0.115)),with:.color(GameTheme.gold),lineWidth:2)
-                    context.draw(Text(scoreText).font(.system(size:max(8,size.width*0.025),weight:.heavy,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width*0.5,y:size.height*0.045))
-                    context.draw(Text(finished ? "PLAY COMPLETE":"IN PLAY").font(.system(size:max(6,size.width*0.018),weight:.bold,design:.monospaced)).foregroundStyle(GameTheme.gold),at:CGPoint(x:size.width*0.5,y:size.height*0.087))
-                    let turf=[FieldPoint(x:0,y:0),FieldPoint(x:60,y:60),FieldPoint(x:45,y:99),FieldPoint(x:0,y:108),FieldPoint(x:-45,y:99),FieldPoint(x:-60,y:60)]
-                    var grass=context;grass.clip(to:path(turf,closed:true))
-                    grass.fill(Path(CGRect(x:0,y:0,width:size.width,height:size.height)),with:.color(Color(hex:0x33734f)))
-                    for row in 0..<12 {
-                        grass.fill(Path(CGRect(x:0,y:Double(row)*size.height/12,width:size.width,height:size.height/24)),with:.color(Color(hex:0x3b8157)))
-                    }
-                    context.stroke(path(turf,closed:true),with:.color(Color(hex:0xa67b4c)),lineWidth:10)
-                    context.stroke(path(turf,closed:true),with:.color(Color(hex:0x254c61)),lineWidth:4)
-                    context.fill(path(DetailedFieldRules.bases,closed:true),with:.color(Color(hex:0xa47a50)))
-                    context.stroke(path(DetailedFieldRules.bases,closed:true),with:.color(Color(hex:0xeee7ca)),lineWidth:1)
-                    context.stroke(path([FieldPoint(x:-60,y:60),FieldPoint(x:0,y:0),FieldPoint(x:60,y:60)]),with:.color(Color(hex:0xf0e4c6)),lineWidth:1.5)
-                    let mound=point(DetailedFieldRules.positions[0])
-                    context.fill(Path(ellipseIn:CGRect(x:mound.x-7,y:mound.y-4,width:14,height:8)),with:.color(Color(hex:0xb28758)))
+                    context.draw(Image(uiImage:InplayStadiumArt.image).interpolation(.none),in:CGRect(origin:.zero,size:size))
+                    let scoreFrame=CGRect(x:size.width*0.28,y:4,width:size.width*0.44,height:34)
+                    context.fill(Path(scoreFrame),with:.color(Color(hex:0x0b2030)))
+                    context.stroke(Path(scoreFrame),with:.color(GameTheme.gold),lineWidth:2)
+                    context.draw(Text(scoreText).font(.system(size:max(12,size.width*0.038),weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:scoreFrame.midX,y:scoreFrame.midY))
                     for base in 0..<4 {
                         let b=point(DetailedFieldRules.bases[base]),w=max(4,size.width*0.016)
                         context.fill(Path(CGRect(x:b.x-w/2,y:b.y-w/2,width:w,height:w)),with:.color(base==target && time>=play.pickupAt ? GameTheme.gold:GameTheme.paper))
@@ -460,17 +512,21 @@ struct DetailedFieldReplayBoard: View {
                     let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
                     let defenseOwn=ownTeamFielding ?? !play.ownBatter
                     func actor(_ at:FieldPoint,own:Bool,teamOwn:Bool,moving:Bool,pose:String,number:Int,out:Bool=false) {
-                        let c=point(at),u=max(0.8,size.width/285)
+                        let c=point(at),u=max(1,size.width/280)
                         let stride=moving ? sin(time*17)*2:0
                         let shirt=teamOwn ? ownKit:opponent
                         let skin=own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91
                         func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
-                            context.fill(Path(CGRect(x:c.x+x*u,y:c.y+y*u,width:w*u,height:h*u)),with:.color(Color(hex:hex).opacity(out ? 0.4:1)))
+                            context.fill(Path(CGRect(x:(c.x+x*u).rounded(),y:(c.y+y*u).rounded(),width:max(1,(w*u).rounded()),height:max(1,(h*u).rounded()))),with:.color(Color(hex:hex).opacity(out ? 0.4:1)))
                         }
-                        box(-5,3,10,2,0x20543c)
+                        box(-6,3,13,3,0x244b38)
+                        box(-5,-17,10,7,0x102735);box(-5,-11,10,10,0x102735)
                         box(-3,-15,6,5,skin);box(-4,-16,8,3,shirt);box(-4,-13,3,1,own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48)
-                        box(3,-14,3,2,shirt);box(-4,-10,8,8,shirt);box(-4,-3,8,1,0xf0ead9)
+                        box(3,-14,3,2,shirt);box(-3,-16,5,1,0x86a5a0)
+                        box(-4,-10,8,8,shirt);box(-4,-10,1,7,0x203b49);box(3,-9,1,6,0x203b49)
+                        box(-3,-10,6,1,0xe6e3cd);box(-4,-3,8,1,0xf0ead9)
                         box(-4,-2,3,5+stride,0xe8e9dd);box(1,-2,3,5-stride,0xe8e9dd)
+                        box(-4,-1,1,4+stride,0xa8b6b0);box(3,-1,1,4-stride,0xa8b6b0)
                         box(-4,3+stride,3,2,0x102a3f);box(1,3-stride,3,2,0x102a3f)
                         let armX=pose == "throw" ? 6.0:pose == "catch" ? 5:4
                         let armY=pose == "throw" ? -16.0:pose == "catch" ? -10:-8
@@ -507,34 +563,8 @@ struct DetailedFieldReplayBoard: View {
                         context.draw(Text(label).font(.system(size:18,weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:frame.midX,y:frame.midY))
                     }
                 }.accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
-                    .accessibilityIdentifier("fieldReplayCanvas")
-                if finished && !animated {
-                if let error=play.misplay {
-                    Text("실책 \(error.at,specifier:"%.2f")초 → 회수 \(error.recoveredAt,specifier:"%.2f")초 · 추가 \(error.extraBases.values.reduce(0,+))베이스")
-                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayMisplayTimes")
-                    Text(error.reachedOnError ? "실책 출루 · 안타 제외" : "정상 타격 기록 유지 · 실책 추가 진루 분리")
-                        .font(.caption2).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayMisplayScoring")
-                }
-                if let relay=play.relay {
-                    Text("중계 \(DetailedFieldRules.names[relay.fielder]) · 수신 \(relay.receiveAt,specifier:"%.2f")초 / 재송구 \(relay.releaseAt,specifier:"%.2f")초")
-                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayRelayTimes")
-                    Text("직접 \(relay.directAt,specifier:"%.2f")초 → 중계 \(play.controlAt,specifier:"%.2f")초")
-                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayRouteComparison")
-                }
-                if let fly=play.fly,play.misplay == nil {
-                    Text("공 낙하 \(play.flight,specifier:"%.2f")초 / 포구 준비 \(fly.reachAt,specifier:"%.2f")초 · \(fly.caught ? "포구 성공" : "낙하 후 처리")")
-                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayCatchTimes")
-                }
-                if play.misplay == nil && (play.fly?.caught != true || play.targetRunner != nil) {
-                Text("\(play.targetBase == 4 ? "홈" : "\(play.targetBase)루") · 공 \(play.controlAt,specifier:"%.2f")초 / 주자 \(play.runnerAt.map { String(format:"%.2f초",$0) } ?? "진루 완료")")
-                    .font(.caption2.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayTimes")
-                }
-                if let second {
-                    Text("1루 · 공 \(second.controlAt,specifier:"%.2f")초 / 타자 \(second.runnerAt,specifier:"%.2f")초")
-                        .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplaySecondTimes")
-                }
-                }
-            }.padding(6).background(GameTheme.board)
+                    .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
+            }.padding(4).background(GameTheme.board)
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
         }
         .task(id:play.eventID) {
@@ -547,6 +577,41 @@ struct DetailedFieldReplayBoard: View {
             }
             if !Task.isCancelled {complete()}
         }
+    }
+}
+
+struct FieldReplayDetails: View {
+    let play:MatchDetailedPlay
+    @State private var expanded=false
+    var body: some View {
+        DisclosureGroup("플레이 상세",isExpanded:$expanded) {
+            let second=play.secondThrow
+                if let error=play.misplay {
+                    Text("실책 \(error.at,specifier:"%.2f")초 → 회수 \(error.recoveredAt,specifier:"%.2f")초 · 추가 \(error.extraBases.values.reduce(0,+))베이스")
+                        .font(.subheadline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayMisplayTimes")
+                    Text(error.reachedOnError ? "실책 출루 · 안타 제외" : "정상 타격 기록 유지 · 실책 추가 진루 분리")
+                        .font(.subheadline).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayMisplayScoring")
+                }
+                if let relay=play.relay {
+                    Text("중계 \(DetailedFieldRules.names[relay.fielder]) · 수신 \(relay.receiveAt,specifier:"%.2f")초 / 재송구 \(relay.releaseAt,specifier:"%.2f")초")
+                        .font(.subheadline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayRelayTimes")
+                    Text("직접 \(relay.directAt,specifier:"%.2f")초 → 중계 \(play.controlAt,specifier:"%.2f")초")
+                        .font(.subheadline.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayRouteComparison")
+                }
+                if let fly=play.fly,play.misplay == nil {
+                    Text("공 낙하 \(play.flight,specifier:"%.2f")초 / 포구 준비 \(fly.reachAt,specifier:"%.2f")초 · \(fly.caught ? "포구 성공" : "낙하 후 처리")")
+                        .font(.subheadline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayCatchTimes")
+                }
+                if play.misplay == nil && (play.fly?.caught != true || play.targetRunner != nil) {
+                Text("\(play.targetBase == 4 ? "홈" : "\(play.targetBase)루") · 공 \(play.controlAt,specifier:"%.2f")초 / 주자 \(play.runnerAt.map { String(format:"%.2f초",$0) } ?? "진루 완료")")
+                    .font(.subheadline.monospaced()).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayTimes")
+                }
+                if let second {
+                    Text("1루 · 공 \(second.controlAt,specifier:"%.2f")초 / 타자 \(second.runnerAt,specifier:"%.2f")초")
+                        .font(.subheadline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplaySecondTimes")
+                }
+        }.font(.subheadline.monospaced()).tint(GameTheme.gold)
+            .accessibilityIdentifier("fieldReplayDetails")
     }
 }
 
