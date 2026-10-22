@@ -10,6 +10,8 @@ struct ScoutingContractPreview: View {
     enum Route: Hashable { case report, offers, detail(Int), compare, career }
     @State private var scenario = Scenario.school
     @State private var pitcher = false
+    @State private var showControls = false
+    @Environment(\.accessibilityReduceMotion) private var reduced
     @State private var decision: String?
     @State private var receipt: String?
     @State private var careerChoice: String?
@@ -25,7 +27,9 @@ struct ScoutingContractPreview: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 notice
-                Text("확인할 장면").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Button(showControls ? "시안 설정 접기 −" : "시안 설정 · \(scenario.rawValue) / \(pitcher ? "투수" : "타자") +") { showControls.toggle() }
+                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutPreviewControls")
+                if showControls {
                 (large ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))) {
                     ForEach(Scenario.allCases) { sample in
                         Button(sample.rawValue) { scenario = sample; receipt = nil; careerChoice = nil }
@@ -40,12 +44,16 @@ struct ScoutingContractPreview: View {
                     Button("투수") { pitcher = true }.buttonStyle(MatchPixelButtonStyle(primary: pitcher))
                         .accessibilityIdentifier("scoutRole-pitcher").accessibilityAddTraits(pitcher ? .isSelected : [])
                 }
+                }
+                office
                 profile
                 interest
                 if scenario == .offers {
                     NavigationLink { destination(.offers) } label: { Text("도착한 제의 2건 확인") }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("scoutOpenOffers")
+                } else if isSchool {
+                    Text("성장 관찰 단계 · 20세 이전에는 계약 대신 보고서를 확인하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 } else {
-                    GamePanel(title: isSchool ? "지금은 성장 관찰 단계" : "이번 평가 · 정식 제의 없음", onBoard: true) {
+                    GamePanel(title: "이번 평가 · 정식 제의 없음", onBoard: true) {
                         Text(isSchool ? "16세 · 프로 계약은 20세부터 검토" : "기량 조건 충족 · 전력 심사 표본 부족").font(.subheadline.bold())
                         Text(isSchool ? "관심 보고서를 보고 다음 훈련 목표를 정하세요." : "미달 이유와 다음 진로를 확인할 수 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         NavigationLink { destination(isSchool ? .report : .career) } label: { Text(isSchool ? "관찰 보고서 보기" : "제의 없음 · 진로 확인") }
@@ -70,6 +78,44 @@ struct ScoutingContractPreview: View {
                 .background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
         }
     }
+    private var office: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let image = ScoutOfficeArt.image {
+                Image(uiImage: image).resizable().interpolation(.none).aspectRatio(contentMode: .fit)
+                    .accessibilityHidden(true)
+            }
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("SCOUTING ROOM").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                    Text(scenario == .offers ? "당신에게 도착한 새로운 기회" : "한 경기 너머의 가능성을 봅니다").font(.subheadline.bold())
+                }
+                Spacer(minLength: 4)
+                Image(systemName: scenario == .offers ? "envelope.badge.fill" : "binoculars.fill").foregroundStyle(GameTheme.gold)
+            }.padding(10).background(GameTheme.boardPanel)
+        }.overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+            .accessibilityElement(children: .ignore).accessibilityLabel("스카우트 관찰실 · 구장과 관찰 노트")
+            .accessibilityIdentifier("scoutOfficeScene")
+    }
+    private func clubIdentity(_ index: Int, paper: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: index == 0 ? "sailboat.fill" : "sparkles")
+                .font(.title2).frame(width: 42, height: 42).foregroundStyle(.white)
+                .background(index == 0 ? ScoutDossierInk.green : Color(red:0.52,green:0.23,blue:0.17))
+                .overlay(Rectangle().strokeBorder(paper ? ScoutDossierInk.ink : GameTheme.boardLine))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(index == 0 ? "HARBORS  /  PLAYER DEVELOPMENT" : "COMETS  /  FIRST TEAM").font(.caption2.monospaced().bold())
+                Text(index == 0 ? "함께 성장할 선수를 찾습니다" : "다음 시즌의 경쟁에 초대합니다").font(.caption)
+            }.foregroundStyle(paper ? ScoutDossierInk.ink : GameTheme.boardInk)
+        }
+    }
+    private func paperRow(_ key: String, _ value: String) -> some View {
+        (large ? AnyLayout(VStackLayout(alignment:.leading,spacing:3)) : AnyLayout(HStackLayout(alignment:.top,spacing:10))) {
+            Text(key).font(.caption).foregroundStyle(ScoutDossierInk.muted).frame(minWidth: large ? 0 : 82, alignment: .leading)
+            if !large { Spacer(minLength: 0) }
+            Text(value).font(.subheadline.monospaced()).foregroundStyle(ScoutDossierInk.ink).multilineTextAlignment(large ? .leading : .trailing)
+        }.fixedSize(horizontal:false,vertical:true).padding(.vertical,3).accessibilityElement(children:.combine)
+    }
     private struct Decision: Identifiable { let title: String; var id: String { title } }
     private var notice: some View {
         Text("화면 시안 · 모든 선수/구단/수치는 샘플 · 저장 안 함")
@@ -88,12 +134,13 @@ struct ScoutingContractPreview: View {
             .overlay(Rectangle().strokeBorder(GameTheme.boardLine))
     }
     private var interest: some View {
-        GamePanel(title: "SCOUT DESK · 관심 구단", onBoard: true) {
+        GamePanel(title: "관찰 파일 · 관심 구단", onBoard: true) {
             HStack(alignment: .top) {
                 ScoutPixelEmblem().frame(width: 40, height: 44).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(scenario == .none ? "1" : "2")개 구단 · \(scenario == .offers ? "제의 검토" : "관찰 중")").font(.headline).foregroundStyle(GameTheme.gold)
                     Text(clubs[0] + " · " + (pitcher ? "선발 육성" : "내야 수비 / 출루")).font(.subheadline)
+                    Text(isSchool ? "아직 완성형은 아니지만 성장 가능성을 지켜보고 있습니다." : "최근 경기와 성장 추이를 함께 검토하고 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 }
             }
             row("다음 관찰 보고서", nextReport + " · 28일 주기")
@@ -125,14 +172,14 @@ struct ScoutingContractPreview: View {
     }
     private var report: some View {
         Group {
-            GamePanel(title: clubs[0] + " · 관찰 보고서", onBoard: true) {
-                row("평가 기준일", date)
-                row("모집 역할", pitcher ? "선발 육성 후보" : "수비형 유격수 후보")
-                row("현재 단계", isSchool ? "관찰 / 계약 연령 미충족" : "국내 육성 검토")
-                Text("최근 365일 · 같은 수준/역할의 성적만 평가").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            ScoutDossier(title: clubs[0] + " · 관찰 보고서", code: "FIELD REPORT  /  017", stamp: "관찰 중") {
+                paperRow("평가 기준일", date)
+                paperRow("모집 역할", pitcher ? "선발 육성 후보" : "수비형 유격수 후보")
+                paperRow("현재 단계", isSchool ? "관찰 / 계약 연령 미충족" : "국내 육성 검토")
+                Text("최근 365일 · 같은 수준/역할의 성적만 평가").font(.caption).foregroundStyle(ScoutDossierInk.muted)
                 metric("현재 기량 H", value: isSchool ? 56.4 : 71.8, target: 70)
                 metric("2년 육성 전망", value: 76.2, target: 72)
-                Text("노란 선은 구단 기준 · 막대는 샘플 평가값").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Text("진한 선은 구단 기준 · 초록은 샘플 평가값").font(.caption).foregroundStyle(ScoutDossierInk.muted)
             }
             GamePanel(title: "평가 근거 · 조건 확인", onBoard: true) {
                 row("구단 기준 C", "70.0 · 샘플 모집 기준")
@@ -151,9 +198,12 @@ struct ScoutingContractPreview: View {
     }
     private var offerList: some View {
         Group {
-            Text("국내 제의 2건 · 발행 2030.04.01 / 만료 04.07").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+            Label("구단에서 도착한 제의 2건", systemImage: "envelope.badge.fill").font(.headline).foregroundStyle(GameTheme.gold)
+                .transition(.opacity.combined(with: .offset(y: reduced ? 0 : 8)))
+            Text("발행 2030.04.01 · 04.07까지 회신").font(.caption.monospaced()).foregroundStyle(GameTheme.boardMuted)
             ForEach(0..<2, id: \.self) { index in
                 GamePanel(title: clubs[index], onBoard: true) {
+                    clubIdentity(index)
                     row("모집", role)
                     row("조건", index == 0 ? "육성 · 1년 / 지수118" : "전력 경쟁 · 2년 / 지수130")
                     Text("출전·승격 보장 없음").font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -166,17 +216,17 @@ struct ScoutingContractPreview: View {
     }
     private func offerDetail(_ index: Int) -> some View {
         Group {
-            GamePanel(title: clubs[index], onBoard: true) {
-                ScoutPixelEmblem().frame(width: 44,height: 44).accessibilityHidden(true)
-                row("리그 / 역할", "국내 프로형 / " + role)
-                row("종류 / 배치", index == 0 ? "육성 계약 / 2군 육성" : "전력 계약 / 1군 경쟁")
-                row("계약 기간", index == 0 ? "1년 · 04.01~2031.03.31" : "2년 · 04.01~2032.03.31")
-                row("발효 예정", "2030.04.01 · 일정/권리 확인 후")
-                row("연봉지수", index == 0 ? "118 · 국내 육성 기준100" : "130 · 국내 전력 기준100")
-                row("제의 만료", "2030.04.07 포함 · 게임 날짜")
-                row("필요 승인", "현재 샘플: 별도 이적 승인 없음")
-                row("예상 경쟁", index == 0 ? "육성 자리 / 단계별 평가" : "동일 포지션 경쟁 / 선발 미보장")
-                Text("지수는 해당 리그·계약종류 기준입니다. 서로 다른 기준의 실제 연봉 금액을 뜻하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            ScoutDossier(title: clubs[index], code: "CONTRACT OFFER  /  0\(index + 1)", stamp: "답신 대기") {
+                clubIdentity(index, paper: true)
+                paperRow("리그 / 역할", "국내 프로형 / " + role)
+                paperRow("종류 / 배치", index == 0 ? "육성 계약 / 2군 육성" : "전력 계약 / 1군 경쟁")
+                paperRow("계약 기간", index == 0 ? "1년 · 04.01~2031.03.31" : "2년 · 04.01~2032.03.31")
+                paperRow("발효 예정", "2030.04.01 · 일정/권리 확인 후")
+                paperRow("연봉지수", index == 0 ? "118 · 국내 육성 기준100" : "130 · 국내 전력 기준100")
+                paperRow("제의 만료", "2030.04.07 포함 · 게임 날짜")
+                paperRow("필요 승인", "현재 샘플: 별도 이적 승인 없음")
+                paperRow("예상 경쟁", index == 0 ? "육성 자리 / 단계별 평가" : "동일 포지션 경쟁 / 선발 미보장")
+                Text("지수는 해당 리그·계약종류 기준입니다. 서로 다른 기준의 실제 연봉 금액을 뜻하지 않습니다.").font(.caption).foregroundStyle(ScoutDossierInk.muted)
             }
             if let receipt { Text(receipt).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutDecisionReceipt") }
             Button("수락 흐름 보기") { decision = clubs[index] + " 수락" }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("scoutAccept")
@@ -230,12 +280,12 @@ struct ScoutingContractPreview: View {
     }
     private func metric(_ label: String, value: Double, target: Double) -> some View {
         VStack(alignment:.leading,spacing:5) {
-            row(label,String(format:"%.1f / 100",value))
+            paperRow(label,String(format:"%.1f / 100",value))
             GeometryReader { g in
                 ZStack(alignment:.leading) {
-                    Rectangle().fill(GameTheme.board)
-                    Rectangle().fill(GameTheme.growth).frame(width:g.size.width * value / 100)
-                    Rectangle().fill(GameTheme.gold).frame(width:2).offset(x:g.size.width * target / 100)
+                    Rectangle().fill(ScoutDossierInk.rule)
+                    Rectangle().fill(ScoutDossierInk.green).frame(width:g.size.width * value / 100)
+                    Rectangle().fill(ScoutDossierInk.ink).frame(width:2).offset(x:g.size.width * target / 100)
                 }
             }.frame(height:9).accessibilityHidden(true)
         }
@@ -261,6 +311,50 @@ private struct ScoutPixelEmblem: View {
                 context.fill(Path(CGRect(x:CGFloat(x)*unit,y:CGFloat(y)*unit,width:unit,height:unit)),with:.color(GameTheme.gold))
             }}
         }
+    }
+}
+private enum ScoutOfficeArt {
+    static let image: UIImage? = Bundle.main.url(forResource: "scout-office-v1", withExtension: "png", subdirectory: "MatchArt")
+        .flatMap { UIImage(contentsOfFile: $0.path) }
+}
+private enum ScoutDossierInk {
+    static let paper = Color(red:0.93,green:0.88,blue:0.74)
+    static let ink = Color(red:0.14,green:0.23,blue:0.25)
+    static let muted = Color(red:0.30,green:0.34,blue:0.31)
+    static let rule = Color(red:0.73,green:0.72,blue:0.60)
+    static let green = Color(red:0.16,green:0.38,blue:0.30)
+}
+private struct ScoutDossier<Content: View>: View {
+    let title: String
+    let code: String
+    let stamp: String
+    @ViewBuilder var content: Content
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @State private var opened = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:6)) : AnyLayout(HStackLayout(alignment:.top))) {
+                Text(code).font(.caption2.monospaced().bold()).foregroundStyle(ScoutDossierInk.muted)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                Text(stamp).font(.caption.monospaced().bold()).foregroundStyle(ScoutDossierInk.green)
+                    .padding(.horizontal,8).padding(.vertical,4).overlay(Rectangle().strokeBorder(ScoutDossierInk.green,lineWidth:2))
+            }
+            Text(title).font(.headline.monospaced()).foregroundStyle(ScoutDossierInk.ink)
+            Rectangle().fill(ScoutDossierInk.ink).frame(height: 2).accessibilityHidden(true)
+            content
+            HStack {
+                Text("BM  /  SCOUTING DEPARTMENT").font(.caption2.monospaced()).foregroundStyle(ScoutDossierInk.muted)
+                Spacer(minLength: 0)
+                Text("시안").font(.caption2.bold()).foregroundStyle(ScoutDossierInk.muted)
+            }.padding(.top,4)
+        }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
+            .foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
+            .overlay(Rectangle().strokeBorder(ScoutDossierInk.rule,lineWidth:2))
+            .padding(.bottom,4).background(alignment:.bottom) { Rectangle().fill(ScoutDossierInk.rule).padding(.horizontal,4) }
+            .opacity(opened || reduced ? 1 : 0).offset(y: opened || reduced ? 0 : 8)
+            .animation(reduced ? nil : .easeOut(duration:0.25), value: opened)
+            .onAppear { opened = true }
     }
 }
 #endif

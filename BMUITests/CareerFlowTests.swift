@@ -14,10 +14,12 @@ final class CareerFlowTests: XCTestCase {
             let shot=XCTAttachment(screenshot:app.screenshot());shot.name=name;shot.lifetime = .keepAlways;self.add(shot)
         }
         capture("Scout home high school sample")
-        app.buttons["scoutOpenReport"].tap()
+        XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"scoutOfficeScene").firstMatch.exists)
+        reveal(app.buttons["scoutOpenReport"],in:app);app.buttons["scoutOpenReport"].tap()
         XCTAssertTrue(app.staticTexts["인천 하버스 · 관찰 보고서"].waitForExistence(timeout:5))
         capture("Scout report batter")
         app.navigationBars.buttons.element(boundBy:0).tap()
+        reveal(app.buttons["scoutPreviewControls"],in:app);app.buttons["scoutPreviewControls"].tap()
         app.buttons["scoutScenario-제의 도착"].tap()
         reveal(app.buttons["scoutOpenOffers"],in:app);app.buttons["scoutOpenOffers"].tap()
         capture("Scout offers list")
@@ -47,6 +49,7 @@ final class CareerFlowTests: XCTestCase {
     @MainActor func testScoutingPreviewLargePitcherWithoutStore() throws {
         let app=XCUIApplication();app.launchArguments=["-scouting-contract-preview","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
         XCTAssertTrue(app.staticTexts["scoutPreviewNotice"].waitForExistence(timeout:5))
+        app.buttons["scoutPreviewControls"].tap()
         app.buttons["scoutRole-pitcher"].tap()
         app.buttons["scoutScenario-제의 도착"].tap()
         reveal(app.buttons["scoutOpenReport"],in:app);app.buttons["scoutOpenReport"].tap()
