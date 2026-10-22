@@ -1,5 +1,52 @@
 import Foundation
 
+enum ScoutingInterestLevel: String, Codable {
+    case observing, focused, priority
+    var label: String {switch self {case .observing:"관찰 관심";case .focused:"집중 관찰";case .priority:"우선 관찰"}}
+    static func at(_ fit: Double) -> Self? {fit >= 0 ? .priority : fit >= -3 ? .focused : fit >= -8 ? .observing:nil}
+}
+struct ScoutingClubInterest: Codable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let roleID: String
+    let roleLabel: String
+    let level: ScoutingInterestLevel
+    let fit: Double
+    let reasons: [String]
+}
+struct ScoutingInterests: Codable, Equatable {
+    var version = 1
+    let entries: [ScoutingClubInterest]
+    let pendingReasons: [String]
+    static func make(_ observation: ScoutingObservation) -> Self {
+        guard let fit=observation.contractFit else {return Self(entries:[],pendingReasons:["계약 적합도 자료가 필요합니다."])}
+        let source=fit.comparisons.first{$0.id == fit.selectedEnvironment && $0.verified}
+        let enough=source.map{observation.role == .batter ? $0.totals.line.plateAppearances >= 40:$0.totals.line.pitchingOuts >= 45} ?? false
+        var best=[String:ScoutingClubInterest]()
+        for club in fit.clubs {
+            guard enough, let source, club.recruitment.demand != .none, let f=club.f, let level=ScoutingInterestLevel.at(f),
+                  let h=club.h, let c=club.c,
+                  let grade=observation.grades.first(where:{$0.id == club.recruitment.roleID}) else {continue}
+            if club.recruitment.roleID == "field" && ((observation.positionMastery ?? -1) < 70 || (observation.abilities.originals.first{$0.id == "homeDefense"}?.current ?? -1) < 70) {continue}
+            guard let key=club.id.split(separator:"/").first else {continue}
+            let id=String(key)
+            func number(_ n:Double) -> String {String(format:"%.1f",locale:Locale(identifier:"en_US_POSIX"),n)}
+            let interest=ScoutingClubInterest(id:id,name:club.recruitment.name,roleID:grade.id,roleLabel:grade.label,
+                level:level,fit:f,reasons:["\(club.recruitment.demand.label) · \(grade.label) 모집",
+                    "역할 기량 \(number(h)) / 구단 기준 \(number(c)) · 적합도 \(number(f))",
+                    "동일 환경 \(observation.role == .batter ? "\(source.totals.line.plateAppearances)타석":"\(source.totals.innings)이닝") · 성적 보정 \(number(club.p))"])
+            if let old=best[id], old.fit > f || (old.fit == f && old.roleID < grade.id) {continue}
+            best[id]=interest
+        }
+        let entries=best.values.sorted{$0.fit == $1.fit ? $0.id < $1.id:$0.fit > $1.fit}
+        var pending=[String]()
+        if source == nil {pending.append("검증된 동일 환경 성적이 필요합니다.")}
+        if !enough {pending.append(observation.role == .batter ? "관찰 표본 40타석이 필요합니다.":"관찰 표본 15이닝이 필요합니다.")}
+        if entries.isEmpty && enough {pending.append("모집 중이며 적합도·역할 조건을 충족한 역할이 없습니다.")}
+        return Self(entries:entries,pendingReasons:pending)
+    }
+}
+
 enum ScoutingInputMode: String, Codable, CaseIterable {
     case automatic, direct, mixed
     var suffix: String { switch self {case .automatic: "auto-v2";case .direct: "direct-v1";case .mixed: "mixed-v1"} }

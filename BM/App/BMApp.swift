@@ -84,6 +84,7 @@ private struct SeasonSummaryVerification: View {
             let schools = try SchoolCatalog.load()
             let diskQA = ProcessInfo.processInfo.arguments.contains("-offseason-verification")
             let inputQA = ProcessInfo.processInfo.arguments.contains("-input-fit-verification")
+            let interestQA = ProcessInfo.processInfo.arguments.contains("-club-interest-verification")
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("offseason-verification.store")
             let store = try diskQA ? CareerStore.makeContainer(url: url) : CareerStore.makeContainer(inMemory: true)
             let c = store.mainContext
@@ -94,6 +95,15 @@ private struct SeasonSummaryVerification: View {
                 var draft = PlayerDraft(); draft.schoolID = schools[0].id; draft.role = role
                 draft.name = role == .batter ? "SeasonBat" : "SeasonPitch"
                 let player = try CareerStore.create(draft, schools: schools, in: c)
+                if interestQA {
+                    player.contact=75;player.power=75;player.discipline=75;player.defense=75
+                    if let abilities=try PlayerAbilityStore.profile(playerID:player.id,in:c) {
+                        try abilities.grow(.mental,to:75)
+                        if role == .pitcher {for kind in [TrainingKind.velocity,.control,.stuff,.stamina] {try abilities.grow(kind,to:75)}}
+                    }
+                    for pitch in player.pitches {pitch.mastery=75}
+                    try c.save()
+                }
                 let state = try c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }!
                 for fixture in try state.fixtures(for: player, year: 2026) {
                     while try GameDate(player.gameDate) < fixture.date {

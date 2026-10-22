@@ -34,6 +34,7 @@ struct ScoutingObservationHomePanel: View {
                 Text("\(value.period + 1)차 관찰 · \(value.observedDate) 확정").font(.subheadline.bold()).accessibilityIdentifier("scoutSavedPeriod")
                 Text("다음 관찰 \(value.nextDate) · 게임 날짜 기준").font(.caption.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutNextObservation")
                 Text("보고서 \(own.count)건 · 같은 주기의 자료는 다시 뽑지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("scoutSavedCount")
+                ScoutingInterestList(value:value,compact:true)
                 NavigationLink { SavedScoutingObservationView(value: value) } label: { Text("확정 보고서 보기") }
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openSavedScoutingReport")
                 if archive && own.count > 1 {
@@ -55,8 +56,38 @@ struct ScoutingObservationHomePanel: View {
                 NavigationLink { ScoutingReportView(player: player, calendar: calendar) } label: { Text("내 관찰 보고서 · 현재 자료/이력") }
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openScoutingReport")
             }
-            Text("구단 관심·제의 생성은 아직 연결 전입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Text("구단 관심은 확정 보고서에 고정합니다. 정식 계약 제의는 후속 단계입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }.task(id: "\(player.id)-\(player.gameDate)") { refresh() }
+    }
+}
+
+struct ScoutingInterestList: View {
+    let value: ScoutingObservation
+    var compact = false
+    @State private var showAll = false
+    var body: some View {
+        VStack(alignment:.leading,spacing:16) {
+            if let interests=value.interests {
+                Text("관심 구단 \(interests.entries.count)곳").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutInterestCount")
+                if interests.entries.isEmpty {
+                    Text("이번 관찰에서 관심 구단이 없습니다.").font(.subheadline).accessibilityIdentifier("scoutInterestEmpty")
+                    ForEach(interests.pendingReasons,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
+                } else {
+                    ForEach(Array((compact && !showAll ? Array(interests.entries.prefix(2)):interests.entries))) { entry in
+                        VStack(alignment:.leading,spacing:8) {
+                            Text(entry.name + " · " + entry.level.label).font(.subheadline.bold()).accessibilityIdentifier("scoutInterest-\(entry.id)")
+                            Text(entry.roleLabel).font(.subheadline).foregroundStyle(GameTheme.gold)
+                            ForEach(entry.reasons,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
+                        }.padding(.vertical,4)
+                    }
+                    if compact && interests.entries.count > 2 {HomeDetailButton(title:"관심 구단 전체 \(interests.entries.count)곳",expanded:$showAll,identifier:"scoutInterestDetails")}
+                }
+                Text("\(value.observedDate) 기준 · 다음 관찰 \(value.nextDate)").font(.caption.monospaced()).foregroundStyle(GameTheme.boardMuted)
+            } else {
+                Text("이전 보고서는 구단 관심을 기록하지 않았습니다. 다음 관찰부터 확인할 수 있습니다.").font(.caption).accessibilityIdentifier("scoutInterestLegacy")
+            }
+            Text(value.age < 20 ? "고교 관찰 관심 · 20세 전 정식 제의 없음" : "관심은 계약 제의가 아닙니다. 진로·권리·등록·예산 심사는 별도입니다.").font(.caption).foregroundStyle(GameTheme.gold)
+        }
     }
 }
 
@@ -67,6 +98,7 @@ struct SavedScoutingObservationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                GamePanel(title:"관심 구단 · 확정 관찰",onBoard:true,contentSpacing:16) {ScoutingInterestList(value:value)}
                 ScoutDossier(title: "\(value.period + 1)차 관찰 보고서", code: "OBSERVATION / FIXED RECORD", stamp: "관찰 확정", isPreview: false) {
                     HStack(alignment: .top, spacing: 16) {
                         PixelPlayer(appearance: value.appearance).frame(width: 38, height: 54).accessibilityHidden(true)
@@ -277,7 +309,7 @@ struct ScoutingReportView: View {
                         Text(report.age < 20 ? "나이 조건 대기 · 프로 계약 검토는 20세부터입니다." : "나이 조건 20세 이상 · 진로/권리 심사는 연결 전입니다.")
                             .font(.subheadline).accessibilityIdentifier("scoutAgeCondition")
                         Text("역할 H·구단 기준 C·성적 보정 P·적합도 F는 확정 보고서의 당시 버전 자료에서 확인합니다.").font(.subheadline).accessibilityIdentifier("scoutEvaluationPending")
-                        Text("같은 주기의 확정 보고서는 갱신하지 않습니다. 구형 보고서는 원문을 유지하며 다음 주기부터 새 비교 기준을 적용합니다. 실제 관심/제의·진로 발효는 후속입니다.")
+                        Text("같은 주기의 확정 보고서는 갱신하지 않습니다. 구형 보고서는 원문을 유지하며 다음 주기부터 새 비교 기준을 적용합니다. 관심은 확정 보고서 기준이며 정식 제의·진로 발효는 후속입니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                         if report.age >= 19 {
                             Text("졸업 시즌 성적 심사·대학/무소속 진로는 후속 단계입니다. 최근 365일 표본만으로 진로를 확정하지 않습니다.")

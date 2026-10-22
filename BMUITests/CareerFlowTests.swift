@@ -2046,6 +2046,49 @@ extension CareerFlowTests {
             app.navigationBars.buttons.element(boundBy:0).tap()
         }
     }
+    @MainActor func testClubInterestBothRolesHomeArchiveAndDiskRelaunch() throws {
+        let app=XCUIApplication();app.launchArguments=["-offseason-verification","-club-interest-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:60))
+        for pitcher in [false,true] {
+            let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
+            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+            revealFit(app.staticTexts["scoutInterestCount"],in:app)
+            let count=app.staticTexts["scoutInterestCount"].label;XCTAssertFalse(count.contains("0곳"))
+            let first=app.staticTexts.matching(NSPredicate(format:"identifier BEGINSWITH %@","scoutInterest-")).firstMatch
+            revealFit(first,in:app);let name=first.label;XCTAssertTrue(first.isHittable)
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "Pitcher actual club interest home":"Batter actual club interest home";shot.lifetime = .keepAlways;add(shot)
+            revealFit(app.buttons["scoutInterestDetails"],in:app);XCTAssertTrue(app.buttons["scoutInterestDetails"].exists);app.buttons["scoutInterestDetails"].tap()
+            revealFit(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            XCTAssertEqual(app.staticTexts["scoutInterestCount"].label,count);XCTAssertEqual(first.label,name)
+            app.terminate();app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
+            let restored=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(restored,in:app);restored.tap()
+            XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+            revealFit(app.staticTexts["scoutInterestCount"],in:app);XCTAssertEqual(app.staticTexts["scoutInterestCount"].label,count)
+            revealFit(first,in:app);XCTAssertEqual(first.label,name)
+            revealFit(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","관심은 확정 보고서 기준")).firstMatch.exists)
+            revealFit(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
+            revealFit(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
+            XCTAssertTrue(app.staticTexts["scoutInterestEmpty"].waitForExistence(timeout:5))
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+    }
+    @MainActor func testClubInterestLargeTextAndEmptyFirstReportBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-season-summary-verification","-club-interest-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:60))
+        for pitcher in [false,true] {
+            let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];revealFit(role,in:app);role.tap()
+            let first=app.staticTexts.matching(NSPredicate(format:"identifier BEGINSWITH %@","scoutInterest-")).firstMatch
+            revealFit(first,in:app);XCTAssertTrue(first.isHittable);XCTAssertLessThanOrEqual(first.frame.maxX,app.windows.firstMatch.frame.maxX)
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "Pitcher interest accessibility XXXL":"Batter interest accessibility XXXL";shot.lifetime = .keepAlways;add(shot)
+            revealFit(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            revealFit(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
+            revealFit(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
+            revealFit(app.staticTexts["scoutInterestEmpty"],in:app);XCTAssertTrue(app.staticTexts["scoutInterestEmpty"].isHittable)
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+    }
     @MainActor private func revealFit(_ element:XCUIElement,in app:XCUIApplication) {
         for _ in 0..<48 {
             if element.isHittable {return}

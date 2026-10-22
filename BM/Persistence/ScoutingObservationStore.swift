@@ -99,6 +99,7 @@ struct ScoutingObservation: Codable {
     let grades: [ScoutingRoleGrade]
     var evaluationPending: [String]
     var contractFit: ScoutingContractFit?
+    var interests: ScoutingInterests?
 
     static func pendingReasons(age: Int, role: PlayerRole, groups: [ScoutingSampleGroup], modern: Bool = false, compared: Bool = false) -> [String] {
         var reasons = ["구단 기준 미연결", "동일 환경 비교 성적 미검증", "육성 전망 미산정", "진로/권리·모집/예산 심사 미연결"]
@@ -116,7 +117,7 @@ struct ScoutingObservation: Codable {
     func validate() throws {
         let origin = try GameDate(origin), date = try GameDate(observedDate)
         let cycle = try ScoutingPeriod(origin: origin, today: date)
-        guard [1,2,3].contains(version), evaluationVersion == "contracts-role-v1", cycle.index == period,
+        guard [1,2,3,4].contains(version), evaluationVersion == "contracts-role-v1", cycle.index == period,
               cycle.start.description == periodStart, cycle.next.description == nextDate,
               try GameDate(sampleStart) == max(origin, date.adding(days: -364)),
               appearance.isValid, (0...99).contains(number), age >= 0, pending >= 0,
@@ -141,6 +142,8 @@ struct ScoutingObservation: Codable {
         guard expected == totals else { throw ScoutingObservationError.invalid }
         if version == 1 {guard contractFit == nil else {throw ScoutingObservationError.invalid}}
         else {guard let contractFit else {throw ScoutingObservationError.invalid};guard contractFit.version == (version == 2 ? 1:2) else {throw ScoutingObservationError.invalid};try contractFit.validate(observation:self)}
+        if version < 4 {guard interests == nil else {throw ScoutingObservationError.invalid}}
+        else {guard interests == ScoutingInterests.make(self) else {throw ScoutingObservationError.invalid}}
     }
 }
 
@@ -200,8 +203,9 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
             pending: live.pending, positionMastery: mastery,
             grades: try ScoutingRoleEvaluation.grades(role: player.role, abilities: live.abilities, positionMastery: mastery),
             evaluationPending: ScoutingObservation.pendingReasons(age: live.age, role: player.role, groups: live.groups))
-        value.version = 3
+        value.version = 4
         value.contractFit = try ScoutingContractFit.make(value)
+        value.interests = ScoutingInterests.make(value)
         value.evaluationPending = ScoutingObservation.pendingReasons(age:live.age,role:player.role,groups:live.groups,modern:true,compared:value.contractFit?.selectedEnvironment != nil)
         try value.validate()
         let row = try CareerScoutingReport(value); context.insert(row); return row

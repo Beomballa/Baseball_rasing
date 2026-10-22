@@ -739,7 +739,7 @@ extension PlayerAbilitiesTests {
             let first = try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
             let bytes = first.payload, value = try first.snapshot()
             XCTAssertEqual(value.period,0);XCTAssertEqual(value.nextDate,"2026-04-29");XCTAssertEqual(value.totals.games,0)
-            XCTAssertEqual(value.version,3);XCTAssertNotNil(value.contractFit)
+            XCTAssertEqual(value.version,4);XCTAssertNotNil(value.contractFit)
             XCTAssertTrue(value.evaluationPending.contains { $0.contains("20세 미만") })
             try finish(p,s,c)
             let match = try CareerMatchStore.start(player:p,state:s,in:c)
@@ -998,7 +998,7 @@ extension PlayerAbilitiesTests {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (p,s)=try scoutingSetup(context:c)
             let row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
-            var value=try row.snapshot();value.version=1;value.contractFit=nil
+            var value=try row.snapshot();value.version=1;value.contractFit=nil;value.interests=nil
             value.evaluationPending=ScoutingObservation.pendingReasons(age:value.age,role:value.role,groups:value.groups)
             row.payload=try JSONEncoder().encode(value);oldData=row.payload
             try insertFitRecord(p,s,XCTUnwrap(s.fixtures(for:p,year:2026).first),c,legacy:true);try c.save()
@@ -1013,7 +1013,7 @@ extension PlayerAbilitiesTests {
             p.gameDate="2026-04-28";try c.save()
             try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
             let newest=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot()
-            XCTAssertEqual(newest.version,3);XCTAssertEqual(newest.contractFit?.comparisons.first?.verified,false)
+            XCTAssertEqual(newest.version,4);XCTAssertEqual(newest.contractFit?.comparisons.first?.verified,false)
             XCTAssertEqual(newest.contractFit?.comparisons.first?.correction,0)
             XCTAssertEqual(old.payload,oldData);XCTAssertEqual(try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first).payload,gameData)
         }
@@ -1107,7 +1107,7 @@ extension PlayerAbilitiesTests {
             p.gameDate=fixtures[3].date.adding(days:28).description;try c.save()
             try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
             let row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first),bytes=row.payload,value=try row.snapshot()
-            let fit=try XCTUnwrap(value.contractFit);XCTAssertEqual(value.version,3);XCTAssertEqual(fit.version,2)
+            let fit=try XCTUnwrap(value.contractFit);XCTAssertEqual(value.version,4);XCTAssertEqual(fit.version,2)
             XCTAssertEqual(fit.comparisons.filter(\.verified).count,3)
             let old=try XCTUnwrap(fit.comparisons.first{$0.id.hasSuffix("manual-unverified")});XCTAssertFalse(old.verified);XCTAssertEqual(old.correction,0)
             for comparison in fit.comparisons where comparison.verified {
@@ -1149,7 +1149,7 @@ extension PlayerAbilitiesTests {
             try insertFitRecord(p,s,XCTUnwrap(s.fixtures(for:p,year:2026).first),c,manual:true)
             p.gameDate="2026-04-29";try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
             let report=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
-            var value=try report.snapshot();value.version=2;value.contractFit?.version=1
+            var value=try report.snapshot();value.version=2;value.contractFit?.version=1;value.interests=nil
             report.payload=try JSONEncoder().encode(value);bytes=report.payload;try c.save()
             let fixture=try XCTUnwrap(s.fixtures(for:p,year:2026).first{$0.date.description == "2026-05-01"})
             p.gameDate=fixture.date.description
@@ -1174,7 +1174,7 @@ extension PlayerAbilitiesTests {
             XCTAssertEqual(restored.payload,completed);XCTAssertEqual(preserved(p),values)
             p.gameDate="2026-05-27";try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
             let next=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot()
-            XCTAssertEqual(next.version,3);XCTAssertEqual(next.contractFit?.version,2)
+            XCTAssertEqual(next.version,4);XCTAssertEqual(next.contractFit?.version,2)
             XCTAssertTrue(next.contractFit?.comparisons.allSatisfy{!$0.verified && $0.correction == 0} == true)
             XCTAssertEqual(old.payload,bytes)
         }
@@ -1233,5 +1233,111 @@ extension PlayerAbilitiesTests {
             XCTAssertTrue(value.contractFit?.comparisons.allSatisfy{!$0.verified && $0.correction == 0} == true)
             XCTAssertFalse(c.hasChanges)
         }
+    }
+
+    private func readyInterest(_ role:PlayerRole,in context:ModelContext) throws -> (CareerPlayer,CareerCalendarState,ScoutingObservation) {
+        let (p,s)=try scoutingSetup(role,context:context)
+        p.contact=75;p.power=75;p.discipline=75;p.defense=75
+        let abilities=try XCTUnwrap(PlayerAbilityStore.profile(playerID:p.id,in:context))
+        try abilities.grow(.mental,to:75)
+        if role == .pitcher {
+            for kind in [TrainingKind.velocity,.control,.stuff,.stamina] {try abilities.grow(kind,to:75)}
+            for pitch in p.pitches {pitch.mastery=75}
+        }
+        let fixtures=try s.fixtures(for:p,year:2026).filter{$0.isAppearance(for:role)}
+        let count=role == .batter ? 12:4
+        for fixture in fixtures.prefix(count) {try insertFitRecord(p,s,fixture,context)}
+        p.gameDate=fixtures[count-1].date.adding(days:28).description;try context.save()
+        try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:context)
+        return (p,s,try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:context).first).snapshot())
+    }
+    func testInterestThresholdsAndClubDedupHaveStableBestRoleOrdering() throws {
+        for (f,level) in [(-8.0001,nil),(-8,ScoutingInterestLevel.observing),(-3.0001,.observing),(-3,.focused),(-0.0001,.focused),(0,.priority)] {
+            XCTAssertEqual(ScoutingInterestLevel.at(f),level)
+        }
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext;defer{withExtendedLifetime(container){}}
+        let (_,_,value)=try readyInterest(.batter,in:c),interests=try XCTUnwrap(value.interests)
+        XCTAssertFalse(interests.entries.isEmpty);XCTAssertEqual(Set(interests.entries.map(\.id)).count,interests.entries.count)
+        let fit=try XCTUnwrap(value.contractFit)
+        for entry in interests.entries {
+            let candidates=fit.clubs.filter{$0.id.hasPrefix(entry.id+"/") && $0.recruitment.roleID != "field" && $0.recruitment.demand != .none && $0.f != nil}
+            XCTAssertEqual(entry.fit,candidates.compactMap(\.f).max());XCTAssertEqual(entry.level,.priority)
+            XCTAssertEqual(entry.reasons.count,3)
+        }
+        XCTAssertEqual(interests,ScoutingInterests.make(value));XCTAssertEqual(interests,try JSONDecoder().decode(ScoutingInterests.self,from:JSONEncoder().encode(interests)))
+        XCTAssertEqual(interests.entries.map(\.fit),interests.entries.map(\.fit).sorted(by:>))
+    }
+    func testInterestRequiresVerifiedSelectedMinimumAndRoleConditionsBothRoles() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext;defer{withExtendedLifetime(container){}}
+        for role in PlayerRole.allCases {
+            let (_,_,value)=try readyInterest(role,in:c),fit=try XCTUnwrap(value.contractFit)
+            let source=try XCTUnwrap(fit.comparisons.first{$0.id == fit.selectedEnvironment})
+            for enough in [false,true] {
+                var copy=value,totals=source.totals
+                if role == .batter {totals.line.plateAppearances=enough ? 40:39} else {totals.line.pitchingOuts=enough ? 45:44}
+                let row=ScoutingPerformanceComparison(id:source.id,totals:totals,performance:source.performance,reference:source.reference,value:source.value,correction:source.correction,verified:true,reason:source.reason)
+                copy.contractFit=ScoutingContractFit(comparisons:[row],selectedEnvironment:source.id,clubs:fit.clubs)
+                XCTAssertEqual(ScoutingInterests.make(copy).entries.isEmpty,!enough)
+            }
+            var missing=value;missing.contractFit=ScoutingContractFit(comparisons:fit.comparisons,selectedEnvironment:nil,clubs:fit.clubs)
+            XCTAssertTrue(ScoutingInterests.make(missing).entries.isEmpty)
+            XCTAssertFalse(ScoutingInterests.make(missing).pendingReasons.isEmpty)
+            XCTAssertFalse(value.interests!.entries.contains{entry in fit.clubs.first{$0.id == entry.id+"/"+entry.roleID}?.recruitment.demand == .none})
+            if role == .batter {XCTAssertFalse(value.interests!.entries.contains{$0.roleID == "field"})}
+        }
+    }
+    func testHighSchoolInterestAllowedWithoutCreatingOffersAndLatestCycleCanLoseIt() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext;defer{withExtendedLifetime(container){}}
+        for role in PlayerRole.allCases {
+            let (p,s,value)=try readyInterest(role,in:c)
+            XCTAssertEqual(value.age,16);XCTAssertFalse(try XCTUnwrap(value.interests).entries.isEmpty)
+            XCTAssertTrue(value.evaluationPending.contains{$0.contains("20세 미만")})
+            let old=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first),bytes=old.payload
+            p.contact=10;p.power=10;p.discipline=10;p.defense=10
+            let abilities=try XCTUnwrap(PlayerAbilityStore.profile(playerID:p.id,in:c))
+            try abilities.grow(.mental,to:10)
+            if role == .pitcher {for kind in [TrainingKind.velocity,.control,.stuff,.stamina] {try abilities.grow(kind,to:10)};for pitch in p.pitches {pitch.mastery=10}}
+            try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in XCTFail("same period interest rewritten")})
+            XCTAssertEqual(old.payload,bytes)
+            p.gameDate=value.nextDate;try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let next=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first).snapshot()
+            XCTAssertTrue(try XCTUnwrap(next.interests).entries.isEmpty);XCTAssertFalse(next.interests!.pendingReasons.isEmpty)
+            XCTAssertEqual(old.payload,bytes);XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testInterestVersionThreeReportPreservedAndNewCycleAtomicFailureOnDisk() throws {
+        enum Failure:Error {case injected}
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:folder)}
+        let url=folder.appendingPathComponent("interest.store");var bytes=Data(),next=""
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let (p,s,value)=try readyInterest(.batter,in:c),row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+            var old=value;old.version=3;old.interests=nil;row.payload=try JSONEncoder().encode(old);bytes=row.payload;next=value.nextDate
+            p.gameDate=try GameDate(next).adding(days:-1).description;try c.save()
+            let before=preserved(p)
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c,save:{_ in throw Failure.injected}))
+            XCTAssertEqual(preserved(p),before);XCTAssertEqual(row.payload,bytes)
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
+            XCTAssertEqual(p.gameDate,next)
+        }
+        try autoreleasepool {
+            let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let rows=try ScoutingObservationStore.reports(player:p,calendar:s,in:c),newest=try XCTUnwrap(rows.first).snapshot()
+            XCTAssertEqual(newest.version,4);XCTAssertFalse(try XCTUnwrap(newest.interests).entries.isEmpty)
+            let old=try XCTUnwrap(rows.first{ $0.payload == bytes });XCTAssertNil(try old.snapshot().interests)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in XCTFail("reopen saved interest")})
+            XCTAssertEqual(old.payload,bytes);XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testTamperedInterestRejectedWithoutChangingReportOrPlayer() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext;defer{withExtendedLifetime(container){}}
+        let (p,s,_)=try readyInterest(.pitcher,in:c),row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
+        var json=try XCTUnwrap(JSONSerialization.jsonObject(with:row.payload) as? [String:Any]),interest=try XCTUnwrap(json["interests"] as? [String:Any])
+        var entries=try XCTUnwrap(interest["entries"] as? [[String:Any]]);entries[0]["name"]="다른 구단";interest["entries"]=entries;json["interests"]=interest
+        row.payload=try JSONSerialization.data(withJSONObject:json);try c.save();let bytes=row.payload,before=preserved(p)
+        XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c))
+        XCTAssertEqual(row.payload,bytes);XCTAssertEqual(preserved(p),before);XCTAssertFalse(c.hasChanges)
     }
 }
