@@ -50,6 +50,12 @@ struct PlayerHomeView: View {
                 if let calendar {
                     CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
                     playActions(calendar)
+                    GamePanel(title: "스카우트 관찰 · 내 기록", onBoard: true, contentSpacing: 16) {
+                        Text("현재 능력과 실제 출전 표본을 확인하세요.").font(.subheadline)
+                        Text("관심 구단·계약 평가는 연결 전입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        NavigationLink { ScoutingReportView(player: player, calendar: calendar) } label: { Text("내 관찰 보고서") }
+                            .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openScoutingReport")
+                    }
                     MatchAbilityGrowthHomePanel(player: player, records: gameRecords)
                     AnnualLeagueHomePanel(player:player,state:calendar,schools:schools,transition:transition)
                 } else {

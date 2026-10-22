@@ -566,4 +566,135 @@ extension PlayerAbilitiesTests {
         XCTAssertNotEqual(missing.axes.count, 6)
         XCTAssertFalse(missing.axes.contains { $0.id == "homeMental" })
     }
+    private func scoutRecord(_ player: CareerPlayer, _ fixture: SeasonFixture, line: MatchLine,
+                             current: Bool = true, completed: Bool = true) throws -> CareerMatchRecord {
+        let date = player.gameDate; player.gameDate = fixture.date.description
+        defer { player.gameDate = date }
+        var match = CareerMatch(random: 123, isHome: fixture.homeID == player.schoolID, role: player.roleRaw,
+                                appearance: fixture.isAppearance(for: player.role), contact: player.contact,
+                                power: player.power, discipline: player.discipline, mastery: [:])
+        match.line = line; match.completed = completed
+        if current { match.controlVersion = 2; match.trainingEffectsVersion = 1 }
+        let record = try CareerMatchRecord(player: player, fixture: fixture, match: match)
+        record.completed = completed; record.rulesVersion = current ? "native-match-v2" : "native-match-v1"
+        return record
+    }
+    func testScoutingReadsCurrentTrainedAbilitiesBothRolesWithoutWrites() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
+        for role in PlayerRole.allCases {
+            let player = try CareerStore.create(draft(.initial(for: role)), schools: SchoolCatalog.load(), in: context)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+            try finish(player, state, context)
+            let before = preserved(player), revision = state.revision, action = state.actionDate
+            let report = try ScoutingReportSnapshot.load(player: player, calendar: state, in: context)
+            let expected = HomeAbilitySummary(player: player, abilities: try profile(player, context))
+            XCTAssertEqual(report.abilities.originals.map(\.current), expected.originals.map(\.current))
+            XCTAssertEqual(report.abilities.pitches.map(\.current), expected.pitches.map(\.current))
+            XCTAssertEqual(report.age, 16); XCTAssertEqual(report.groups.count, 0)
+            XCTAssertEqual(report.totals.games, 0); XCTAssertEqual(preserved(player), before)
+            XCTAssertEqual(state.revision, revision); XCTAssertEqual(state.actionDate, action)
+            XCTAssertFalse(context.hasChanges)
+        }
+    }
+    func testScoutingRolling365DaysPendingAndSeparateEnvironments() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
+        let player = try CareerStore.create(draft(.contact), schools: SchoolCatalog.load(), in: context)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let fixtures = try state.fixtures(for: player, year: 2026)
+        var line = MatchLine(); line.plateAppearances = 5; line.atBats = 4; line.hits = 1; line.walks = 1
+        let records = try [scoutRecord(player, fixtures[0], line: line), scoutRecord(player, fixtures[1], line: line),
+                           scoutRecord(player, fixtures[2], line: line, current: false)]
+        player.gameDate = "2027-04-06"
+        let report = try ScoutingReportSnapshot.make(player: player, calendar: state, profile: profile(player, context), records: records)
+        XCTAssertEqual(report.start.description, "2026-04-07")
+        XCTAssertEqual(report.totals.games, 2); XCTAssertEqual(report.totals.line.plateAppearances, 10)
+        XCTAssertEqual(report.groups.count, 2); XCTAssertTrue(report.groups.allSatisfy { !$0.hasBatterMinimum })
+        player.gameDate = "2027-04-07"
+        let today = try XCTUnwrap(state.fixtures(for: player, year: 2027).first { $0.date.description == player.gameDate })
+        let pending = try scoutRecord(player, today, line: MatchLine(), completed: false)
+        let next = try ScoutingReportSnapshot.make(player: player, calendar: state, profile: profile(player, context), records: records + [pending])
+        XCTAssertEqual(next.start.description, "2026-04-08"); XCTAssertEqual(next.totals.games, 1); XCTAssertEqual(next.pending, 1)
+        let other = try CareerStore.create(draft(.stuff), schools: SchoolCatalog.load(), in: context)
+        let otherState = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == other.id })
+        let unrelated = try scoutRecord(other, XCTUnwrap(otherState.fixtures(for: other, year: 2026).first), line: MatchLine())
+        unrelated.payload = Data([0])
+        XCTAssertEqual(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: profile(player, context), records: records + [pending, unrelated]).totals.games, 1)
+    }
+    func testScoutingPitcherUsesIntegerOutsAndDoesNotMixMinimums() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
+        let player = try CareerStore.create(draft(.stuff), schools: SchoolCatalog.load(), in: context)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let fixtures = try state.fixtures(for: player, year: 2026).filter { $0.isAppearance(for: .pitcher) }
+        player.gameDate = "2026-09-22"
+        var records: [CareerMatchRecord] = []
+        for (index, outs) in [24,20,1].enumerated() {
+            var line = MatchLine(); line.pitchingOuts = outs; line.pitches = 100
+            records.append(try scoutRecord(player, fixtures[index], line: line, current: index != 1))
+        }
+        let first = try ScoutingReportSnapshot.make(player: player, calendar: state, profile: profile(player, context), records: records)
+        XCTAssertEqual(first.totals.innings, "15.0"); XCTAssertEqual(first.groups.count, 2)
+        XCTAssertTrue(first.groups.allSatisfy { !$0.hasPitcherMinimum })
+        var extra = MatchLine(); extra.pitchingOuts = 20; extra.pitches = 100
+        records.append(try scoutRecord(player, fixtures[3], line: extra))
+        let next = try ScoutingReportSnapshot.make(player: player, calendar: state, profile: profile(player, context), records: records)
+        XCTAssertEqual(next.totals.innings, "21.2"); XCTAssertEqual(next.groups.filter(\.hasPitcherMinimum).count, 1)
+        var nonAppearance = MatchLine(); nonAppearance.pitchingOuts = 27
+        records.append(try scoutRecord(player, state.fixtures(for: player, year: 2026)[1], line: nonAppearance))
+        XCTAssertEqual(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: profile(player, context), records: records).totals.games, 4)
+    }
+    func testScoutingRejectsCorruptionDuplicatesFutureAndMissingProfile() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        defer { withExtendedLifetime(container) {} }
+        let player = try CareerStore.create(draft(.contact), schools: SchoolCatalog.load(), in: context)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first), abilities = try profile(player, context)
+        let fixtures = try state.fixtures(for: player, year: 2026)
+        let saved = try scoutRecord(player, fixtures[0], line: MatchLine())
+        XCTAssertThrowsError(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: abilities, records: [saved,saved]))
+        let future = try scoutRecord(player, fixtures[1], line: MatchLine())
+        XCTAssertThrowsError(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: abilities, records: [future]))
+        saved.payload = Data([0]); context.insert(saved); try context.save()
+        let payload = saved.payload, revision = saved.revision, before = preserved(player)
+        XCTAssertThrowsError(try ScoutingReportSnapshot.load(player: player, calendar: state, in: context))
+        XCTAssertEqual(saved.payload,payload); XCTAssertEqual(saved.revision,revision); XCTAssertEqual(preserved(player),before)
+        XCTAssertFalse(context.hasChanges)
+        abilities.mental = .nan
+        XCTAssertThrowsError(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: abilities, records: []))
+        context.rollback(); context.delete(abilities); try context.save()
+        XCTAssertThrowsError(try ScoutingReportSnapshot.load(player: player, calendar: state, in: context))
+        XCTAssertFalse(context.hasChanges)
+    }
+    func testScoutingDiskReopenPreservesPlayersRecordsAndCalendarBothRoles() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("scout.store")
+        var players: [UUID:[String]] = [:], payloads: [UUID:Data] = [:]
+        try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            defer { withExtendedLifetime(container) {} }
+            for role in PlayerRole.allCases {
+                let player = try CareerStore.create(draft(.initial(for: role)), schools: SchoolCatalog.load(), in: context)
+                let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+                try finish(player, state, context)
+                let record = try scoutRecord(player, XCTUnwrap(state.fixtures(for: player, year: 2026).first), line: MatchLine())
+                context.insert(record); try context.save()
+                players[player.id] = preserved(player); payloads[player.id] = record.payload
+                XCTAssertEqual(try ScoutingReportSnapshot.load(player: player, calendar: state, in: context).totals.games,1)
+                XCTAssertFalse(context.hasChanges)
+            }
+        }
+        let reopened = try CareerStore.makeContainer(url: url), context = reopened.mainContext
+        defer { withExtendedLifetime(reopened) {} }
+        for player in try context.fetch(FetchDescriptor<CareerPlayer>()) {
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+            let revision = state.revision, action = state.actionDate
+            for _ in 0..<2 { XCTAssertEqual(try ScoutingReportSnapshot.load(player: player, calendar: state, in: context).totals.games,1) }
+            XCTAssertEqual(preserved(player),players[player.id]); XCTAssertEqual(state.revision,revision); XCTAssertEqual(state.actionDate,action)
+            XCTAssertEqual(try context.fetch(FetchDescriptor<CareerMatchRecord>()).first { $0.playerID == player.id }?.payload,payloads[player.id])
+            XCTAssertFalse(context.hasChanges)
+        }
+    }
 }

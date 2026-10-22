@@ -318,21 +318,25 @@ private struct ScoutPixelEmblem: View {
         }
     }
 }
-private enum ScoutOfficeArt {
+#endif
+
+// Shared presentation only. The live report supplies real values; the DEBUG preview stays isolated.
+enum ScoutOfficeArt {
     static let image: UIImage? = Bundle.main.url(forResource: "scout-office-v1", withExtension: "png", subdirectory: "MatchArt")
         .flatMap { UIImage(contentsOfFile: $0.path) }
 }
-private enum ScoutDossierInk {
+enum ScoutDossierInk {
     static let paper = Color(red:0.93,green:0.88,blue:0.74)
     static let ink = Color(red:0.14,green:0.23,blue:0.25)
     static let muted = Color(red:0.30,green:0.34,blue:0.31)
     static let rule = Color(red:0.73,green:0.72,blue:0.60)
     static let green = Color(red:0.16,green:0.38,blue:0.30)
 }
-private struct ScoutDossier<Content: View>: View {
+struct ScoutDossier<Content: View>: View {
     let title: String
     let code: String
     let stamp: String
+    var isPreview = true
     @ViewBuilder var content: Content
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduced
@@ -353,7 +357,7 @@ private struct ScoutDossier<Content: View>: View {
             HStack {
                 Text("BM  /  SCOUTING DEPARTMENT").font(.caption2.monospaced()).foregroundStyle(ScoutDossierInk.muted)
                 Spacer(minLength: 0)
-                Text("시안").font(.caption2.bold()).foregroundStyle(ScoutDossierInk.muted)
+                Text(isPreview ? "시안" : "실제 선수 자료").font(.caption2.bold()).foregroundStyle(ScoutDossierInk.muted)
             }.padding(.top,4)
         }.padding(18).frame(maxWidth:.infinity,alignment:.leading)
             .foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
@@ -364,4 +368,3 @@ private struct ScoutDossier<Content: View>: View {
             .onAppear { opened = true }
     }
 }
-#endif

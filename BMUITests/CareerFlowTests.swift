@@ -1,6 +1,64 @@
 import XCTest
 
 final class CareerFlowTests: XCTestCase {
+    @MainActor func testLiveScoutingBothRolesActualRecordsReadOnlyAndLargeText() throws {
+        let app = XCUIApplication(); app.launch()
+        for pitcher in [false, true] {
+            if pitcher {
+                reveal(app.buttons["createOtherRole"],in:app); app.buttons["createOtherRole"].tap()
+                app.buttons["hand-left"].tap()
+            }
+            let name = pitcher ? "ActualPitch" : "ActualBat"
+            createDashboardSample(app,name:name,motionStyle:true)
+            let date = app.staticTexts["calendarDate"].label
+            let fatigue = app.staticTexts["homeFatigue"].label, action = app.staticTexts["calendarAction"].label
+            reveal(app.buttons["openScoutingReport"],in:app); app.buttons["openScoutingReport"].tap()
+            XCTAssertTrue(app.staticTexts["scoutActualPlayer"].waitForExistence(timeout:5))
+            XCTAssertTrue(app.staticTexts["scoutActualPlayer"].label.contains(name))
+            XCTAssertTrue(app.staticTexts["scoutActualRole"].label.contains(pitcher ? "좌투" : "타자"))
+            XCTAssertTrue(app.staticTexts["실제 선수 자료"].exists)
+            XCTAssertFalse(app.buttons["scoutOpenOffers"].exists)
+            let identity = XCTAttachment(screenshot:app.screenshot()); identity.name = pitcher ? "Actual pitcher observation identity" : "Actual batter observation identity"; identity.lifetime = .keepAlways; add(identity)
+            reveal(app.buttons["scoutAbilityDetails"],in:app); app.buttons["scoutAbilityDetails"].tap()
+            let ability = app.descendants(matching:.any).matching(identifier:pitcher ? "homeControl" : "homeContact").firstMatch
+            reveal(ability,in:app); XCTAssertTrue(ability.exists)
+            reveal(app.staticTexts["scoutSampleWaiting"],in:app); XCTAssertTrue(app.staticTexts["scoutSampleWaiting"].exists)
+            reveal(app.buttons["scoutReportRefresh"],in:app); app.buttons["scoutReportRefresh"].tap()
+            XCTAssertFalse(app.staticTexts["scoutReportError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.staticTexts["calendarDate"],in:app)
+            XCTAssertEqual(app.staticTexts["calendarDate"].label,date); XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+            XCTAssertEqual(app.staticTexts["calendarAction"].label,action)
+            reveal(app.buttons["restToday"],in:app); app.buttons["restToday"].tap()
+            reveal(app.buttons["openCareerGame"],in:app); app.buttons["openCareerGame"].tap()
+            XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:5)); app.buttons["gameAutomatic"].tap()
+            app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
+            reveal(app.buttons["gameReturnHome"],in:app); app.buttons["gameReturnHome"].tap()
+            reveal(app.staticTexts["homeFatigue"],in:app)
+            let finalFatigue = app.staticTexts["homeFatigue"].label, finalAction = app.staticTexts["calendarAction"].label
+            reveal(app.buttons["openScoutingReport"],in:app); app.buttons["openScoutingReport"].tap()
+            let sample = app.staticTexts["scoutSample-1"]
+            reveal(sample,in:app); XCTAssertTrue(sample.exists); XCTAssertTrue(sample.label.contains(pitcher ? "1등판" : "1경기"))
+            XCTAssertFalse(app.staticTexts["scoutSampleWaiting"].exists)
+            let expectedSample = sample.label
+            let capture = XCTAttachment(screenshot:app.screenshot()); capture.name = pitcher ? "Actual pitcher completed sample" : "Actual batter completed sample"; capture.lifetime = .keepAlways; add(capture)
+            reveal(app.buttons["scoutReportRefresh"],in:app); app.buttons["scoutReportRefresh"].tap()
+            reveal(sample,in:app); XCTAssertEqual(sample.label,expectedSample)
+            app.terminate(); app.launchArguments = ["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+            let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
+            if role.exists { reveal(role,in:app); role.tap() }
+            reveal(app.buttons["openScoutingReport"],in:app); app.buttons["openScoutingReport"].tap()
+            reveal(app.staticTexts["scoutSample-1"],in:app); XCTAssertEqual(app.staticTexts["scoutSample-1"].label,expectedSample)
+            let large = XCTAttachment(screenshot:app.screenshot()); large.name = pitcher ? "Actual pitcher sample accessibility XXXL" : "Actual batter sample accessibility XXXL"; large.lifetime = .keepAlways; add(large)
+            reveal(app.buttons["scoutReportRefresh"],in:app); XCTAssertTrue(app.buttons["scoutReportRefresh"].isHittable)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.staticTexts["calendarDate"],in:app)
+            XCTAssertEqual(app.staticTexts["calendarDate"].label,date); XCTAssertEqual(app.staticTexts["homeFatigue"].label,finalFatigue)
+            XCTAssertEqual(app.staticTexts["calendarAction"].label,finalAction)
+            app.terminate(); app.launchArguments = []; app.launch()
+        }
+    }
     @MainActor func testScoutingPreviewFlowsPreserveCareer() throws {
         let app = XCUIApplication(); app.launch(); createDashboardSample(app,name:"ScoutSafe")
         let fatigue = app.staticTexts["homeFatigue"].label
