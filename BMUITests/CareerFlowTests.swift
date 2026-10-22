@@ -1676,9 +1676,12 @@ extension CareerFlowTests {
         app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         for role in ["batter", "pitcher"] {
-            reveal(app.buttons["homeRole-" + role], in: app); app.buttons["homeRole-" + role].tap()
+            revealFit(app.buttons["homeRole-" + role], in: app); app.buttons["homeRole-" + role].tap()
+            let details = app.buttons["homeAbilityDetails"]
+            revealFit(details, in: app); XCTAssertTrue(details.isHittable)
+            if details.value as? String == "접힘" { details.tap() }
             let value = app.descendants(matching: .any).matching(identifier: role == "batter" ? "homeContact" : "homeVelocity").firstMatch
-            reveal(value, in: app); XCTAssertTrue(value.isHittable)
+            revealFit(value, in: app); XCTAssertTrue(value.isHittable)
             let window = app.windows.firstMatch.frame
             XCTAssertGreaterThanOrEqual(value.frame.minX, window.minX)
             XCTAssertLessThanOrEqual(value.frame.maxX, window.maxX)
@@ -2141,6 +2144,30 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["scoutFrozenDate"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["scoutFrozenDate"].label.contains("2026-04-01"))
             revealFit(app.buttons["scoutClubDetails"],in:app);XCTAssertTrue(app.buttons["scoutClubDetails"].isHittable)
             app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+    }
+}
+
+
+extension CareerFlowTests {
+    @MainActor func testCareerPathHomeBothRolesAndAgeStagesWithoutDiskChanges() throws {
+        let app = XCUIApplication()
+        for age in [16,19,20] {
+            app.launchArguments = ["-career-path-verification", "-career-age\(age)"]
+            if age == 20 { app.launchArguments += ["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"] }
+            app.launch()
+            for role in ["batter","pitcher"] {
+                let button = app.buttons["homeRole-"+role];reveal(button,in:app);button.tap()
+                let stage = app.staticTexts["careerPathStage"];reveal(stage,in:app)
+                XCTAssertTrue(stage.waitForExistence(timeout:5))
+                XCTAssertTrue(stage.label.contains(age == 16 ? "고교 재학" : age == 19 ? "진로 준비":"성인 진로"))
+                let details = app.buttons["careerPathDetails"];reveal(details,in:app);details.tap()
+                let route = app.descendants(matching:.any).matching(identifier:"careerRoute-rookie").firstMatch
+                reveal(route,in:app);XCTAssertTrue(route.label.contains(age == 20 ? "심사 대기":"20세부터"))
+                XCTAssertFalse(app.buttons["scoutAcceptOffer"].exists)
+                let shot = XCTAttachment(screenshot:app.screenshot());shot.name = "Career path \(age) \(role)";shot.lifetime = .keepAlways;add(shot)
+            }
+            app.terminate()
         }
     }
 }

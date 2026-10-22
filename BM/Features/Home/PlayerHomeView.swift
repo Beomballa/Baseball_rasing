@@ -50,6 +50,7 @@ struct PlayerHomeView: View {
                 if let calendar {
                     CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
                     playActions(calendar)
+                    CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
                     ScoutingObservationHomePanel(player: player, calendar: calendar)
                     MatchAbilityGrowthHomePanel(player: player, records: gameRecords)
                     AnnualLeagueHomePanel(player:player,state:calendar,schools:schools,transition:transition)
@@ -142,7 +143,7 @@ struct PlayerHomeView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(age <= 18 ? "HIGH SCHOOL" : "CAREER").font(.caption2.monospaced().bold()).foregroundStyle(GameTheme.gold)
                 Text("\(player.name)  #\(player.jerseyNumber)").font(.title3.bold()).accessibilityIdentifier("homePlayerName")
-                Text(player.schoolName).font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("homeSchool")
+                Text(age <= 18 ? player.schoolName : "무소속 · 출신 \(player.schoolName)").font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("homeSchool")
                 Text("\(player.role.label) · \(player.roleDetail) · \(age)세 / \(SeasonSchedule.academicStatus(age: age))")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("homeAge")
                 if let abilities { Text(abilities.label).font(.caption.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homeArchetype") }
@@ -570,5 +571,56 @@ struct SeasonOffseasonPanel: View {
         .alert("오프시즌 진행을 완료하지 못했습니다", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("확인") { failure = nil }
         } message: { Text(failure ?? "") }
+    }
+}
+
+
+struct CareerPathHomePanel: View {
+    let player: CareerPlayer
+    let calendar: CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var history: CareerPathHistory?
+    @State private var failure: String?
+    @State private var expanded = false
+    var body: some View {
+        GamePanel(title: "진로 · 소속 이력", onBoard: true) {
+            if let failure {
+                Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerPathError")
+                Button("다시 확인", action:load).buttonStyle(MatchPixelButtonStyle())
+            } else if let history {
+                Text(history.current.stage.label).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerPathStage")
+                Text(history.current.stage == .school ? "현재 소속 · \(history.current.schoolName ?? player.schoolName)" : "현재 소속 · 무소속 아마추어 / 출신 · \(player.schoolName)")
+                    .font(.caption).accessibilityIdentifier("careerPathAffiliation")
+                Text("관심 구단은 관찰 단계입니다. 정식 제의·입단 심사는 아직 연결되지 않았습니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                HomeDetailButton(title:"신청 경로 · 소속 이력",expanded:$expanded,identifier:"careerPathDetails")
+                if expanded {
+                    let age = (try? calendar.age(of:player)) ?? player.startAge
+                    ForEach(CareerRoute.routes(age:age)) { route in
+                        VStack(alignment:.leading,spacing:6) {
+                            Text(route.title).font(.subheadline.bold())
+                            Text(route.status).font(.caption.bold()).foregroundStyle(GameTheme.gold)
+                            Text(route.detail).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        }.padding(.vertical,4).accessibilityElement(children:.combine).accessibilityIdentifier("careerRoute-"+route.id)
+                    }
+                    Text("표시된 자격은 나이 조건입니다. 신청·합격·계약 수락 버튼은 심사와 실제 배치 연결 후 제공합니다.")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    ForEach(Array(history.entries.enumerated()),id:\.offset) { _, entry in
+                        Text("\(entry.since) · \(entry.stage.label)\(entry.schoolName.map { " · " + $0 } ?? "")")
+                            .font(.caption.monospaced()).accessibilityIdentifier("careerAffiliationHistory")
+                    }
+                    if history.source == "legacy-v1" {
+                        Text("기존 저장은 최초 등록 시점부터 이력을 보관합니다. 이전 졸업·프로 경력은 추정하지 않습니다.")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
+                }
+            }
+        }.task(id:player.gameDate) { load() }
+    }
+    private func load() {
+        do {
+            guard let row = try CareerPathStore.record(player:player,calendar:calendar,in:context) else { throw CareerPathError.invalid }
+            history = try row.snapshot(player:player,calendar:calendar); failure = nil
+        } catch { history = nil; failure = error.localizedDescription }
     }
 }

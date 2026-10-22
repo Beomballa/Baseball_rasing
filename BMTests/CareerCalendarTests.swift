@@ -804,7 +804,10 @@ import SwiftData
         let (container, p, s) = try offseasonFixture(), c = container.mainContext
         // Seed the pre-observation legacy fixture before assigning its original anniversary.
         for report in try c.fetch(FetchDescriptor<CareerScoutingReport>()) { c.delete(report) }
+        // Represent a legacy save whose origin predates the new affiliation record.
+        for row in try c.fetch(FetchDescriptor<CareerAffiliationRecord>()) { c.delete(row) }
         s.originDate = "2026-02-01"; p.gameDate = "2027-01-20"; try c.save()
+        try CareerPathStore.addMissing(in:c)
         let plan = try XCTUnwrap(CareerSeasonStore.offseason(player: p, state: s, in: c))
         XCTAssertEqual(plan.seasonYear, 2026); XCTAssertEqual(plan.age, 16); XCTAssertEqual(plan.targetAge, 17)
         let stopped = try await offseasonBatch(p, s, c)
@@ -867,4 +870,113 @@ import SwiftData
         XCTAssertEqual(p.gameDate, originalDate)
     }
 
+}
+
+extension CareerCalendarTests {
+    func testCareerPathAgeRoutesDoNotCreateAdmissions() throws {
+        XCTAssertEqual(CareerAffiliation.stage(age:18),.school)
+        XCTAssertEqual(CareerAffiliation.stage(age:19),.preparation)
+        XCTAssertEqual(CareerAffiliation.stage(age:20),.unsigned)
+        XCTAssertTrue(CareerRoute.routes(age:19)[0].status.contains("20세"))
+        for age in [20,23] { XCTAssertTrue(CareerRoute.routes(age:age)[0].status.contains("심사 대기")) }
+        XCTAssertTrue(CareerRoute.routes(age:24)[1].status.contains("종료"))
+    }
+    func testCareerPathGraduationAndAdultTransitionAreAtomicAndDoNotChangePlayerValues() throws {
+        let (container,player,state) = try fixture(date:"2029-03-31")
+        let c = container.mainContext
+        let school = player.schoolID, speed = player.speed, pitches = player.pitches.map(\.mastery)
+        state.actionDate = player.gameDate; try c.save()
+        try CalendarProgression.advanceDay(player:player,state:state,revision:state.revision,confirmAnniversary:true,in:c)
+        let row = try XCTUnwrap(CareerPathStore.record(player:player,calendar:state,in:c))
+        XCTAssertEqual(try row.snapshot(player:player,calendar:state).entries.map(\.stage),[.school,.preparation])
+        player.gameDate = "2030-03-31";state.actionDate = player.gameDate;try c.save()
+        enum Failure: Error { case disk }
+        let payload = row.payload, revision = state.revision, fatigue = player.fatigue
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:player,state:state,revision:revision,confirmAnniversary:true,in:c,save:{_ in throw Failure.disk}))
+        XCTAssertEqual(player.gameDate,"2030-03-31");XCTAssertEqual(row.payload,payload);XCTAssertEqual(state.revision,revision);XCTAssertEqual(player.fatigue,fatigue)
+        try CalendarProgression.advanceDay(player:player,state:state,revision:revision,confirmAnniversary:true,in:c)
+        XCTAssertEqual(try row.snapshot(player:player,calendar:state).entries.map(\.stage),[.school,.preparation,.unsigned])
+        XCTAssertEqual(player.schoolID,school);XCTAssertEqual(player.speed,speed);XCTAssertEqual(player.pitches.map(\.mastery),pitches)
+        let frozen = row.payload;try CareerPathStore.addMissing(in:c);XCTAssertEqual(row.payload,frozen)
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:player,state:state,revision:revision,automaticRest:true,in:c))
+    }
+    func testCareerPathBatchStopsBeforeGraduation() async throws {
+        let (container,player,state) = try fixture(date:"2029-03-30")
+        let result = try await CalendarProgression.advanceOffDays(player:player,state:state,in:container.mainContext)
+        XCTAssertEqual(result.stop,.anniversary);XCTAssertEqual(player.gameDate,"2029-03-31")
+        XCTAssertEqual(try CareerPathStore.record(player:player,calendar:state,in:container.mainContext)?.snapshot(player:player,calendar:state).current.stage,.school)
+    }
+    func testCareerPathV8MigrationKeepsCurrentSaveAndDoesNotInventHistory() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:dir)}
+        let url = dir.appendingPathComponent("career-path.store"),schools = try SchoolCatalog.load()
+        let id:UUID = try autoreleasepool {
+            let schema = Schema(versionedSchema:CareerSchemaV8.self)
+            let c = try ModelContainer(for:schema,configurations:[ModelConfiguration("Career",schema:schema,url:url,cloudKitDatabase:.none)])
+            c.mainContext.autosaveEnabled = false
+            var draft = PlayerDraft();draft.name = "진로이전";draft.schoolID = schools[0].id;draft.role = .pitcher
+            let p = CareerPlayer(draft:draft,school:schools[0]);let calendar = CareerCalendarState(player:p,schools:schools,legacySave:false)
+            p.gameDate = "2030-04-01";p.fatigue = 61;p.speed = 63.125;calendar.revision = 7;calendar.actionDate = p.gameDate
+            c.mainContext.insert(p);c.mainContext.insert(calendar);try c.mainContext.save();return p.id
+        }
+        var payload = ""
+        do {
+            let migrated = try CareerStore.makeContainer(url:url)
+            let c = migrated.mainContext
+            let player = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let calendar = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            XCTAssertEqual(player.id,id);XCTAssertEqual(player.speed,63.125);XCTAssertEqual(player.fatigue,61)
+            XCTAssertEqual(calendar.revision,7);XCTAssertEqual(calendar.actionDate,"2030-04-01");XCTAssertEqual(player.pitches.count,4)
+            let row = try XCTUnwrap(CareerPathStore.record(player:player,calendar:calendar,in:c));let history = try row.snapshot(player:player,calendar:calendar)
+            XCTAssertEqual(history.source,"legacy-v1");XCTAssertEqual(history.entries.count,1);XCTAssertEqual(history.current.stage,.unsigned)
+            XCTAssertEqual(history.current.since,"2030-04-01");payload = row.payload
+        }
+        let reopened = try CareerStore.makeContainer(url:url)
+        XCTAssertEqual(try reopened.mainContext.fetch(FetchDescriptor<CareerAffiliationRecord>()).first?.payload,payload)
+    }
+    func testCareerPathCorruptionIsNotReset() throws {
+        let (container,player,state) = try fixture()
+        let c = container.mainContext,row = try XCTUnwrap(CareerPathStore.record(player:player,calendar:state,in:container.mainContext))
+        row.payload = "broken";try c.save()
+        XCTAssertThrowsError(try CareerPathStore.addMissing(in:c));XCTAssertEqual(row.payload,"broken")
+    }
+}
+
+extension CareerCalendarTests {
+    func testCareerPathV8MigrationPreservesBothPendingMatchesAndCompletionOnce() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:dir)}
+        let url = dir.appendingPathComponent("pending-career.store"),schools = try SchoolCatalog.load()
+        let original:[UUID:Data] = try autoreleasepool {
+            let schema = Schema(versionedSchema:CareerSchemaV8.self)
+            let old = try ModelContainer(for:schema,configurations:[ModelConfiguration("Career",schema:schema,url:url,cloudKitDatabase:.none)])
+            let c = old.mainContext;c.autosaveEnabled = false
+            var values:[UUID:Data] = [:]
+            for role in PlayerRole.allCases {
+                var draft = PlayerDraft();draft.name = role == .batter ? "이어타자":"이어투수";draft.role = role;draft.schoolID = schools[0].id
+                let p = try CareerStore.create(draft,schools:schools,in:c)
+                let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id })
+                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let r = try CareerMatchStore.start(player:p,state:s,in:c)
+                try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? "four-seam":nil,in:c)
+                values[p.id] = r.payload
+            }
+            return values
+        }
+        let migrated = try CareerStore.makeContainer(url:url),c = migrated.mainContext
+        for p in try c.fetch(FetchDescriptor<CareerPlayer>()) {
+            let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id })
+            let r = try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first { $0.playerID == p.id })
+            XCTAssertEqual(r.payload,original[p.id]);XCTAssertFalse(r.completed)
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,original[p.id])
+            XCTAssertEqual(try CareerPathStore.record(player:p,calendar:s,in:c)?.snapshot(player:p,calendar:s).entries.count,1)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            let payload = r.payload, fatigue = p.fatigue, revision = s.revision
+            XCTAssertTrue(r.completed)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+            XCTAssertEqual(r.payload,payload);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+        }
+    }
 }

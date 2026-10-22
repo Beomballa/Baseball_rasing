@@ -131,3 +131,69 @@ extension CareerSeasonStore {
         return try OffseasonPlan.make(summary: summary, origin: origin, startAge: player.startAge, today: today)
     }
 }
+
+// V1-V8 entity definitions remain unchanged; career history is an independent record.
+enum CareerSchemaV9: VersionedSchema {
+    static let versionIdentifier = Schema.Version(9, 0, 0)
+    static var models: [any PersistentModel.Type] { CareerSchemaV8.models + [AffiliationRecord.self] }
+    @Model final class AffiliationRecord {
+        @Attribute(.unique) var playerID: UUID
+        var payload: String
+        init(_ history: CareerPathHistory) throws {
+            playerID = history.playerID
+            payload = String(decoding: try JSONEncoder().encode(history), as: UTF8.self)
+        }
+        func snapshot(player: CareerPlayer, calendar: CareerCalendarState) throws -> CareerPathHistory {
+            guard let data = payload.data(using:.utf8) else { throw CareerPathError.invalid }
+            let history = try JSONDecoder().decode(CareerPathHistory.self, from:data)
+            try history.validate(playerID:player.id, origin:calendar.originDate, today:GameDate(player.gameDate),startAge:player.startAge)
+            guard playerID == player.id else { throw CareerPathError.invalid }
+            return history
+        }
+    }
+}
+typealias CareerAffiliationRecord = CareerSchemaV9.AffiliationRecord
+
+@MainActor enum CareerPathStore {
+    static func record(player: CareerPlayer, calendar: CareerCalendarState, in context: ModelContext) throws -> CareerAffiliationRecord? {
+        let id = player.id
+        let rows = try context.fetch(FetchDescriptor<CareerAffiliationRecord>(predicate:#Predicate { $0.playerID == id }))
+        guard rows.count <= 1, calendar.playerID == id else { throw CareerPathError.invalid }
+        if let row = rows.first { _ = try row.snapshot(player:player,calendar:calendar) }
+        return rows.first
+    }
+    // The caller owns the atomic save, including the calendar and scouting boundary.
+    static func synchronize(player: CareerPlayer, calendar: CareerCalendarState, in context: ModelContext, initial: Bool = false) throws {
+        guard context.container.schema.entities.contains(where: { $0.name == "AffiliationRecord" }) else { return }
+        let today = try GameDate(player.gameDate), age = try calendar.age(of:player)
+        guard age >= 16 else { throw CareerPathError.invalid }
+        let stage = CareerAffiliation.stage(age:age)
+        func entry(_ stage: CareerAffiliation) -> CareerAffiliationEntry {
+            CareerAffiliationEntry(stage:stage,since:player.gameDate,schoolID:stage == .school ? player.schoolID:nil,
+                                   schoolName:stage == .school ? player.schoolName:nil)
+        }
+        if let row = try record(player:player,calendar:calendar,in:context) {
+            var history = try row.snapshot(player:player,calendar:calendar)
+            if history.current.stage != stage {
+                history.entries.append(entry(stage))
+                try history.validate(playerID:player.id,origin:calendar.originDate,today:today,startAge:player.startAge)
+                row.payload = String(decoding:try JSONEncoder().encode(history),as:UTF8.self)
+            }
+        } else {
+            let history = CareerPathHistory(playerID:player.id,origin:calendar.originDate,source:initial ? "initial-v1":"legacy-v1",entries:[entry(stage)])
+            try history.validate(playerID:player.id,origin:calendar.originDate,today:today,startAge:player.startAge)
+            context.insert(try CareerAffiliationRecord(history))
+        }
+    }
+    static func addMissing(in context: ModelContext) throws {
+        let players = try context.fetch(FetchDescriptor<CareerPlayer>())
+        let calendars = try context.fetch(FetchDescriptor<CareerCalendarState>())
+        do {
+            for player in players {
+                guard let calendar = calendars.first(where: { $0.playerID == player.id }) else { throw CareerPathError.invalid }
+                try synchronize(player:player,calendar:calendar,in:context)
+            }
+            if context.hasChanges { try context.save() }
+        } catch { context.rollback(); throw error }
+    }
+}

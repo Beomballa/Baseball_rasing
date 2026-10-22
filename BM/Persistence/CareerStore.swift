@@ -3,7 +3,7 @@ import SwiftData
 
 @MainActor enum CareerStore {
     static func makeContainer(url: URL? = nil, inMemory: Bool = false) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: CareerSchemaV8.self)
+        let schema = Schema(versionedSchema: CareerSchemaV9.self)
         let configuration: ModelConfiguration
         if let url {
             configuration = ModelConfiguration("Career", schema: schema, url: url, cloudKitDatabase: .none)
@@ -18,6 +18,7 @@ import SwiftData
         try PlayerAbilityStore.addMissing(in: container.mainContext)
         try PlayerTraitStore.addMissing(in: container.mainContext)
         try PlayerPositionStore.addMissing(in: container.mainContext)
+        try CareerPathStore.addMissing(in: container.mainContext)
         return container
     }
 
@@ -58,6 +59,7 @@ import SwiftData
         let state = CareerCalendarState(player: player, schools: schools, legacySave: false)
         context.insert(state)
         do {
+            try CareerPathStore.synchronize(player: player, calendar: state, in: context, initial: true)
             _ = try ScoutingObservationStore.insertIfNeeded(player: player, calendar: state, in: context)
             try save(context)
         } catch { context.rollback(); throw error }

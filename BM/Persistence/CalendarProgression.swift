@@ -85,6 +85,7 @@ struct CalendarAdvanceFailure: LocalizedError {
         state.actionDate = nil
         state.revision += 1
         do {
+            try CareerPathStore.synchronize(player: player, calendar: state, in: context)
             if observationDue { _ = try ScoutingObservationStore.insertIfNeeded(player: player, calendar: state, in: context) }
             try save(context)
         } catch { context.rollback(); throw error }

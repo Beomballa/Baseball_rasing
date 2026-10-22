@@ -269,3 +269,63 @@ enum OffseasonError: LocalizedError {
     case unavailable
     var errorDescription: String? { "최신 시즌의 30경기 결산을 마친 뒤 다음 해 4월 1일 전까지만 진행할 수 있습니다. 현재 날짜와 기록을 다시 확인해 주세요." }
 }
+
+// Eligibility describes a route, never an admission or contract award.
+enum CareerAffiliation: String, Codable {
+    case school, preparation, unsigned
+    var label: String {
+        switch self {
+        case .school: "고교 재학"
+        case .preparation: "고교 졸업 · 진로 준비"
+        case .unsigned: "무소속 · 성인 진로 준비"
+        }
+    }
+    static func stage(age: Int) -> Self { age <= 18 ? .school : age == 19 ? .preparation : .unsigned }
+}
+struct CareerAffiliationEntry: Codable, Equatable {
+    let stage: CareerAffiliation
+    let since: String
+    let schoolID: String?
+    let schoolName: String?
+}
+struct CareerPathHistory: Codable, Equatable {
+    var version = 1
+    let playerID: UUID
+    let origin: String
+    let source: String
+    var entries: [CareerAffiliationEntry]
+    var current: CareerAffiliationEntry { entries[entries.count - 1] }
+    func validate(playerID: UUID, origin: String, today: GameDate, startAge: Int = 16) throws {
+        guard version == 1, self.playerID == playerID, self.origin == origin,
+              ["initial-v1", "legacy-v1"].contains(source), !entries.isEmpty else { throw CareerPathError.invalid }
+        var last: GameDate?
+        for (index, entry) in entries.enumerated() {
+            let date = try GameDate(entry.since)
+            guard date >= (try GameDate(origin)), date <= today, last.map({ date > $0 }) ?? true,
+                  entry.stage == CareerAffiliation.stage(age:try GameDate(origin).age(startingAt:startAge,on:date)),
+                  (entry.stage == .school ? entry.schoolID != nil && entry.schoolName != nil : entry.schoolID == nil && entry.schoolName == nil),
+                  index == 0 || (entries[index - 1].stage == .school && entry.stage == .preparation)
+                    || (entries[index - 1].stage == .preparation && entry.stage == .unsigned) else { throw CareerPathError.invalid }
+            last = date
+        }
+    }
+}
+enum CareerPathError: LocalizedError {
+    case invalid
+    var errorDescription: String? { "진로·소속 이력을 확인하지 못했습니다. 기존 저장을 유지합니다. 다시 확인해 주세요." }
+}
+struct CareerRoute: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let status: String
+    let detail: String
+    static func routes(age: Int) -> [Self] {
+        let status = age < 20 ? "20세부터 나이 조건 충족" : age <= 23 ? "나이 조건 충족 · 심사 대기" : "신규 신청 나이 범위 종료"
+        return [Self(id:"rookie",title:"국내 신인",status:status,
+                     detail:"20~23세 · 신규 프로 경력 없는 아마추어/무소속. 성적·모집·권리·예산 심사 후 결정합니다."),
+                Self(id:"college",title:"대학 입단",status:status,
+                     detail:"20~23세 · 대학 모집·성적·자리 심사가 필요합니다. 자동 입학하지 않습니다."),
+                Self(id:"unsigned",title:"무소속 준비",status:age < 19 ? "고교 졸업 후 가능" : "훈련·휴식으로 준비 가능",
+                     detail:"계약 없이 육성을 계속할 수 있습니다. 인증 평가전과 실제 진로 신청은 후속 단계입니다.")]
+    }
+}

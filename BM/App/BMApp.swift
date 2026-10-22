@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-scouting-contract-preview") {
+            if ProcessInfo.processInfo.arguments.contains("-career-path-verification") {
+                CareerPathVerification()
+            } else if ProcessInfo.processInfo.arguments.contains("-scouting-contract-preview") {
                 NavigationStack { ScoutingContractPreview() }
             } else if ProcessInfo.processInfo.arguments.contains("-season-summary-verification") || ProcessInfo.processInfo.arguments.contains("-offseason-verification") {
                 SeasonSummaryVerification()
@@ -127,6 +129,43 @@ private struct SeasonSummaryVerification: View {
             }
             self.schools = schools; container = store
         } catch { self.error = error.localizedDescription }
+    }
+}
+#endif
+
+
+#if DEBUG
+// This verification path never opens the user's disk container.
+struct CareerPathVerification: View {
+    @State private var container: ModelContainer?
+    @State private var schools: [School] = []
+    @State private var failure: String?
+    var body: some View {
+        Group {
+            if let container { CareerRootView(schools:schools).modelContainer(container) }
+            else if let failure { Text(failure) }
+            else { ProgressView("진로 검증 준비") }
+        }.task {
+            guard container == nil, failure == nil else { return }
+            do {
+                let c = try CareerStore.makeContainer(inMemory:true), schools = try SchoolCatalog.load()
+                let args = ProcessInfo.processInfo.arguments
+                let age = args.contains("-career-age20") ? 20 : args.contains("-career-age19") ? 19 : 16
+                for role in PlayerRole.allCases {
+                    var draft = PlayerDraft();draft.name = role == .batter ? "CareerBat":"CareerPitch";draft.role = role;draft.schoolID = schools[0].id
+                    let p = try CareerStore.create(draft,schools:schools,in:c.mainContext)
+                    let calendar = try c.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id }!
+                    if age >= 19 {
+                        p.gameDate = "2029-04-01";try CareerPathStore.synchronize(player:p,calendar:calendar,in:c.mainContext)
+                    }
+                    if age >= 20 {
+                        p.gameDate = "2030-04-01";try CareerPathStore.synchronize(player:p,calendar:calendar,in:c.mainContext)
+                    }
+                    try c.mainContext.save()
+                }
+                self.schools = schools;self.container = c
+            } catch { failure = error.localizedDescription }
+        }
     }
 }
 #endif
