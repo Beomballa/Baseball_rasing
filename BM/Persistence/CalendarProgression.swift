@@ -3,6 +3,7 @@ import SwiftData
 
 struct CalendarAdvanceSummary: Equatable, Sendable {
     enum Stop: String, Sendable {
+        case evaluation = "계약 평가 자료 도착 · 홈에서 확인 후 계속"
         case fixture = "경기일 도착 · 경기 진행/완료 확인"
         case anniversary = "나이·학적 변경 전 · 하루 진행으로 확인"
         case limit = "30일 진행 완료"
@@ -66,6 +67,7 @@ struct CalendarAdvanceFailure: LocalizedError {
                            in context: ModelContext, save: Save = { try $0.save() }) throws {
         try validate(player, state, revision: revision)
         try CareerTrainingStore.requireNoPending(player: player, in: context)
+        if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil {throw ContractEvaluationError.unread}
         if try hasGameToday(player: player, state: state) {
             let fixture = try CareerMatchStore.today(player: player, state: state)
             guard try CareerMatchStore.isCompleted(player: player, fixture: fixture, in: context) else { throw CalendarError.fixturePending }
@@ -86,6 +88,7 @@ struct CalendarAdvanceFailure: LocalizedError {
         state.revision += 1
         do {
             try CareerPathStore.synchronize(player: player, calendar: state, in: context)
+            _ = try ContractEvaluationStore.captureIfDue(player:player,calendar:state,in:context)
             if observationDue { _ = try ScoutingObservationStore.insertIfNeeded(player: player, calendar: state, in: context) }
             try save(context)
         } catch { context.rollback(); throw error }
@@ -103,6 +106,7 @@ struct CalendarAdvanceFailure: LocalizedError {
             while days < 30 {
                 if Task.isCancelled { stop = .cancelled; break }
                 try validate(player, state, revision: expectedRevision)
+                if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil {stop = .evaluation;break}
                 if try hasGameToday(player: player, state: state) { stop = .fixture; break }
                 if try isAnniversaryTomorrow(player: player, state: state) { stop = .anniversary; break }
                 let needsRest = !state.hasAction(on: player.gameDate)
@@ -114,6 +118,7 @@ struct CalendarAdvanceFailure: LocalizedError {
                 if needsRest { rests += 1 }
                 await onDaySaved?(player.gameDate)
                 await Task.yield()
+                if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil {stop = .evaluation;break}
             }
             if stop == .limit {
                 if try hasGameToday(player: player, state: state) { stop = .fixture }
@@ -154,6 +159,7 @@ extension CalendarProgression {
                 try validate(player, state, revision: expectedRevision)
                 guard player.gameDate == lastDate else { throw CalendarError.staleState }
                 if try GameDate(player.gameDate) >= plan.target { stop = .seasonOpening; break }
+                if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil {stop = .evaluation;break}
                 if try hasGameToday(player: player, state: state) { stop = .fixture; break }
                 let birthday = try isAnniversaryTomorrow(player: player, state: state)
                 if birthday && !(confirmAnniversary && days == 0) { stop = .anniversary; break }
@@ -165,6 +171,7 @@ extension CalendarProgression {
                 if needsRest { rests += 1 }
                 await onDaySaved?(lastDate)
                 await Task.yield()
+                if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil {stop = .evaluation;break}
             }
             if stop == .limit {
                 if try GameDate(player.gameDate) == plan.target { stop = .seasonOpening }

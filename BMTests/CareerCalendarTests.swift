@@ -884,7 +884,7 @@ extension CareerCalendarTests {
     func testCareerPathGraduationAndAdultTransitionAreAtomicAndDoNotChangePlayerValues() throws {
         let (container,player,state) = try fixture(date:"2029-03-31")
         let c = container.mainContext
-        let school = player.schoolID, speed = player.speed, pitches = player.pitches.map(\.mastery)
+        let school = player.schoolID, speed = player.speed, pitches = player.pitches.sorted {$0.code < $1.code}.map(\.mastery)
         state.actionDate = player.gameDate; try c.save()
         try CalendarProgression.advanceDay(player:player,state:state,revision:state.revision,confirmAnniversary:true,in:c)
         let row = try XCTUnwrap(CareerPathStore.record(player:player,calendar:state,in:c))
@@ -896,7 +896,7 @@ extension CareerCalendarTests {
         XCTAssertEqual(player.gameDate,"2030-03-31");XCTAssertEqual(row.payload,payload);XCTAssertEqual(state.revision,revision);XCTAssertEqual(player.fatigue,fatigue)
         try CalendarProgression.advanceDay(player:player,state:state,revision:revision,confirmAnniversary:true,in:c)
         XCTAssertEqual(try row.snapshot(player:player,calendar:state).entries.map(\.stage),[.school,.preparation,.unsigned])
-        XCTAssertEqual(player.schoolID,school);XCTAssertEqual(player.speed,speed);XCTAssertEqual(player.pitches.map(\.mastery),pitches)
+        XCTAssertEqual(player.schoolID,school);XCTAssertEqual(player.speed,speed);XCTAssertEqual(player.pitches.sorted {$0.code < $1.code}.map(\.mastery),pitches)
         let frozen = row.payload;try CareerPathStore.addMissing(in:c);XCTAssertEqual(row.payload,frozen)
         XCTAssertThrowsError(try CalendarProgression.advanceDay(player:player,state:state,revision:revision,automaticRest:true,in:c))
     }
@@ -978,5 +978,181 @@ extension CareerCalendarTests {
             XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
             XCTAssertEqual(r.payload,payload);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
         }
+    }
+}
+
+extension CareerCalendarTests {
+    private func evaluationFixture(date:String = "2030-06-30",role:PlayerRole = .pitcher) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+        let (container,p,s) = try fixture(role:role),c = container.mainContext
+        p.gameDate = "2029-04-01";try CareerPathStore.synchronize(player:p,calendar:s,in:c)
+        p.gameDate = date;try CareerPathStore.synchronize(player:p,calendar:s,in:c);try c.save()
+        return (container,p,s)
+    }
+    func testContractWindowBoundariesAndRouteEligibility() throws {
+        for month in [4,7,11] {
+            for day in [1,14] {XCTAssertEqual(ContractEvaluationWindow.containing(try GameDate(String(format:"2030-%02d-%02d",month,day)))?.month,month)}
+            XCTAssertNil(ContractEvaluationWindow.containing(try GameDate(String(format:"2030-%02d-15",month))))
+        }
+        let april = ContractEvaluationWindow(year:2030,month:4),july = ContractEvaluationWindow(year:2030,month:7)
+        XCTAssertTrue(april.routes(age:19,affiliation:.preparation).isEmpty)
+        XCTAssertEqual(april.routes(age:20,affiliation:.unsigned),["국내 신인","대학 입단"])
+        XCTAssertEqual(july.routes(age:23,affiliation:.unsigned),["국내 신인"])
+        XCTAssertEqual(april.routes(age:24,affiliation:.unsigned),["국내 전력/검증 테스트"])
+        XCTAssertTrue(ContractEvaluationWindow(year:2030,month:11).routes(age:25,affiliation:.unsigned).isEmpty)
+    }
+    func testContractEvaluationFreezesCurrentInputsSeparatelyFrom28DayReportsBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (container,p,s) = try evaluationFixture(date:"2030-04-01",role:role),c = container.mainContext
+            let reports = try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload)
+            XCTAssertTrue(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c));try c.save()
+            let row = try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first),payload = row.payload
+            let saved = try row.snapshot(player:p,calendar:s)
+            XCTAssertEqual(saved.routes,["국내 신인","대학 입단"]);XCTAssertEqual(saved.observation.role,role)
+            p.contact += 1;p.speed += 1;try c.save()
+            XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
+            XCTAssertEqual(row.payload,payload)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reports)
+            XCTAssertTrue(saved.pending.contains(where:{$0.contains("심사 대기")}))
+        }
+    }
+    func testContractEvaluationBulkStopsAtArrivalAndConfirmationDoesNotConsumeDay() async throws {
+        let (container,p,s) = try evaluationFixture(),c = container.mainContext
+        let before = p.fatigue,result = try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
+        XCTAssertEqual(result.days,1);XCTAssertEqual(result.stop,.evaluation);XCTAssertEqual(p.gameDate,"2030-07-01")
+        XCTAssertEqual(p.fatigue,max(0,before-22))
+        let row = try XCTUnwrap(ContractEvaluationStore.unread(player:p,calendar:s,in:c)),frozen = row.payload
+        XCTAssertEqual(try row.snapshot(player:p,calendar:s).routes,["국내 신인"])
+        let zero = try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
+        XCTAssertEqual(zero.days,0);XCTAssertEqual(zero.stop,.evaluation)
+        let date = p.gameDate,fatigue = p.fatigue,revision = s.revision
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,in:c))
+        try ContractEvaluationStore.acknowledge(player:p,calendar:s,key:row.key,date:date,revision:revision,in:c)
+        XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision);XCTAssertEqual(row.payload,frozen)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,in:c)
+        XCTAssertEqual(p.gameDate,"2030-07-02");XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).count,1)
+    }
+    func testContractEvaluationArrivalSaveFailureRollsBackLedgerDateAndRecovery() throws {
+        let (container,p,s) = try evaluationFixture(),c = container.mainContext
+        let date = p.gameDate,fatigue = p.fatigue,revision = s.revision
+        enum Failure:Error {case disk}
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,in:c,save:{_ in throw Failure.disk}))
+        XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+        XCTAssertTrue(try ContractEvaluationStore.records(player:p,calendar:s,in:c).isEmpty)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,in:c)
+        XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).count,1)
+    }
+    func testContractEvaluationAcknowledgeFailureAndStaleInputDoNotUnlock() throws {
+        let (container,p,s) = try evaluationFixture(date:"2030-04-02"),c = container.mainContext
+        try ContractEvaluationStore.registerCurrent(in:c)
+        let row = try XCTUnwrap(ContractEvaluationStore.unread(player:p,calendar:s,in:c)),payload = row.payload
+        enum Failure:Error {case disk}
+        XCTAssertThrowsError(try ContractEvaluationStore.acknowledge(player:p,calendar:s,key:row.key,date:p.gameDate,revision:s.revision,in:c,save:{_ in throw Failure.disk}))
+        XCTAssertFalse(row.acknowledged);XCTAssertEqual(row.payload,payload)
+        XCTAssertThrowsError(try ContractEvaluationStore.acknowledge(player:p,calendar:s,key:row.key,date:p.gameDate,revision:s.revision+1,in:c))
+        try ContractEvaluationStore.acknowledge(player:p,calendar:s,key:row.key,date:p.gameDate,revision:s.revision,in:c)
+        try ContractEvaluationStore.acknowledge(player:p,calendar:s,key:row.key,date:p.gameDate,revision:s.revision,in:c,save:{_ in XCTFail("duplicate acknowledgement saved")})
+    }
+    func testContractEvaluationMissedWindowsAndNovemberDoNotInventProfessionalReviews() throws {
+        let (container,p,s) = try evaluationFixture(date:"2030-04-15"),c = container.mainContext
+        XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
+        p.gameDate = "2030-11-01";try c.save()
+        XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
+        XCTAssertTrue(try ContractEvaluationStore.records(player:p,calendar:s,in:c).isEmpty)
+    }
+    func testContractEvaluationFirstEligibleBirthdayInsideWindow() throws {
+        let (container,p,s) = try fixture(),c = container.mainContext
+        for row in try c.fetch(FetchDescriptor<CareerAffiliationRecord>()) {c.delete(row)}
+        s.originDate = "2026-04-10";p.gameDate = "2030-04-09";try c.save();try CareerPathStore.addMissing(in:c)
+        XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,confirmAnniversary:true,in:c)
+        let row = try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+        XCTAssertEqual(try row.snapshot(player:p,calendar:s).evaluatedDate,"2030-04-10")
+    }
+    func testContractEvaluationV9DiskMigrationPreservesPendingMatchesAndFreezesOnlyCurrentWindow() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url = dir.appendingPathComponent("evaluation.store"),schools = try SchoolCatalog.load()
+        let payloads:[UUID:Data] = try autoreleasepool {
+            let schema = Schema(versionedSchema:CareerSchemaV9.self)
+            let old = try ModelContainer(for:schema,configurations:[ModelConfiguration("Career",schema:schema,url:url,cloudKitDatabase:.none)]),c = old.mainContext
+            c.autosaveEnabled = false;var result:[UUID:Data] = [:]
+            for role in PlayerRole.allCases {
+                var draft = PlayerDraft();draft.name = "평가이전";draft.role = role;draft.schoolID = schools[0].id
+                let p = try CareerStore.create(draft,schools:schools,in:c)
+                let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == p.id})
+                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let r = try CareerMatchStore.start(player:p,state:s,in:c)
+                try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? "four-seam":nil,in:c)
+                result[p.id] = r.payload
+            }
+            return result
+        }
+        let new = try CareerStore.makeContainer(url:url),c = new.mainContext
+        for p in try c.fetch(FetchDescriptor<CareerPlayer>()) {
+            let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == p.id})
+            let r = try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first {$0.playerID == p.id})
+            XCTAssertEqual(r.payload,payloads[p.id]);XCTAssertTrue(try ContractEvaluationStore.records(player:p,calendar:s,in:c).isEmpty)
+            try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            let frozen = r.payload,fatigue = p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c))
+            XCTAssertEqual(r.payload,frozen);XCTAssertEqual(p.fatigue,fatigue)
+        }
+    }
+    func testContractEvaluationCorruptionIsNotReplaced() throws {
+        let (container,p,s) = try evaluationFixture(date:"2030-07-10"),c = container.mainContext
+        try ContractEvaluationStore.registerCurrent(in:c)
+        let row = try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+        row.payload = Data("broken".utf8);try c.save()
+        XCTAssertThrowsError(try ContractEvaluationStore.registerCurrent(in:c));XCTAssertEqual(row.payload,Data("broken".utf8))
+    }
+}
+
+extension CareerCalendarTests {
+    func testContractEvaluationV9AdultImportReopenAndNextYearKeepOriginalWindowBytes() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url = dir.appendingPathComponent("adult-window.store"),schools = try SchoolCatalog.load()
+        try autoreleasepool {
+            let schema = Schema(versionedSchema:CareerSchemaV9.self)
+            let old = try ModelContainer(for:schema,configurations:[ModelConfiguration("Career",schema:schema,url:url,cloudKitDatabase:.none)]),c = old.mainContext
+            c.autosaveEnabled = false
+            var draft = PlayerDraft();draft.name = "창이전";draft.schoolID = schools[0].id
+            let p = try CareerStore.create(draft,schools:schools,in:c)
+            let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            p.gameDate = "2029-04-01";try CareerPathStore.synchronize(player:p,calendar:s,in:c)
+            p.gameDate = "2030-07-10";try CareerPathStore.synchronize(player:p,calendar:s,in:c);try c.save()
+        }
+        var frozen = Data()
+        do {
+            let store = try CareerStore.makeContainer(url:url),c = store.mainContext
+            let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let row = try XCTUnwrap(ContractEvaluationStore.unread(player:p,calendar:s,in:c));frozen = row.payload
+            XCTAssertEqual(try row.snapshot(player:p,calendar:s).evaluatedDate,"2030-07-10")
+            try ContractEvaluationStore.acknowledge(player:p,calendar:s,key:row.key,date:p.gameDate,revision:s.revision,in:c)
+            p.contact += 1;try c.save()
+        }
+        let store = try CareerStore.makeContainer(url:url),c = store.mainContext
+        let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let previous = try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+        XCTAssertEqual(previous.payload,frozen);XCTAssertTrue(previous.acknowledged)
+        p.gameDate = "2031-04-01";try c.save()
+        XCTAssertTrue(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c));try c.save()
+        XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).count,2)
+        XCTAssertEqual(previous.payload,frozen)
+    }
+    func testContractEvaluationBulkPartialFailureKeepsOnlyCommittedDatesAndCanRetry() async throws {
+        let (store,p,s) = try evaluationFixture(date:"2030-06-29"),c = store.mainContext
+        enum Failure:Error {case disk}
+        do {
+            _ = try await CalendarProgression.advanceOffDays(player:p,state:s,in:c,save:{c in
+                if p.gameDate == "2030-07-01" {throw Failure.disk};try c.save()
+            });XCTFail("expected injected save failure")
+        } catch let error as CalendarAdvanceFailure {
+            XCTAssertEqual(error.summary.days,1);XCTAssertEqual(error.summary.lastSavedDate,"2030-06-30")
+        }
+        XCTAssertTrue(try ContractEvaluationStore.records(player:p,calendar:s,in:c).isEmpty)
+        let retry = try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
+        XCTAssertEqual(retry.days,1);XCTAssertEqual(retry.stop,.evaluation)
+        XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).count,1)
     }
 }

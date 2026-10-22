@@ -329,3 +329,33 @@ struct CareerRoute: Identifiable, Equatable {
                      detail:"계약 없이 육성을 계속할 수 있습니다. 인증 평가전과 실제 진로 신청은 후속 단계입니다.")]
     }
 }
+
+struct ContractEvaluationWindow: Codable, Equatable {
+    let year: Int
+    let month: Int
+    var id: String { String(format:"%04d-%02d",year,month) }
+    var start: GameDate { try! GameDate(id+"-01") }
+    var end: GameDate { try! GameDate(id+"-14") }
+    var label: String { month == 4 ? "4월 · 성인/아마추어 진로" : month == 7 ? "7월 · 무소속 재평가":"11월 · 프로 외부/갱신" }
+    static func containing(_ date: GameDate) -> Self? {
+        [4,7,11].map { Self(year:date.year,month:$0) }.first { $0.start <= date && date <= $0.end }
+    }
+    func routes(age: Int, affiliation: CareerAffiliation) -> [String] {
+        guard age >= 20, affiliation == .unsigned else { return [] }
+        switch month {
+        case 4: return age <= 23 ? ["국내 신인","대학 입단"]:["국내 전력/검증 테스트"]
+        case 7: return age <= 23 ? ["국내 신인"]:["국내 전력/검증 테스트"]
+        default: return [] // Professional affiliation/rights are not yet implemented.
+        }
+    }
+}
+enum ContractEvaluationError: LocalizedError {
+    case invalid, unread, pendingChanges
+    var errorDescription: String? {
+        switch self {
+        case .invalid: "계약 평가 원장을 확인하지 못했습니다. 기존 자료를 유지하고 다시 확인해 주세요."
+        case .unread: "홈에서 새 계약 평가 자료를 확인한 뒤 날짜를 진행해 주세요."
+        case .pendingChanges: "다른 저장 작업이 진행 중입니다. 완료한 뒤 다시 확인해 주세요."
+        }
+    }
+}

@@ -23,6 +23,8 @@ struct CareerCalendarPanel: View {
     private var trainingPending: Bool { trainingRecords.contains { $0.playerID == player.id && !$0.completed } }
     private var trainedToday: Bool { trainingRecords.contains { $0.playerID == player.id && $0.gameDate == player.gameDate && $0.completed } }
     @Query private var gameRecords: [CareerMatchRecord]
+    @Query private var evaluations: [CareerContractEvaluation]
+    private var evaluationUnread: Bool {evaluations.contains {$0.playerID == player.id && !$0.acknowledged}}
     private func detail(_ fixture: SeasonFixture) -> String {
         "\(fixture.date) · \(teamName(fixture.opponent(of: player.schoolID))) · \(fixture.homeID == player.schoolID ? "홈" : "원정")"
     }
@@ -117,7 +119,7 @@ struct CareerCalendarPanel: View {
                 }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).disabled(hasAction || trainingPending || advancing || schedule == nil)
                     .accessibilityIdentifier("restToday")
                 Button("다음 날") { nextDay() }.buttonStyle(GameButtonStyle(onBoard: true))
-                    .disabled(trainingPending || !hasAction || (today != nil && !gameCompleted) || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
+                    .disabled(evaluationUnread || trainingPending || !hasAction || (today != nil && !gameCompleted) || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
             }
             if advancing {
                 Button("묶음 진행 중지") { transition.requestCancel() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true))
@@ -141,6 +143,7 @@ struct CareerCalendarPanel: View {
                 }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).disabled(trainingPending || today != nil || schedule == nil)
                     .accessibilityIdentifier("advanceOffDays")
             }
+            if evaluationUnread {Text("새 계약 평가 자료를 홈에서 확인한 뒤 날짜를 진행해 주세요.").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractEvaluationDateGate")}
             layout {
                 Button("연간 30경기 일정 보기") { showSchedule = true }
                     .font(.caption.bold()).frame(minHeight: 44).accessibilityIdentifier("showSeasonSchedule")

@@ -2171,3 +2171,33 @@ extension CareerFlowTests {
         }
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testContractEvaluationHomeBothRolesConfirmAndContinueWithoutReevaluation() throws {
+        let app = XCUIApplication();app.launchArguments = ["-career-path-verification","-career-age20"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector = app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let date = app.staticTexts["calendarDate"].label,fatigue = app.staticTexts["homeFatigue"].label
+            let status = app.staticTexts["contractEvaluationStatus"];revealFit(status,in:app)
+            XCTAssertTrue(status.label.contains("2030-04-01"));XCTAssertTrue(status.label.contains("확인 필요"))
+            XCTAssertTrue(app.staticTexts["contractEvaluationRoutes"].label.contains("대학 입단"))
+            revealFit(app.buttons["contractEvaluationDetails"],in:app);app.buttons["contractEvaluationDetails"].tap()
+            let grade = app.staticTexts["contractEvaluationGrade-"+(role == "batter" ? "slugger":"starter")]
+            revealFit(grade,in:app);XCTAssertTrue(grade.exists);let fixedGrade = grade.label
+            let shot = XCTAttachment(screenshot:app.screenshot());shot.name = "Contract evaluation frozen "+role;shot.lifetime = .keepAlways;add(shot)
+            let acknowledge = app.buttons["acknowledgeContractEvaluation"];revealFit(acknowledge,in:app);acknowledge.tap()
+            XCTAssertTrue(status.label.contains("확인 완료"))
+            XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+            revealFit(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
+            revealFit(app.buttons["advanceDay"],in:app);app.buttons["advanceDay"].tap()
+            let advanced = app.staticTexts["calendarDate"]
+            let predicate = NSPredicate(format:"label == %@","2030-04-02")
+            expectation(for:predicate,evaluatedWith:advanced);waitForExpectations(timeout:6)
+            revealFit(status,in:app);XCTAssertTrue(status.label.contains("2030-04-01"));XCTAssertTrue(status.label.contains("확인 완료"))
+            revealFit(app.buttons["contractEvaluationDetails"],in:app)
+            if app.buttons["contractEvaluationDetails"].value as? String == "접힘" {app.buttons["contractEvaluationDetails"].tap()}
+            revealFit(grade,in:app);XCTAssertEqual(grade.label,fixedGrade)
+        }
+        app.terminate()
+    }
+}

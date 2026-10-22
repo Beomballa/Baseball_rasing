@@ -50,6 +50,7 @@ struct PlayerHomeView: View {
                 if let calendar {
                     CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
                     playActions(calendar)
+                    ContractEvaluationHomePanel(player:player,calendar:calendar).id(player.id)
                     CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
                     ScoutingObservationHomePanel(player: player, calendar: calendar)
                     MatchAbilityGrowthHomePanel(player: player, records: gameRecords)
@@ -622,5 +623,63 @@ struct CareerPathHomePanel: View {
             guard let row = try CareerPathStore.record(player:player,calendar:calendar,in:context) else { throw CareerPathError.invalid }
             history = try row.snapshot(player:player,calendar:calendar); failure = nil
         } catch { history = nil; failure = error.localizedDescription }
+    }
+}
+
+
+struct ContractEvaluationHomePanel: View {
+    let player: CareerPlayer
+    let calendar: CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @Query private var evaluations: [CareerContractEvaluation]
+    @State private var details = false
+    @State private var selectedKey: String?
+    @State private var failure: String?
+    private var own: [CareerContractEvaluation] { evaluations.filter {$0.playerID == player.id}.sorted {$0.key > $1.key} }
+    var body: some View {
+        GamePanel(title:"계약 평가 · 연간 창",onBoard:true) {
+            Text("4월 1~14일 진로 · 7월 1~14일 무소속 · 11월 1~14일 프로")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractWindows")
+            if let failure {
+                Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractEvaluationError")
+                Button("다시 확인") {self.failure = nil}.buttonStyle(MatchPixelButtonStyle())
+            }
+            if let row = own.first(where: {!$0.acknowledged}) ?? own.first(where: {$0.key == selectedKey}) ?? own.first {
+                if let value = try? row.snapshot(player:player,calendar:calendar) {
+                    Text(value.window.label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                    Text("\(value.evaluatedDate) 평가 자료 고정 · \(row.acknowledged ? "확인 완료":"확인 필요")")
+                        .font(.caption).accessibilityIdentifier("contractEvaluationStatus")
+                    Text(value.routes.joined(separator:" / ")).font(.caption).accessibilityIdentifier("contractEvaluationRoutes")
+                    if !row.acknowledged {
+                        Text("같은 창에서는 성장하거나 재실행해도 다시 평가하지 않습니다. 자료를 확인하면 날짜 진행을 계속할 수 있습니다.")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Button("평가 자료 확인 · 계속") {
+                            do {try ContractEvaluationStore.acknowledge(player:player,calendar:calendar,key:row.key,date:player.gameDate,revision:calendar.revision,in:context);failure = nil}
+                            catch {failure = error.localizedDescription}
+                        }.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acknowledgeContractEvaluation")
+                    }
+                    HomeDetailButton(title:"고정 자료 · 평가 이력",expanded:$details,identifier:"contractEvaluationDetails")
+                    if details {
+                        ForEach(value.observation.grades) { grade in
+                            Text("\(grade.label) H \(grade.score.map {String(format:"%.1f",$0)} ?? "—")")
+                                .font(.caption.monospaced()).accessibilityIdentifier("contractEvaluationGrade-"+grade.id)
+                        }
+                        Text("구단 모집·경쟁 기준과 동일 환경 성적은 평가일 자료로 보관합니다. 신인/대학 선발 심사는 아직 대기 상태입니다.")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        ForEach(value.pending,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
+                        ForEach(own) { record in
+                            Button((record.key.components(separatedBy:":").last ?? "") + " · 고정 자료 보기") {selectedKey = record.key}.font(.caption.monospaced()).buttonStyle(MatchPixelButtonStyle())
+                        }
+                    }
+                } else {Text(ContractEvaluationError.invalid.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold)}
+            } else {
+                Text(((try? calendar.age(of:player)) ?? 16) < 20 ? "20세 전에는 정식 평가 자료를 만들지 않습니다.":"해당 경로의 평가 창에서 자료를 한 번 고정합니다.")
+                    .font(.caption).accessibilityIdentifier("contractEvaluationWaiting")
+            }
+            if let date = try? GameDate(player.gameDate), ContractEvaluationWindow.containing(date)?.month == 11 {
+                Text("11월은 프로 외부/갱신 창입니다. 현재 고교·진로 준비·무소속 선수는 대상이 아니며 프로 소속/권리 연결은 후속입니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractNovemberIneligible")
+            }
+        }
     }
 }

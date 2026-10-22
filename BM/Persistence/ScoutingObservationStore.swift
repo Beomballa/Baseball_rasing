@@ -191,6 +191,11 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
         let cycle = try ScoutingPeriod(origin: GameDate(calendar.originDate), today: GameDate(player.gameDate))
         let rows = try reports(player: player, calendar: calendar, in: context)
         if let row = rows.first(where: { $0.period == cycle.index }) { return row }
+        let value = try currentObservation(player:player,calendar:calendar,in:context)
+        let row = try CareerScoutingReport(value); context.insert(row); return row
+    }
+    static func currentObservation(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> ScoutingObservation {
+        let cycle = try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(player.gameDate))
         let live = try ScoutingReportSnapshot.load(player: player, calendar: calendar, in: context)
         let position = FieldPosition(rawValue: player.positionRaw)
         let profile = player.role == .batter ? try PlayerPositionStore.profile(playerID: player.id, in: context) : nil
@@ -208,7 +213,7 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
         value.interests = ScoutingInterests.make(value)
         value.evaluationPending = ScoutingObservation.pendingReasons(age:live.age,role:player.role,groups:live.groups,modern:true,compared:value.contractFit?.selectedEnvironment != nil)
         try value.validate()
-        let row = try CareerScoutingReport(value); context.insert(row); return row
+        return value
     }
     static func ensureCurrent(player: CareerPlayer, calendar: CareerCalendarState, in context: ModelContext,
                               save: CalendarProgression.Save = { try $0.save() }) throws {
@@ -217,5 +222,103 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
             _ = try insertIfNeeded(player: player, calendar: calendar, in: context)
             if context.hasChanges { try save(context) }
         } catch { context.rollback(); throw error }
+    }
+}
+
+struct ContractEvaluationSnapshot: Codable {
+    var version = 1
+    let rule: String
+    let window: ContractEvaluationWindow
+    let evaluatedDate: String
+    let calendarRevision: Int
+    let affiliation: CareerAffiliationEntry
+    let routes: [String]
+    let observation: ScoutingObservation
+    let pending: [String]
+    func validate(player:CareerPlayer,calendar:CareerCalendarState) throws {
+        let date = try GameDate(evaluatedDate)
+        guard version == 1, rule == "contracts-window-v1", [4,7,11].contains(window.month),
+              (1...9998).contains(window.year), window == ContractEvaluationWindow.containing(date),
+              observation.playerID == player.id, observation.origin == calendar.originDate,
+              observation.role == player.role, observation.observedDate == evaluatedDate,
+              observation.age == (try GameDate(calendar.originDate).age(startingAt:player.startAge,on:date)),
+              date <= (try GameDate(player.gameDate)), calendarRevision >= 0,
+              !routes.isEmpty, routes == window.routes(age:observation.age,affiliation:affiliation.stage),
+              !pending.isEmpty else { throw ContractEvaluationError.invalid }
+        try observation.validate()
+    }
+}
+enum CareerSchemaV10: VersionedSchema {
+    static let versionIdentifier = Schema.Version(10,0,0)
+    static var models: [any PersistentModel.Type] { CareerSchemaV9.models + [ContractEvaluation.self] }
+    @Model final class ContractEvaluation {
+        @Attribute(.unique) var key: String
+        var playerID: UUID
+        var payload: Data
+        var acknowledged: Bool
+        init(playerID:UUID,snapshot:ContractEvaluationSnapshot) throws {
+            self.playerID = playerID;key = Self.key(playerID,snapshot.window.id)
+            payload = try JSONEncoder().encode(snapshot);acknowledged = false
+        }
+        static func key(_ id:UUID,_ window:String) -> String { id.uuidString+":"+window }
+        func snapshot(player:CareerPlayer,calendar:CareerCalendarState) throws -> ContractEvaluationSnapshot {
+            guard playerID == player.id else {throw ContractEvaluationError.invalid}
+            let value = try JSONDecoder().decode(ContractEvaluationSnapshot.self,from:payload)
+            try value.validate(player:player,calendar:calendar)
+            guard key == Self.key(playerID,value.window.id) else {throw ContractEvaluationError.invalid}
+            return value
+        }
+    }
+}
+typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
+
+@MainActor enum ContractEvaluationStore {
+    static func records(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> [CareerContractEvaluation] {
+        guard context.container.schema.entities.contains(where:{$0.name == "ContractEvaluation"}) else {return []}
+        guard calendar.playerID == player.id else {throw ContractEvaluationError.invalid}
+        let id = player.id
+        let rows = try context.fetch(FetchDescriptor<CareerContractEvaluation>(predicate:#Predicate {$0.playerID == id}))
+        guard Set(rows.map(\.key)).count == rows.count else {throw ContractEvaluationError.invalid}
+        for row in rows {_ = try row.snapshot(player:player,calendar:calendar)}
+        return rows.sorted {$0.key > $1.key}
+    }
+    static func unread(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> CareerContractEvaluation? {
+        try records(player:player,calendar:calendar,in:context).first {$0.acknowledged == false}
+    }
+    // Creation/date progression/legacy registration owns the single save and rollback.
+    @discardableResult static func captureIfDue(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> Bool {
+        guard context.container.schema.entities.contains(where:{$0.name == "ContractEvaluation"}) else {return false}
+        let rows = try records(player:player,calendar:calendar,in:context)
+        guard let window = ContractEvaluationWindow.containing(try GameDate(player.gameDate)) else {return false}
+        guard !rows.contains(where:{$0.key == CareerContractEvaluation.key(player.id,window.id)}) else {return false}
+        guard let history = try CareerPathStore.record(player:player,calendar:calendar,in:context)?.snapshot(player:player,calendar:calendar) else {throw ContractEvaluationError.invalid}
+        let routes = window.routes(age:try calendar.age(of:player),affiliation:history.current.stage)
+        guard !routes.isEmpty else {return false}
+        let observation = try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
+        let value = ContractEvaluationSnapshot(rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
+            calendarRevision:calendar.revision,affiliation:history.current,routes:routes,observation:observation,
+            pending:["평가 자료 고정 · 선발 심사 대기","졸업 성적/인증 평가전·프로 경력/권리·모집/예산·경쟁 심사는 후속입니다.","관찰 H/C/P/F는 참고 자료이며 신인/대학 합격 판정이 아닙니다."])
+        try value.validate(player:player,calendar:calendar)
+        context.insert(try CareerContractEvaluation(playerID:player.id,snapshot:value));return true
+    }
+    static func registerCurrent(in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        guard !context.hasChanges else {throw ContractEvaluationError.pendingChanges}
+        do {
+            let calendars = try context.fetch(FetchDescriptor<CareerCalendarState>())
+            for player in try context.fetch(FetchDescriptor<CareerPlayer>()) {
+                guard let calendar = calendars.first(where:{$0.playerID == player.id}) else {throw ContractEvaluationError.invalid}
+                _ = try captureIfDue(player:player,calendar:calendar,in:context)
+            }
+            if context.hasChanges {try save(context)}
+        } catch {context.rollback();throw error}
+    }
+    static func acknowledge(player:CareerPlayer,calendar:CareerCalendarState,key:String,date:String,revision:Int,
+                            in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        guard !context.hasChanges else {throw ContractEvaluationError.pendingChanges}
+        guard player.gameDate == date,calendar.revision == revision,
+              let row = try records(player:player,calendar:calendar,in:context).first(where:{$0.key == key}) else {throw ContractEvaluationError.invalid}
+        guard !row.acknowledged else {return}
+        row.acknowledged = true
+        do {try save(context)} catch {context.rollback();throw error}
     }
 }

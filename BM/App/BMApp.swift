@@ -161,6 +161,7 @@ struct CareerPathVerification: View {
                     if age >= 20 {
                         p.gameDate = "2030-04-01";try CareerPathStore.synchronize(player:p,calendar:calendar,in:c.mainContext)
                     }
+                    _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:c.mainContext)
                     try c.mainContext.save()
                 }
                 self.schools = schools;self.container = c
