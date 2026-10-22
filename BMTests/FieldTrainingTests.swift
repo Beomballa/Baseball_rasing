@@ -891,4 +891,35 @@ import SwiftUI
         }
     }
 
+    func testHomePlateProjectionExpandsInfieldAndKeepsEveryPositionVisible() throws {
+        let size=CGSize(width:390,height:460)
+        func point(_ p:FieldPoint) -> CGPoint {InplayFieldProjection.point(p,size:size)}
+        let home=point(DetailedFieldRules.bases[0]),second=point(DetailedFieldRules.bases[2])
+        XCTAssertGreaterThan(home.y-second.y,size.height*0.48)
+        let first=point(DetailedFieldRules.bases[1]),third=point(DetailedFieldRules.bases[3])
+        XCTAssertGreaterThan(abs(first.x-third.x),size.width*0.42)
+        XCTAssertGreaterThan(home.y-point(DetailedFieldRules.positions[0]).y,110)
+        for p in DetailedFieldRules.positions+DetailedFieldRules.bases {
+            let screen=point(p)
+            XCTAssertGreaterThan(screen.x,15);XCTAssertLessThan(screen.x,size.width-15)
+            XCTAssertGreaterThan(screen.y,50);XCTAssertLessThan(screen.y,size.height)
+            XCTAssertEqual(point(.init(x:-p.x,y:p.y)).x,size.width-screen.x,accuracy:0.000001)
+        }
+        var previous=point(.init(x:0,y:-6)).y
+        for depth in 0...125 {
+            let next=point(.init(x:0,y:Double(depth))).y
+            XCTAssertLessThan(next,previous);previous=next
+        }
+        for play in [doublePlay(),fly(),relayFly()] {
+            let data=try JSONEncoder().encode(play)
+            let view=DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),animated:false,scoreText:"H 2 : 1 A") {}
+                .frame(width:390,height:500)
+            let renderer=ImageRenderer(content:view);renderer.scale=2
+            let attachment=XCTAttachment(image:try XCTUnwrap(renderer.uiImage))
+            attachment.name="Infield home plate camera \(play.fly == nil ? "ground":"air") \(play.relay != nil ? "relay":"direct")"
+            attachment.lifetime = .keepAlways;add(attachment)
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+        }
+    }
+
 }

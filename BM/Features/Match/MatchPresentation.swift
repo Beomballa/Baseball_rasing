@@ -622,6 +622,17 @@ enum FieldSpriteAnimation {
     }
 }
 
+// A home-plate camera expands the infield and foreshortens the distant outfield.
+// This projection is presentation-only; simulation distances and timestamps stay in metres.
+enum InplayFieldProjection {
+    static func point(_ p:FieldPoint,size:CGSize) -> CGPoint {
+        let depth=max(-6,p.y)
+        let distance=(1-exp(-depth/40))/(1-exp(-119.0/40))
+        return CGPoint(x:size.width*(0.5+p.x/(68+0.95*max(0,depth))),
+                       y:size.height*(0.90-0.78*distance))
+    }
+}
+
 // A fixed-resolution stadium keeps stepped edges and texture pixels at every display scale.
 @MainActor enum InplayStadiumArt {
     static let size=CGSize(width:320,height:352)
@@ -633,9 +644,21 @@ enum FieldSpriteAnimation {
             func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
                 c.setFillColor(color(hex));c.fill(CGRect(x:x.rounded(),y:y.rounded(),width:w.rounded(),height:h.rounded()))
             }
-            func point(_ p:FieldPoint) -> CGPoint {CGPoint(x:(320*(0.5+p.x/145)).rounded(),y:(352*(0.94-p.y/150)).rounded())}
+            func point(_ p:FieldPoint) -> CGPoint {
+                let projected=InplayFieldProjection.point(p,size:CGSize(width:320,height:352))
+                return CGPoint(x:projected.x.rounded(),y:projected.y.rounded())
+            }
             func path(_ nodes:[FieldPoint]) -> CGPath {
-                let p=CGMutablePath();p.addLines(between:nodes.map(point));p.closeSubpath();return p
+                let p=CGMutablePath()
+                guard let first=nodes.first else {return p}
+                p.move(to:point(first))
+                for (a,b) in zip(nodes,nodes.dropFirst()+[first]) {
+                    for step in 1...24 {
+                        let t=Double(step)/24
+                        p.addLine(to:point(.init(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)))
+                    }
+                }
+                p.closeSubpath();return p
             }
             let edge:[FieldPoint]=[.init(x:0,y:-3),.init(x:64,y:61),.init(x:61,y:82),.init(x:50,y:101),.init(x:32,y:114),.init(x:0,y:119),.init(x:-32,y:114),.init(x:-50,y:101),.init(x:-61,y:82),.init(x:-64,y:61)]
             let field=path(edge)
@@ -680,18 +703,28 @@ enum FieldSpriteAnimation {
             let infield=path([.init(x:0,y:7),.init(x:12,y:19.4),.init(x:0,y:31.8),.init(x:-12,y:19.4)])
             c.addPath(infield);c.setFillColor(color(0x3b7c4e));c.fillPath()
             for i in 0..<170 {
-                let x=144+(i*17)%35,y=273+(i*11)%43
-                if !infield.contains(CGPoint(x:x,y:y)) {box(Double(x),Double(y),1,1,0xc59b64)}
+                let x=90+(i*17)%140,y=140+(i*11)%170
+                if diamond.contains(CGPoint(x:x,y:y)) && !infield.contains(CGPoint(x:x,y:y)) {box(Double(x),Double(y),1,1,0xc59b64)}
             }
             for (a,b) in [(FieldPoint(x:-64,y:64),FieldPoint(x:0,y:0)),(FieldPoint(x:0,y:0),FieldPoint(x:64,y:64))] {
-                c.move(to:point(a));c.addLine(to:point(b));c.setStrokeColor(color(0xf0e6c8));c.setLineWidth(1);c.strokePath()
+                c.move(to:point(a))
+                for step in 1...32 {
+                    let t=Double(step)/32
+                    c.addLine(to:point(.init(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t)))
+                }
+                c.setStrokeColor(color(0xf0e6c8));c.setLineWidth(1);c.strokePath()
             }
             for p in DetailedFieldRules.bases {
                 let b=point(p);c.setFillColor(color(0xbf925c));c.fillEllipse(in:CGRect(x:b.x-6,y:b.y-4,width:12,height:8))
             }
             let mound=point(DetailedFieldRules.positions[0])
-            c.setFillColor(color(0xbe945f));c.fillEllipse(in:CGRect(x:mound.x-8,y:mound.y-5,width:16,height:10))
-            box(mound.x-2,mound.y-1,4,1,0xf7ebd2)
+            c.setFillColor(color(0xbe945f));c.fillEllipse(in:CGRect(x:mound.x-12,y:mound.y-7,width:24,height:14))
+            box(mound.x-3,mound.y-1,6,2,0xf7ebd2)
+            let home=point(DetailedFieldRules.bases[0])
+            c.setStrokeColor(color(0xe3d8b6));c.setLineWidth(1)
+            for side in [-1.0,1] {
+                c.stroke(CGRect(x:home.x+side*12-4,y:home.y-8,width:8,height:15))
+            }
             c.restoreGState()
             c.addPath(field);c.setStrokeColor(color(0x112b38));c.setLineWidth(6);c.strokePath()
             c.addPath(field);c.setStrokeColor(color(0x6c9291));c.setLineWidth(2);c.strokePath()
@@ -754,7 +787,7 @@ struct DetailedFieldReplayBoard: View {
                 Text(finished ? "플레이 완료":phase).font(.system(.headline,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
                     .lineLimit(typeSize.isAccessibilitySize ? nil:2).accessibilityIdentifier("fieldReplayPhase")
                 Canvas { context,size in
-                    func point(_ p:FieldPoint) -> CGPoint {CGPoint(x:size.width*(0.5+p.x/145),y:size.height*(0.94-p.y/150))}
+                    func point(_ p:FieldPoint) -> CGPoint {InplayFieldProjection.point(p,size:size)}
                     context.draw(Image(uiImage:InplayStadiumArt.image).interpolation(.none),in:CGRect(origin:.zero,size:size))
                     let scoreFrame=CGRect(x:size.width*0.28,y:4,width:size.width*0.44,height:34)
                     context.fill(Path(scoreFrame),with:.color(Color(hex:0x0b2030)))
