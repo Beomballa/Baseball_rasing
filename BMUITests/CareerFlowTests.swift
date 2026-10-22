@@ -984,9 +984,9 @@ extension CareerFlowTests {
                 let watched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "지켜보기"), object: app.staticTexts["careerGameMessage"])
                 XCTAssertEqual(XCTWaiter.wait(for: [watched], timeout: 5), .completed)
                 app.buttons["gameInput-bunt"].tap()
-                waitForEnabled(app.buttons[primary],timeout:10); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
+                waitForEnabled(app.buttons[primary],timeout:15); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
                 let bunt = XCTAttachment(screenshot: app.screenshot()); bunt.name = "Personal batter bunt saved number"; bunt.lifetime = .keepAlways; add(bunt)
-                waitForEnabled(app.buttons[primary],timeout:10); app.buttons["gameInput-swing"].tap(); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
+                waitForEnabled(app.buttons[primary],timeout:15); app.buttons["gameInput-swing"].tap(); app.buttons[primary].tap(); app.buttons["gameHit"].tap()
             }
             waitForEnabled(app.buttons["gameAutomatic"],timeout:15)
             let speed = app.descendants(matching: .any).matching(identifier: "boardPitchSpeed").firstMatch
@@ -1006,8 +1006,10 @@ extension CareerFlowTests {
             XCTAssertFalse(fieldSummary.isEmpty)
             app.buttons["replayResultFieldPlay"].tap()
             XCTAssertTrue(app.otherElements["fieldReplayCanvas"].exists)
+            XCTAssertEqual(app.staticTexts["gameDetailedFieldSummary"].label,"인플레이 · 수비 재생 중")
+            XCTAssertFalse(app.otherElements["fieldReplayCanvas"].label.contains(fieldSummary))
             let movingField=XCTAttachment(screenshot:app.screenshot());movingField.name=pitcher ? "Detailed pitcher field moving" : "Detailed batter field moving";movingField.lifetime = .keepAlways;add(movingField)
-            waitForEnabled(app.buttons["replayResultFieldPlay"],timeout:9)
+            waitForEnabled(app.buttons["replayResultFieldPlay"],timeout:12)
             XCTAssertEqual(app.staticTexts["gameDetailedFieldSummary"].label,fieldSummary)
             let settledField=XCTAttachment(screenshot:app.screenshot());settledField.name=pitcher ? "Detailed pitcher field settled" : "Detailed batter field settled";settledField.lifetime = .keepAlways;add(settledField)
             let dpMetric=app.descendants(matching:.any).matching(identifier:"gameResult-doublePlays").firstMatch
@@ -1015,10 +1017,10 @@ extension CareerFlowTests {
             let dpValue=dpMetric.label
             if app.buttons["replayDoublePlay"].exists {
                 reveal(app.buttons["replayDoublePlay"],in:app);app.buttons["replayDoublePlay"].tap()
-                XCTAssertTrue(app.staticTexts["fieldReplaySecondTimes"].exists)
+                XCTAssertFalse(app.staticTexts["fieldReplaySecondTimes"].exists)
                 reveal(app.staticTexts["fieldReplayPhase"],in:app)
                 let moving=XCTAttachment(screenshot:app.screenshot());moving.name=pitcher ? "Double play pitcher moving" : "Double play batter moving";moving.lifetime = .keepAlways;add(moving)
-                waitForEnabled(app.buttons["replayDoublePlay"],timeout:9)
+                waitForEnabled(app.buttons["replayDoublePlay"],timeout:12)
                 XCTAssertTrue(app.staticTexts["gameDetailedFieldSummary"].label.contains("2루 아웃 → 1루"))
                 let ended=XCTAttachment(screenshot:app.screenshot());ended.name=pitcher ? "Double play pitcher settled" : "Double play batter settled";ended.lifetime = .keepAlways;add(ended)
                 reveal(dpMetric,in:app);XCTAssertEqual(dpMetric.label,dpValue)
@@ -1026,10 +1028,10 @@ extension CareerFlowTests {
             let flyButton=app.buttons["replayFlyPlay"]
             reveal(flyButton,in:app);XCTAssertTrue(flyButton.exists)
             flyButton.tap()
-            XCTAssertTrue(app.staticTexts["fieldReplayCatchTimes"].exists)
+            XCTAssertFalse(app.staticTexts["fieldReplayCatchTimes"].exists)
             reveal(app.staticTexts["fieldReplayPhase"],in:app)
             let flyMoving=XCTAttachment(screenshot:app.screenshot());flyMoving.name=pitcher ? "Fly pitcher moving" : "Fly batter moving";flyMoving.lifetime = .keepAlways;add(flyMoving)
-            waitForEnabled(flyButton,timeout:9)
+            waitForEnabled(flyButton,timeout:12)
             let flySummary=app.staticTexts["gameDetailedFieldSummary"].label
             XCTAssertTrue(flySummary.contains("뜬공") || flySummary.contains("태그업"))
             let flySettled=XCTAttachment(screenshot:app.screenshot());flySettled.name=pitcher ? "Fly pitcher settled" : "Fly batter settled";flySettled.lifetime = .keepAlways;add(flySettled)
@@ -1037,11 +1039,11 @@ extension CareerFlowTests {
             let relayButton=app.buttons["replayRelayPlay"]
             reveal(relayButton,in:app);XCTAssertTrue(relayButton.exists)
             relayButton.tap()
-            XCTAssertTrue(app.staticTexts["fieldReplayRelayTimes"].exists)
-            XCTAssertTrue(app.staticTexts["fieldReplayRouteComparison"].exists)
+            XCTAssertFalse(app.staticTexts["fieldReplayRelayTimes"].exists)
+            XCTAssertFalse(app.staticTexts["fieldReplayRouteComparison"].exists)
             reveal(app.staticTexts["fieldReplayPhase"],in:app)
             let relayMoving=XCTAttachment(screenshot:app.screenshot());relayMoving.name=pitcher ? "Relay pitcher moving":"Relay batter moving";relayMoving.lifetime = .keepAlways;add(relayMoving)
-            waitForEnabled(relayButton,timeout:9)
+            waitForEnabled(relayButton,timeout:12)
             XCTAssertTrue(app.staticTexts["gameDetailedFieldSummary"].label.contains("중계"))
             let relaySettled=XCTAttachment(screenshot:app.screenshot());relaySettled.name=pitcher ? "Relay pitcher settled":"Relay batter settled";relaySettled.lifetime = .keepAlways;add(relaySettled)
             reveal(dpMetric,in:app);XCTAssertEqual(dpMetric.label,dpValue)
@@ -1049,11 +1051,11 @@ extension CareerFlowTests {
             reveal(errorMetric,in:app);XCTAssertTrue(errorMetric.exists);let errorValue=errorMetric.label
             let errorButton=app.buttons["replayMisplay"]
             reveal(errorButton,in:app);XCTAssertTrue(errorButton.exists);errorButton.tap()
-            XCTAssertTrue(app.staticTexts["fieldReplayMisplayTimes"].exists)
-            XCTAssertTrue(app.staticTexts["fieldReplayMisplayScoring"].exists)
+            XCTAssertFalse(app.staticTexts["fieldReplayMisplayTimes"].exists)
+            XCTAssertFalse(app.staticTexts["fieldReplayMisplayScoring"].exists)
             reveal(app.staticTexts["fieldReplayPhase"],in:app)
             let errorMoving=XCTAttachment(screenshot:app.screenshot());errorMoving.name=pitcher ? "Misplay pitcher moving":"Misplay batter moving";errorMoving.lifetime = .keepAlways;add(errorMoving)
-            waitForEnabled(errorButton,timeout:9)
+            waitForEnabled(errorButton,timeout:12)
             let errorSummary=app.staticTexts["gameDetailedFieldSummary"].label
             XCTAssertTrue(errorSummary.contains("실책") || errorSummary.contains("악송구"))
             let errorSettled=XCTAttachment(screenshot:app.screenshot());errorSettled.name=pitcher ? "Misplay pitcher settled":"Misplay batter settled";errorSettled.lifetime = .keepAlways;add(errorSettled)

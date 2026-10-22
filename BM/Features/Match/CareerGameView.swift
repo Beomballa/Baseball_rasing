@@ -40,6 +40,7 @@ struct CareerGameView: View {
     @State private var resultReplayPlay:MatchDetailedPlay?
     @State private var resultReplayID=0
     @State private var animateResultReplay=false
+    @State private var fieldResolved = false
     @State private var replay: MatchDetailedPlay?
     @State private var pulse: String?
     @State private var pulseAt = Date.distantPast
@@ -91,20 +92,22 @@ struct CareerGameView: View {
             if let result = updated.lastManual {
                 visualSnapshot = previous; presenting = true; judgment = nil; arrivedSnapshot = nil
                 let showCall: @MainActor () -> Void = {
-                    judgment = result; arrivedSnapshot = updated
-                    pulse = MatchPresentation.countPulse(result.outcome); pulseAt = Date()
+                    if let fieldPlay {
+                        fieldResolved=false;replay=fieldPlay
+                    } else {
+                        judgment = result; arrivedSnapshot = updated
+                        pulse = MatchPresentation.countPulse(result.outcome); pulseAt = Date()
+                    }
                 }
                 let showResult: @MainActor () -> Void = {
-                    judgment = nil
-                    if let fieldPlay {
-                        replay=fieldPlay
-                    } else { presenting = false; visualSnapshot = nil; arrivedSnapshot = nil }
+                    guard fieldPlay == nil else {return}
+                    judgment = nil;presenting = false; visualSnapshot = nil; arrivedSnapshot = nil
                 }
                 if player.role == .pitcher {
                     let started = scene.demonstrate(reduceMotion: reduced, flightDuration: previous.delivery(pitchCode: result.pitchCode).duration,
                                           x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
                                           outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, onArrival: showCall, completion: showResult)
-                    if !started { showResult() }
+                    if !started { showCall(); showResult() }
                 } else {
                     // Saved fair contact drives the barrel motion; localized multi-base labels are not contact flags.
                     scene.finishBat(action: result.action, outcome: added.contains(where: \.ownBatter) ? "안타" : result.outcome,
@@ -114,7 +117,7 @@ struct CareerGameView: View {
         } catch { retrySave = pending; self.error = error.localizedDescription; scene.cancelDelivery() }
     }
     private func cancelInput() {
-        clock.stop(); attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
+        clock.stop(); attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;fieldResolved=false;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
     }
     private func advance(_ input: MatchInput) {
         guard !presenting, attempt == nil, retrySave == nil, let record else { return }
@@ -210,8 +213,16 @@ struct CareerGameView: View {
             ZStack {
                 SpriteView(scene: scene, options: [.ignoresSiblingOrder])
                 if let replay {
-                    DetailedFieldReplayBoard(play:replay,appearance:player.appearance) {
-                        self.replay=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil
+                    DetailedFieldReplayBoard(play:replay,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
+                        ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
+                        ownTeamFielding:(replay.half%2 == 0) == match.isHome,
+                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",onResolved:{
+                            fieldResolved=true
+                            if let updated=try? record?.snapshot() {
+                                arrivedSnapshot=updated;pulse=MatchPresentation.countPulse(updated.lastManual?.outcome ?? "");pulseAt=Date()
+                            }
+                        }) {
+                        self.replay=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
                     }.transition(.opacity)
                 }
             }
@@ -284,8 +295,10 @@ struct CareerGameView: View {
             }
             if let play=resultReplayPlay ?? match.fieldPlays?.last {
                 GamePanel(title:resultReplayPlay == nil ? "마지막 타구 · 수비/주루" : resultReplayPlay?.misplay != nil ? "최근 실책 · 추가 진루" : resultReplayPlay?.relay != nil ? "최근 중계 송구" : resultReplayPlay?.fly != nil ? "최근 뜬공 · 태그업" : "최근 병살 시도",onBoard:true) {
-                    Text(play.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gameDetailedFieldSummary")
-                    DetailedFieldReplayBoard(play:play,appearance:player.appearance,animated:animateResultReplay) { animateResultReplay=false }
+                    Text(animateResultReplay ? "인플레이 · 수비 재생 중":play.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gameDetailedFieldSummary")
+                    DetailedFieldReplayBoard(play:play,appearance:player.appearance,animated:animateResultReplay,
+                        jerseyNumber:player.jerseyNumber,ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
+                        ownTeamFielding:(play.half%2 == 0) == match.isHome,scoreText:"H \(match.homeScore) : \(match.awayScore) A") { animateResultReplay=false }
                         .id(resultReplayID).frame(height:play.relay == nil && play.misplay == nil ? 240:290)
                     Button("수비·주루 재생") { animateResultReplay=true;resultReplayID += 1 }
                         .buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayResultFieldPlay")
@@ -406,14 +419,14 @@ struct CareerGameView: View {
                                                            detail: "\(MatchPresentation.pitchName(judgment)) · \(judgment.speed) km/h")
                                             .accessibilityIdentifier("pitchJudgmentToast")
                                     }
-                                    Text((arrivedSnapshot ?? match).lastManual.map { "\($0.grade) · \($0.outcome)" }
+                                    Text(replay != nil && !fieldResolved ? "인플레이 · 수비 진행 중" : (arrivedSnapshot ?? match).lastManual.map { "\($0.grade) · \($0.outcome)" }
                                          ?? (match.completed ? match.message : player.role == .batter ? "조준 → 투구 요청 → 타격" : "그립 선택 → 투구 준비 → 릴리스"))
                                         .font(.system(.caption, design: .monospaced, weight: .bold))
                                         .frame(maxWidth: .infinity, minHeight: 20)
                                         .accessibilityIdentifier("careerGameMessage")
                                     if let last=savedMatch.fieldPlays?.last {
                                         Button("직전 수비·주루 다시 보기") {
-                                            visualSnapshot=savedMatch;presenting=true;replay=last
+                                            visualSnapshot=savedMatch;presenting=true;fieldResolved=false;replay=last
                                         }.buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked).accessibilityIdentifier("replayLastFieldPlay")
                                     }
                                     VStack(spacing: 6) { controls(match) }

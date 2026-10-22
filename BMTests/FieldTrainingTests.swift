@@ -735,4 +735,67 @@ import SwiftUI
         XCTAssertLessThan(b.arrival,a.arrival);try fast.validate()
     }
 
+    func testFieldPresentationWithholdsOutcomeUntilResolvedWithoutMutatingReplay() throws {
+        for play in [doublePlay(), fly(), relayFly()] {
+            let data=try JSONEncoder().encode(play)
+            for time in [0,play.pickupAt,play.releaseAt,play.controlAt,play.duration] {
+                let phase=FieldReplayPresentation.phase(play,time:time,finished:false)
+                for spoiler in ["아웃","세이프","안타","OUT","SAFE"] {XCTAssertFalse(phase.contains(spoiler))}
+                XCTAssertNotEqual(phase,play.summary)
+            }
+            XCTAssertEqual(FieldReplayPresentation.phase(play,time:play.duration,finished:true),play.summary)
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+        }
+    }
+
+    func testFieldPresentationSeparatesGroundAirPosesAndTeamKits() {
+        let ground=doublePlay(),air=fly()
+        XCTAssertLessThanOrEqual(FieldReplayPresentation.lift(ground,time:ground.flight/2,height:300),3)
+        XCTAssertGreaterThan(FieldReplayPresentation.lift(air,time:air.flight/2,height:300),50)
+        XCTAssertEqual(FieldReplayPresentation.pose(ground,index:ground.fielder,time:ground.pickupAt,moving:false),"catch")
+        XCTAssertEqual(FieldReplayPresentation.pose(ground,index:ground.fielder,time:ground.releaseAt,moving:false),"throw")
+        XCTAssertEqual(FieldReplayPresentation.pose(ground,index:8,time:0,moving:true),"run")
+        XCTAssertEqual(FieldReplayPresentation.seconds(ground,reduced:true,animated:true),0.25)
+        XCTAssertGreaterThanOrEqual(FieldReplayPresentation.seconds(air,reduced:false,animated:true),3)
+        for color in PlayerAppearance.kitColors {XCTAssertNotEqual(FieldReplayPresentation.opponentKit(color),color)}
+    }
+
+    func testFieldPresentationRendersOwnLeftHandedNumberAndDistinctUniformsReadOnly() throws {
+        let play=relayFly(),data=try JSONEncoder().encode(play)
+        for ownFielding in [true,false] {
+            var appearance=PlayerAppearance();appearance.kit=2;appearance.skin=4;appearance.hair=4
+            let view=DetailedFieldReplayBoard(play:play,appearance:appearance,animated:false,jerseyNumber:47,
+                ownPosition:"2B",throwingHand:"left",ownTeamFielding:ownFielding,scoreText:"H 2 : 1 A") {}
+                .frame(width:390,height:360)
+            let renderer=ImageRenderer(content:view);renderer.scale=2
+            let image=try XCTUnwrap(renderer.uiImage)
+            let attachment=XCTAttachment(image:image);attachment.name=ownFielding ? "Own defense pixel stadium":"Opponent defense pixel stadium"
+            attachment.lifetime = .keepAlways;add(attachment)
+        }
+        XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+    }
+
+    func testFieldPresentationResolvesBeforeReceiptCompletionAndCancelsOnDismissal() async throws {
+        var events:[String]=[]
+        let resolved=expectation(description:"field completed before result receipt")
+        let complete=expectation(description:"result receipt ended")
+        let window=UIWindow(frame:CGRect(x:0,y:0,width:390,height:500))
+        let view=DetailedFieldReplayBoard(play:fly(),appearance:PlayerAppearance(),onResolved:{
+            events.append("resolved");resolved.fulfill()
+        }) {events.append("complete");complete.fulfill()}
+        window.rootViewController=UIHostingController(rootView:view);window.makeKeyAndVisible()
+        await fulfillment(of:[resolved],timeout:10)
+        XCTAssertEqual(events,["resolved"])
+        await fulfillment(of:[complete],timeout:3)
+        XCTAssertEqual(events,["resolved","complete"])
+        var cancelledCallbacks=0
+        let cancelView=DetailedFieldReplayBoard(play:fly(),appearance:PlayerAppearance(),onResolved:{cancelledCallbacks+=1}) {cancelledCallbacks+=1}
+        window.rootViewController=UIHostingController(rootView:cancelView)
+        try await Task.sleep(for:.milliseconds(100))
+        window.rootViewController=UIViewController()
+        try await Task.sleep(for:.seconds(9))
+        XCTAssertEqual(cancelledCallbacks,0)
+        window.isHidden=true;window.rootViewController=nil
+    }
+
 }

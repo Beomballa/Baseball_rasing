@@ -345,102 +345,170 @@ struct MatchResultSummary {
     }
 }
 
+enum FieldReplayPresentation {
+    static func seconds(_ play:MatchDetailedPlay,reduced:Bool,animated:Bool) -> Double {
+        reduced || !animated ? 0.25:min(8,max(3,play.duration))
+    }
+    static func phase(_ play:MatchDetailedPlay,time:Double,finished:Bool) -> String {
+        if finished {return play.summary}
+        if time < play.pickupAt {return play.fly == nil ? "땅볼 · 야수 타구 추격":"공중 타구 · 낙하지점으로 이동"}
+        if let relay=play.relay,time>=play.releaseAt {
+            if time < relay.receiveAt {return "외야 송구 · 중계 야수 수신 대기"}
+            if time < relay.releaseAt {return "중계 포구 · 재송구 준비"}
+        }
+        if let second=play.secondThrow,time>=play.controlAt && time<second.releaseAt {return "베이스 포구 · 1루 재송구 준비"}
+        if play.fly?.caught == true && play.targetRunner == nil && play.misplay == nil {return "포구 · 플레이 확인 중"}
+        if time < play.releaseAt {return "포구 · 송구 자세 전환"}
+        if let error=play.misplay,time>=error.at && time<error.recoveredAt {return "공 회수 · 주자 이동 중"}
+        return "송구 · 주자와 베이스 경합"
+    }
+    static func lift(_ play:MatchDetailedPlay,time:Double,height:Double) -> Double {
+        if time < play.flight {
+            let t=max(0,min(1,time/max(0.001,play.flight)))
+            return play.fly == nil ? abs(sin(t * .pi * 4))*3:sin(t * .pi)*height*0.19 + (play.fly?.caught == true ? t*height*0.035:0)
+        }
+        for (a,b) in zip(play.ball,play.ball.dropFirst()) where time>=a.at && time<b.at && a.at>=play.releaseAt && a.point != b.point {
+            return height*0.035 + sin(.pi*(time-a.at)/max(0.001,b.at-a.at))*height*0.035
+        }
+        return time>=play.pickupAt ? height*0.035:0
+    }
+    static func opponentKit(_ own:Int) -> Int {
+        [0x294c77,0xf0ead9,0x9a3e39].max {a,b in
+            func distance(_ color:Int) -> Int {
+                [0,8,16].reduce(0) {sum,shift in let d=((color>>shift)&255)-((own>>shift)&255);return sum+d*d}
+            }
+            return distance(a)<distance(b)
+        }!
+    }
+    static func pose(_ play:MatchDetailedPlay,index:Int,time:Double,moving:Bool) -> String {
+        let throwEvents=[(play.fielder,play.releaseAt),(play.receiver,play.secondThrow?.releaseAt ?? -10),(play.relay?.fielder ?? -1,play.relay?.releaseAt ?? -10)]
+        if throwEvents.contains(where:{$0.0 == index && abs(time-$0.1)<0.26}) {return "throw"}
+        let catches=[(play.fielder,play.pickupAt),(play.receiver,play.ballAt),(play.relay?.fielder ?? -1,play.relay?.receiveAt ?? -10)]
+        if catches.contains(where:{$0.0 == index && abs(time-$0.1)<0.22}) {return "catch"}
+        return moving ? "run":"ready"
+    }
+}
+
 struct DetailedFieldReplayBoard: View {
     let play: MatchDetailedPlay
     let appearance: PlayerAppearance
     var animated = true
+    var jerseyNumber = 1
+    var ownPosition: String? = nil
+    var throwingHand = "right"
+    var ownTeamFielding: Bool? = nil
+    var scoreText = "IN PLAY"
+    var onResolved: @MainActor () -> Void = {}
     let complete: @MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduced
     @State private var start = Date()
-    private var seconds: Double { reduced || !animated ? 0.25 : min(6,play.duration) }
+    @State private var resolved = false
+    private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
     var body: some View {
         TimelineView(.animation(minimumInterval:1.0/30,paused:reduced || !animated)) { timeline in
-            let fraction = reduced || !animated ? 1 : min(1,max(0,timeline.date.timeIntervalSince(start)/seconds))
-            let time = fraction*play.duration
+            let fraction = reduced || !animated ? 1:min(1,max(0,timeline.date.timeIntervalSince(start)/seconds))
+            let time=fraction*play.duration,finished = !animated || resolved
+            let phase=FieldReplayPresentation.phase(play,time:time,finished:finished)
             let second=play.secondThrow
-            let secondActive=second.map { time >= $0.releaseAt } ?? false
-            let target=secondActive ? 1 : play.targetBase
-            let groundPhase: String = time < play.pickupAt ? "\(DetailedFieldRules.names[play.fielder]) 타구 접근"
-                : time < play.releaseAt ? "포구 → \(play.targetBase == 4 ? "홈" : "\(play.targetBase)루") 송구 준비"
-                : second != nil && time >= play.controlAt && time < (second?.releaseAt ?? 0) ? "2루 아웃 → 1루 재송구 준비"
-                : secondActive && time < play.decisionAt ? "2루 아웃 → 1루 경합"
-                : time < play.decisionAt ? "송구 중" : play.summary
-            let normalPhase=play.fly?.caught == true ? (time < play.flight ? "뜬공 낙하지점 이동" : time < play.releaseAt ? "포구 아웃 · 태그업 출발" : time < play.decisionAt ? "태그업 · 송구 경합" : play.summary) : groundPhase
-            let routePhase=play.relay.map { relay in
-                time < play.releaseAt ? normalPhase : time < relay.receiveAt ? "외야수 → \(DetailedFieldRules.names[relay.fielder]) 중계 송구"
-                    : time < relay.releaseAt ? "중계 포구 → 재송구 준비" : time < play.decisionAt ? "중계 야수 → 베이스 경합" : play.summary
-            } ?? normalPhase
-            let phase=play.misplay.map { error in
-                time < error.at ? "타구 처리 중" : time < error.scatteredAt ? (error.kind == .fielding ? "공 놓침 · 포구 실책" : "악송구 · 공이 빗나갑니다")
-                    : time < error.recoveredAt ? "공 회수 중 · 주자 추가 진루" : time < play.ballAt ? "수습 송구" : play.summary
-            } ?? routePhase
+            let target=time >= (second?.releaseAt ?? .infinity) ? 1:play.targetBase
             VStack(spacing:4) {
-                Text(phase)
-                    .font(.system(.caption,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
-                    .accessibilityIdentifier("fieldReplayPhase")
+                Text(phase).font(.system(.caption,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
+                    .lineLimit(2).accessibilityIdentifier("fieldReplayPhase")
                 Canvas { context,size in
-                    func point(_ p:FieldPoint) -> CGPoint { CGPoint(x:size.width*(0.5+p.x/130),y:size.height*(0.94-p.y/115)) }
+                    func point(_ p:FieldPoint) -> CGPoint {CGPoint(x:size.width*(0.5+p.x/145),y:size.height*(0.94-p.y/150))}
                     func path(_ points:[FieldPoint],closed:Bool=false) -> Path {
-                        Path { p in
-                            guard let first=points.first else { return };p.move(to:point(first))
-                            for next in points.dropFirst() { p.addLine(to:point(next)) };if closed {p.closeSubpath()}
-                        }
+                        Path {p in guard let first=points.first else {return};p.move(to:point(first))
+                            for next in points.dropFirst() {p.addLine(to:point(next))};if closed {p.closeSubpath()}}
                     }
-                    context.fill(Path(CGRect(origin:.zero,size:size)),with:.color(Color(hex:0x205b43)))
+                    func rect(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
+                        context.fill(Path(CGRect(x:x,y:y,width:w,height:h)),with:.color(Color(hex:hex)))
+                    }
+                    rect(0,0,size.width,size.height,0x17374d)
+                    // Pixel stands use the pitching scene's navy seats, warm skin and cream rails.
+                    let cell=max(8,size.width/38)
+                    for row in 0..<4 {for col in 0..<40 {
+                        let x=Double(col)*cell,y=Double(row)*cell*0.55
+                        let skin=[0xefbe91,0xc68a63,0xf0d0a3][(col+row)%3]
+                        rect(x,y,cell-1,cell*0.5,(col+row)%3 == 0 ? 0x42617c:0x274967)
+                        rect(x+cell*0.28,y+1,cell*0.42,cell*0.18,skin)
+                        rect(x+cell*0.2,y,cell*0.58,2,(col+row)%4 == 0 ? 0xefe9d6:0x153452)
+                        rect(x+cell*0.16,y+cell*0.22,cell*0.68,cell*0.26,(col+row)%5 == 0 ? 0xefe9d6:0x345e84)
+                    }}
+                    rect(0,size.height*0.14,size.width,3,0xa4b8b4)
+                    rect(0,size.height*0.15,size.width,size.height*0.07,0x13394f)
+                    rect(size.width*0.31,3,size.width*0.38,size.height*0.115,0x102a3f)
+                    context.stroke(Path(CGRect(x:size.width*0.31,y:3,width:size.width*0.38,height:size.height*0.115)),with:.color(GameTheme.gold),lineWidth:2)
+                    context.draw(Text(scoreText).font(.system(size:max(8,size.width*0.025),weight:.heavy,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width*0.5,y:size.height*0.045))
+                    context.draw(Text(finished ? "PLAY COMPLETE":"IN PLAY").font(.system(size:max(6,size.width*0.018),weight:.bold,design:.monospaced)).foregroundStyle(GameTheme.gold),at:CGPoint(x:size.width*0.5,y:size.height*0.087))
                     let turf=[FieldPoint(x:0,y:0),FieldPoint(x:60,y:60),FieldPoint(x:45,y:99),FieldPoint(x:0,y:108),FieldPoint(x:-45,y:99),FieldPoint(x:-60,y:60)]
-                    context.stroke(path(turf,closed:true),with:.color(GameTheme.gold),lineWidth:3)
-                    context.fill(path(DetailedFieldRules.bases,closed:true),with:.color(Color(hex:0x9a8054)))
-                    context.stroke(path(DetailedFieldRules.bases,closed:true),with:.color(Color(hex:0xe7e4cf)),lineWidth:1)
-                    for base in 0..<4 {
-                        let b=point(DetailedFieldRules.bases[base]);let w=max(4,size.width*0.018)
-                        context.fill(Path(CGRect(x:b.x-w/2,y:b.y-w/2,width:w,height:w)),with:.color(base==target && time>=play.pickupAt ? GameTheme.gold : .white))
+                    var grass=context;grass.clip(to:path(turf,closed:true))
+                    grass.fill(Path(CGRect(x:0,y:0,width:size.width,height:size.height)),with:.color(Color(hex:0x33734f)))
+                    for row in 0..<12 {
+                        grass.fill(Path(CGRect(x:0,y:Double(row)*size.height/12,width:size.width,height:size.height/24)),with:.color(Color(hex:0x3b8157)))
                     }
-                    func actor(_ at:FieldPoint,own:Bool,runner:Bool,moving:Bool,out:Bool=false) {
-                        let c=point(at),u=max(1,floor(size.width/180))
-                        let step=moving ? (Int(time*8)%2==0 ? u : -u) : 0
-                        let shirt=own ? PlayerAppearance.kitColors[appearance.kit] : runner ? 0xe4c370 : 0x294c77
+                    context.stroke(path(turf,closed:true),with:.color(Color(hex:0xa67b4c)),lineWidth:10)
+                    context.stroke(path(turf,closed:true),with:.color(Color(hex:0x254c61)),lineWidth:4)
+                    context.fill(path(DetailedFieldRules.bases,closed:true),with:.color(Color(hex:0xa47a50)))
+                    context.stroke(path(DetailedFieldRules.bases,closed:true),with:.color(Color(hex:0xeee7ca)),lineWidth:1)
+                    context.stroke(path([FieldPoint(x:-60,y:60),FieldPoint(x:0,y:0),FieldPoint(x:60,y:60)]),with:.color(Color(hex:0xf0e4c6)),lineWidth:1.5)
+                    let mound=point(DetailedFieldRules.positions[0])
+                    context.fill(Path(ellipseIn:CGRect(x:mound.x-7,y:mound.y-4,width:14,height:8)),with:.color(Color(hex:0xb28758)))
+                    for base in 0..<4 {
+                        let b=point(DetailedFieldRules.bases[base]),w=max(4,size.width*0.016)
+                        context.fill(Path(CGRect(x:b.x-w/2,y:b.y-w/2,width:w,height:w)),with:.color(base==target && time>=play.pickupAt ? GameTheme.gold:GameTheme.paper))
+                    }
+                    let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
+                    let defenseOwn=ownTeamFielding ?? !play.ownBatter
+                    func actor(_ at:FieldPoint,own:Bool,teamOwn:Bool,moving:Bool,pose:String,number:Int,out:Bool=false) {
+                        let c=point(at),u=max(0.8,size.width/285)
+                        let stride=moving ? sin(time*17)*2:0
+                        let shirt=teamOwn ? ownKit:opponent
+                        let skin=own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91
                         func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {
-                            context.fill(Path(CGRect(x:c.x+x*u,y:c.y+y*u,width:w*u,height:h*u)),with:.color(Color(hex:hex).opacity(out ? 0.4 : 1)))
+                            context.fill(Path(CGRect(x:c.x+x*u,y:c.y+y*u,width:w*u,height:h*u)),with:.color(Color(hex:hex).opacity(out ? 0.4:1)))
                         }
-                        box(-2,-9,4,3,own ? PlayerAppearance.skinColors[appearance.skin] : 0xefbe91)
-                        box(-3,-10,6,2,own ? PlayerAppearance.hairColors[appearance.hair] : 0x162e48)
-                        box(-3,-6,6,5,shirt);box(-4,-5,1,3,0xefbe91);box(3,-5,1,3,0xefbe91)
-                        box(-3,-1,2,3,0xe6eadb);box(1,-1,2,3,0xe6eadb)
-                        box(-3,2+step/u,2,1,0x102a3f);box(1,2-step/u,2,1,0x102a3f)
-                        if own {box(-1,-5,2,2,0xf4f0db)}
+                        box(-5,3,10,2,0x20543c)
+                        box(-3,-15,6,5,skin);box(-4,-16,8,3,shirt);box(-4,-13,3,1,own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48)
+                        box(3,-14,3,2,shirt);box(-4,-10,8,8,shirt);box(-4,-3,8,1,0xf0ead9)
+                        box(-4,-2,3,5+stride,0xe8e9dd);box(1,-2,3,5-stride,0xe8e9dd)
+                        box(-4,3+stride,3,2,0x102a3f);box(1,3-stride,3,2,0x102a3f)
+                        let armX=pose == "throw" ? 6.0:pose == "catch" ? 5:4
+                        let armY=pose == "throw" ? -16.0:pose == "catch" ? -10:-8
+                        let left=own && throwingHand == "left"
+                        box(left ? 4:-6,pose == "catch" ? -12:-9+stride,2,4,skin);box(left ? -armX-2:armX,armY,2,5,skin)
+                        let gloveX=pose == "catch" ? -8.0:-7
+                        box(left ? -gloveX-4:gloveX,pose == "catch" ? -12:-6,4,4,0x976037)
+                        box(left ? -gloveX-3:gloveX+1,pose == "catch" ? -11:-5,2,2,0xc99b5e)
+                        context.draw(Text("\(number)").font(.system(size:5*u,weight:.black,design:.monospaced)).foregroundStyle(Color(hex:shirt == 0xf0ead9 ? 0x18344b:0xf3ecd3)),at:CGPoint(x:c.x,y:c.y-6*u))
+                        if own {box(-1,-20,2,2,0xecc66b)}
                     }
                     for index in play.fielders.indices {
                         let nodes=play.fielders[index],p=FieldNode.sample(nodes,at:time)
-                        actor(p,own:play.ownDefense && index==play.fielder || second?.ownThrower == true && index==play.receiver || play.relay?.ownThrower == true && index==play.relay?.fielder || play.misplay?.ownFielder == index,runner:false,moving:p.distance(to:FieldNode.sample(nodes,at:time+0.06)) > 0.001)
+                        let moving=p.distance(to:FieldNode.sample(nodes,at:time+0.06))>0.001
+                        let own=defenseOwn && (ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index==play.fielder))
+                        actor(p,own:own,teamOwn:defenseOwn,moving:moving,pose:FieldReplayPresentation.pose(play,index:index,time:time,moving:moving),number:own ? jerseyNumber:index+1)
                     }
                     for runner in play.runners {
-                        actor(FieldNode.sample(runner.nodes,at:time),own:runner.profile.own,runner:true,moving:FieldNode.sample(runner.nodes,at:time).distance(to:FieldNode.sample(runner.nodes,at:time+0.06)) > 0.001,out:runner.out && time >= (runner.retiredAt ?? play.decisionAt))
+                        let p=FieldNode.sample(runner.nodes,at:time),moving=p.distance(to:FieldNode.sample(runner.nodes,at:time+0.06))>0.001
+                        actor(p,own:runner.profile.own,teamOwn:!defenseOwn,moving:moving,pose:"run",number:runner.profile.own ? jerseyNumber:runner.from+10,out:finished && runner.out)
                     }
-                    let groundBall=point(FieldNode.sample(play.ball,at:time))
-                    let loft=play.fly != nil && time < play.flight ? sin(.pi*time/play.flight)*size.height*0.18 : 0
-                    if loft > 0 {
-                        context.fill(Path(CGRect(x:groundBall.x-2,y:groundBall.y-1,width:4,height:2)),with:.color(.black.opacity(0.4)))
+                    let groundBall=point(FieldNode.sample(play.ball,at:time)),loft=FieldReplayPresentation.lift(play,time:time,height:size.height)
+                    context.fill(Path(ellipseIn:CGRect(x:groundBall.x-3,y:groundBall.y-1,width:6,height:2)),with:.color(.black.opacity(0.4)))
+                    for i in 1...3 where time<Double(play.ball.last?.at ?? 0) {
+                        let before=max(0,time-Double(i)*0.04),p=point(FieldNode.sample(play.ball,at:before))
+                        context.fill(Path(CGRect(x:p.x,y:p.y-FieldReplayPresentation.lift(play,time:before,height:size.height),width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
                     }
-                    let ball=CGPoint(x:groundBall.x,y:groundBall.y-loft),w=max(3,size.width*0.012)
-                    PixelBaseball.draw(in:context,at:ball,diameter:max(7,w))
-                    func call(_ base:Int,_ out:Bool) {
-                        let b=point(DetailedFieldRules.bases[base])
-                        context.draw(Text(out ? "OUT" : "SAFE").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(out ? Color(hex:0xff9d83) : GameTheme.growth),at:CGPoint(x:b.x,y:b.y-18))
+                    PixelBaseball.draw(in:context,at:CGPoint(x:groundBall.x,y:groundBall.y-loft),diameter:max(7,size.width*0.022))
+                    if finished {
+                        let label=play.misplay != nil ? "ERROR":play.secondThrow?.out == true ? "DOUBLE PLAY":play.fly?.caught == true && play.targetRunner == nil ? "CATCH · OUT":play.out ? "OUT":"SAFE"
+                        let frame=CGRect(x:size.width*0.18,y:size.height*0.27,width:size.width*0.64,height:32)
+                        context.fill(Path(frame),with:.color(GameTheme.board.opacity(0.96)))
+                        context.stroke(Path(frame),with:.color(GameTheme.gold),lineWidth:2)
+                        context.draw(Text(label).font(.system(size:18,weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:frame.midX,y:frame.midY))
                     }
-                    if play.fly?.caught == true,time>=play.flight,play.misplay.map({$0.at > play.flight}) ?? true {
-                        let p=point(play.landing)
-                        context.draw(Text("CATCH · OUT").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(GameTheme.gold),at:CGPoint(x:min(size.width-60,max(60,p.x+(p.x > size.width/2 ? -60:60))),y:max(12,p.y-20)))
-                    }
-                    if let error=play.misplay,time >= error.at {
-                        let p=point(error.loosePoint)
-                        context.draw(Text(error.kind == .fielding ? "ERROR" : "WILD THROW").font(.system(.caption,design:.monospaced,weight:.black)).foregroundStyle(Color(hex:0xff9d83)),at:CGPoint(x:min(size.width-55,max(55,p.x)),y:max(14,p.y-18)))
-                        for runner in play.runners where !runner.out && runner.destination > runner.from && time >= runner.arrival { call(runner.destination == 4 ? 0:runner.destination,false) }
-                        for runner in play.runners where runner.out && runner.from > 0 && time >= (runner.retiredAt ?? 0) {call(runner.destination,true)}
-                    }
-                    if second != nil,time>=play.controlAt { call(2,true) }
-                    if time>=play.decisionAt,play.targetRunner != nil { call(second != nil ? 1 : play.targetBase,second?.out ?? play.out) }
-
-                }.accessibilityLabel("도트 수비 주루 재생 · " + play.summary).accessibilityIdentifier("fieldReplayCanvas")
+                }.accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
+                    .accessibilityIdentifier("fieldReplayCanvas")
+                if finished && !animated {
                 if let error=play.misplay {
                     Text("실책 \(error.at,specifier:"%.2f")초 → 회수 \(error.recoveredAt,specifier:"%.2f")초 · 추가 \(error.extraBases.values.reduce(0,+))베이스")
                         .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayMisplayTimes")
@@ -465,12 +533,19 @@ struct DetailedFieldReplayBoard: View {
                     Text("1루 · 공 \(second.controlAt,specifier:"%.2f")초 / 타자 \(second.runnerAt,specifier:"%.2f")초")
                         .font(.caption2.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplaySecondTimes")
                 }
+                }
             }.padding(6).background(GameTheme.board)
+                .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
         }
         .task(id:play.eventID) {
-            start=Date()
-            do { try await Task.sleep(for:.seconds(seconds+0.5)) } catch { return }
-            if !Task.isCancelled { complete() }
+            start=Date();resolved=false
+            do {try await Task.sleep(for:.seconds(seconds))} catch {return}
+            guard !Task.isCancelled else {return}
+            resolved=true;onResolved()
+            if animated {
+                do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:reduced,match:true)))} catch {return}
+            }
+            if !Task.isCancelled {complete()}
         }
     }
 }
