@@ -46,6 +46,10 @@ import SpriteKit
     private var pitchReceipt: (deadline:Double, completion:(@MainActor () -> Void)?)?
 
     override func update(_ currentTime: TimeInterval) {
+        #if DEBUG
+        let measuredAt=MatchRenderMetrics.begin()
+        defer {MatchRenderMetrics.end("spriteUpdate",started:measuredAt)}
+        #endif
         let now=ProcessInfo.processInfo.systemUptime
         if let flight=pitchFlight {
             let t=min(1,max(0,(now-flight.started)/flight.duration))

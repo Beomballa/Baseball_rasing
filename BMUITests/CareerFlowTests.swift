@@ -2612,4 +2612,41 @@ extension CareerFlowTests {
         let large=XCTAttachment(screenshot:app.screenshot());large.name="Home run accessibility banner";large.lifetime = .keepAlways;add(large)
     }
 
+    @MainActor func testIntegratedTenPlayBoundariesBothRolesHandsAndReducedMotion() throws {
+        let app=XCUIApplication();app.launchArguments=["-match-presentation-verification"];app.launch()
+        let expected=["1루 세이프","땅볼 아웃","2루 슬라이딩","병살","태그업","중계","포구 실책","악송구","번트","홈런"]
+        for pitcher in [false,true] {
+            if pitcher {app.buttons["integratedRole"].tap();app.buttons["integratedHand"].tap()}
+            for (index,name) in expected.enumerated() {
+                XCTAssertEqual(app.staticTexts["integratedScenario"].label,name)
+                if index==9 {XCTAssertFalse(app.staticTexts["homeRunCelebration"].exists)}
+                else {
+                    let phase=app.staticTexts["fieldReplayPhase"].label
+                    XCTAssertFalse(phase.contains("세이프"));XCTAssertFalse(phase.contains("아웃"))
+                }
+                if [0,3,5,6,7,9].contains(index) {
+                    app.swipeUp()
+                    let canvas=app.otherElements[index == 9 ? "homeRunCanvas":"fieldReplayCanvas"]
+                    XCTAssertTrue(canvas.exists)
+                    XCTAssertLessThanOrEqual(canvas.frame.maxX,app.windows.firstMatch.frame.maxX+1)
+                    let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Integrated UI \(pitcher ? "pitcher-left":"batter-right") \(name)";shot.lifetime = .keepAlways;add(shot)
+                    for _ in 0..<4 where !app.buttons["integratedEnd"].isHittable {app.swipeDown()}
+                }
+                app.buttons["integratedEnd"].tap()
+                if index==9 {XCTAssertTrue(app.staticTexts["homeRunCelebration"].exists)}
+                else {XCTAssertEqual(app.staticTexts["fieldReplayPhase"].label,"플레이 완료")}
+                app.buttons["integratedEnd"].tap();app.buttons["integratedNext"].tap()
+            }
+        }
+        app.buttons["integratedReduced"].tap()
+        for _ in 0..<10 {
+            app.buttons["integratedEnd"].tap();app.buttons["integratedEnd"].tap();app.buttons["integratedNext"].tap()
+        }
+        app.terminate();app.launchArguments=["-match-presentation-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        let next=app.buttons["integratedNext"];reveal(next,in:app)
+        XCTAssertTrue(next.isHittable)
+        let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Integrated controls accessibility XXXL";shot.lifetime = .keepAlways;add(shot)
+        next.tap();XCTAssertTrue(app.staticTexts["integratedScenario"].exists)
+    }
+
 }

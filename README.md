@@ -898,3 +898,15 @@ iOS 실제 타자·투수 인플레이와 결과 다시 보기에 포수 전용 
 기존 홈런 판정·RNG 소비·점수/책임 주자·기록/경기 XP·피로/완료1회·SwiftData V12를 유지한다. 주자 조깅/외야 추적·비거리는 표시 모델이고 실제 물리/구장 계측값이 아니다. 영상 프레임 단위 이어하기·홈런 확률/능력 밸런스 조정·특별 축하 전용 스프라이트/음향·다이빙·도루/견제는 미구현/후속이다.
 
 검증: 관련 단위/회귀232개와 최종 홈런 집중8개(회귀와 일부 중복), 홈런 양 역할/큰 글자·실시간 일주 및 실제 타자/좌투 경기·재실행 이어하기 UI2개, 최종 공 표시 변경 후 홈런 UI1개 재검증이 모두 통과했다. 실패·건너뜀0/runtimeWarnings=[]이며 Python 스프라이트9개·Git 보안7개와 개인 설정 제외 공유 Simulator Release도 통과했다. 8가지 베이스 점유/남은 모든 루 통과·펜스 투영·홈 도착 전 배너 숨김·동작 줄이기/표시 취소·디스크 거리 보존/기존 nil 비소급·완료 후 중복 반영 거부를 검사했다. 근거는 로컬 ios/qa/home-run-units.json·home-run-final-focused.json·home-run-ui.json·home-run-final-ui.json 및 native-home-run-contact.png·native-home-run-fence.png·native-home-run-bases.png·native-home-run-home.png·native-home-run-large-ui.png다. 기존 사용자 세이브/보호 기기·개인 project.pbxproj를 유지했다. 실기기/iOS17·장기 FPS/메모리·전체 경기 시각 인수는 후속이다.
+
+## 경기 연출 통합 검증·캐시 성능 점검 (native-match-integration-v1 · 2026-10-23)
+
+완료 범위:10종 플레이의 역할/손·경계 시각·불투명 원화·최종 판정 지연/주자 보존·읽기 전용 원자료 인수, 작은 iPhone/큰 글자/동작 줄이기 및 실제 타자·좌투/홈런·재실행 회귀, 약175초 단독 전후/최적화 계측이다. 수정한 실전 경로는 일반 수비 단조 시계와 정면 중복 이미지 캐시이며 중계 접촉점·재현실 접근성/대비는 QA 표시 보완이다. Domain/Persistence/SwiftData V12·경기 입력/판정·RNG/원장·XP/결과1회는 수정하지 않았다.
+
+제한: 진단 CPU/콜백과 GPU/물리 기기 FPS를 구분한다. 초기 미캐시 처리의 최대 지연과 추가 원본 캐시의 제외 근거를 아래에 기록한다. 단기 표본에서 지속 상승을 관찰하지 않은 것을 누수 없음으로 표시하지 않는다. 실기기/iOS17·GPU/장기/모든 seed 인수는 남아 있으며 도루/견제·다이빙·음향 등 새 기능 완료로 확대하지 않는다.
+
+검증: 최종 관련 단위/회귀239개·홈런 디스크 저장10회 반복·작은 iPhone SE 통합10종/타자·투수/양손/동작 줄이기/큰 글자 UI1개·iPhone17e 실제 경기/홈런/큰 글자/재실행 이어하기 UI2개 통과(최종 실패/건너뜀0, 결과 보고서 runtimeWarnings=[]). Python 스프라이트9개·Git 보안7개·성능 요약3개=19개와 개인 설정 제외 일반 공유 Simulator Release도 통과했다. 시작 자동 이닝의 홈런이 없다고 가정하던 테스트는 명시적 legacy nil 자료와 홈런이 발생하는 고정 입력 준비로 수정하고10회 반복했다. 기존 판정/원장 검증을 완화하지 않았다. 재현실 접근성 부모ID 충돌·어두운 제목·큰 글자 상태 버튼을 수정했다.
+
+성능: 동일 QA/단독 Debug 약175초에서 이미지 생성426→239회, 누적 생성 픽셀187.96→101.65MiB, Canvas 명령 준비 p95 35.041→2.498ms였다. 최종 채택 코드의 -O 진단은 p95 1.172/p99 27.974/최대220.969ms, 프로세스 표본 최대122.909MiB·종료83.877MiB다. Debug의 프로세스 표본 최대는 개선 전116.299/후124.877MiB로 낮아지지 않았다. 원본 추가16MiB 캐시는 적중28/249(약11%)·p95 1.147ms로 비용 대비 이득이 작아 제외했다. 초기 미캐시 약0.22초 지연은 남아 있으며 사전 로딩/실기기 최적화는 후속이다. 이 수치를 GPU 프레임률/실기기/iOS17·장기 누수 통과로 해석하지 않는다.
+
+근거는 로컬 ios/qa/match-integration-units.json·match-integration-home-run-repeat.json·match-integration-small-ui.json·match-integration-live-ui.json·match-rendering-comparison.json·match-integration-verification.md다. 약175초 외 역할별4회 투구 update도 별도로 계측했다. 기존 사용자 세이브/보호 기기와 개인 project.pbxproj는 보존했고 캡처·원시 계측/저장 데이터는 Git에 포함하지 않는다.

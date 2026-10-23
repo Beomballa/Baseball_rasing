@@ -34,6 +34,8 @@
 !/scripts/check_staged.py
 !/scripts/check_commit_message.py
 !/scripts/test_git_security.py
+!/scripts/summarize_match_rendering.py
+!/scripts/test_match_rendering_summary.py
 
 # Always private/local, including files placed inside an allowed source folder.
 **/.DS_Store

@@ -43,7 +43,17 @@ enum MatchArt {
               let data=try? Data(contentsOf:url) else {return nil}
         return try? JSONDecoder().decode(Manifest.self,from:data)
     }()
-    private static let cache: NSCache<NSString,UIImage> = {let c=NSCache<NSString,UIImage>();c.totalCostLimit=48*1024*1024;return c}()
+    private static let cache: NSCache<NSString,UIImage> = {
+        let c=NSCache<NSString,UIImage>();c.totalCostLimit=48*1024*1024
+        #if DEBUG
+        c.delegate=cacheMetrics
+        #endif
+        return c
+    }()
+    #if DEBUG
+    static let cacheMetrics=FieldCacheMetrics()
+    static func resetCacheForVerification() {cache.removeAllObjects();cacheMetrics.reset()}
+    #endif
     static func samples(_ motion:FieldSpriteMotion,kind:String,left:Bool) -> [Sample] {
         let direction=left ? (8-motion.facing.rawValue)%8:motion.facing.rawValue
         guard let sheet=manifest?.kinds[kind]?[directions[direction]] else {return []}
@@ -109,8 +119,18 @@ enum MatchArt {
     }
     static func image(_ sample:Sample,kit:Int,skin:Int,hair:Int,number:Int,back:Bool) -> UIImage? {
         let f=sample.frame
-        let key="\(f.file):\(f.rect):\(kit):\(skin):\(hair):\(number):\(back):\(sample.mirrored)" as NSString
-        if let result=cache.object(forKey:key) {return result}
+        // Front poses contain no jersey digits; only back numbers need mirrored raster variants.
+        let drawnNumber=back ? number:0,numberMirrored=back && sample.mirrored
+        let key="\(f.file):\(f.rect):\(kit):\(skin):\(hair):\(drawnNumber):\(back):\(numberMirrored)" as NSString
+        if let result=cache.object(forKey:key) {
+            #if DEBUG
+            cacheMetrics.hit()
+            #endif
+            return result
+        }
+        #if DEBUG
+        cacheMetrics.miss()
+        #endif
         guard let url=Bundle.main.url(forResource:f.file,withExtension:nil,subdirectory:"MatchArt"),
               let original=UIImage(contentsOfFile:url.path)?.cgImage,
               let crop=original.cropping(to:CGRect(x:f.rect[0],y:f.rect[1],width:f.rect[2],height:f.rect[3])) else {return nil}
@@ -140,7 +160,11 @@ enum MatchArt {
                 mirrored:sample.mirrored,unit:max(2,w/60),bytes:&bytes,width:w,height:h)
         }
         guard let provider=CGDataProvider(data:Data(bytes) as CFData),let cg=CGImage(width:w,height:h,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:format),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else {return nil}
-        let result=UIImage(cgImage:cg);cache.setObject(result,forKey:key,cost:w*h*4);return result
+        let result=UIImage(cgImage:cg)
+        #if DEBUG
+        cacheMetrics.insert(result,cost:w*h*4)
+        #endif
+        cache.setObject(result,forKey:key,cost:w*h*4);return result
     }
     @discardableResult static func draw(in context:GraphicsContext,at point:CGPoint,scale:Double,motion:FieldSpriteMotion,
             kind:String,kit:Int,skin:Int,hair:Int,number:Int,left:Bool,selected:Bool,out:Bool) -> Bool {
@@ -541,6 +565,9 @@ enum FieldReplayPresentation {
     }
     static func stageHeight(width:CGFloat,available:CGFloat,accessibility:Bool=false) -> CGFloat {
         max(320,min(width*1.5+36,available-112)) + (accessibility ? 160:0)
+    }
+    static func elapsed(start:Double?,handoff:FieldContactHandoff?,now:Double) -> Double {
+        handoff?.elapsed(at:now) ?? start.map {max(0,now-$0)} ?? 0
     }
     static func seconds(_ play:MatchDetailedPlay,reduced:Bool,animated:Bool) -> Double {
         animated ? max(3,play.duration):0
@@ -1189,19 +1216,21 @@ struct DetailedFieldReplayBoard: View {
     var ownTeamFielding: Bool? = nil
     var scoreText = "IN PLAY"
     var previewTime:Double? = nil
+    var reduceMotionOverride:Bool? = nil
     var handoff:FieldContactHandoff? = nil
     var showsContactPoints = false
     var onResolved: @MainActor () -> Void = {}
     let complete: @MainActor () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var start: Date?
+    private var reduced:Bool {reduceMotionOverride ?? systemReduced}
+    @State private var start:Double?
     @State private var resolved = false
     private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
     var body: some View {
         TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved)) { timeline in
             let now=ProcessInfo.processInfo.systemUptime
-            let elapsed=handoff?.elapsed(at:now) ?? start.map {timeline.date.timeIntervalSince($0)} ?? 0
+            let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:handoff,now:now)
             let time=previewTime.map {max(0,min(play.duration,$0))} ?? (resolved ? play.duration:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:animated))
             let finished=previewTime.map {$0>=play.duration} ?? (!animated || resolved)
             let phase=FieldReplayPresentation.phase(play,time:time,finished:finished)
@@ -1212,6 +1241,10 @@ struct DetailedFieldReplayBoard: View {
                     .lineLimit(typeSize.isAccessibilitySize ? nil:2).accessibilityIdentifier("fieldReplayPhase")
                 GeometryReader { geometry in
                 Canvas { context,size in
+                    #if DEBUG
+                    let measuredAt=MatchRenderMetrics.begin()
+                    defer {MatchRenderMetrics.end("field",started:measuredAt)}
+                    #endif
                     var context=context
                     if let handoff {
                         let cut=max(0,min(play.duration,handoff.cutAt-handoff.startedAt))
@@ -1271,7 +1304,7 @@ struct DetailedFieldReplayBoard: View {
                         for index in play.fielders.indices {
                             let at=FieldNode.sample(play.fielders[index],at:time)
                             let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:at,size:size)
-                            let hand=[FieldSpriteStage.windup,.release].contains(motion.stage)
+                            let hand=motion.ballInThrowingHand
                             if let contact=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:index == leftIndex,hand:hand) {
                                 let scale=InplayFieldProjection.actorScale(at,size:size),base=point(at)
                                 let marker=CGPoint(x:base.x+(contact.x+motion.bodyOffset.x)*scale,y:base.y+(contact.y+motion.bodyOffset.y)*scale)
@@ -1301,7 +1334,7 @@ struct DetailedFieldReplayBoard: View {
         }
         .task(id:play.eventID + (animated ? ":live":":still")) {
             guard previewTime == nil else {return}
-            start=Date();resolved=false
+            start=ProcessInfo.processInfo.systemUptime;resolved=false
             guard animated else {return}
             let elapsed=handoff?.elapsed(at:ProcessInfo.processInfo.systemUptime) ?? 0
             do {try await Task.sleep(for:.seconds(max(0,seconds-elapsed)))} catch {return}
@@ -1516,9 +1549,11 @@ struct HomeRunReplayBoard:View {
     var handoff:FieldContactHandoff?=nil
     var animated=true
     var previewTime:Double?=nil
+    var reduceMotionOverride:Bool?=nil
     var onResolved:@MainActor () -> Void = {}
     var complete:@MainActor () -> Void = {}
-    @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.accessibilityReduceMotion) private var systemReduced
+    private var reduced:Bool {reduceMotionOverride ?? systemReduced}
     @State private var start=ProcessInfo.processInfo.systemUptime
     @State private var resolved=false
     var body:some View {
@@ -1532,6 +1567,10 @@ struct HomeRunReplayBoard:View {
                     .accessibilityIdentifier("homeRunPhase")
                 GeometryReader {geometry in
                     Canvas {context,size in
+                        #if DEBUG
+                        let measuredAt=MatchRenderMetrics.begin()
+                        defer {MatchRenderMetrics.end("homeRun",started:measuredAt)}
+                        #endif
                         var context=context
                         if let handoff {
                             let cut=max(0,min(event.duration,handoff.cutAt-handoff.startedAt))
@@ -1597,3 +1636,34 @@ struct HomeRunReplayBoard:View {
         }
     }
 }
+
+#if DEBUG
+/// Tracks NSCache-owned pixel costs, not process/GPU memory. NSCache limits are advisory.
+final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
+    struct Snapshot:Codable {let hits:Int;let misses:Int;let entries:Int;let bytes:Int;let peakBytes:Int;let generatedBytes:Int;let evictions:Int}
+    private let lock=NSLock()
+    private var live:[ObjectIdentifier:Int]=[:]
+    private var hits=0,misses=0,bytes=0,peak=0,generated=0,evictions=0
+    func hit() {lock.withLock {hits+=1}}
+    func miss() {lock.withLock {misses+=1}}
+    func insert(_ image:UIImage,cost:Int) {
+        lock.withLock {live[ObjectIdentifier(image)]=cost;bytes+=cost;generated+=cost;peak=max(peak,bytes)}
+    }
+    func cache(_ cache:NSCache<AnyObject,AnyObject>,willEvictObject object:Any) {
+        lock.withLock {if let cost=live.removeValue(forKey:ObjectIdentifier(object as AnyObject)) {bytes-=cost;evictions+=1}}
+    }
+    func reset() {lock.withLock {live=[:];hits=0;misses=0;bytes=0;peak=0;generated=0;evictions=0}}
+    var snapshot:Snapshot {lock.withLock {Snapshot(hits:hits,misses:misses,entries:live.count,bytes:bytes,peakBytes:peak,generatedBytes:generated,evictions:evictions)}}
+}
+@MainActor enum MatchRenderMetrics {
+    struct Frame:Codable {let kind:String;let at:Double;let milliseconds:Double}
+    static var enabled=false
+    private(set) static var frames:[Frame]=[]
+    static func begin() -> Double? {enabled ? ProcessInfo.processInfo.systemUptime:nil}
+    static func end(_ kind:String,started:Double?) {
+        guard enabled,let started,frames.count<12_000 else {return}
+        frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000))
+    }
+    static func reset() {frames=[]}
+}
+#endif

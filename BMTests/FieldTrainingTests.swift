@@ -1,6 +1,8 @@
 import XCTest
 import SwiftData
 import SwiftUI
+import Darwin
+import SpriteKit
 @testable import BM
 
 @MainActor final class FieldTrainingTests: XCTestCase {
@@ -2039,4 +2041,162 @@ import SwiftUI
         try await Task.sleep(for:.seconds(0.1));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
     }
 
+}
+
+@MainActor final class MatchRenderingPerformanceTests:XCTestCase {
+    private func footprint() throws -> UInt64 {
+        var info=task_vm_info_data_t()
+        var count=mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size/MemoryLayout<integer_t>.size)
+        let capacity=Int(count)
+        let result=withUnsafeMutablePointer(to:&info) {pointer in
+            pointer.withMemoryRebound(to:integer_t.self,capacity:capacity) {task_info(mach_task_self_,task_flavor_t(TASK_VM_INFO),$0,&count)}
+        }
+        XCTAssertEqual(result,KERN_SUCCESS)
+        return info.phys_footprint
+    }
+    private struct MemorySample:Codable {let seconds:Double;let footprint:UInt64;let cache:FieldCacheMetrics.Snapshot}
+    private struct Report:Codable {
+        let kind:String
+        let optimized:Bool
+        let elapsed:Double
+        let memory:[MemorySample]
+        let frames:[MatchRenderMetrics.Frame]
+        let cache:FieldCacheMetrics.Snapshot
+        let note:String
+    }
+    func testLiveReplayTwoCyclesFootprintCadenceAndCache() async throws {
+        FieldRasterArt.resetCacheForVerification();MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true
+        let fixtures=try MatchReplayFixture.make(pitcher:false),pitcher=try MatchReplayFixture.make(pitcher:true)
+        let cycle=fixtures.reduce(0) {$0+$1.duration+1},duration=cycle*2+1
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:windowScene)
+        let started=ProcessInfo.processInfo.systemUptime
+        var memory=[MemorySample(seconds:0,footprint:try footprint(),cache:FieldRasterArt.cacheMetrics.snapshot)]
+        window.rootViewController=UIHostingController(rootView:MatchReplayStressView(fixtures:fixtures,pitcherFixtures:pitcher,started:started).frame(width:390,height:680))
+        window.makeKeyAndVisible()
+        defer {MatchRenderMetrics.enabled=false;window.isHidden=true;window.rootViewController=nil;previous?.makeKey()}
+        while ProcessInfo.processInfo.systemUptime-started<duration {
+            try await Task.sleep(for:.seconds(3))
+            memory.append(MemorySample(seconds:ProcessInfo.processInfo.systemUptime-started,footprint:try footprint(),cache:FieldRasterArt.cacheMetrics.snapshot))
+        }
+        let report=Report(kind:"two real-time ten-play cycles, batter/right then pitcher/left",optimized:!_isDebugAssertConfiguration(),elapsed:ProcessInfo.processInfo.systemUptime-started,
+            memory:memory,frames:MatchRenderMetrics.frames,cache:FieldRasterArt.cacheMetrics.snapshot,
+            note:"iOS Simulator diagnostic build, 390x680 hosted view; command recording time/callback cadence excludes GPU presentation. Cache bytes are NSCache-owned personalized pixel costs, footprint is Mach phys_footprint of test host.")
+        let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys]
+        let attachment=XCTAttachment(data:try encoder.encode(report),uniformTypeIdentifier:"public.json");attachment.name="match-replay-performance.json";attachment.lifetime = .keepAlways;add(attachment)
+        XCTAssertGreaterThan(report.frames.count,300);XCTAssertGreaterThan(report.cache.hits,report.cache.misses)
+        XCTAssertGreaterThan(report.cache.entries,0);XCTAssertGreaterThan(report.cache.bytes,0)
+    }
+    func testRepeatedPitcherBatterDeliveryUpdateAndFootprint() async throws {
+        MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:windowScene),controller=UIViewController()
+        let view=SKView(frame:CGRect(x:0,y:0,width:320,height:340));controller.view=view;window.rootViewController=controller;window.makeKeyAndVisible()
+        defer {MatchRenderMetrics.enabled=false;view.presentScene(nil);window.isHidden=true;window.rootViewController=nil;previous?.makeKey()}
+        let start=ProcessInfo.processInfo.systemUptime
+        var memory=[MemorySample(seconds:0,footprint:try footprint(),cache:FieldRasterArt.cacheMetrics.snapshot)]
+        for role in PlayerRole.allCases {
+            let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:role == .pitcher ? "left":"right",kit:2,role:role)
+            view.presentScene(scene)
+            for index in 0..<4 {
+                let done=expectation(description:role.rawValue+" delivery \(index)")
+                XCTAssertTrue(scene.demonstrate(reduceMotion:false,flightDuration:0.65,preparedRelease:true,completion:{done.fulfill()}))
+                await fulfillment(of:[done],timeout:4)
+                memory.append(MemorySample(seconds:ProcessInfo.processInfo.systemUptime-start,footprint:try footprint(),cache:FieldRasterArt.cacheMetrics.snapshot))
+            }
+        }
+        let report=Report(kind:"four repeated deliveries per role",optimized:!_isDebugAssertConfiguration(),elapsed:ProcessInfo.processInfo.systemUptime-start,memory:memory,frames:MatchRenderMetrics.frames,
+            cache:FieldRasterArt.cacheMetrics.snapshot,note:"Simulator diagnostic SpriteKit update callback timing, not GPU render time or device FPS.")
+        let attachment=XCTAttachment(data:try JSONEncoder().encode(report),uniformTypeIdentifier:"public.json");attachment.name="match-sprite-performance.json";attachment.lifetime = .keepAlways;add(attachment)
+        XCTAssertGreaterThan(report.frames.count,100)
+    }
+}
+
+@MainActor final class MatchRenderingIntegrationTests:XCTestCase {
+    func testFrontRasterSharesUnpaintedNumberAndMirrorVariantsButPreservesBackDigits() throws {
+        FieldRasterArt.resetCacheForVerification()
+        let motion=FieldSpriteMotion(facing:.south,stage:.ready)
+        let sample=try XCTUnwrap(FieldRasterArt.samples(motion,kind:"fielder",left:false).first)
+        let mirrored=FieldRasterArt.Sample(frame:sample.frame,weight:sample.weight,unit:sample.unit,mirrored:!sample.mirrored)
+        let first=try XCTUnwrap(FieldRasterArt.image(sample,kit:0x123456,skin:0xefbe91,hair:0x263b48,number:1,back:false))
+        for number in 0..<30 {
+            let other=try XCTUnwrap(FieldRasterArt.image(number%2 == 0 ? sample:mirrored,kit:0x123456,skin:0xefbe91,hair:0x263b48,number:number,back:false))
+            XCTAssertTrue(first === other)
+        }
+        var stats=FieldRasterArt.cacheMetrics.snapshot
+        XCTAssertEqual(stats.misses,1);XCTAssertEqual(stats.hits,30);XCTAssertEqual(stats.entries,1)
+        XCTAssertEqual(stats.bytes,first.cgImage!.bytesPerRow*first.cgImage!.height)
+        let back=try XCTUnwrap(FieldRasterArt.samples(.init(facing:.north,stage:.ready),kind:"fielder",left:false).first)
+        let one=try XCTUnwrap(FieldRasterArt.image(back,kit:0x123456,skin:0xefbe91,hair:0x263b48,number:1,back:true))
+        let other=try XCTUnwrap(FieldRasterArt.image(back,kit:0x123456,skin:0xefbe91,hair:0x263b48,number:99,back:true))
+        XCTAssertFalse(one === other);XCTAssertNotEqual(one.pngData(),other.pngData())
+        stats=FieldRasterArt.cacheMetrics.snapshot;XCTAssertEqual(stats.entries,3)
+        FieldRasterArt.resetCacheForVerification();XCTAssertEqual(FieldRasterArt.cacheMetrics.snapshot.bytes,0)
+    }
+    func testAllPlayBoundaryFramesAreFiniteOpaqueAndPreserveSavedRules() throws {
+        for pitcher in [false,true] {
+            let fixtures=try MatchReplayFixture.make(pitcher:pitcher)
+            XCTAssertEqual(fixtures.count,10)
+            for fixture in fixtures {
+                if let play=fixture.field {
+                    try play.validate();let original=play
+                    for left in [false,true] {for reduced in [false,true] {for size in [CGSize(width:320,height:480),CGSize(width:390,height:585)] {
+                        let times=FieldVerificationScenario.moments(play).flatMap {[$0-0.001,$0,$0+0.001]}.map {max(0,min(play.duration,$0))}
+                        for raw in times {
+                            let time=FieldReplayPresentation.time(play,elapsed:raw,reduced:reduced,animated:true)
+                            let ball=FieldBallPresentation.point(play,time:time,size:size,leftIndex:pitcher && left ? 0:nil)
+                            XCTAssertTrue(ball.x.isFinite && ball.y.isFinite)
+                            for index in play.fielders.indices {
+                                let at=FieldNode.sample(play.fielders[index],at:time)
+                                let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:at,size:size)
+                                let frames=FieldRasterArt.samples(motion,kind:index == 1 ? "catcher":"fielder",left:pitcher && left && index == 0)
+                                XCTAssertEqual(frames.count,1);XCTAssertEqual(frames.first?.weight,1)
+                            }
+                            for runner in play.runners {
+                                let display=FieldSpriteAnimation.runner(runner,play:play,time:time,reduced:reduced)
+                                XCTAssertTrue(display.point.x.isFinite && display.point.y.isFinite)
+                                XCTAssertFalse(FieldReplayPresentation.retired(runner,finished:false))
+                            }
+                            if raw<play.duration {
+                                let phase=FieldReplayPresentation.phase(play,time:time,finished:false)
+                                XCTAssertFalse(phase.contains("세이프"));XCTAssertFalse(phase.contains("아웃"))
+                            }
+                        }
+                    }}}
+                    XCTAssertEqual(play,original)
+                } else if let event=fixture.homeRun {
+                    try event.validate();let original=event
+                    for raw in [0.0,event.flight/2,event.flight,event.duration-0.001,event.duration] {
+                        for reduced in [false,true] {
+                            let time=HomeRunPresentation.time(event,elapsed:raw,reduced:reduced)
+                            for size in [CGSize(width:320,height:480),CGSize(width:390,height:585)] {
+                                let p=HomeRunPresentation.ballPoint(event,time:time,size:size)
+                                XCTAssertTrue((0...size.width).contains(p.x));XCTAssertTrue((0...size.height).contains(p.y))
+                            }
+                        }
+                    }
+                    XCTAssertEqual(event,original)
+                }
+            }
+        }
+    }
+    func testMonotonicReplayClockMatchesContactClockAndNeverUsesWallDate() {
+        let start=100.0,now=102.0
+        XCTAssertEqual(FieldReplayPresentation.elapsed(start:start,handoff:nil,now:now),2)
+        XCTAssertEqual(FieldReplayPresentation.elapsed(start:start,handoff:nil,now:99),0)
+        XCTAssertEqual(FieldReplayPresentation.elapsed(start:nil,handoff:nil,now:now),0)
+        let handoff=FieldContactHandoff(startedAt:101,cutAt:101.28,sourcePoint:.zero)
+        XCTAssertEqual(FieldReplayPresentation.elapsed(start:start,handoff:handoff,now:now),1)
+    }
+    func testIntegratedNativeStillsBothRolesAndReducedMotionRemainReadOnly() throws {
+        for pitcher in [false,true] {
+            for fixture in try MatchReplayFixture.make(pitcher:pitcher) {
+                let view=MatchReplaySample(sample:fixture,pitcher:pitcher,left:pitcher,time:fixture.duration*0.55,reduced:false).frame(width:320,height:600)
+                let renderer=ImageRenderer(content:view);renderer.scale=1
+                let shot=XCTAttachment(image:try XCTUnwrap(renderer.uiImage));shot.name="Integrated native \(pitcher ? "pitcher":"batter") \(fixture.name)";shot.lifetime = .keepAlways;add(shot)
+                let reduced=MatchReplaySample(sample:fixture,pitcher:pitcher,left:!pitcher,time:fixture.duration,reduced:true).frame(width:390,height:680)
+                XCTAssertNotNil(ImageRenderer(content:reduced).uiImage)
+            }
+        }
+    }
 }

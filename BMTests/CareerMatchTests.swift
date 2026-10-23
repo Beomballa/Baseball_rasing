@@ -641,6 +641,16 @@ import SwiftUI
             let expected:CareerMatch=try autoreleasepool {
                 let container=try CareerStore.makeContainer(url:url),context=container.mainContext
                 let (player,state)=try setup(role:role,in:context),record=try ready(player,state,in:context)
+                // Opening auto innings may already contain home runs. Explicitly model a legacy nil-display save.
+                var legacy=try record.snapshot();legacy.homeRuns=nil
+                var chosen:CareerMatch?
+                for seed in UInt64(1)...64 {
+                    var candidate=legacy;candidate.random=seed
+                    var probe=candidate;try probe.advance(.automatic)
+                    if !(probe.homeRuns ?? []).isEmpty {chosen=candidate;break}
+                }
+                legacy=try XCTUnwrap(chosen)
+                record.payload=try JSONEncoder().encode(legacy);try context.save()
                 let original=record.payload
                 XCTAssertNil(try record.snapshot().homeRuns)
                 XCTAssertEqual(try CareerMatchStore.start(player:player,state:state,in:context).payload,original)

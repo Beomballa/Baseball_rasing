@@ -223,7 +223,7 @@ enum FieldVerificationScenario:String,CaseIterable,Identifiable {
         switch self {case .relay:"2B";case .tagUp:"CF";case .doubleHit:"LF";case .bunt:"P";default:"SS"}
     }
     var forcedError:Bool {self == .fieldError || self == .throwError}
-    func make(ability:Double=60) throws -> MatchDetailedPlay {
+    func make(ability:Double=60,ownBatter:Bool=false) throws -> MatchDetailedPlay {
         let stats=MatchFieldStats(version:3,speed:ability,defense:ability,arm:ability,position:position,activeTraits:[],positionMastery:100)
         let airborne=self == .tagUp || self == .relay
         let landing:FieldPoint=self == .doubleHit ? .init(x:-44,y:83):self == .relay ? .init(x:0,y:95):self == .tagUp ? .init(x:0,y:90):self == .doublePlay ? .init(x:-14,y:35):.init(x:-16,y:37)
@@ -237,15 +237,15 @@ enum FieldVerificationScenario:String,CaseIterable,Identifiable {
                 direction:atan2(landing.x,landing.y)*180 / .pi,distance:distance,flight:flight)
         }
         let before:[FieldRunnerProfile?]=self == .doublePlay ? [FieldRunnerProfile(speed:60),nil,nil]:airborne ? [nil,nil,FieldRunnerProfile(speed:100)]:[nil,nil,nil]
-        let runner=FieldRunnerProfile(speed:forcedError ? 30:self == .groundOut || self == .doublePlay ? 60:100)
+        let runner=FieldRunnerProfile(speed:forcedError ? 30:self == .groundOut || self == .doublePlay ? 60:100,own:ownBatter)
         var play=airborne ? DetailedFieldRules.resolveFly(half:0,order:0,landing:shot.landing,flight:shot.flight,runners:before,
-            batter:runner,outs:0,stats:stats,defending:true,ownBatter:false,relayEnabled:true):
+            batter:runner,outs:0,stats:stats,defending:!ownBatter,ownBatter:ownBatter,relayEnabled:true):
             DetailedFieldRules.resolve(half:0,order:0,landing:shot.landing,flight:shot.flight,runners:before,
-                batter:runner,outs:0,stats:stats,defending:true,ownBatter:false,doublePlayEnabled:true,groundBall:shot.kind == .ground,relayEnabled:true)
+                batter:runner,outs:0,stats:stats,defending:!ownBatter,ownBatter:ownBatter,doublePlayEnabled:true,groundBall:shot.kind == .ground,relayEnabled:true)
         play.ball=shot.nodes+play.ball.filter {$0.at>shot.flight};play.battedBall=shot;play.version=5
         if forcedError {
             var draws=Array(repeating:0.999999,count:7);draws[self == .fieldError ? 0:1]=0
-            play=FieldMisplayRules.applying(to:play,stats:stats,defending:true,draws:draws)
+            play=FieldMisplayRules.applying(to:play,stats:stats,defending:!ownBatter,draws:draws)
             play.battedBall=shot
             guard play.misplay != nil else {throw MatchError.invalidRecord}
         }
@@ -415,6 +415,91 @@ struct HomeRunVerification:View {
                 }.padding(8)
             }.background(GameTheme.navy.ignoresSafeArea())
         }.navigationTitle("홈런 재현실").toolbarColorScheme(.dark,for:.navigationBar)
+    }
+}
+
+struct MatchReplayFixture {
+    let name:String
+    let field:MatchDetailedPlay?
+    let homeRun:MatchHomeRun?
+    var duration:Double {field?.duration ?? homeRun?.duration ?? 0}
+    static func make(pitcher:Bool) throws -> [Self] {
+        var result=try FieldVerificationScenario.allCases.map {scenario in
+            Self(name:scenario.rawValue,field:try scenario.make(ownBatter:!pitcher),homeRun:nil)
+        }
+        let home=MatchHomeRun(half:0,order:0,seed:42,power:72,quality:0.9,directionOffset:0,
+            before:[FieldRunnerProfile(speed:50),FieldRunnerProfile(speed:65),FieldRunnerProfile(speed:80)],
+            batter:FieldRunnerProfile(speed:60,own:!pitcher),defenderSpeeds:Array(repeating:60,count:9),ownDefender:pitcher ? 0:nil)
+        result.append(Self(name:"홈런",field:nil,homeRun:home));return result
+    }
+}
+struct MatchReplaySample:View {
+    let sample:MatchReplayFixture
+    let pitcher:Bool
+    let left:Bool
+    let time:Double
+    var reduced=false
+    var body:some View {
+        Group {
+            if let play=sample.field {
+                DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:left ? "left":"right",ownTeamFielding:pitcher,
+                    previewTime:FieldReplayPresentation.time(play,elapsed:time,reduced:reduced,animated:true),reduceMotionOverride:reduced,showsContactPoints:true) {}
+            } else if let event=sample.homeRun {
+                HomeRunReplayBoard(event:event,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:left ? "left":"right",ownTeamFielding:pitcher,
+                    previewTime:HomeRunPresentation.time(event,elapsed:time,reduced:reduced),reduceMotionOverride:reduced)
+            }
+        }
+    }
+}
+struct MatchReplayStressView:View {
+    let fixtures:[MatchReplayFixture]
+    let pitcherFixtures:[MatchReplayFixture]
+    let started:Double
+    var cycle:Double {fixtures.reduce(0) {$0+$1.duration+1}}
+    var body:some View {
+        TimelineView(.animation(minimumInterval:1.0/30)) {_ in
+            let elapsed=max(0,ProcessInfo.processInfo.systemUptime-started),loop=Int(elapsed/cycle)
+            let local=elapsed.truncatingRemainder(dividingBy:cycle)
+            let fixtures=loop%2 == 1 ? pitcherFixtures:self.fixtures
+            let index=fixtures.indices.first {i in local<fixtures.prefix(i+1).reduce(0) {$0+$1.duration+1}} ?? 0
+            let before=fixtures.prefix(index).reduce(0) {$0+$1.duration+1}
+            MatchReplaySample(sample:fixtures[index],pitcher:loop%2 == 1,left:loop%2 == 1,time:min(fixtures[index].duration,local-before))
+                .id("\(loop)/\(index)").padding(8).background(GameTheme.navy)
+        }
+    }
+}
+struct MatchReplayVerification:View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var controls:AnyLayout {typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing:8)):AnyLayout(HStackLayout(spacing:8))}
+    @State private var pitcher=false
+    @State private var left=false
+    @State private var reduced=false
+    @State private var index=0
+    @State private var ending=false
+    var body:some View {
+        ScrollView {
+            VStack(spacing:10) {
+                Text("경기 연출 통합 검증 · 실제 저장 미사용").font(.headline).foregroundStyle(GameTheme.gold)
+                controls {
+                    Button(pitcher ? "투수":"타자") {pitcher.toggle()}.accessibilityIdentifier("integratedRole")
+                    Button(left ? "왼손":"오른손") {left.toggle()}.accessibilityIdentifier("integratedHand")
+                    Button {reduced.toggle()} label: {
+                        VStack(spacing:2) {Text("동작 줄이기");Text(reduced ? "켜짐":"꺼짐").font(.caption).accessibilityHidden(true)}
+                    }.accessibilityValue(reduced ? "켜짐":"꺼짐").accessibilityIdentifier("integratedReduced")
+                }.buttonStyle(MatchPixelButtonStyle())
+                if let fixtures=try? MatchReplayFixture.make(pitcher:pitcher) {
+                    controls {
+                        Button("이전") {index=(index+fixtures.count-1)%fixtures.count;ending=false}.accessibilityIdentifier("integratedPrevious")
+                        Text(fixtures[index].name).accessibilityIdentifier("integratedScenario")
+                        Button("다음") {index=(index+1)%fixtures.count;ending=false}.accessibilityIdentifier("integratedNext")
+                    }.buttonStyle(MatchPixelButtonStyle())
+                    Button(ending ? "중간 장면":"최종 장면") {ending.toggle()}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("integratedEnd")
+                    MatchReplaySample(sample:fixtures[index],pitcher:pitcher,left:left,time:ending ? fixtures[index].duration:fixtures[index].duration*0.45,reduced:reduced)
+                        .frame(minHeight:560)
+                } else {Text("고정 검증 자료 오류")}
+            }.padding(8)
+        }.background(GameTheme.navy.ignoresSafeArea()).foregroundStyle(GameTheme.paper)
+            .navigationTitle("통합 재현실").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
     }
 }
 #endif
