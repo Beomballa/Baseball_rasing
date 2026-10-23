@@ -755,9 +755,72 @@ import SwiftUI
         XCTAssertEqual(FieldSpriteAnimation.motion(ground,index:ground.fielder,time:ground.pickupAt).stage,.catchBall)
         XCTAssertEqual(FieldSpriteAnimation.motion(ground,index:ground.fielder,time:ground.releaseAt).stage,.release)
         XCTAssertEqual(FieldSpriteAnimation.travel([.init(at:0,point:.init(x:0,y:0)),.init(at:1,point:.init(x:10,y:0))],time:0.5).stage,.run)
-        XCTAssertEqual(FieldReplayPresentation.seconds(ground,reduced:true,animated:true),0.25)
+        XCTAssertEqual(FieldReplayPresentation.seconds(ground,reduced:true,animated:true),max(3,ground.duration))
         XCTAssertGreaterThanOrEqual(FieldReplayPresentation.seconds(air,reduced:false,animated:true),3)
         for color in PlayerAppearance.kitColors {XCTAssertNotEqual(FieldReplayPresentation.opponentKit(color),color)}
+    }
+
+    func testLiveFieldClockPreservesBallSpeedAndDoesNotStartAtRetiredRunner() throws {
+        for play in [doublePlay(),fly(),relayFly()] {
+            let saved=try JSONEncoder().encode(play)
+            for reduced in [false,true] {
+                XCTAssertEqual(FieldReplayPresentation.time(play,elapsed:0,reduced:reduced,animated:true),0)
+                XCTAssertEqual(FieldReplayPresentation.time(play,elapsed:-1,reduced:reduced,animated:true),0)
+                XCTAssertEqual(FieldReplayPresentation.seconds(play,reduced:reduced,animated:true),max(3,play.duration))
+                for runner in play.runners {
+                    XCTAssertFalse(FieldReplayPresentation.retired(runner,finished:false))
+                    XCTAssertEqual(FieldReplayPresentation.retired(runner,finished:true),runner.out)
+                }
+                for moment in [play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration] {
+                    XCTAssertEqual(FieldReplayPresentation.time(play,elapsed:moment,reduced:reduced,animated:true),moment)
+                }
+            }
+            let mid=play.flight/2
+            XCTAssertEqual(FieldReplayPresentation.time(play,elapsed:mid,reduced:false,animated:true),mid)
+            let ball=FieldNode.sample(play.ball,at:mid)
+            XCTAssertNotEqual(ball,DetailedFieldRules.bases[0])
+            XCTAssertNotEqual(ball,play.landing)
+            XCTAssertEqual(FieldReplayPresentation.time(play,elapsed:0,reduced:false,animated:false),play.duration)
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:saved))
+        }
+    }
+
+    func testStaticFieldBoardDoesNotCompleteOrResolveAnActivePlayback() async throws {
+        var callbacks=0
+        let window=UIWindow(frame:CGRect(x:0,y:0,width:390,height:600))
+        window.rootViewController=UIHostingController(rootView:DetailedFieldReplayBoard(play:doublePlay(),appearance:PlayerAppearance(),animated:false,onResolved:{callbacks+=1}) {callbacks+=1})
+        window.makeKeyAndVisible()
+        try await Task.sleep(for:.milliseconds(500))
+        XCTAssertEqual(callbacks,0)
+        window.isHidden=true;window.rootViewController=nil
+    }
+
+    func testLongFieldPlayIsNotCompressedAndReducedStillsStayInEventOrder() throws {
+        let play=DetailedFieldRules.resolve(half:0,order:0,landing:FieldPoint(x:55,y:90),flight:4,
+            runners:[nil,nil,nil],batter:FieldRunnerProfile(speed:70),outs:0,stats:nil,defending:false,ownBatter:true)
+        try play.validate()
+        XCTAssertGreaterThan(play.duration,8)
+        for reduced in [false,true] {
+            XCTAssertEqual(FieldReplayPresentation.seconds(play,reduced:reduced,animated:true),play.duration)
+            let before=FieldReplayPresentation.time(play,elapsed:play.flight-0.01,reduced:reduced,animated:true)
+            XCTAssertLessThan(before,play.flight)
+            let after=FieldReplayPresentation.time(play,elapsed:play.flight,reduced:reduced,animated:true)
+            XCTAssertEqual(after,play.flight)
+            XCTAssertFalse(FieldReplayPresentation.phase(play,time:after,finished:false).contains("아웃"))
+        }
+    }
+
+    func testRunningSpritesAreOpaqueFrameCyclesInsteadOfGhostedDissolves() {
+        for kind in ["runner","fielder","catcher"] {for facing in FieldFacing.allCases {for left in [false,true] {
+            var actions=Set<String>()
+            for gait in [0.0,0.4,1.5,3.3,4.8,6.0] {
+                let samples=FieldRasterArt.samples(FieldSpriteMotion(facing:facing,stage:.run,gait:gait),kind:kind,left:left)
+                XCTAssertEqual(samples.count,1)
+                XCTAssertEqual(samples.first?.weight,1)
+                if let action=samples.first?.frame.action {actions.insert(action)}
+            }
+            XCTAssertEqual(actions,kind == "catcher" ? ["gather"]:["runA","runB"])
+        }}}
     }
 
     func testFieldPresentationRendersOwnLeftHandedNumberAndDistinctUniformsReadOnly() throws {
@@ -784,7 +847,7 @@ import SwiftUI
             events.append("resolved");resolved.fulfill()
         }) {events.append("complete");complete.fulfill()}
         window.rootViewController=UIHostingController(rootView:view);window.makeKeyAndVisible()
-        await fulfillment(of:[resolved],timeout:10)
+        await fulfillment(of:[resolved],timeout:max(3,fly().duration)+3)
         XCTAssertEqual(events,["resolved"])
         await fulfillment(of:[complete],timeout:3)
         XCTAssertEqual(events,["resolved","complete"])

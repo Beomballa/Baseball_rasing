@@ -234,6 +234,7 @@ struct CareerGameView: View {
                         }) {
                             replay=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
                         }
+                        .id(play.eventID)
                         .frame(height:FieldReplayPresentation.stageHeight(width:geometry.size.width-16,available:geometry.size.height,accessibility:typeSize.isAccessibilitySize))
                     Text(fieldResolved ? play.summary:"타구를 따라 수비가 진행됩니다")
                         .font(.subheadline.monospaced()).foregroundStyle(GameTheme.boardMuted)

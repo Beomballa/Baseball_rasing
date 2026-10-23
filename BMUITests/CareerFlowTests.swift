@@ -947,9 +947,15 @@ extension CareerFlowTests {
             if stage.waitForExistence(timeout:5) {found=true;break}
         }
         XCTAssertTrue(found,"A live fair ball must enter the dedicated field stage")
-        verifyImmersiveField(app,name:"Immersive live pitcher field")
+        let field=app.descendants(matching:.any).matching(identifier:"fieldReplayCanvas").firstMatch
+        let firstProgress=field.value as? String
+        XCTAssertNotEqual(firstProgress,"플레이 완료","A new fair ball must start before the final result")
+        Thread.sleep(forTimeInterval:1)
+        XCTAssertTrue(stage.exists,"The fair ball must not immediately jump to the result")
+        XCTAssertNotEqual(field.value as? String,firstProgress,"The saved field clock must advance")
+        verifyImmersiveField(app,name:"Live field motion and opaque runner")
         let ended=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
-        XCTAssertEqual(XCTWaiter.wait(for:[ended],timeout:15),.completed)
+        XCTAssertEqual(XCTWaiter.wait(for:[ended],timeout:30),.completed)
         let count=app.otherElements["careerGameCount"].label
         app.terminate();app.launch()
         reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
@@ -978,7 +984,7 @@ extension CareerFlowTests {
         XCTAssertTrue(stage.waitForExistence(timeout:3))
         verifyImmersiveField(app,name:"Immersive batter field replay")
         let replayEnded=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
-        XCTAssertEqual(XCTWaiter.wait(for:[replayEnded],timeout:15),.completed)
+        XCTAssertEqual(XCTWaiter.wait(for:[replayEnded],timeout:30),.completed)
         XCTAssertEqual(app.otherElements["careerGameCount"].label,before)
         app.terminate();app.launchArguments=["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
         let role=app.buttons["homeRole-batter"];reveal(role,in:app);role.tap()
@@ -998,9 +1004,9 @@ extension CareerFlowTests {
         XCTAssertGreaterThan(field.frame.width,window.width*0.9)
         XCTAssertGreaterThan(field.frame.height,window.width*0.85)
         XCTAssertLessThanOrEqual(field.frame.maxX,window.maxX+1)
+        let shot=XCTAttachment(screenshot:app.screenshot());shot.name=name;shot.lifetime = .keepAlways;add(shot)
         XCTAssertFalse(app.otherElements["pitchJudgmentToast"].exists)
         XCTAssertFalse(app.buttons["gamePitch"].isHittable)
-        let shot=XCTAttachment(screenshot:app.screenshot());shot.name=name;shot.lifetime = .keepAlways;add(shot)
     }
 
     @MainActor func testMatchBoardBothRolesResumeAndLargeText() throws {

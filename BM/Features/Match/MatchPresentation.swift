@@ -50,8 +50,8 @@ enum MatchArt {
         switch motion.stage {
         case .ready:poses=[("ready",1)]
         case .run:
-            let blend=(sin(motion.gait)+1)/2
-            poses=kind == "catcher" ? [("gather",1)]:[("runA",1-blend),("runB",blend)]
+            // Pixel running is a frame cycle, not an alpha dissolve between two bodies.
+            poses=kind == "catcher" ? [("gather",1)]:[(sin(motion.gait)>=0 ? "runB":"runA",1)]
         case .catchBall:poses=[("ready",1-p),(motion.airCatch && kind == "fielder" ? "airCatch":"catch",p)]
         case .gather:
             let caught=motion.airCatch && kind == "fielder" ? "airCatch":"catch"
@@ -461,11 +461,26 @@ enum FieldReplayPresentation {
         max(320,min(width*1.5+36,available-112)) + (accessibility ? 160:0)
     }
     static func seconds(_ play:MatchDetailedPlay,reduced:Bool,animated:Bool) -> Double {
-        reduced || !animated ? 0.25:min(8,max(3,play.duration))
+        animated ? max(3,play.duration):0
+    }
+    static func time(_ play:MatchDetailedPlay,elapsed:Double,reduced:Bool,animated:Bool) -> Double {
+        guard animated else {return play.duration}
+        let time=min(play.duration,max(0,elapsed))
+        guard reduced else {return time}
+        // Reduced motion uses readable, ordered stills instead of skipping to the result.
+        let moments=[0,play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration]
+            + (play.relay.map {[$0.receiveAt,$0.releaseAt]} ?? [])
+            + (play.secondThrow.map {[$0.releaseAt,$0.ballAt,$0.controlAt]} ?? [])
+            + (play.misplay.map {[$0.at,$0.scatteredAt,$0.recoveredAt]} ?? [])
+        return moments.filter {$0<=time}.max() ?? 0
+    }
+    static func retired(_ runner:DetailedRunner,finished:Bool) -> Bool {
+        finished && runner.out
     }
     static func phase(_ play:MatchDetailedPlay,time:Double,finished:Bool) -> String {
         if finished {return play.summary}
-        if time < play.pickupAt {return play.fly == nil ? "땅볼 · 야수 타구 추격":"공중 타구 · 낙하지점으로 이동"}
+        if time < play.flight {return play.fly == nil ? "타격 · 땅볼 이동 / 야수 추격":"타격 · 공중 타구 / 야수 추격"}
+        if time < play.pickupAt {return "타구 도착 · 야수 포구 준비"}
         if let relay=play.relay,time>=play.releaseAt {
             if time < relay.receiveAt {return "외야 송구 · 중계 야수 수신 대기"}
             if time < relay.releaseAt {return "중계 포구 · 재송구 준비"}
@@ -855,13 +870,14 @@ struct DetailedFieldReplayBoard: View {
     let complete: @MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var start = Date()
+    @State private var start: Date?
     @State private var resolved = false
     private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
     var body: some View {
-        TimelineView(.animation(minimumInterval:1.0/30,paused:reduced || !animated)) { timeline in
-            let fraction = reduced || !animated ? 1:min(1,max(0,timeline.date.timeIntervalSince(start)/seconds))
-            let time=fraction*play.duration,finished = !animated || resolved
+        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:!animated || resolved)) { timeline in
+            let elapsed=start.map {timeline.date.timeIntervalSince($0)} ?? 0
+            let time=resolved ? play.duration:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:animated)
+            let finished = !animated || resolved
             let phase=FieldReplayPresentation.phase(play,time:time,finished:finished)
             let second=play.secondThrow
             let target=time >= (second?.releaseAt ?? .infinity) ? 1:play.targetBase
@@ -892,7 +908,7 @@ struct DetailedFieldReplayBoard: View {
                         actors.append((FieldNode.sample(play.fielders[index],at:time),FieldSpriteAnimation.motion(play,index:index,time:time),own,defenseOwn,own ? jerseyNumber:index+1,false,index == 1 ? "catcher":"fielder"))
                     }
                     for runner in play.runners {
-                        actors.append((FieldNode.sample(runner.nodes,at:time),FieldSpriteAnimation.travel(runner.nodes,time:time),runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,finished && runner.out,"runner"))
+                        actors.append((FieldNode.sample(runner.nodes,at:time),FieldSpriteAnimation.travel(runner.nodes,time:time),runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,FieldReplayPresentation.retired(runner,finished:finished),"runner"))
                     }
                     for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
                         let raster=FieldRasterArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),kind:actor.kind,
@@ -911,7 +927,7 @@ struct DetailedFieldReplayBoard: View {
                     }
                     let groundBall=point(FieldNode.sample(play.ball,at:time))
                     context.fill(Path(ellipseIn:CGRect(x:groundBall.x-3,y:groundBall.y-1,width:6,height:2)),with:.color(.black.opacity(0.4)))
-                    for i in 1...3 where time<Double(play.ball.last?.at ?? 0) {
+                    for i in 1...3 where !reduced && time<Double(play.ball.last?.at ?? 0) {
                         let p=ballPoint(max(0,time-Double(i)*0.04))
                         context.fill(Path(CGRect(x:p.x,y:p.y,width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
                     }
@@ -924,12 +940,14 @@ struct DetailedFieldReplayBoard: View {
                         context.draw(Text(label).font(.system(size:18,weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:frame.midX,y:frame.midY))
                     }
                 }.aspectRatio(2.0/3,contentMode:.fit).accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
+                    .accessibilityValue(finished ? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
                     .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
             }.padding(4).background(GameTheme.board)
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
         }
-        .task(id:play.eventID) {
+        .task(id:play.eventID + (animated ? ":live":":still")) {
             start=Date();resolved=false
+            guard animated else {return}
             do {try await Task.sleep(for:.seconds(seconds))} catch {return}
             guard !Task.isCancelled else {return}
             resolved=true;onResolved()
