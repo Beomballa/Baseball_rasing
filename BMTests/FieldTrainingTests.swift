@@ -1864,4 +1864,83 @@ import SwiftUI
         for p in match.fieldPlays ?? [] {try p.validate()}
     }
 
+    func testContactHandoffKeepsStoredPathDirectionFlightAndLegacyData() throws {
+        let origin=CGPoint(x:0.51,y:0.65),size=CGSize(width:320,height:340)
+        for x in [-30.0,30.0] {
+            let play=relayFly(x,100),before=try JSONEncoder().encode(play)
+            let start=FieldContactPresentation.sourcePoint(play,time:0,origin:origin,size:size)
+            XCTAssertEqual(start.x,origin.x,accuracy:0.0001);XCTAssertEqual(start.y,origin.y,accuracy:0.0001)
+            let moved=FieldContactPresentation.sourcePoint(play,time:0.28,origin:origin,size:size)
+            XCTAssertEqual(moved.x>origin.x,x>0);XCTAssertLessThan(moved.y,origin.y)
+            XCTAssertEqual(FieldContactPresentation.duration(play),0.28,accuracy:0.0001)
+            let legacy=try JSONDecoder().decode(MatchDetailedPlay.self,from:before)
+            XCTAssertEqual(FieldContactPresentation.sourcePoint(legacy,time:0.28,origin:origin,size:size),moved)
+            XCTAssertEqual(play.ball,legacy.ball)
+        }
+        let slow=relayFly(30,100)
+        let fast=DetailedFieldRules.resolveFly(half:0,order:0,landing:FieldPoint(x:30,y:100),flight:3,
+            runners:[nil,nil,nil],batter:FieldRunnerProfile(speed:60),outs:0,stats:nil,defending:false,ownBatter:true)
+        let a=FieldContactPresentation.sourcePoint(fast,time:0.1,origin:origin,size:size)
+        let b=FieldContactPresentation.sourcePoint(slow,time:0.1,origin:origin,size:size)
+        XCTAssertGreaterThan(a.x,b.x)
+    }
+    func testContactHandoffCameraAndReplayShareMonotonicClockAndHonorReducedMotion() {
+        let h=FieldContactHandoff(startedAt:100,cutAt:100.28,sourcePoint:CGPoint(x:0.5,y:0.6),sourceFrame:CGRect(x:10,y:100,width:300,height:300))
+        let canvas=CGRect(x:10,y:80,width:300,height:450),ball=CGPoint(x:150,y:350)
+        let atCut=FieldContactPresentation.cameraOffset(h,fieldPoint:ball,canvas:canvas,now:h.cutAt,reduced:false)
+        XCTAssertEqual(canvas.minY+ball.y+atCut.y,h.sourceFrame.minY+h.sourcePoint.y*h.sourceFrame.height,accuracy:0.0001)
+        XCTAssertEqual(FieldContactPresentation.cameraOffset(h,fieldPoint:ball,canvas:canvas,now:101,reduced:false),.zero)
+        XCTAssertEqual(FieldContactPresentation.cameraOffset(h,fieldPoint:ball,canvas:canvas,now:h.cutAt,reduced:true),.zero)
+        XCTAssertEqual(FieldContactPresentation.cameraOffset(nil,fieldPoint:ball,canvas:canvas,now:h.cutAt,reduced:false),.zero)
+        XCTAssertEqual(FieldContactPresentation.cameraOffset(h,fieldPoint:ball,canvas:.zero,now:h.cutAt,reduced:false),.zero)
+        XCTAssertEqual(h.elapsed(at:99),0);XCTAssertEqual(h.elapsed(at:101),1)
+        let play=relayFly()
+        XCTAssertGreaterThan(FieldReplayPresentation.time(play,elapsed:h.elapsed(at:h.cutAt),reduced:false,animated:true),0)
+        XCTAssertEqual(FieldReplayPresentation.time(play,elapsed:play.duration+1,reduced:false,animated:true),play.duration)
+    }
+    func testContactHandoffDoesNotAttachToAnotherAtBatOrWatch() {
+        let play=relayFly()
+        var previous=CareerMatch(random:42,isHome:false,role:"pitcher",appearance:true,contact:60,power:60,discipline:60,mastery:[:])
+        previous.half=0;previous.awayOrder=0
+        XCTAssertTrue(FieldContactPresentation.matches(play,previous:previous,action:"pitch"))
+        XCTAssertTrue(FieldContactPresentation.matches(play,previous:previous,action:"bunt"))
+        XCTAssertFalse(FieldContactPresentation.matches(play,previous:previous,action:"watch"))
+        previous.awayOrder=1
+        XCTAssertFalse(FieldContactPresentation.matches(play,previous:previous,action:"swing"))
+        previous.awayOrder=0;previous.half=1
+        XCTAssertFalse(FieldContactPresentation.matches(play,previous:previous,action:"swing"))
+    }
+
+    func testContactHandoffBoardEndsOnSharedClockAndPreviewRemainsReadOnly() async throws {
+        let play=try FieldVerificationScenario.doublePlay.make()
+        let window=UIWindow(frame:CGRect(x:0,y:0,width:390,height:700))
+        var resolved=0,completed=0
+        let now=ProcessInfo.processInfo.systemUptime
+        let handoff=FieldContactHandoff(startedAt:now-max(3,play.duration)+0.2,cutAt:now,sourcePoint:CGPoint(x:0.5,y:0.6),sourceFrame:CGRect(x:0,y:100,width:390,height:390))
+        window.rootViewController=UIHostingController(rootView:DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),handoff:handoff,onResolved:{resolved+=1}) {completed+=1}.frame(width:390,height:650))
+        window.makeKeyAndVisible()
+        defer {window.isHidden=true;window.rootViewController=nil}
+        try await Task.sleep(for:.seconds(0.5))
+        XCTAssertEqual(resolved,1,"The outgoing contact segment is not replayed from zero")
+        XCTAssertEqual(completed,0,"Result remains visible for the normal receipt interval")
+        try await Task.sleep(for:.seconds(2.2));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+        window.rootViewController=UIHostingController(rootView:DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),previewTime:0.28,handoff:handoff,onResolved:{resolved+=1}) {completed+=1})
+        try await Task.sleep(for:.seconds(0.3));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+    }
+
+    func testContactHandoffNativeCameraFramesRenderWithoutChangingPlay() throws {
+        let play=relayFly(30,100),encoded=try JSONEncoder().encode(relayFly(30,100))
+        for settled in [false,true] {
+            let now=ProcessInfo.processInfo.systemUptime
+            let handoff=FieldContactHandoff(startedAt:now-0.28,cutAt:now-(settled ? 1:0),sourcePoint:CGPoint(x:0.55,y:0.56),sourceFrame:CGRect(x:0,y:0,width:390,height:650))
+            let board=DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),previewTime:0.28,handoff:handoff) {}.frame(width:390,height:650)
+            let renderer=ImageRenderer(content:board);renderer.scale=2
+            let image=try XCTUnwrap(renderer.uiImage)
+            let shot=XCTAttachment(image:image);shot.name=settled ? "Contact camera settled":"Contact camera entry";shot.lifetime = .keepAlways;add(shot)
+            XCTAssertEqual(image.size.width,390)
+        }
+        let original=try JSONDecoder().decode(MatchDetailedPlay.self,from:encoded)
+        XCTAssertEqual(original.ball,play.ball)
+    }
+
 }

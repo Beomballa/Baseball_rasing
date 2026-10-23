@@ -884,3 +884,9 @@ iOS 실제 타자·투수 인플레이와 결과 다시 보기에 포수 전용 
 중계 원장의 실제 cutoff receiveAt/releaseAt·공/야수/주자 노드와 기존 gather/windup 구간을 그대로 사용한다. 공을 빼기 전에는 같은 원화의 글러브, 이후에는 실제 던지는 손 기준점을 공에 적용한다. 판정용 송구 준비/비행 시간과 직접/중계 선택·NPC/실제 능력·수비/주루·실책·스키마/저장/이어하기·XP 및 결과1회를 변경하지 않는다. 병살/직접 송구/실책 수습은 기존 모션을 유지하며 새 중계 전환 프레임을 섞지 않는다.
 
 검증: 최종 관련 단위/회귀221개·고정 중계 공 빼기/발 디딤 UI1개·실제 타자/좌투 경기·큰 글자/재실행 이어하기 UI1개 통과(실패·건너뜀0, runtimeWarnings=[]). 포수 전신2보폭·8방향/양손·중계3자세·글러브→던지는 손의 동일 프레임 접촉·동작 줄이기·기존 병살/실책/직접 송구 분리·NPC/저장/결과1회를 검사했다. 스프라이트9개·Git보안7개 통과, 개인 설정 제외 공유 Simulator Release 빌드 성공 및 런타임 소스/아트 바이트 일치를 확인했다. 기존 사용자 저장/보호 기기와 개인 project.pbxproj는 보존했다. 근거는 로컬 ios/qa/relay-transfer-units.json·relay-transfer-ui.json·native-catcher-relay-poses.png·native-relay-transfer-0/1/2.png·native-relay-extract-ui.png·native-relay-plant-ui.png다. 실기기/iOS17·장기 프레임/메모리와 추가 포수 보폭 원화/다중중계는 미검증/후속이다.
+
+## 타격 접촉→인플레이 연속 전환 (native-contact-handoff-v1 · 2026-10-23)
+
+완료: 실제 타자 스윙/번트·투수 동일 타석 페어볼의 접촉 후 저장 경로 비행과 연속 시계 인플레이 전환. 같은 타구를 다시0초부터 표시하던 경로를 교체했다. MatchPresentation의 순수 표시 계산/보드, BallparkScene의 접촉 flight와 CareerGameView의 메모리 handoff만 런타임 변경했다. Domain/Persistence/스키마/NPC/판정·저장·이어하기·XP/결과1회는 그대로다. 원장 없는 홈런·다른 자동 타석의 전환 범위를 완료로 확대하지 않는다.
+
+검증: 관련 단위/회귀225개와 최종 집중6개(그중 새 종료/카메라 렌더2개), 실제 타자·좌투 경기/큰 글자/재실행 이어하기 UI1개 통과, 실패·건너뜀0/runtimeWarnings=[]다. Python 스프라이트9개·Git 보안7개와 개인 설정 제외 공유 Simulator Release 빌드도 통과했다. 근거는 로컬 ios/qa/contact-handoff-units.json·contact-handoff-focused.json·contact-handoff-ui.json 및 native-contact-camera-entry.png·native-contact-camera-settled.png·native-contact-live-field.png다. 사용자 기존 세이브/보호 기기·개인 project.pbxproj는 보존했다. 실기기/iOS17·장기 FPS/메모리 인수는 별도다.

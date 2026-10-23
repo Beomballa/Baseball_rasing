@@ -172,6 +172,37 @@ enum MatchArt {
     }
 }
 
+// A transient presentation clock. It is never encoded in the career/match ledger.
+struct FieldContactHandoff {
+    let startedAt:Double
+    let cutAt:Double
+    let sourcePoint:CGPoint // top-left normalized coordinates in the SpriteKit arena
+    var sourceFrame:CGRect = .zero
+    func elapsed(at now:Double) -> Double {max(0,now-startedAt)}
+}
+
+enum FieldContactPresentation {
+    static let cameraDuration=0.24
+    static func duration(_ play:MatchDetailedPlay) -> Double {max(0,min(0.28,play.flight*0.30))}
+    static func matches(_ play:MatchDetailedPlay,previous:CareerMatch,action:String) -> Bool {
+        play.half == previous.half && play.order == (previous.half%2 == 1 ? previous.homeOrder:previous.awayOrder) && action != "watch"
+    }
+    static func sourcePoint(_ play:MatchDetailedPlay,time:Double,origin:CGPoint,size:CGSize) -> CGPoint {
+        let t=max(0,min(play.duration,time)),first=FieldNode.sample(play.ball,at:0)
+        let start=InplayFieldProjection.point(first,size:size)
+        let point=InplayFieldProjection.point(FieldNode.sample(play.ball,at:t),size:size)
+        return CGPoint(x:origin.x+(point.x-start.x)/size.width,
+                       y:origin.y+(point.y-start.y-FieldReplayPresentation.lift(play,time:t,height:size.height))/size.height)
+    }
+    static func cameraOffset(_ handoff:FieldContactHandoff?,fieldPoint:CGPoint,canvas:CGRect,now:Double,reduced:Bool) -> CGPoint {
+        guard !reduced,let h=handoff,h.sourceFrame.width>0,h.sourceFrame.height>0 else {return .zero}
+        let global=CGPoint(x:h.sourceFrame.minX+h.sourcePoint.x*h.sourceFrame.width,y:h.sourceFrame.minY+h.sourcePoint.y*h.sourceFrame.height)
+        guard canvas.contains(global) else {return .zero}
+        let p=max(0,min(1,(now-h.cutAt)/cameraDuration)),remaining=pow(1-p,3)
+        return CGPoint(x:(global.x-canvas.minX-fieldPoint.x)*remaining,y:(global.y-canvas.minY-fieldPoint.y)*remaining)
+    }
+}
+
 enum MatchPresentation {
     static func batContact(action: String) -> CGPoint {
         let bunt = action == "bunt"
@@ -1158,6 +1189,7 @@ struct DetailedFieldReplayBoard: View {
     var ownTeamFielding: Bool? = nil
     var scoreText = "IN PLAY"
     var previewTime:Double? = nil
+    var handoff:FieldContactHandoff? = nil
     var showsContactPoints = false
     var onResolved: @MainActor () -> Void = {}
     let complete: @MainActor () -> Void
@@ -1168,7 +1200,8 @@ struct DetailedFieldReplayBoard: View {
     private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
     var body: some View {
         TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved)) { timeline in
-            let elapsed=start.map {timeline.date.timeIntervalSince($0)} ?? 0
+            let now=ProcessInfo.processInfo.systemUptime
+            let elapsed=handoff?.elapsed(at:now) ?? start.map {timeline.date.timeIntervalSince($0)} ?? 0
             let time=previewTime.map {max(0,min(play.duration,$0))} ?? (resolved ? play.duration:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:animated))
             let finished=previewTime.map {$0>=play.duration} ?? (!animated || resolved)
             let phase=FieldReplayPresentation.phase(play,time:time,finished:finished)
@@ -1177,7 +1210,16 @@ struct DetailedFieldReplayBoard: View {
             VStack(spacing:4) {
                 Text(finished ? "플레이 완료":phase).font(.system(.headline,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
                     .lineLimit(typeSize.isAccessibilitySize ? nil:2).accessibilityIdentifier("fieldReplayPhase")
+                GeometryReader { geometry in
                 Canvas { context,size in
+                    var context=context
+                    if let handoff {
+                        let cut=max(0,min(play.duration,handoff.cutAt-handoff.startedAt))
+                        let ball=FieldBallPresentation.point(play,time:cut,size:size,leftIndex:ownTeamFielding == true && throwingHand == "left" ? DetailedFieldRules.names.firstIndex(of:ownPosition ?? ""):nil)
+                        let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:ball,canvas:geometry.frame(in:.global),now:now,reduced:reduced)
+                        context.clip(to:Path(CGRect(origin:.zero,size:size)))
+                        context.translateBy(x:offset.x,y:offset.y)
+                    }
                     func point(_ p:FieldPoint) -> CGPoint {InplayFieldProjection.point(p,size:size)}
                     if let image=InplayStadiumArt.image {
                         context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))
@@ -1250,6 +1292,7 @@ struct DetailedFieldReplayBoard: View {
                                 in:CGRect(x:frame.minX+6,y:frame.minY+32,width:frame.width-12,height:40))
                         }
                     }
+                }
                 }.aspectRatio(2.0/3,contentMode:.fit).accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
                     .accessibilityValue(finished ? FieldReplayPresentation.errorDetail(play,ownTeamFielding:ownTeamFielding ?? !play.ownBatter) ?? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
                     .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
@@ -1260,7 +1303,8 @@ struct DetailedFieldReplayBoard: View {
             guard previewTime == nil else {return}
             start=Date();resolved=false
             guard animated else {return}
-            do {try await Task.sleep(for:.seconds(seconds))} catch {return}
+            let elapsed=handoff?.elapsed(at:ProcessInfo.processInfo.systemUptime) ?? 0
+            do {try await Task.sleep(for:.seconds(max(0,seconds-elapsed)))} catch {return}
             guard !Task.isCancelled else {return}
             resolved=true;onResolved()
             if animated {

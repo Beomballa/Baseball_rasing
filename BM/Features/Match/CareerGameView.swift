@@ -41,6 +41,8 @@ struct CareerGameView: View {
     @State private var resultReplayID=0
     @State private var animateResultReplay=false
     @State private var fieldResolved = false
+    @State private var fieldHandoff:FieldContactHandoff?
+    @State private var arenaFrame:CGRect = .zero
     @State private var replay: MatchDetailedPlay?
     @State private var pulse: String?
     @State private var pulseAt = Date.distantPast
@@ -93,7 +95,9 @@ struct CareerGameView: View {
                 visualSnapshot = previous; presenting = true; judgment = nil; arrivedSnapshot = nil
                 let showCall: @MainActor () -> Void = {
                     if let fieldPlay {
-                        fieldResolved=false;replay=fieldPlay
+                        fieldResolved=false
+                        var handoff=scene.fieldHandoff;handoff?.sourceFrame=arenaFrame;fieldHandoff=handoff
+                        replay=fieldPlay
                     } else {
                         judgment = result; arrivedSnapshot = updated
                         pulse = MatchPresentation.countPulse(result.outcome); pulseAt = Date()
@@ -103,21 +107,22 @@ struct CareerGameView: View {
                     guard fieldPlay == nil else {return}
                     judgment = nil;presenting = false; visualSnapshot = nil; arrivedSnapshot = nil
                 }
+                let contact=fieldPlay.flatMap {FieldContactPresentation.matches($0,previous:previous,action:result.action) ? $0:nil}
                 if player.role == .pitcher {
                     let started = scene.demonstrate(reduceMotion: reduced, flightDuration: previous.delivery(pitchCode: result.pitchCode).duration,
                                           x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
-                                          outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, onArrival: showCall, completion: showResult)
+                                          outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, fieldPlay:contact, onArrival: showCall, completion: showResult)
                     if !started { showCall(); showResult() }
                 } else {
                     // Saved fair contact drives the barrel motion; localized multi-base labels are not contact flags.
                     scene.finishBat(action: result.action, outcome: added.contains(where: \.ownBatter) ? "안타" : result.outcome,
-                                    reduced: reduced, matchJudgment: true, onArrival: showCall, completion: showResult)
+                                    reduced: reduced, matchJudgment: true, fieldPlay:contact, onArrival: showCall, completion: showResult)
                 }
             }
         } catch { retrySave = pending; self.error = error.localizedDescription; scene.cancelDelivery() }
     }
     private func cancelInput() {
-        clock.stop(); attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;fieldResolved=false;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
+        clock.stop(); attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;fieldHandoff=nil;fieldResolved=false;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
     }
     private func advance(_ input: MatchInput) {
         guard !presenting, attempt == nil, retrySave == nil, let record else { return }
@@ -226,13 +231,13 @@ struct CareerGameView: View {
                     DetailedFieldReplayBoard(play:play,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(play.half%2 == 0) == match.isHome,
-                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",onResolved:{
+                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,onResolved:{
                             fieldResolved=true
                             if let updated=try? record?.snapshot() {
                                 arrivedSnapshot=updated;pulse=MatchPresentation.countPulse(updated.lastManual?.outcome ?? "");pulseAt=Date()
                             }
                         }) {
-                            replay=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
+                            replay=nil;fieldHandoff=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
                         }
                         .id(play.eventID)
                         .frame(height:FieldReplayPresentation.stageHeight(width:geometry.size.width-16,available:geometry.size.height,accessibility:typeSize.isAccessibilitySize))
@@ -251,6 +256,8 @@ struct CareerGameView: View {
 
             }
                 .frame(width: field.width, height: field.height)
+                .background {GeometryReader {geometry in Color.clear.preference(key:MatchArenaFrameKey.self,value:geometry.frame(in:.global))}}
+                .onPreferenceChange(MatchArenaFrameKey.self) {arenaFrame=$0}
                 .accessibilityLabel(player.role == .batter ? "도트 타자 경기장" : "도트 투수 경기장")
                 .accessibilityIdentifier("careerMatchField")
                 .overlay {
@@ -451,7 +458,7 @@ struct CareerGameView: View {
                                         .accessibilityIdentifier("careerGameMessage")
                                     if let last=savedMatch.fieldPlays?.last {
                                         Button("직전 수비·주루 다시 보기") {
-                                            visualSnapshot=savedMatch;presenting=true;fieldResolved=false;replay=last
+                                            visualSnapshot=savedMatch;presenting=true;fieldResolved=false;fieldHandoff=nil;replay=last
                                         }.buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked).accessibilityIdentifier("replayLastFieldPlay")
                                     }
                                     VStack(spacing: 6) { controls(match) }
@@ -549,4 +556,9 @@ private struct MatchNPCFieldersPanel:View {
         }.padding(10).background(GameTheme.boardPanel)
             .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
     }
+}
+
+private struct MatchArenaFrameKey:PreferenceKey {
+    static let defaultValue:CGRect = .zero
+    static func reduce(value:inout CGRect,nextValue:()->CGRect) {value=nextValue()}
 }

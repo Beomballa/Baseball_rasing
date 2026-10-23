@@ -689,4 +689,39 @@ extension ManualMatchTests {
         try await Task.sleep(for:.seconds(1.1));XCTAssertTrue(finished)
         scene.cancelDelivery();XCTAssertTrue(marker.isHidden)
     }
+    func testRenderedFairContactMovesBeforeHandoffAndCancellationDropsCallbacks() async throws {
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:windowScene),controller=UIViewController()
+        let view=SKView(frame:CGRect(x:0,y:0,width:320,height:340));controller.view=view;window.rootViewController=controller;window.makeKeyAndVisible()
+        defer {view.presentScene(nil);window.isHidden=true;previous?.makeKey()}
+        let play=DetailedFieldRules.resolveFly(half:0,order:0,landing:FieldPoint(x:30,y:90),flight:4,
+            runners:[nil,nil,nil],batter:FieldRunnerProfile(speed:60),outs:0,stats:nil,defending:false,ownBatter:true)
+        for action in ["swing","bunt","pitch"] {
+            let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:"left",kit:2,role:action == "pitch" ? .pitcher:.batter)
+            view.presentScene(scene)
+            var callbacks=0
+            let done=expectation(description:action+" shared contact clock")
+            let started=ProcessInfo.processInfo.systemUptime
+            let arrival={ @MainActor in
+                callbacks+=1
+                guard let h=scene.fieldHandoff else {XCTFail("contact clock missing");return}
+                XCTAssertGreaterThanOrEqual(h.cutAt-h.startedAt,FieldContactPresentation.duration(play)-0.001)
+                let origin=action == "pitch" ? CGPoint(x:0.54,y:0.43):MatchPresentation.batContact(action:action)
+                XCTAssertGreaterThan(h.sourcePoint.x,origin.x)
+                XCTAssertTrue(scene.childNode(withName:"receivedBaseball")!.isHidden)
+            }
+            if action == "pitch" {
+                XCTAssertTrue(scene.demonstrate(reduceMotion:false,flightDuration:0.4,preparedRelease:true,fieldPlay:play,onArrival:arrival,completion:{done.fulfill()}))
+            } else {
+                scene.finishBat(action:action,outcome:"안타",reduced:false,fieldPlay:play,onArrival:arrival,completion:{done.fulfill()})
+            }
+            try await Task.sleep(for:.seconds(0.12));XCTAssertEqual(callbacks,0)
+            await fulfillment(of:[done],timeout:3)
+            XCTAssertEqual(callbacks,1);XCTAssertGreaterThanOrEqual(ProcessInfo.processInfo.systemUptime-started,0.28)
+            scene.cancelDelivery();XCTAssertNil(scene.fieldHandoff)
+            scene.finishBat(action:"swing",outcome:"안타",reduced:false,fieldPlay:play,onArrival:{callbacks+=1},completion:{callbacks+=1})
+            scene.cancelDelivery();try await Task.sleep(for:.seconds(0.4));XCTAssertEqual(callbacks,1)
+        }
+    }
+
 }
