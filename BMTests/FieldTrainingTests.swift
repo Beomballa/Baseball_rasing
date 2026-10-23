@@ -723,6 +723,57 @@ import SwiftUI
         }
     }
 
+    func testErrorCallMeansBaseballMisplayWithTeamPositionAndScoringExplanation() throws {
+        for stage in [0,1] {
+            let play=misplay(doublePlay(),stage:stage),saved=try JSONEncoder().encode(play)
+            let error=try XCTUnwrap(play.misplay)
+            XCTAssertEqual(FieldReplayPresentation.resultTitle(play),stage == 0 ? "포구 실책":"악송구")
+            for own in [true,false] {
+                let detail=try XCTUnwrap(FieldReplayPresentation.errorDetail(play,ownTeamFielding:own))
+                XCTAssertTrue(detail.hasPrefix(own ? "우리 팀":"상대 팀"))
+                XCTAssertTrue(detail.contains(error.reachedOnError ? "안타 제외":error.ordinaryHitBases>0 ? "안타 인정":error.extraBases.isEmpty ? "주자 생존":"추가 진루"))
+            }
+            XCTAssertEqual(FieldSpriteAnimation.throwsIn(play).first?.fielder,error.recoverer)
+            XCTAssertEqual(FieldSpriteAnimation.motion(play,index:error.recoverer,time:play.releaseAt).stage,.release)
+            let recovery=FieldSpriteAnimation.motion(play,index:error.recoverer,time:error.recoveredAt)
+            XCTAssertFalse(recovery.airCatch);XCTAssertFalse(recovery.chestCatch)
+            XCTAssertEqual(FieldReplayPresentation.phase(play,time:error.at,finished:false),"벗어난 공 회수 · 주자 이동 중")
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:saved))
+        }
+        XCTAssertNil(FieldReplayPresentation.errorDetail(doublePlay(),ownTeamFielding:true))
+        XCTAssertFalse(FieldReplayPresentation.resultTitle(doublePlay()).contains("실책"))
+    }
+
+    func testAllReceiveAndThrowPosesAreSingleOpaqueFramesWithMatchingContacts() throws {
+        for kind in ["fielder","catcher"] {for facing in FieldFacing.allCases {for left in [false,true] {
+            for stage in [FieldSpriteStage.catchBall,.gather,.windup,.release,.followThrough] {for progress in [0.0,0.25,0.49,0.5,0.75,1] {
+                let motion=FieldSpriteMotion(facing:facing,stage:stage,progress:progress,willThrow:true)
+                let frames=FieldRasterArt.samples(motion,kind:kind,left:left)
+                XCTAssertEqual(frames.count,1);XCTAssertEqual(frames.first?.weight,1)
+                let sample=try XCTUnwrap(frames.first),f=sample.frame
+                let anchor=stage == .release ? f.hand:f.glove
+                let actual=try XCTUnwrap(FieldRasterArt.contact(motion,kind:kind,left:left,hand:stage == .release))
+                XCTAssertEqual(actual.x,(anchor[0]-f.pivot[0])*sample.unit*(sample.mirrored ? -1:1),accuracy:0.00001)
+                XCTAssertEqual(actual.y,(anchor[1]-f.pivot[1])*sample.unit,accuracy:0.00001)
+            }}
+        }}}
+        let ground=FieldRasterArt.samples(.init(facing:.south,stage:.catchBall,progress:1),kind:"fielder",left:false)
+        let chest=FieldRasterArt.samples(.init(facing:.south,stage:.catchBall,progress:1,chestCatch:true),kind:"fielder",left:false)
+        let air=FieldRasterArt.samples(.init(facing:.south,stage:.catchBall,progress:1,airCatch:true),kind:"fielder",left:false)
+        XCTAssertEqual(ground.first?.frame.action,"catch");XCTAssertEqual(chest.first?.frame.action,"gather");XCTAssertEqual(air.first?.frame.action,"airCatch")
+    }
+
+    func testCatcherStrideAndOpaqueThrowContactSheetRenders() throws {
+        let view=Canvas {context,_ in
+            for row in 0..<3 {for col in 0..<8 {
+                let motion=FieldSpriteMotion(facing:FieldFacing.allCases[col],stage:row == 0 ? .run:row == 1 ? .windup:.catchBall,progress:0.6,gait:Double(col)*0.8,chestCatch:row == 2)
+                FieldRasterArt.draw(in:context,at:CGPoint(x:35+col*65,y:70+row*85),scale:1.7,motion:motion,kind:row == 0 ? "catcher":"fielder",kit:0x316841,skin:0xba7750,hair:0x382416,number:47,left:false,selected:false,out:false)
+            }}
+        }.frame(width:540,height:280).background(GameTheme.board)
+        let image=try XCTUnwrap(ImageRenderer(content:view).uiImage)
+        let attachment=XCTAttachment(image:image);attachment.name="Opaque catcher stride chest receive and throw poses";attachment.lifetime = .keepAlways;add(attachment)
+    }
+
     func testMisplayRestartsWaitingCheetahRunnerEarlierWithoutChangingSpeed() throws {
         func play(_ traits:[PlayerTrait]) -> MatchDetailedPlay {
             let clean=relayFly(before:[FieldRunnerProfile(speed:60,traits:traits,own:true),nil,FieldRunnerProfile(speed:100)])

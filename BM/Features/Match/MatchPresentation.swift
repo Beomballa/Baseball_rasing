@@ -46,20 +46,24 @@ enum MatchArt {
         let direction=left ? (8-motion.facing.rawValue)%8:motion.facing.rawValue
         guard let sheet=manifest?.kinds[kind]?[directions[direction]] else {return []}
         let p=max(0,min(1,motion.progress))
+        let caught=motion.airCatch && kind == "fielder" ? "airCatch":motion.chestCatch && kind == "fielder" ? "gather":"catch"
         var poses:[(String,Double)]
         switch motion.stage {
         case .ready:poses=[("ready",1)]
         case .run:
             // Pixel running is a frame cycle, not an alpha dissolve between two bodies.
             poses=kind == "catcher" ? [("gather",1)]:[(sin(motion.gait)>=0 ? "runB":"runA",1)]
-        case .catchBall:poses=[("ready",1-p),(motion.airCatch && kind == "fielder" ? "airCatch":"catch",p)]
+        case .catchBall:poses=[("ready",1-p),(caught,p)]
         case .gather:
-            let caught=motion.airCatch && kind == "fielder" ? "airCatch":"catch"
             poses=motion.willThrow ? [(caught,1-p),("gather",p)]:p<0.5 ? [(caught,1-p*2),("gather",p*2)]:[("gather",2-p*2),("ready",p*2-1)]
         case .windup:poses=p<0.5 ? [("gather",1-p*2),("windup",p*2)]:[("windup",2-p*2),("release",p*2-1)]
         case .release:poses=[("release",1)]
         case .followThrough:
             poses=kind == "catcher" ? [("release",1-p),("ready",p)]:p<0.5 ? [("release",1-p*2),("followThrough",p*2)]:[("followThrough",2-p*2),("ready",p*2-1)]
+        }
+        // Use one opaque pose; the ball reads exactly the same hand/mitt anchor.
+        if let pose=poses.enumerated().max(by: {a,b in a.element.1 == b.element.1 ? a.offset<b.offset:a.element.1<b.element.1}) {
+            poses=[(pose.element.0,1)]
         }
         // A single physical scale for the whole direction avoids pose-dependent size pulses.
         let widest=sheet.frames.map {$0.rect[2]}.max() ?? sheet.referenceHeight
@@ -125,7 +129,20 @@ enum MatchArt {
             var layer=c;layer.opacity *= sample.weight
             layer.translateBy(x:point.x+motion.bodyOffset.x*scale,y:point.y+motion.bodyOffset.y*scale)
             if sample.mirrored {layer.scaleBy(x:-1,y:1)}
-            layer.draw(Image(uiImage:image).interpolation(.none),in:CGRect(x:-f.pivot[0]*u,y:-f.pivot[1]*u,width:f.rect[2]*u,height:f.rect[3]*u))
+            let rect=CGRect(x:-f.pivot[0]*u,y:-f.pivot[1]*u,width:f.rect[2]*u,height:f.rect[3]*u)
+            if kind == "catcher" && motion.stage == .run {
+                // Keep mask, chest protector and mitt fixed; articulate the existing lower legs.
+                let hip=rect.minY+rect.height*0.72
+                for side in [-1.0,1.0] {
+                    var leg=layer
+                    leg.clip(to:Path(CGRect(x:side<0 ? rect.minX:rect.midX,y:hip,width:rect.width/2,height:rect.maxY-hip+2*scale)))
+                    let stride=sin(motion.gait+(side<0 ? 0:Double.pi))
+                    leg.translateBy(x:stride*0.6*scale,y:stride*1.2*scale)
+                    leg.draw(Image(uiImage:image).interpolation(.none),in:rect)
+                }
+                layer.clip(to:Path(CGRect(x:rect.minX,y:rect.minY,width:rect.width,height:hip-rect.minY)))
+            }
+            layer.draw(Image(uiImage:image).interpolation(.none),in:rect)
         }
         return true
     }
@@ -457,6 +474,16 @@ struct MatchResultSummary {
 }
 
 enum FieldReplayPresentation {
+    static func resultTitle(_ play:MatchDetailedPlay) -> String {
+        if let error=play.misplay {return error.kind == .fielding ? "포구 실책":"악송구"}
+        return play.secondThrow?.out == true ? "DOUBLE PLAY":play.fly?.caught == true && play.targetRunner == nil ? "CATCH · OUT":play.out ? "OUT":"SAFE"
+    }
+    static func errorDetail(_ play:MatchDetailedPlay,ownTeamFielding:Bool) -> String? {
+        guard let error=play.misplay else {return nil}
+        let positions=["투수","포수","1루수","2루수","3루수","유격수","좌익수","중견수","우익수"]
+        let result=error.reachedOnError ? "실책 출루 · 안타 제외":error.ordinaryHitBases>0 ? "안타 인정 · 실책 별도":error.extraBases.isEmpty ? "실책으로 주자 생존":"실책으로 추가 진루"
+        return "\(ownTeamFielding ? "우리 팀":"상대 팀") \(positions[error.fielder]) · \(result)"
+    }
     static func stageHeight(width:CGFloat,available:CGFloat,accessibility:Bool=false) -> CGFloat {
         max(320,min(width*1.5+36,available-112)) + (accessibility ? 160:0)
     }
@@ -479,6 +506,7 @@ enum FieldReplayPresentation {
     }
     static func phase(_ play:MatchDetailedPlay,time:Double,finished:Bool) -> String {
         if finished {return play.summary}
+        if let error=play.misplay,time>=error.at && time<error.recoveredAt {return "벗어난 공 회수 · 주자 이동 중"}
         if time < play.flight {return play.fly == nil ? "타격 · 땅볼 이동 / 야수 추격":"타격 · 공중 타구 / 야수 추격"}
         if time < play.pickupAt {return "타구 도착 · 야수 포구 준비"}
         if let relay=play.relay,time>=play.releaseAt {
@@ -488,7 +516,6 @@ enum FieldReplayPresentation {
         if let second=play.secondThrow,time>=play.controlAt && time<second.releaseAt {return "베이스 포구 · 1루 재송구 준비"}
         if play.fly?.caught == true && play.targetRunner == nil && play.misplay == nil {return "포구 · 플레이 확인 중"}
         if time < play.releaseAt {return "포구 · 송구 자세 전환"}
-        if let error=play.misplay,time>=error.at && time<error.recoveredAt {return "공 회수 · 주자 이동 중"}
         return "송구 · 주자와 베이스 경합"
     }
     static func lift(_ play:MatchDetailedPlay,time:Double,height:Double) -> Double {
@@ -553,10 +580,11 @@ struct FieldSpriteMotion {
     var gait:Double = 0
     var airCatch=false
     var willThrow=false
+    var chestCatch=false
 
     var bodyOffset:CGPoint {
         let lean=stage == .followThrough ? facing.vector.x*sin(progress * .pi)*2:stage == .run ? facing.vector.x*1.2:0
-        let bob=stage == .run ? -abs(cos(gait))*1.4:stage == .catchBall && !airCatch ? sin(progress * .pi/2)*3:stage == .gather && !airCatch ? (1-progress)*3:0
+        let bob=stage == .run ? -abs(cos(gait))*1.4:stage == .catchBall && !airCatch && !chestCatch ? sin(progress * .pi/2)*3:stage == .gather && !airCatch && !chestCatch ? (1-progress)*3:0
         return CGPoint(x:lean,y:bob)
     }
     func throwingHand(left:Bool) -> CGPoint {
@@ -606,6 +634,9 @@ enum FieldSpriteAnimation {
         let receiver:Int
     }
     static func throwsIn(_ play:MatchDetailedPlay) -> [ThrowEvent] {
+        if let error=play.misplay {
+            return [.init(fielder:error.recoverer,caughtAt:error.recoveredAt,releaseAt:play.releaseAt,receivedAt:play.ballAt,receiver:play.receiver)]
+        }
         var events:[ThrowEvent]=[]
         if play.releaseAt>play.pickupAt {
             events.append(.init(fielder:play.fielder,caughtAt:play.pickupAt,releaseAt:play.releaseAt,
@@ -644,7 +675,8 @@ enum FieldSpriteAnimation {
             let catchFacing=FieldFacing.direction(dx:incoming.x-at.x,dy:incoming.y-at.y)
             if motion.stage == .catchBall {motion.facing=catchFacing}
             else if motion.stage == .gather {motion.facing=FieldFacing.turn(from:catchFacing,to:motion.facing,fraction:motion.progress)}
-            motion.airCatch=index == play.fielder && play.fly?.caught == true
+            motion.airCatch=play.misplay == nil && index == play.fielder && play.fly?.caught == true
+            motion.chestCatch=play.misplay == nil && index != play.fielder
             return motion
         }
         let catches=[(play.fielder,play.pickupAt)]+events.map {($0.receiver,$0.receivedAt)}
@@ -654,6 +686,7 @@ enum FieldSpriteAnimation {
             motion.stage=time<caught.1+0.10 ? .catchBall:.gather
             motion.progress=time<caught.1+0.10 ? min(1,max(0,(time-caught.1+0.12)/0.22)):min(1,(time-caught.1-0.10)/0.25)
             motion.airCatch=index == play.fielder && play.fly?.caught == true
+            motion.chestCatch=index != play.fielder
         }
         if motion.stage == .ready {
             if let last=events.last(where:{$0.fielder == index && time>$0.releaseAt}) {
@@ -933,14 +966,19 @@ struct DetailedFieldReplayBoard: View {
                     }
                     PixelBaseball.draw(in:context,at:ballPoint(time),diameter:max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size)))
                     if finished {
-                        let label=play.misplay != nil ? "ERROR":play.secondThrow?.out == true ? "DOUBLE PLAY":play.fly?.caught == true && play.targetRunner == nil ? "CATCH · OUT":play.out ? "OUT":"SAFE"
-                        let frame=CGRect(x:size.width*0.18,y:size.height*0.27,width:size.width*0.64,height:32)
+                        let label=FieldReplayPresentation.resultTitle(play)
+                        let detail=FieldReplayPresentation.errorDetail(play,ownTeamFielding:defenseOwn)
+                        let frame=CGRect(x:size.width*(detail == nil ? 0.18:0.04),y:size.height*0.27,width:size.width*(detail == nil ? 0.64:0.92),height:detail == nil ? 32:78)
                         context.fill(Path(frame),with:.color(GameTheme.board.opacity(0.96)))
                         context.stroke(Path(frame),with:.color(GameTheme.gold),lineWidth:2)
-                        context.draw(Text(label).font(.system(size:18,weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:frame.midX,y:frame.midY))
+                        context.draw(Text(label).font(.system(size:18,weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:frame.midX,y:detail == nil ? frame.midY:frame.minY+16))
+                        if let detail {
+                            context.draw(Text(detail).font(.system(size:12,weight:.bold)).foregroundStyle(GameTheme.paper),
+                                in:CGRect(x:frame.minX+6,y:frame.minY+32,width:frame.width-12,height:40))
+                        }
                     }
                 }.aspectRatio(2.0/3,contentMode:.fit).accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
-                    .accessibilityValue(finished ? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
+                    .accessibilityValue(finished ? FieldReplayPresentation.errorDetail(play,ownTeamFielding:ownTeamFielding ?? !play.ownBatter) ?? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
                     .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
             }.padding(4).background(GameTheme.board)
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
