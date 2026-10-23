@@ -3,8 +3,8 @@
 :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#112938;color:#eee9cd}body{max-width:1080px;margin:auto;padding:20px}h1{font-size:24px;margin:8px 0}p{line-height:1.6;color:#bac9cf}button,select{font:inherit;color:inherit;background:#203e57;border:2px solid #7695a6;padding:10px 14px;min-height:44px}button:focus-visible,select:focus-visible{outline:3px solid #edc96a;outline-offset:3px}button[aria-pressed=true]{background:#307855;border-color:#edc96a}.controls{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}main{display:grid;grid-template-columns:minmax(0,390px) minmax(0,1fr);gap:24px}canvas{max-width:100%;height:auto;image-rendering:pixelated}#field{width:390px;background:#194f3c}#poses{width:640px;background:#263c49}#state{font-size:20px;color:#edc96a;min-height:30px}label{display:flex;gap:8px;align-items:center}small{display:block;line-height:1.6;color:#bac9cf}@media(max-width:760px){main{grid-template-columns:1fr}body{padding:14px}#field{display:block;margin:auto}h1{font-size:21px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
 </style>
 <h1>수비 선수 · 원본 동작 검증</h1><p>8방향 × 8동작. 기존 경기 캐릭터에 맞춘 원본 아트입니다. 실제 경기·저장과 연결되지 않는 별도 미리보기입니다.</p>
-<div class="controls"><label>방향 <select id="direction" aria-label="선수 방향"></select></label><label>기준 키 <select id="height"><option>56</option><option selected>72</option><option>96</option></select>px</label><button id="play" aria-pressed="false">연속 동작 재생</button></div>
-<main><section><div id="state" role="status">불러오는 중</div><canvas id="field" width="780" height="1170" aria-label="실제 경기장 위 스프라이트 미리보기"></canvas><small>경기장 폭 390px 기준. 준비 → 달리기 → 포구 → 모으기 → 송구를 재생합니다. 공·손 기준점의 실제 경기 연결은 후속 단계입니다.</small></section><section><h2>선택 방향의 8동작</h2><canvas id="poses" width="640" height="400" aria-label="8개 동작 원본 비교"></canvas><div class="controls" id="actions"></div><small>각 동작의 실제 불투명 경계를 사용합니다. 방향별 준비 자세의 키로 크기를 정하고, 포구 자세를 세로로 늘리지 않습니다. 파란 기준선은 발 위치입니다.</small></section></main>
+<div class="controls"><label>방향 <select id="direction" aria-label="선수 방향"></select></label><label>구장 배율 <select id="height"><option value="0.85">85%</option><option value="1" selected>100%</option><option value="1.15">115%</option></select></label><button id="play" aria-pressed="false">연속 동작 재생</button></div>
+<main><section><div id="state" role="status">불러오는 중</div><canvas id="field" width="780" height="1170" aria-label="실제 경기장 위 스프라이트 미리보기"></canvas><small>구장 폭에 맞춘 선수 크기와 원근을 적용합니다. 외야는 작게, 내야는 조금 크게 표시합니다. 준비 → 달리기 → 포구 → 모으기 → 송구를 재생합니다. 공·손 기준점의 실제 경기 연결은 후속 단계입니다.</small></section><section><h2>선택 방향의 8동작</h2><canvas id="poses" width="640" height="400" aria-label="8개 동작 원본 비교"></canvas><div class="controls" id="actions"></div><small>각 동작의 실제 불투명 경계를 사용합니다. 방향별 준비 자세의 키로 크기를 정하고, 포구 자세를 세로로 늘리지 않습니다. 파란 기준선은 발 위치입니다.</small></section></main>
 <script type="module">
 const root='../BM/Resources/MatchArt/';
 const labels=['준비','달리기 A','달리기 B','땅볼 포구','공 모으기','송구 준비','릴리스','팔로스루'];
@@ -15,13 +15,18 @@ let manifest,images={},background,selected=0,running=false,start=0,raf;
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 async function load(url){const i=new Image();i.src=url;await i.decode();return i;}
 function sprite(ctx,d,index,x,y,h){const sheet=manifest.sheets[d],f=sheet.frames[index],s=h/sheet.referenceHeight;ctx.imageSmoothingEnabled=false;const dx=x-f.pivot[0]*s,dy=y-f.pivot[1]*s;ctx.save();ctx.beginPath();for(const [row,left,width] of f.clipRows)ctx.rect(dx+left*s,dy+row*s,width*s,s+0.01);ctx.clip();ctx.drawImage(images[d],...f.rect,dx,dy,f.rect[2]*s,f.rect[3]*s);ctx.restore();}
+// Canvas uses two pixels per displayed point at the reference 390-point field width.
+function fieldSpriteHeight(y){
+ const depth=Math.min(1,Math.max(0,(y-360)/540));
+ return field.width*(22+16*depth)/390*Number(height.value);
+}
 function render(t=0){
  const ctx=field.getContext('2d');ctx.clearRect(0,0,780,1170);ctx.drawImage(background,0,0,780,1170);
- let phase=selected,x=390;
- if(running){const elapsed=(t-start)/1000;const cycle=elapsed%5.5;phase=cycle<.6?0:cycle<2?(Math.floor(cycle*6)%2)+1:cycle<2.7?3:cycle<3.3?4:cycle<3.9?5:cycle<4.5?6:7;x=310+Math.min(1,Math.max(0,(cycle-.6)/1.4))*90;}
- for(const [d,px,py] of [['s',170,400],['s',620,400],['s',390,300],['se',185,670],['sw',600,670]])sprite(ctx,d,0,px,py,Number(height.value)*1.35);
- sprite(ctx,direction.value,phase,x,830,Number(height.value)*2);
- ctx.strokeStyle='#80ced5';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-25,830);ctx.lineTo(x+25,830);ctx.stroke();
+ let phase=selected,x=315;
+ if(running){const elapsed=(t-start)/1000;const cycle=elapsed%5.5;phase=cycle<.6?0:cycle<2?(Math.floor(cycle*6)%2)+1:cycle<2.7?3:cycle<3.3?4:cycle<3.9?5:cycle<4.5?6:7;x=245+Math.min(1,Math.max(0,(cycle-.6)/1.4))*70;}
+ for(const [d,px,py] of [['s',170,430],['s',620,430],['s',390,360],['se',110,640],['sw',670,640]])sprite(ctx,d,0,px,py,fieldSpriteHeight(py));
+ sprite(ctx,direction.value,phase,x,550,fieldSpriteHeight(550));
+ ctx.strokeStyle='#80ced5';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-12,550);ctx.lineTo(x+12,550);ctx.stroke();
  state.textContent=`${names[direction.value]} · ${labels[phase]}`;
  const p=poses.getContext('2d');p.clearRect(0,0,640,400);
  for(let i=0;i<8;i++){const cx=(i%4)*160+80,cy=Math.floor(i/4)*200+158;p.strokeStyle='#80ced5';p.beginPath();p.moveTo(cx-40,cy);p.lineTo(cx+40,cy);p.stroke();sprite(p,direction.value,i,cx,cy,112);p.fillStyle='#eee9cd';p.font='15px system-ui';p.textAlign='center';p.fillText(labels[i],cx,cy+28);}
