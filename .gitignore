@@ -101,3 +101,16 @@
 !/BM/Resources/MatchArt/inplay-stadium-sunset-v1.png
 
 !/BM/Resources/MatchArt/inplay-stadium-arcade-v1.png
+
+# Reviewed fielder source atlas and read-only preview tooling.
+!/scripts/preview_field_sprites.html
+!/scripts/test_field_sprites.py
+!/BM/Resources/MatchArt/fielders-v1.json
+!/BM/Resources/MatchArt/fielder-e-v1.png
+!/BM/Resources/MatchArt/fielder-n-v1.png
+!/BM/Resources/MatchArt/fielder-ne-v1.png
+!/BM/Resources/MatchArt/fielder-nw-v1.png
+!/BM/Resources/MatchArt/fielder-s-v1.png
+!/BM/Resources/MatchArt/fielder-se-v1.png
+!/BM/Resources/MatchArt/fielder-sw-v1.png
+!/BM/Resources/MatchArt/fielder-w-v1.png
