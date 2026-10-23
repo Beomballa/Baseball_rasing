@@ -509,7 +509,14 @@ import SwiftUI
                 try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
                 let r = try CareerMatchStore.start(player:p,state:s,in:c)
                 XCTAssertEqual(try r.snapshot().abilityExperience?.annualBefore ?? total,total)
-                try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+                do {
+                    try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+                } catch {
+                    let replay=XCTAttachment(data:r.payload,uniformTypeIdentifier:"public.json")
+                    replay.name="Season growth failed input \(role.rawValue) \(fixture.date.description)"
+                    replay.lifetime = .keepAlways;add(replay)
+                    throw error
+                }
                 if fixture.isAppearance(for:role) {
                     appearances += 1
                     total = TrainingRules.round(total + (try XCTUnwrap(r.snapshot().abilityExperience?.result)).rawXP)

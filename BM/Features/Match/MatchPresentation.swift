@@ -61,6 +61,7 @@ enum MatchArt {
         case .followThrough:
             poses=kind == "catcher" ? [("release",1-p),("ready",p)]:p<0.5 ? [("release",1-p*2),("followThrough",p*2)]:[("followThrough",2-p*2),("ready",p*2-1)]
         }
+        if kind == "runner" && motion.runnerPose == .slide {poses=[("runB",1)]}
         // Use one opaque pose; the ball reads exactly the same hand/mitt anchor.
         if let pose=poses.enumerated().max(by: {a,b in a.element.1 == b.element.1 ? a.offset<b.offset:a.element.1<b.element.1}) {
             poses=[(pose.element.0,1)]
@@ -123,11 +124,29 @@ enum MatchArt {
         c.opacity=out ? 0.38:1
         c.fill(Path(ellipseIn:CGRect(x:point.x-7*scale,y:point.y-1*scale,width:14*scale,height:3*scale)),with:.color(.black.opacity(0.25)))
         if selected {c.stroke(Path(ellipseIn:CGRect(x:point.x-8*scale,y:point.y-2*scale,width:16*scale,height:4*scale)),with:.color(GameTheme.gold),lineWidth:1)}
+        if motion.baseReceive == .force {
+            // The receiving foot stays on the bag as the torso stretches toward the throw.
+            c.fill(Path(CGRect(x:point.x-2*scale,y:point.y-scale,width:4*scale,height:2*scale)),with:.color(Color(hex:0x142b3c)))
+        }
+        if kind == "runner" && [.slide,.decelerate].contains(motion.runnerPose) {
+            for i in 0..<3 {
+                let trail=Double(i+1)*3
+                let alpha=(1-motion.arrivalProgress)*0.55
+                c.fill(Path(CGRect(x:point.x-motion.facing.vector.x*trail*scale,y:point.y+Double(i%2)*scale,width:2*scale,height:scale)),with:.color(Color(hex:0xc39962).opacity(alpha)))
+            }
+        }
         for sample in frames {
             guard let image=image(sample,kit:kit,skin:skin,hair:hair,number:number,back:motion.facing.back && kind != "catcher") else {return false}
             let f=sample.frame,u=sample.unit*scale
             var layer=c;layer.opacity *= sample.weight
             layer.translateBy(x:point.x+motion.bodyOffset.x*scale,y:point.y+motion.bodyOffset.y*scale)
+            if kind == "runner" && motion.runnerPose == .slide {
+                // Feet remain the pivot at the saved base; no extra world-space advance.
+                layer.rotate(by:.radians(-motion.facing.vector.x*1.05*motion.slideAmount))
+                layer.scaleBy(x:1,y:1-0.38*motion.slideAmount)
+            } else if kind == "runner" && motion.runnerPose == .tagUp {
+                layer.scaleBy(x:1,y:0.90)
+            }
             if sample.mirrored {layer.scaleBy(x:-1,y:1)}
             let rect=CGRect(x:-f.pivot[0]*u,y:-f.pivot[1]*u,width:f.rect[2]*u,height:f.rect[3]*u)
             if kind == "catcher" && motion.stage == .run {
@@ -499,7 +518,8 @@ enum FieldReplayPresentation {
             + (play.relay.map {[$0.receiveAt,$0.releaseAt]} ?? [])
             + (play.secondThrow.map {[$0.releaseAt,$0.ballAt,$0.controlAt]} ?? [])
             + (play.misplay.map {[$0.at,$0.scatteredAt,$0.recoveredAt]} ?? [])
-        return moments.filter {$0<=time}.max() ?? 0
+        let runnerMoments=play.runners.flatMap {runner in runner.nodes.map(\.at)}
+        return (moments+runnerMoments).filter {$0<=time}.max() ?? 0
     }
     static func retired(_ runner:DetailedRunner,finished:Bool) -> Bool {
         finished && runner.out
@@ -576,6 +596,9 @@ enum FieldFacing: Int,CaseIterable,Equatable {
     }
 }
 
+enum FieldRunnerPose: Equatable {case stride,accelerate,turn,decelerate,slide,tagUp,settled}
+enum FieldBaseReceive: Equatable {case none,force,tag}
+
 enum FieldSpriteStage: Equatable {case ready,run,catchBall,gather,windup,release,followThrough}
 struct FieldSpriteMotion {
     var facing:FieldFacing
@@ -585,11 +608,21 @@ struct FieldSpriteMotion {
     var airCatch=false
     var willThrow=false
     var chestCatch=false
+    var runnerPose:FieldRunnerPose = .stride
+    var baseReceive:FieldBaseReceive = .none
+    var arrivalProgress:Double = 0
 
+    var slideAmount:Double {
+        runnerPose == .slide ? max(0,min(1,arrivalProgress/0.22,(1-arrivalProgress)/0.22)):0
+    }
     var bodyOffset:CGPoint {
         let lean=stage == .followThrough ? facing.vector.x*sin(progress * .pi)*2:stage == .run ? facing.vector.x*1.2:0
         let bob=stage == .run ? -abs(cos(gait))*1.4:stage == .catchBall && !airCatch && !chestCatch ? sin(progress * .pi/2)*3:stage == .gather && !airCatch && !chestCatch ? (1-progress)*3:0
-        return CGPoint(x:lean,y:bob)
+        let crouch=runnerPose == .tagUp ? 2.0:runnerPose == .slide ? 5*slideAmount:0
+        let drive=runnerPose == .accelerate ? 2*(1-arrivalProgress):runnerPose == .decelerate ? -1.5:0
+        let reach=baseReceive == .tag ? sin(arrivalProgress * .pi)*2:0
+        let stretch=baseReceive == .force ? 1.5:0
+        return CGPoint(x:lean+facing.vector.x*(drive+reach+stretch),y:bob+crouch+reach)
     }
     func throwingHand(left:Bool) -> CGPoint {
         let side=(left ? -1.0:1)*(facing.back ? 1:-1)
@@ -659,7 +692,96 @@ enum FieldSpriteAnimation {
         }
         return .init(facing:last,stage:.ready)
     }
+    struct RunnerSample {
+        var point:FieldPoint
+        var motion:FieldSpriteMotion
+    }
+    static func runner(_ runner:DetailedRunner,play:MatchDetailedPlay,time:Double,reduced:Bool=false) -> RunnerSample {
+        let legs=Array(zip(runner.nodes,runner.nodes.dropFirst())).filter {$0.0.point != $0.1.point}
+        var result=RunnerSample(point:FieldNode.sample(runner.nodes,at:time),motion:travel(runner.nodes,time:time))
+        result.motion.runnerPose = .settled
+        guard let first=legs.first else {
+            if play.fly?.caught == true && runner.from>0 {
+                result.motion.runnerPose = .tagUp
+                result.motion.facing = .direction(dx:play.landing.x-result.point.x,dy:play.landing.y-result.point.y)
+            }
+            return result
+        }
+        if play.fly?.caught == true && runner.from>0 && time<first.0.at {
+            result.motion.runnerPose = .tagUp
+            let incoming=play.landing
+            result.motion.facing = .direction(dx:incoming.x-result.point.x,dy:incoming.y-result.point.y)
+            return result
+        }
+        for (index,leg) in legs.enumerated() where time>=leg.0.at && time<leg.1.at {
+            let elapsed=time-leg.0.at
+            result.motion.runnerPose = .stride
+            if index == 0 && elapsed<0.32 {
+                let p=min(1,elapsed/min(0.32,leg.1.at-leg.0.at))
+                result.motion.runnerPose = .accelerate;result.motion.arrivalProgress=p
+                result.motion.gait=elapsed*17*(0.4+0.6*p)
+                if !reduced {
+                    // Ease only the opening stride and rejoin the saved path within 320ms.
+                    let delayed=elapsed-0.55*elapsed*pow(1-p,3)
+                    result.point=FieldNode.sample(runner.nodes,at:leg.0.at+delayed)
+                }
+            }
+            if index>0 && elapsed<0.16 {
+                let previous=legs[index-1]
+                let old=FieldFacing.direction(dx:previous.1.point.x-previous.0.point.x,dy:previous.1.point.y-previous.0.point.y)
+                result.motion.facing=FieldFacing.turn(from:old,to:result.motion.facing,fraction:elapsed/0.16)
+                result.motion.runnerPose = .turn
+            }
+        }
+        let reachesBase=runner.destination>0 && runner.destination<DetailedFieldRules.bases.count && runner.nodes.last?.point == DetailedFieldRules.bases[runner.destination]
+        guard reachesBase else {return result}
+        let arrival=runner.arrival
+        if [2,3].contains(runner.destination) && time>=arrival-0.34 && time<arrival+0.24 {
+            result.motion.runnerPose = .slide
+            result.motion.arrivalProgress=max(0,min(1,(time-arrival+0.34)/0.58))
+            if reduced {result.motion.stage = .ready}
+        } else if runner.from == 0 && runner.destination == 1 && !runner.out && time>=arrival {
+            let window=max(0.001,min(0.4,play.duration-arrival))
+            let p=max(0,min(1,(time-arrival)/window))
+            result.motion.runnerPose = p<1 ? .decelerate:.settled
+            result.motion.stage = p<1 ? .run:.ready
+            result.motion.arrivalProgress=p;result.motion.gait=arrival*17+6*p-3*p*p
+            if !reduced,let last=legs.last {
+                let length=last.0.point.distance(to:last.1.point)
+                // First-base overrun is visual only; the next play still starts on its saved bag.
+                let overshoot=1.8*(1-pow(1-p,3))
+                result.point=FieldPoint(x:result.point.x+(last.1.point.x-last.0.point.x)/length*overshoot,
+                                       y:result.point.y+(last.1.point.y-last.0.point.y)/length*overshoot)
+            }
+        }
+        return result
+    }
     static func motion(_ play:MatchDetailedPlay,index:Int,time:Double) -> FieldSpriteMotion {
+        var result=fieldingMotion(play,index:index,time:time)
+        // An outgoing pivot owns its gather/windup; do not replace a double-play throw.
+        guard ![FieldSpriteStage.windup,.release,.followThrough].contains(result.stage) else {return result}
+        var receive:(at:Double,control:Double,force:Bool,runner:Int?)?
+        if index == play.receiver && play.targetRunner != nil && play.releaseAt>play.pickupAt {
+            receive=(play.ballAt,play.controlAt,play.force,play.targetRunner)
+        }
+        if let second=play.secondThrow,index == second.receiver {receive=(second.ballAt,second.controlAt,true,0)}
+        guard let receive,time>=receive.at-0.12,time<receive.control+0.28 else {return result}
+        if receive.force {
+            result.baseReceive = .force
+            result.chestCatch=true
+        } else if time>=receive.at {
+            result.baseReceive = .tag;result.chestCatch=false;result.airCatch=false
+            result.stage = .catchBall;result.progress=1
+            result.arrivalProgress=max(0,min(1,(time-receive.at)/max(0.12,receive.control+0.28-receive.at)))
+            if let runner=play.runners.first(where:{$0.from == receive.runner}) {
+                let at=FieldNode.sample(play.fielders[index],at:time)
+                let target=FieldNode.sample(runner.nodes,at:receive.control)
+                result.facing = .direction(dx:target.x-at.x,dy:target.y-at.y)
+            }
+        }
+        return result
+    }
+    private static func fieldingMotion(_ play:MatchDetailedPlay,index:Int,time:Double) -> FieldSpriteMotion {
         let nodes=play.fielders[index],at=FieldNode.sample(nodes,at:time)
         let events=throwsIn(play)
         var motion=travel(nodes,time:time)
@@ -945,7 +1067,8 @@ struct DetailedFieldReplayBoard: View {
                         actors.append((FieldNode.sample(play.fielders[index],at:time),FieldSpriteAnimation.motion(play,index:index,time:time),own,defenseOwn,own ? jerseyNumber:index+1,false,index == 1 ? "catcher":"fielder"))
                     }
                     for runner in play.runners {
-                        actors.append((FieldNode.sample(runner.nodes,at:time),FieldSpriteAnimation.travel(runner.nodes,time:time),runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,FieldReplayPresentation.retired(runner,finished:finished),"runner"))
+                        let display=FieldSpriteAnimation.runner(runner,play:play,time:time,reduced:reduced)
+                        actors.append((display.point,display.motion,runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,FieldReplayPresentation.retired(runner,finished:finished),"runner"))
                     }
                     for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
                         let raster=FieldRasterArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),kind:actor.kind,

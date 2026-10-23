@@ -1243,4 +1243,119 @@ import SwiftUI
         try copy.validateDetailedField()
     }
 
+    func testRunnerStartAccelerationPreservesReactionAndAllSavedBaseArrivals() throws {
+        let play=detailed(-45,85,speed:100,flight:3.5)
+        let runner=try XCTUnwrap(play.runners.first {$0.from == 0})
+        let first=try XCTUnwrap(zip(runner.nodes,runner.nodes.dropFirst()).first {$0.0.point != $0.1.point})
+        let before=FieldSpriteAnimation.runner(runner,play:play,time:first.0.at-0.01)
+        XCTAssertEqual(before.point,first.0.point);XCTAssertEqual(before.motion.stage,.ready)
+        let moving=FieldSpriteAnimation.runner(runner,play:play,time:first.0.at+0.08)
+        XCTAssertEqual(moving.motion.runnerPose,.accelerate)
+        XCTAssertLessThan(first.0.point.distance(to:moving.point),first.0.point.distance(to:FieldNode.sample(runner.nodes,at:first.0.at+0.08)))
+        for node in runner.nodes {
+            XCTAssertEqual(FieldSpriteAnimation.runner(runner,play:play,time:node.at).point,node.point)
+        }
+        let saved=try JSONEncoder().encode(play)
+        for t in stride(from:0.0,through:play.duration,by:0.03) {_=FieldSpriteAnimation.runner(runner,play:play,time:t)}
+        XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:saved))
+    }
+
+    func testRunnerBaseTurnOverrunAndSlideHaveSeparatePosesWithoutInventingAdvance() throws {
+        let single=detailed(speed:100),batter=try XCTUnwrap(single.runners.first {$0.from == 0})
+        XCTAssertEqual(batter.destination,1);XCTAssertFalse(batter.out)
+        XCTAssertEqual(FieldSpriteAnimation.runner(batter,play:single,time:batter.arrival).point,DetailedFieldRules.bases[1])
+        let overrun=FieldSpriteAnimation.runner(batter,play:single,time:batter.arrival+0.18)
+        XCTAssertEqual(overrun.motion.runnerPose,.decelerate)
+        XCTAssertGreaterThan(overrun.point.x,DetailedFieldRules.bases[1].x)
+        let stop=FieldSpriteAnimation.runner(batter,play:single,time:single.duration)
+        XCTAssertEqual(stop.motion.stage,.ready);XCTAssertEqual(stop.motion.runnerPose,.settled)
+        XCTAssertEqual(single.afterRunners[0],batter.profile)
+        let doubleHit=detailed(-45,85,speed:100,flight:3.5)
+        let second=try XCTUnwrap(doubleHit.runners.first {$0.from == 0})
+        let firstAt=try XCTUnwrap(second.arrival(at:1))
+        XCTAssertEqual(FieldSpriteAnimation.runner(second,play:doubleHit,time:firstAt+0.04).motion.runnerPose,.turn)
+        for base in [2,3] {
+            var runner=second;runner.destination=base
+            runner.nodes=[.init(at:0,point:DetailedFieldRules.bases[base-1]),.init(at:3,point:DetailedFieldRules.bases[base])]
+            let slide=FieldSpriteAnimation.runner(runner,play:doubleHit,time:2.9)
+            XCTAssertEqual(slide.motion.runnerPose,.slide)
+            XCTAssertEqual(FieldSpriteAnimation.runner(runner,play:doubleHit,time:3).point,DetailedFieldRules.bases[base])
+            XCTAssertEqual(FieldSpriteAnimation.runner(runner,play:doubleHit,time:3.3).motion.runnerPose,.settled)
+        }
+        let outPlay=detailed(speed:0),retired=try XCTUnwrap(outPlay.runners.first {$0.from == 0})
+        XCTAssertTrue(retired.out)
+        let stopped=FieldSpriteAnimation.runner(retired,play:outPlay,time:outPlay.duration)
+        XCTAssertEqual(stopped.point,retired.nodes.last?.point)
+        XCTAssertNotEqual(stopped.motion.runnerPose,.decelerate)
+        XCTAssertNotEqual(stopped.motion.runnerPose,.slide)
+    }
+
+    func testRunnerTagUpWaitAndReducedMotionUseSavedDepartureAndBagStills() throws {
+        let play=fly(speed:100),runner=try XCTUnwrap(play.runners.first {$0.from == 3})
+        for t in [0,play.flight-0.01,play.flight] {
+            let wait=FieldSpriteAnimation.runner(runner,play:play,time:t)
+            XCTAssertEqual(wait.motion.runnerPose,.tagUp);XCTAssertEqual(wait.point,DetailedFieldRules.bases[3])
+        }
+        let departure=try XCTUnwrap(zip(runner.nodes,runner.nodes.dropFirst()).first {$0.0.point != $0.1.point}).0.at
+        XCTAssertEqual(FieldSpriteAnimation.runner(runner,play:play,time:departure+0.08).motion.runnerPose,.accelerate)
+        XCTAssertEqual(FieldReplayPresentation.time(play,elapsed:departure,reduced:true,animated:true),departure)
+        let single=detailed(speed:100),batter=try XCTUnwrap(single.runners.first {$0.from == 0})
+        let reduced=FieldSpriteAnimation.runner(batter,play:single,time:single.duration,reduced:true)
+        XCTAssertEqual(reduced.point,DetailedFieldRules.bases[1])
+        XCTAssertEqual(FieldSpriteAnimation.runner(runner,play:play,time:runner.arrival).point,DetailedFieldRules.bases[4])
+    }
+
+    func testForceReceiveTagAndDoublePlayPivotKeepSavedBallContactsAndOpaqueFrames() throws {
+        let force=doublePlay(),tag=fly(speed:100)
+        XCTAssertEqual(FieldSpriteAnimation.motion(force,index:force.receiver,time:force.ballAt).baseReceive,.force)
+        let second=try XCTUnwrap(force.secondThrow)
+        XCTAssertEqual(FieldSpriteAnimation.motion(force,index:second.receiver,time:second.ballAt).baseReceive,.force)
+        XCTAssertEqual(FieldSpriteAnimation.motion(force,index:force.receiver,time:second.releaseAt).stage,.release)
+        XCTAssertEqual(FieldSpriteAnimation.motion(tag,index:tag.receiver,time:tag.controlAt).baseReceive,.tag)
+        for play in [force,tag] {for left in [false,true] {
+            let time=play.controlAt,at=FieldNode.sample(play.fielders[play.receiver],at:time),size=CGSize(width:390,height:585)
+            let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:play.receiver,time:time),at:at,size:size)
+            let kind=play.receiver == 1 ? "catcher":"fielder"
+            let contact=try XCTUnwrap(FieldRasterArt.contact(motion,kind:kind,left:left,hand:false))
+            let offset=FieldBallPresentation.handOffset(play,time:time,size:size,leftIndex:left ? play.receiver:nil)
+            let scale=InplayFieldProjection.actorScale(at,size:size)
+            XCTAssertEqual(offset.x,(contact.x+motion.bodyOffset.x)*scale,accuracy:0.00001)
+            XCTAssertEqual(offset.y,(contact.y+motion.bodyOffset.y)*scale,accuracy:0.00001)
+            XCTAssertEqual(FieldRasterArt.samples(motion,kind:kind,left:left).count,1)
+        }}
+    }
+
+    func testRunnerArrivalMotionContactSheetAndReplayRender() throws {
+        let poses:[FieldRunnerPose]=[.accelerate,.turn,.decelerate,.slide,.tagUp,.settled]
+        let view=Canvas {context,_ in
+            for row in 0..<2 {for col in poses.indices {
+                let motion=FieldSpriteMotion(facing:row == 0 ? .east:.west,stage:col<4 ? .run:.ready,gait:1,runnerPose:poses[col],arrivalProgress:0.5)
+                FieldRasterArt.draw(in:context,at:CGPoint(x:42+col*78,y:80+row*90),scale:2,motion:motion,kind:"runner",kit:0x316841,skin:0xba7750,hair:0x382416,number:47,left:false,selected:false,out:false)
+            }}
+            for (col,style) in [FieldBaseReceive.force,.tag].enumerated() {
+                let motion=FieldSpriteMotion(facing:.west,stage:.catchBall,progress:1,chestCatch:style == .force,baseReceive:style,arrivalProgress:0.5)
+                FieldRasterArt.draw(in:context,at:CGPoint(x:110+col*200,y:270),scale:2,motion:motion,kind:col == 0 ? "fielder":"catcher",kit:0x8b3440,skin:0xefbe91,hair:0x263b48,number:13,left:false,selected:false,out:false)
+            }
+        }.frame(width:480,height:300).background(GameTheme.board)
+        let image=try XCTUnwrap(ImageRenderer(content:view).uiImage)
+        let attachment=XCTAttachment(image:image);attachment.name="Runner start turn overrun slide tag-up and force-tag poses";attachment.lifetime = .keepAlways;add(attachment)
+    }
+
+    func testFirstBaseOverrunSpriteStaysInsidePhoneFieldViewport() throws {
+        let play=detailed(speed:100),runner=try XCTUnwrap(play.runners.first {$0.from == 0})
+        for size in [CGSize(width:320,height:480),CGSize(width:390,height:585)] {
+            for time in stride(from:runner.arrival,through:play.duration,by:0.02) {
+                let display=FieldSpriteAnimation.runner(runner,play:play,time:time)
+                let motion=InplayFieldProjection.motion(display.motion,at:display.point,size:size)
+                let point=InplayFieldProjection.point(display.point,size:size),scale=InplayFieldProjection.actorScale(display.point,size:size)
+                for left in [false,true] {for sample in FieldRasterArt.samples(motion,kind:"runner",left:left) {
+                    let frame=sample.frame
+                    let extent=sample.mirrored ? frame.pivot[0]:frame.rect[2]-frame.pivot[0]
+                    let right=point.x+extent*sample.unit*scale+motion.bodyOffset.x*scale
+                    XCTAssertLessThanOrEqual(right,size.width,"First-base follow-through must not crop either handed runner")
+                }}
+            }
+        }
+    }
+
 }
