@@ -928,6 +928,46 @@ extension CareerFlowTests {
         reveal(app.staticTexts["gameResultFatigue"], in: app); XCTAssertEqual(app.staticTexts["gameResultFatigue"].label, fatigue)
     }
 
+    @MainActor func testFieldVerificationControlsScenariosAndCareerStoreIsolation() throws {
+        let app=XCUIApplication();app.launch()
+        if app.textFields["playerName"].waitForExistence(timeout:2) {createDashboardSample(app,name:"ReplayKeeper")}
+        let name=app.staticTexts["homePlayerName"].label
+        reveal(app.staticTexts["calendarDate"],in:app)
+        let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label,action=app.staticTexts["calendarAction"].label
+        app.terminate();app.launchArguments=["-field-replay-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["fieldVerificationNotice"].waitForExistence(timeout:5))
+        XCTAssertTrue(app.staticTexts["fieldVerificationAbilities"].label.contains("60"))
+        let timer=app.staticTexts["fieldVerificationTime"]
+        let initial=timer.label
+        app.buttons["fieldVerificationNext"].tap();XCTAssertNotEqual(timer.label,initial)
+        app.buttons["fieldVerificationReset"].tap();XCTAssertEqual(timer.label,initial)
+        app.buttons["fieldVerificationSpeed"].tap();app.buttons["fieldVerificationSpeed-0.25"].tap()
+        app.buttons["fieldVerificationPlay"].tap();Thread.sleep(forTimeInterval:0.6)
+        app.buttons["fieldVerificationPlay"].tap();let paused=timer.label
+        Thread.sleep(forTimeInterval:0.3);XCTAssertEqual(timer.label,paused)
+        for scenario in ["땅볼 아웃","2루 슬라이딩","병살","태그업","중계","포구 실책","악송구","번트"] {
+            reveal(app.buttons["fieldVerificationScenario"],in:app);app.buttons["fieldVerificationScenario"].tap()
+            app.buttons[scenario].tap()
+            XCTAssertFalse(app.staticTexts["fieldVerificationError"].exists,scenario)
+            if ["포구 실책","악송구"].contains(scenario) {XCTAssertTrue(app.staticTexts["fieldVerificationForcedError"].exists)}
+            reveal(app.buttons["fieldVerificationNext"],in:app);app.buttons["fieldVerificationNext"].tap()
+        }
+        reveal(app.buttons["fieldVerificationScenario"],in:app);app.buttons["fieldVerificationScenario"].tap();app.buttons["중계"].tap()
+        app.segmentedControls["fieldVerificationPreset"].buttons["높음 85"].tap()
+        XCTAssertTrue(app.staticTexts["fieldVerificationAbilities"].label.contains("85"))
+        reveal(app.otherElements["fieldReplayCanvas"],in:app)
+        let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Replay lab relay field";shot.lifetime = .keepAlways;add(shot)
+        app.terminate();app.launchArguments=["-field-replay-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        reveal(app.buttons["fieldVerificationNext"],in:app)
+        XCTAssertLessThanOrEqual(app.buttons["fieldVerificationNext"].frame.maxX,app.windows.firstMatch.frame.maxX)
+        app.buttons["fieldVerificationNext"].tap()
+        let large=XCTAttachment(screenshot:app.screenshot());large.name="Replay lab large controls";large.lifetime = .keepAlways;add(large)
+        app.terminate();app.launchArguments=[];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:5));XCTAssertEqual(app.staticTexts["homePlayerName"].label,name)
+        reveal(app.staticTexts["calendarDate"],in:app)
+        XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue);XCTAssertEqual(app.staticTexts["calendarAction"].label,action)
+    }
+
     @MainActor func testImmersiveInplayFieldLivePitcherBatterReplayAndLargeText() throws {
         let app=XCUIApplication();app.launch()
         app.buttons["role-pitcher"].tap();app.buttons["hand-left"].tap()

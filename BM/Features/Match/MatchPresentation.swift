@@ -1025,6 +1025,8 @@ struct DetailedFieldReplayBoard: View {
     var throwingHand = "right"
     var ownTeamFielding: Bool? = nil
     var scoreText = "IN PLAY"
+    var previewTime:Double? = nil
+    var showsContactPoints = false
     var onResolved: @MainActor () -> Void = {}
     let complete: @MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduced
@@ -1033,10 +1035,10 @@ struct DetailedFieldReplayBoard: View {
     @State private var resolved = false
     private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
     var body: some View {
-        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:!animated || resolved)) { timeline in
+        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved)) { timeline in
             let elapsed=start.map {timeline.date.timeIntervalSince($0)} ?? 0
-            let time=resolved ? play.duration:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:animated)
-            let finished = !animated || resolved
+            let time=previewTime.map {max(0,min(play.duration,$0))} ?? (resolved ? play.duration:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:animated))
+            let finished=previewTime.map {$0>=play.duration} ?? (!animated || resolved)
             let phase=FieldReplayPresentation.phase(play,time:time,finished:finished)
             let second=play.secondThrow
             let target=time >= (second?.releaseAt ?? .infinity) ? 1:play.targetBase
@@ -1091,6 +1093,18 @@ struct DetailedFieldReplayBoard: View {
                         let p=ballPoint(max(0,time-Double(i)*0.04))
                         context.fill(Path(CGRect(x:p.x,y:p.y,width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
                     }
+                    if showsContactPoints {
+                        for index in play.fielders.indices {
+                            let at=FieldNode.sample(play.fielders[index],at:time)
+                            let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:at,size:size)
+                            let hand=[FieldSpriteStage.windup,.release].contains(motion.stage)
+                            if let contact=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:index == leftIndex,hand:hand) {
+                                let scale=InplayFieldProjection.actorScale(at,size:size),base=point(at)
+                                let marker=CGPoint(x:base.x+(contact.x+motion.bodyOffset.x)*scale,y:base.y+(contact.y+motion.bodyOffset.y)*scale)
+                                context.stroke(Path(ellipseIn:CGRect(x:marker.x-3,y:marker.y-3,width:6,height:6)),with:.color(GameTheme.gold),lineWidth:1)
+                            }
+                        }
+                    }
                     PixelBaseball.draw(in:context,at:ballPoint(time),diameter:max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size)))
                     if finished {
                         let label=FieldReplayPresentation.resultTitle(play)
@@ -1111,6 +1125,7 @@ struct DetailedFieldReplayBoard: View {
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
         }
         .task(id:play.eventID + (animated ? ":live":":still")) {
+            guard previewTime == nil else {return}
             start=Date();resolved=false
             guard animated else {return}
             do {try await Task.sleep(for:.seconds(seconds))} catch {return}

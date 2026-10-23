@@ -126,6 +126,8 @@ struct PlayerHomeView: View {
                 recentGames
                 GamePanel(title: "커리어 메뉴", onBoard: true) {
                     #if DEBUG
+                    NavigationLink("인플레이 · 상황별 검증") { FieldReplayVerification() }
+                        .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openFieldVerification")
                     NavigationLink("스카우트·계약 · 화면 시안") { ScoutingContractPreview() }
                         .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openScoutingPreview")
                     NavigationLink("포지션 훈련 · 화면 미리보기") { PositionTrainingPreview() }

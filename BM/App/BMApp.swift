@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-career-path-verification") {
+            if ProcessInfo.processInfo.arguments.contains("-field-replay-verification") {
+                NavigationStack { FieldReplayVerification() }
+            } else if ProcessInfo.processInfo.arguments.contains("-career-path-verification") {
                 CareerPathVerification()
             } else if ProcessInfo.processInfo.arguments.contains("-scouting-contract-preview") {
                 NavigationStack { ScoutingContractPreview() }

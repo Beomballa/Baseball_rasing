@@ -1358,4 +1358,57 @@ import SwiftUI
         }
     }
 
+    func testVerificationScenariosValidateAndExposeRealBaselineOutcomesWithoutRNG() throws {
+        for scenario in FieldVerificationScenario.allCases {
+            for ability in [30.0,60,85] {
+                let play:MatchDetailedPlay
+                do {play=try scenario.make(ability:ability)}
+                catch {XCTFail("QA fixture \(scenario.rawValue) ability \(ability): \(error)");throw error}
+                try play.validate();XCTAssertNotNil(play.battedBall)
+                XCTAssertEqual(play,try scenario.make(ability:ability))
+                XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:JSONEncoder().encode(play)))
+                let events=FieldVerificationScenario.moments(play)
+                XCTAssertEqual(events,events.sorted());XCTAssertEqual(Set(events).count,events.count)
+                XCTAssertEqual(events.first,0);XCTAssertEqual(events.last,play.duration)
+                XCTAssertTrue(events.contains(play.controlAt))
+            }
+        }
+        XCTAssertFalse(try FieldVerificationScenario.single.make().out)
+        XCTAssertTrue(try FieldVerificationScenario.groundOut.make().out)
+        XCTAssertEqual(try FieldVerificationScenario.doubleHit.make().runners.first {$0.from == 0}?.destination,2)
+        XCTAssertNotNil(try FieldVerificationScenario.doublePlay.make().secondThrow)
+        XCTAssertEqual(try FieldVerificationScenario.tagUp.make().fly?.caught,true)
+        XCTAssertNotNil(try FieldVerificationScenario.relay.make().relay)
+        XCTAssertEqual(try FieldVerificationScenario.fieldError.make().misplay?.kind,.fielding)
+        XCTAssertEqual(try FieldVerificationScenario.throwError.make().misplay?.kind,.throwing)
+        XCTAssertEqual(try FieldVerificationScenario.bunt.make().battedBall?.kind,.bunt)
+    }
+
+    func testVerificationClockPauseSpeedSeekAndEndDoNotSkipElapsedTime() {
+        let start=Date(timeIntervalSince1970:1000)
+        var clock=FieldVerificationClock()
+        clock.play(at:start,duration:10)
+        XCTAssertEqual(clock.time(at:start.addingTimeInterval(2),duration:10),2)
+        clock.speed(0.25,at:start.addingTimeInterval(2),duration:10)
+        XCTAssertEqual(clock.time(at:start.addingTimeInterval(6),duration:10),3)
+        clock.pause(at:start.addingTimeInterval(6),duration:10)
+        XCTAssertEqual(clock.time(at:start.addingTimeInterval(100),duration:10),3)
+        clock.seek(9,duration:10);clock.play(at:start,duration:10)
+        XCTAssertEqual(clock.time(at:start.addingTimeInterval(20),duration:10),10)
+        clock.pause(at:start.addingTimeInterval(20),duration:10);clock.play(at:start.addingTimeInterval(21),duration:10)
+        XCTAssertEqual(clock.time(at:start.addingTimeInterval(21),duration:10),0)
+        clock.seek(-2,duration:10);XCTAssertEqual(clock.elapsed,0)
+    }
+
+    func testControlledVerificationBoardNeverFiresCareerCompletionCallbacks() async throws {
+        var callbacks=0
+        let play=try FieldVerificationScenario.doublePlay.make(),window=UIWindow(frame:CGRect(x:0,y:0,width:390,height:700))
+        for time in [0.0,play.pickupAt,play.duration] {
+            window.rootViewController=UIHostingController(rootView:DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),previewTime:time,showsContactPoints:true,onResolved:{callbacks+=1}) {callbacks+=1})
+            window.makeKeyAndVisible();try await Task.sleep(for:.milliseconds(150))
+            XCTAssertEqual(callbacks,0)
+        }
+        window.isHidden=true;window.rootViewController=nil
+    }
+
 }

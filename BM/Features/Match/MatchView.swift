@@ -212,3 +212,174 @@ private struct PositionPracticeDestination: View {
         }
     }
 }
+
+#if DEBUG
+// Fixed QA inputs. No career container, random stream, reward or save is opened here.
+enum FieldVerificationScenario:String,CaseIterable,Identifiable {
+    case single="1루 세이프", groundOut="땅볼 아웃", doubleHit="2루 슬라이딩", doublePlay="병살"
+    case tagUp="태그업", relay="중계", fieldError="포구 실책", throwError="악송구", bunt="번트"
+    var id:String {rawValue}
+    var position:String {
+        switch self {case .relay:"2B";case .tagUp:"CF";case .doubleHit:"LF";case .bunt:"P";default:"SS"}
+    }
+    var forcedError:Bool {self == .fieldError || self == .throwError}
+    func make(ability:Double=60) throws -> MatchDetailedPlay {
+        let stats=MatchFieldStats(version:3,speed:ability,defense:ability,arm:ability,position:position,activeTraits:[],positionMastery:100)
+        let airborne=self == .tagUp || self == .relay
+        let landing:FieldPoint=self == .doubleHit ? .init(x:-44,y:83):self == .relay ? .init(x:0,y:95):self == .tagUp ? .init(x:0,y:90):self == .doublePlay ? .init(x:-14,y:35):.init(x:-16,y:37)
+        let distance=hypot(landing.x,landing.y),flight=airborne ? (self == .relay ? 7.0:5.5):distance/(35*0.68)
+        let shot:MatchBattedBall
+        if self == .bunt {
+            shot = .make(quality:0.85,contact:60,power:60,bunt:true,speedDraw:0.5,angleDraw:0.2,directionDraw:0.2)
+        } else {
+            shot=MatchBattedBall(kind:airborne ? .fly:.ground,quality:0.75,contact:60,power:60,
+                speed:airborne ? flight*9.81/(2*sin(Double.pi/3)):35,angle:airborne ? 60:0,
+                direction:atan2(landing.x,landing.y)*180 / .pi,distance:distance,flight:flight)
+        }
+        let before:[FieldRunnerProfile?]=self == .doublePlay ? [FieldRunnerProfile(speed:60),nil,nil]:airborne ? [nil,nil,FieldRunnerProfile(speed:100)]:[nil,nil,nil]
+        let runner=FieldRunnerProfile(speed:forcedError ? 30:self == .groundOut || self == .doublePlay ? 60:100)
+        var play=airborne ? DetailedFieldRules.resolveFly(half:0,order:0,landing:shot.landing,flight:shot.flight,runners:before,
+            batter:runner,outs:0,stats:stats,defending:true,ownBatter:false,relayEnabled:true):
+            DetailedFieldRules.resolve(half:0,order:0,landing:shot.landing,flight:shot.flight,runners:before,
+                batter:runner,outs:0,stats:stats,defending:true,ownBatter:false,doublePlayEnabled:true,groundBall:shot.kind == .ground,relayEnabled:true)
+        play.ball=shot.nodes+play.ball.filter {$0.at>shot.flight};play.battedBall=shot;play.version=5
+        if forcedError {
+            var draws=Array(repeating:0.999999,count:7);draws[self == .fieldError ? 0:1]=0
+            play=FieldMisplayRules.applying(to:play,stats:stats,defending:true,draws:draws)
+            play.battedBall=shot
+            guard play.misplay != nil else {throw MatchError.invalidRecord}
+        }
+        try play.validate();return play
+    }
+    static func moments(_ play:MatchDetailedPlay) -> [Double] {
+        var events:[Double]=[0,play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration]
+        if let relay=play.relay {events += [relay.receiveAt,relay.releaseAt]}
+        if let second=play.secondThrow {events += [second.releaseAt,second.ballAt,second.controlAt]}
+        if let error=play.misplay {events += [error.at,error.scatteredAt,error.recoveredAt]}
+        events += play.runners.flatMap {$0.nodes.map(\.at)}
+        return Array(Set(events)).sorted()
+    }
+}
+
+struct FieldVerificationClock {
+    private(set) var elapsed=0.0
+    private(set) var startedAt:Date?
+    private(set) var rate=1.0
+    func time(at now:Date,duration:Double) -> Double {
+        min(duration,max(0,elapsed+(startedAt.map {max(0,now.timeIntervalSince($0))*rate} ?? 0)))
+    }
+    mutating func play(at now:Date,duration:Double) {
+        if elapsed>=duration {elapsed=0}
+        startedAt=now
+    }
+    mutating func pause(at now:Date,duration:Double) {elapsed=time(at:now,duration:duration);startedAt=nil}
+    mutating func seek(_ value:Double,duration:Double) {elapsed=max(0,min(duration,value));startedAt=nil}
+    mutating func speed(_ value:Double,at now:Date,duration:Double) {
+        elapsed=time(at:now,duration:duration)
+        if startedAt != nil {startedAt=now}
+        rate=[0.25,0.5,1].contains(value) ? value:1
+    }
+}
+
+struct FieldReplayVerification:View {
+    @State private var scenario=FieldVerificationScenario.single
+    @State private var ability=60.0
+    @State private var sample:MatchDetailedPlay?
+    @State private var failure:String?
+    @State private var clock=FieldVerificationClock()
+    @State private var contacts=false
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var controlsLayout:AnyLayout {
+        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing:8)):AnyLayout(HStackLayout(spacing:8))
+    }
+    var body:some View {
+        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:clock.startedAt == nil)) { timeline in
+            let duration=sample?.duration ?? 0
+            let time=clock.time(at:timeline.date,duration:duration)
+            ScrollView {
+                VStack(alignment:.leading,spacing:12) {
+                    Text("인플레이 재현실").font(.title2.bold()).foregroundStyle(GameTheme.gold)
+                    Text("검증 전용 · 선수 저장/날짜/피로/XP 변경 없음")
+                        .font(.caption).accessibilityIdentifier("fieldVerificationNotice")
+                    Picker("상황",selection:$scenario) {
+                        ForEach(FieldVerificationScenario.allCases) {Text($0.rawValue).tag($0)}
+                    }.pickerStyle(.menu).accessibilityIdentifier("fieldVerificationScenario")
+                    GamePanel(title:"야수 기준 · 가상 검증값",onBoard:true) {
+                        Text("조정 대상 \(scenario.position) · 스피드/수비/송구 \(Int(ability))")
+                            .font(.subheadline).accessibilityIdentifier("fieldVerificationAbilities")
+                        Picker("대상 야수 기량",selection:$ability) {
+                            Text("낮음 30").tag(30.0);Text("기본 60").tag(60.0);Text("높음 85").tag(85.0)
+                        }.pickerStyle(.segmented).accessibilityIdentifier("fieldVerificationPreset")
+                        Text("나머지 8명은 각각 60 · 특성 없음 · 기준 장면의 결과는 기량에 따라 달라질 수 있음")
+                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        if scenario.forcedError {
+                            Text("실책 발생 강제 · 연출 재현용 / 실전 발생 확률과 별도")
+                                .font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldVerificationForcedError")
+                        }
+                    }
+                    if let play=sample {
+                        controlsLayout {
+                            Button(clock.startedAt == nil ? "재생":"일시정지") {
+                                if clock.startedAt == nil {clock.play(at:Date(),duration:play.duration)}
+                                else {clock.pause(at:Date(),duration:play.duration)}
+                            }.accessibilityIdentifier("fieldVerificationPlay")
+                            Button("처음으로") {clock.seek(0,duration:play.duration)}.accessibilityIdentifier("fieldVerificationReset")
+                        }.buttonStyle(GameButtonStyle(secondary:true,onBoard:true))
+                        controlsLayout {
+                            Button("이전 구간") {step(play,time:time,forward:false)}.accessibilityIdentifier("fieldVerificationPrevious")
+                            Button("다음 구간") {step(play,time:time,forward:true)}.accessibilityIdentifier("fieldVerificationNext")
+                            Menu("\(clock.rate,specifier:"%.2g")×") {
+                                ForEach([1.0,0.5,0.25],id:\.self) {rate in
+                                    Button("\(rate,specifier:"%.2g")×") {clock.speed(rate,at:Date(),duration:play.duration)}
+                                        .accessibilityIdentifier("fieldVerificationSpeed-\(rate)")
+                                }
+                            }.accessibilityIdentifier("fieldVerificationSpeed")
+                        }.buttonStyle(GameButtonStyle(secondary:true,onBoard:true))
+                        Slider(value:Binding(get:{time},set:{clock.seek($0,duration:play.duration)}),in:0...max(0.001,play.duration))
+                            .tint(GameTheme.gold).accessibilityLabel("재생 시각").accessibilityIdentifier("fieldVerificationScrubber")
+                        Text("\(time,specifier:"%.2f") / \(play.duration,specifier:"%.2f")초")
+                            .monospacedDigit().accessibilityIdentifier("fieldVerificationTime")
+                        DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),animated:false,ownPosition:scenario.position,
+                            ownTeamFielding:true,previewTime:FieldReplayPresentation.time(play,elapsed:time,reduced:reduced,animated:true),showsContactPoints:contacts) {}
+                        Toggle("손·글러브 접촉점 표시",isOn:$contacts).accessibilityIdentifier("fieldVerificationContacts")
+                        DisclosureGroup("시각·능력치 진단") {
+                            Text("타구 \(play.battedBall?.kmh ?? 0,specifier:"%.1f") km/h · 포구 \(play.pickupAt,specifier:"%.2f")초 · 송구 수신 \(play.ballAt,specifier:"%.2f")초")
+                            Text("주자 도착 \(play.runnerAt ?? 0,specifier:"%.2f")초 · 공 통제 \(play.controlAt,specifier:"%.2f")초")
+                            let motion=FieldSpriteAnimation.motion(play,index:play.receiver,time:time)
+                            Text("수신 야수 \(DetailedFieldRules.names[play.receiver]) · \(String(describing:motion.stage)) / \(String(describing:motion.baseReceive))")
+                            Text("대상 포구 실책 기준 \(FieldMisplayRules.probability(kind:.fielding,defense:ability,arm:ability,distance:0,traits:[])*100,specifier:"%.2f")% · 특성 없음")
+                            Text("주자 스피드 \(play.runners.map {String(Int($0.profile.speed))}.joined(separator:" / "))")
+                            Text("악송구는 송구/거리로 계산 · 강제 실책은 이 확률 검사가 아님")
+                        }.font(.caption).accessibilityIdentifier("fieldVerificationDiagnostics")
+                    } else if let failure {
+                        Text(failure).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldVerificationError")
+                        Button("다시 구성",action:load).buttonStyle(GameButtonStyle(secondary:true,onBoard:true))
+                    }
+                }.padding(12).foregroundStyle(GameTheme.paper)
+            }.background(GameTheme.board)
+                .onChange(of:time>=duration && duration>0) {_,ended in if ended {clock.pause(at:timeline.date,duration:duration)}}
+        }
+        .navigationTitle("인플레이 검증").navigationBarTitleDisplayMode(.inline)
+        .preferredColorScheme(.dark)
+        .toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar)
+        .toolbarColorScheme(.dark,for:.navigationBar)
+        .onAppear(perform:load)
+        .onChange(of:scenario) {_,_ in load()}
+        .onChange(of:ability) {_,_ in load()}
+        .onChange(of:scenePhase) {_,phase in if phase != .active {clock.pause(at:Date(),duration:sample?.duration ?? 0)}}
+        .onDisappear {clock.pause(at:Date(),duration:sample?.duration ?? 0)}
+    }
+    private func load() {
+        clock.seek(0,duration:0)
+        do {sample=try scenario.make(ability:ability);failure=nil}
+        catch {sample=nil;failure="재현 자료를 구성하지 못했습니다. 실제 선수 저장은 변경하지 않았습니다."}
+    }
+    private func step(_ play:MatchDetailedPlay,time:Double,forward:Bool) {
+        let moments=FieldVerificationScenario.moments(play)
+        let next=forward ? moments.first {$0>time+0.001} ?? play.duration:moments.last {$0<time-0.001} ?? 0
+        clock.seek(next,duration:play.duration)
+    }
+}
+#endif
