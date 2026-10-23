@@ -66,6 +66,23 @@ class RuntimeSpriteTests(unittest.TestCase):
                     self.assertIsInstance(f['sourceLeft'],bool)
                     if kind=='runner':self.assertTrue(f['file'].startswith('runner-'))
 
+    def test_dedicated_arrival_frames_have_reviewed_sources_and_contact_anchors(self):
+        m=json.loads((ART/'field-runtime-v1.json').read_text())
+        for kind,entries in m['kinds'].items():
+            actions=['slideEnter','slideHold','slideRecover'] if kind=='runner' else ['baseReach','baseSecure','baseTag']
+            for sh in entries.values():
+                dedicated=[f for f in sh['frames'] if f['action'] in actions]
+                self.assertEqual([f['action'] for f in dedicated],actions)
+                for f in dedicated:
+                    self.assertEqual(f['file'],kind+'-arrival-v1.png')
+                    self.assertGreater(f['referenceHeight'],250)
+                    for anchor in ['pivot','glove','hand']:
+                        self.assertTrue(0<=f[anchor][0]<=f['rect'][2])
+                        self.assertTrue(0<=f[anchor][1]<=f['rect'][3])
+                    data=(ART/f['file']).read_bytes()
+                    self.assertEqual(data[25],6)
+                    self.assertEqual(blob_issues(str((ART/f['file']).relative_to(ROOT)),data),[])
+
 class ThrowPreviewTests(unittest.TestCase):
     def test_release_flight_arrival_catch_and_loop_for_all_targets(self):
         source=(ROOT/'scripts/preview_field_sprites.html').read_text()

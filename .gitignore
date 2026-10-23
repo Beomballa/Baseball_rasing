@@ -126,3 +126,8 @@
 !/BM/Resources/MatchArt/runner-ready-v1.png
 !/BM/Resources/MatchArt/runner-run-a-v1.png
 !/BM/Resources/MatchArt/runner-run-b-v1.png
+
+# Reviewed dedicated slide / base receive / tag source frames.
+!/BM/Resources/MatchArt/runner-arrival-v1.png
+!/BM/Resources/MatchArt/fielder-arrival-v1.png
+!/BM/Resources/MatchArt/catcher-arrival-v1.png

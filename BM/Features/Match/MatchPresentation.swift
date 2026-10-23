@@ -31,6 +31,8 @@ enum MatchArt {
         let hand: [Double]
         let glove: [Double]
         let sourceLeft: Bool
+        let referenceHeight: Double?
+        let numberCenter: [Double]?
     }
     struct Sheet: Decodable {let referenceHeight: Double;let frames: [Frame]}
     struct Manifest: Decodable {let kinds: [String:[String:Sheet]]}
@@ -61,17 +63,33 @@ enum MatchArt {
         case .followThrough:
             poses=kind == "catcher" ? [("release",1-p),("ready",p)]:p<0.5 ? [("release",1-p*2),("followThrough",p*2)]:[("followThrough",2-p*2),("ready",p*2-1)]
         }
-        if kind == "runner" && motion.runnerPose == .slide {poses=[("runB",1)]}
+        if kind == "runner" && motion.runnerPose == .slide {
+            let phase=motion.reducedArrival ? 0.5:motion.arrivalProgress
+            poses=[(phase<0.24 ? "slideEnter":phase<0.82 ? "slideHold":"slideRecover",1)]
+        } else if kind != "runner" && motion.baseReceive != .none {
+            let action: String
+            switch motion.receivePose {
+            case .reach:action="baseReach"
+            case .secure,.recover:action="baseSecure"
+            case .tag:action="baseTag"
+            }
+            poses=[(action,1)]
+        }
         // Use one opaque pose; the ball reads exactly the same hand/mitt anchor.
         if let pose=poses.enumerated().max(by: {a,b in a.element.1 == b.element.1 ? a.offset<b.offset:a.element.1<b.element.1}) {
             poses=[(pose.element.0,1)]
         }
         // A single physical scale for the whole direction avoids pose-dependent size pulses.
-        let widest=sheet.frames.map {$0.rect[2]}.max() ?? sheet.referenceHeight
+        let widest=sheet.frames.filter {$0.referenceHeight == nil}.map {$0.rect[2]}.max() ?? sheet.referenceHeight
         let unit=min(24/sheet.referenceHeight,26/widest)
         return poses.compactMap {action,weight in
             guard weight>0,let frame=sheet.frames.first(where:{$0.action==action}) ?? sheet.frames.first(where:{$0.action=="ready"}) else {return nil}
-            return Sample(frame:frame,weight:weight,unit:unit,mirrored:left != frame.sourceLeft)
+            let authoredUnit:Double
+            if let height=frame.referenceHeight {
+                let width=sheet.frames.filter {$0.referenceHeight == height}.map {$0.rect[2]}.max() ?? frame.rect[2]
+                authoredUnit=min(24/height,26/width)
+            } else {authoredUnit=unit}
+            return Sample(frame:frame,weight:weight,unit:authoredUnit,mirrored:left != frame.sourceLeft)
         }
     }
     static func contact(_ motion:FieldSpriteMotion,kind:String,left:Bool,hand:Bool) -> CGPoint? {
@@ -111,7 +129,7 @@ enum MatchArt {
             if let color {for (offset,shift) in [(0,16),(1,8),(2,0)] {bytes[i+offset]=UInt8(min(255,Double((color>>shift)&255)*shade)*Double(a)/255)}}
         }}
         if back {
-            PlayerMotionArt.drawNumber(number,at:CGPoint(x:Double(w)*0.5,y:Double(h)*0.49),angle:0,
+            PlayerMotionArt.drawNumber(number,at:CGPoint(x:f.numberCenter?[0] ?? Double(w)*0.5,y:f.numberCenter?[1] ?? Double(h)*0.49),angle:0,
                 mirrored:sample.mirrored,unit:max(2,w/60),bytes:&bytes,width:w,height:h)
         }
         guard let provider=CGDataProvider(data:Data(bytes) as CFData),let cg=CGImage(width:w,height:h,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:format),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else {return nil}
@@ -124,10 +142,6 @@ enum MatchArt {
         c.opacity=out ? 0.38:1
         c.fill(Path(ellipseIn:CGRect(x:point.x-7*scale,y:point.y-1*scale,width:14*scale,height:3*scale)),with:.color(.black.opacity(0.25)))
         if selected {c.stroke(Path(ellipseIn:CGRect(x:point.x-8*scale,y:point.y-2*scale,width:16*scale,height:4*scale)),with:.color(GameTheme.gold),lineWidth:1)}
-        if motion.baseReceive == .force {
-            // The receiving foot stays on the bag as the torso stretches toward the throw.
-            c.fill(Path(CGRect(x:point.x-2*scale,y:point.y-scale,width:4*scale,height:2*scale)),with:.color(Color(hex:0x142b3c)))
-        }
         if kind == "runner" && [.slide,.decelerate].contains(motion.runnerPose) {
             for i in 0..<3 {
                 let trail=Double(i+1)*3
@@ -140,11 +154,7 @@ enum MatchArt {
             let f=sample.frame,u=sample.unit*scale
             var layer=c;layer.opacity *= sample.weight
             layer.translateBy(x:point.x+motion.bodyOffset.x*scale,y:point.y+motion.bodyOffset.y*scale)
-            if kind == "runner" && motion.runnerPose == .slide {
-                // Feet remain the pivot at the saved base; no extra world-space advance.
-                layer.rotate(by:.radians(-motion.facing.vector.x*1.05*motion.slideAmount))
-                layer.scaleBy(x:1,y:1-0.38*motion.slideAmount)
-            } else if kind == "runner" && motion.runnerPose == .tagUp {
+            if kind == "runner" && motion.runnerPose == .tagUp {
                 layer.scaleBy(x:1,y:0.90)
             }
             if sample.mirrored {layer.scaleBy(x:-1,y:1)}
@@ -598,6 +608,7 @@ enum FieldFacing: Int,CaseIterable,Equatable {
 
 enum FieldRunnerPose: Equatable {case stride,accelerate,turn,decelerate,slide,tagUp,settled}
 enum FieldBaseReceive: Equatable {case none,force,tag}
+enum FieldReceivePose: Equatable {case reach,secure,tag,recover}
 
 enum FieldSpriteStage: Equatable {case ready,run,catchBall,gather,windup,release,followThrough}
 struct FieldSpriteMotion {
@@ -611,18 +622,17 @@ struct FieldSpriteMotion {
     var runnerPose:FieldRunnerPose = .stride
     var baseReceive:FieldBaseReceive = .none
     var arrivalProgress:Double = 0
+    var receivePose:FieldReceivePose = .reach
+    var reducedArrival=false
 
-    var slideAmount:Double {
-        runnerPose == .slide ? max(0,min(1,arrivalProgress/0.22,(1-arrivalProgress)/0.22)):0
-    }
     var bodyOffset:CGPoint {
+        // These frames already articulate knees/hips and anchor the contact cleat to the bag.
+        if runnerPose == .slide || baseReceive != .none {return .zero}
         let lean=stage == .followThrough ? facing.vector.x*sin(progress * .pi)*2:stage == .run ? facing.vector.x*1.2:0
         let bob=stage == .run ? -abs(cos(gait))*1.4:stage == .catchBall && !airCatch && !chestCatch ? sin(progress * .pi/2)*3:stage == .gather && !airCatch && !chestCatch ? (1-progress)*3:0
-        let crouch=runnerPose == .tagUp ? 2.0:runnerPose == .slide ? 5*slideAmount:0
+        let crouch=runnerPose == .tagUp ? 2.0:0
         let drive=runnerPose == .accelerate ? 2*(1-arrivalProgress):runnerPose == .decelerate ? -1.5:0
-        let reach=baseReceive == .tag ? sin(arrivalProgress * .pi)*2:0
-        let stretch=baseReceive == .force ? 1.5:0
-        return CGPoint(x:lean+facing.vector.x*(drive+reach+stretch),y:bob+crouch+reach)
+        return CGPoint(x:lean+facing.vector.x*drive,y:bob+crouch)
     }
     func throwingHand(left:Bool) -> CGPoint {
         let side=(left ? -1.0:1)*(facing.back ? 1:-1)
@@ -739,7 +749,7 @@ enum FieldSpriteAnimation {
         if [2,3].contains(runner.destination) && time>=arrival-0.34 && time<arrival+0.24 {
             result.motion.runnerPose = .slide
             result.motion.arrivalProgress=max(0,min(1,(time-arrival+0.34)/0.58))
-            if reduced {result.motion.stage = .ready}
+            if reduced {result.motion.stage = .ready;result.motion.reducedArrival=true}
         } else if runner.from == 0 && runner.destination == 1 && !runner.out && time>=arrival {
             let window=max(0.001,min(0.4,play.duration-arrival))
             let p=max(0,min(1,(time-arrival)/window))
@@ -769,16 +779,20 @@ enum FieldSpriteAnimation {
         if receive.force {
             result.baseReceive = .force
             result.chestCatch=true
-        } else if time>=receive.at {
+        } else {
             result.baseReceive = .tag;result.chestCatch=false;result.airCatch=false
             result.stage = .catchBall;result.progress=1
             result.arrivalProgress=max(0,min(1,(time-receive.at)/max(0.12,receive.control+0.28-receive.at)))
-            if let runner=play.runners.first(where:{$0.from == receive.runner}) {
+            if time>=min(receive.control,receive.at+0.06),let runner=play.runners.first(where:{$0.from == receive.runner}) {
                 let at=FieldNode.sample(play.fielders[index],at:time)
                 let target=FieldNode.sample(runner.nodes,at:receive.control)
                 result.facing = .direction(dx:target.x-at.x,dy:target.y-at.y)
             }
         }
+        if time<receive.at {result.receivePose = .reach}
+        else if receive.force || time<min(receive.control,receive.at+0.06) {result.receivePose = .secure}
+        else if time<receive.control+0.12 {result.receivePose = .tag}
+        else {result.receivePose = .recover}
         return result
     }
     private static func fieldingMotion(_ play:MatchDetailedPlay,index:Int,time:Double) -> FieldSpriteMotion {

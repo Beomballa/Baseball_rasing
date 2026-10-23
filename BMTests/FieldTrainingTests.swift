@@ -1333,12 +1333,110 @@ import SwiftUI
                 FieldRasterArt.draw(in:context,at:CGPoint(x:42+col*78,y:80+row*90),scale:2,motion:motion,kind:"runner",kit:0x316841,skin:0xba7750,hair:0x382416,number:47,left:false,selected:false,out:false)
             }}
             for (col,style) in [FieldBaseReceive.force,.tag].enumerated() {
-                let motion=FieldSpriteMotion(facing:.west,stage:.catchBall,progress:1,chestCatch:style == .force,baseReceive:style,arrivalProgress:0.5)
+                let motion=FieldSpriteMotion(facing:.west,stage:.catchBall,progress:1,chestCatch:style == .force,baseReceive:style,arrivalProgress:0.5,receivePose:style == .tag ? .tag:.secure)
                 FieldRasterArt.draw(in:context,at:CGPoint(x:110+col*200,y:270),scale:2,motion:motion,kind:col == 0 ? "fielder":"catcher",kit:0x8b3440,skin:0xefbe91,hair:0x263b48,number:13,left:false,selected:false,out:false)
             }
         }.frame(width:480,height:300).background(GameTheme.board)
         let image=try XCTUnwrap(ImageRenderer(content:view).uiImage)
         let attachment=XCTAttachment(image:image);attachment.name="Runner start turn overrun slide tag-up and force-tag poses";attachment.lifetime = .keepAlways;add(attachment)
+    }
+
+    func testDedicatedArrivalFramesCoverEightDirectionsBothHandsWithoutRunPoseDeformation() throws {
+        for kind in ["runner","fielder","catcher"] {for facing in FieldFacing.allCases {for left in [false,true] {
+            var actions=Set<String>()
+            for step in 0..<3 {
+                var motion=FieldSpriteMotion(facing:facing,stage:.catchBall,progress:1)
+                if kind == "runner" {motion.runnerPose = .slide;motion.arrivalProgress=[0.1,0.5,0.95][step]}
+                else {motion.baseReceive = .tag;motion.receivePose=[.reach,.secure,.tag][step]}
+                let samples=FieldRasterArt.samples(motion,kind:kind,left:left)
+                XCTAssertEqual(samples.count,1)
+                let sample=try XCTUnwrap(samples.first)
+                XCTAssertEqual(sample.weight,1);XCTAssertEqual(motion.bodyOffset,.zero)
+                XCTAssertEqual(sample.frame.file,"\(kind)-arrival-v1.png")
+                XCTAssertLessThanOrEqual(sample.frame.rect[2]*sample.unit,26.0001)
+                XCTAssertNotNil(sample.frame.referenceHeight);actions.insert(sample.frame.action)
+                let cg=try XCTUnwrap(FieldRasterArt.image(sample,kit:0x316841,skin:0xba7750,hair:0x382416,number:47,back:facing.back)?.cgImage)
+                XCTAssertGreaterThan(cg.width,100);XCTAssertGreaterThan(cg.height,100)
+                let anchor=try XCTUnwrap(FieldRasterArt.contact(motion,kind:kind,left:left,hand:false))
+                XCTAssertEqual(anchor.x,(sample.frame.glove[0]-sample.frame.pivot[0])*sample.unit*(sample.mirrored ? -1:1),accuracy:0.00001)
+            }
+            XCTAssertEqual(actions,kind == "runner" ? ["slideEnter","slideHold","slideRecover"]:["baseReach","baseSecure","baseTag"])
+        }}}
+    }
+
+    func testSavedSlideArrivalSelectsRecoveryAfterStopAndReducedMotionHoldsOnePose() throws {
+        let play=try FieldVerificationScenario.doubleHit.make()
+        let runner=try XCTUnwrap(play.runners.first {$0.from == 0})
+        for (offset,action) in [(-0.32,"slideEnter"),(-0.02,"slideHold"),(0.20,"slideRecover")] {
+            let sample=FieldSpriteAnimation.runner(runner,play:play,time:runner.arrival+offset)
+            XCTAssertEqual(FieldRasterArt.samples(sample.motion,kind:"runner",left:false).first?.frame.action,action)
+            let still=FieldSpriteAnimation.runner(runner,play:play,time:runner.arrival+offset,reduced:true)
+            XCTAssertEqual(FieldRasterArt.samples(still.motion,kind:"runner",left:false).first?.frame.action,"slideHold")
+        }
+    }
+
+    func testReceiveCatchTagRecoveryFollowSavedTimesAndDoublePlayThrowWins() throws {
+        let tag=fly(speed:100),force=doublePlay()
+        for play in [tag,force] {
+            let before=FieldSpriteAnimation.motion(play,index:play.receiver,time:play.ballAt-0.001)
+            XCTAssertEqual(before.receivePose,.reach)
+            let caught=FieldSpriteAnimation.motion(play,index:play.receiver,time:play.ballAt)
+            XCTAssertEqual(caught.receivePose,.secure)
+        }
+        for time in [tag.ballAt-0.001,tag.ballAt] {
+            let at=FieldNode.sample(tag.fielders[tag.receiver],at:time)
+            let incoming=FieldNode.sample(tag.ball,at:max(0,tag.ballAt-0.12))
+            let motion=FieldSpriteAnimation.motion(tag,index:tag.receiver,time:time)
+            XCTAssertEqual(motion.facing,FieldFacing.direction(dx:incoming.x-at.x,dy:incoming.y-at.y),"Receive before turning toward the runner")
+        }
+        XCTAssertEqual(FieldSpriteAnimation.motion(tag,index:tag.receiver,time:tag.controlAt).receivePose,.tag)
+        XCTAssertEqual(FieldSpriteAnimation.motion(tag,index:tag.receiver,time:tag.controlAt+0.2).receivePose,.recover)
+        let second=try XCTUnwrap(force.secondThrow)
+        let outgoing=FieldSpriteAnimation.motion(force,index:force.receiver,time:second.releaseAt)
+        XCTAssertEqual(outgoing.stage,.release);XCTAssertEqual(outgoing.baseReceive,.none)
+        XCTAssertEqual(FieldRasterArt.samples(outgoing,kind:"fielder",left:false).first?.frame.action,"release")
+    }
+
+    func testDedicatedArrivalSamplingLeavesAllSavedScenariosUnchanged() throws {
+        for scenario in FieldVerificationScenario.allCases {
+            let play=try scenario.make(),bytes=try JSONEncoder().encode(play)
+            let saved=try JSONDecoder().decode(MatchDetailedPlay.self,from:bytes)
+            for time in stride(from:0.0,through:play.duration,by:0.03) {
+                for index in play.fielders.indices {
+                    let motion=FieldSpriteAnimation.motion(play,index:index,time:time)
+                    for left in [false,true] {_ = FieldRasterArt.samples(motion,kind:index == 1 ? "catcher":"fielder",left:left)}
+                }
+                for runner in play.runners {
+                    let display=FieldSpriteAnimation.runner(runner,play:play,time:time)
+                    _ = FieldRasterArt.samples(display.motion,kind:"runner",left:false)
+                }
+            }
+            XCTAssertEqual(play,saved);try play.validate()
+        }
+    }
+
+    func testDedicatedSlideReceiveAndTagContactSheetAndActualReplayFrames() throws {
+        let view=Canvas {context,_ in
+            for (row,kind) in ["runner","fielder","catcher"].enumerated() {
+                for column in 0..<8 {for phase in 0..<3 {
+                    let facing=FieldFacing.allCases[column]
+                    var motion=FieldSpriteMotion(facing:facing,stage:.catchBall,progress:1)
+                    if kind == "runner" {motion.runnerPose = .slide;motion.arrivalProgress=[0.1,0.5,0.95][phase]}
+                    else {motion.baseReceive = .tag;motion.receivePose=[.reach,.secure,.tag][phase]}
+                    FieldRasterArt.draw(in:context,at:CGPoint(x:60+column*72,y:68+(row*3+phase)*64),scale:1.8,motion:motion,kind:kind,kit:row == 0 ? 0x316841:0x8b3440,skin:0xba7750,hair:0x382416,number:47,left:false,selected:false,out:false)
+                }}
+            }
+        }.frame(width:640,height:590).background(GameTheme.board)
+        let renderer=ImageRenderer(content:view);renderer.scale=2
+        let image=try XCTUnwrap(renderer.uiImage)
+        let sheet=XCTAttachment(image:image);sheet.name="Dedicated arrival frames eight directions three phases three roles";sheet.lifetime = .keepAlways;add(sheet)
+        for scenario in [FieldVerificationScenario.doubleHit,.doublePlay,.tagUp] {
+            let play=try scenario.make()
+            let time=scenario == .doubleHit ? try XCTUnwrap(play.runners.first {$0.from == 0}).arrival:play.controlAt
+            let board=DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),previewTime:time,showsContactPoints:true,complete:{}).frame(width:390,height:585)
+            let r=ImageRenderer(content:board);r.scale=2
+            let frame=XCTAttachment(image:try XCTUnwrap(r.uiImage));frame.name="Dedicated arrival native \(scenario.rawValue)";frame.lifetime = .keepAlways;add(frame)
+        }
     }
 
     func testFirstBaseOverrunSpriteStaysInsidePhoneFieldViewport() throws {
