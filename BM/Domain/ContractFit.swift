@@ -129,7 +129,8 @@ extension CareerMatch {
               abilityStats?.version == 1, pitching?.version == 1,
               fieldStats?.version == (role == .batter ? 3:2),
               let position = fieldStats?.position else { return nil }
-        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
+        let batted=battedBallVersion.map {"-batted\($0)"} ?? ""
+        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1\(batted)-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
     }
 }
 
@@ -171,7 +172,8 @@ struct ScoutingReference: Codable, Equatable {
         var totals = PersonalSeasonTotals(), performance = tracked ? MatchScoutingPerformance.tracked:MatchScoutingPerformance()
         for (index, profile) in profiles.enumerated() {
             for game in 0..<count {
-                var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0,tracked:tracked)
+                var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0,tracked:tracked,
+                    battedBallVersion:environment.contains("-batted1-") ? 1:nil)
                 // Empty input counts initially identify automatic; match rules/position must still match exactly.
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
                 try run(&match,mode:mode ?? .automatic)
@@ -198,10 +200,11 @@ struct ScoutingReference: Codable, Equatable {
             pitches += 1
         }
     }
-    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false) -> CareerMatch {
+    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil) -> CareerMatch {
         var match = CareerMatch(random:seed,isHome:home,role:role.rawValue,appearance:true,
             contact:values.contact,power:values.power,discipline:values.discipline,mastery:values.pitches)
         match.controlVersion=2;match.trainingEffectsVersion=1;match.detailedFieldVersion=5
+        match.battedBallVersion=battedBallVersion
         match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.abilityStats=MatchAbilityStats(mental:values.mental,velocity:values.velocity,control:values.control,stuff:values.stuff,stamina:values.stamina,fatigue:24)
         match.fieldStats=MatchFieldStats(speed:values.speed,defense:values.defense,arm:values.arm,position:position)

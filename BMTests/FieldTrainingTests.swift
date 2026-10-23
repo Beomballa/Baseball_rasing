@@ -1145,4 +1145,102 @@ import SwiftUI
         }}}
     }
 
+    private func battedPlay(_ ball:MatchBattedBall,runner:Double=60,stats:MatchFieldStats?=nil) -> MatchDetailedPlay {
+        var play=ball.kind.airborne ? DetailedFieldRules.resolveFly(half:0,order:0,landing:ball.landing,flight:ball.flight,
+            runners:[nil,nil,nil],batter:FieldRunnerProfile(speed:runner,own:true),outs:0,stats:stats,defending:stats != nil,ownBatter:true,relayEnabled:true)
+            : DetailedFieldRules.resolve(half:0,order:0,landing:ball.landing,flight:ball.flight,
+            runners:[nil,nil,nil],batter:FieldRunnerProfile(speed:runner,own:true),outs:0,stats:stats,defending:stats != nil,ownBatter:true,
+            doublePlayEnabled:true,groundBall:ball.kind == .ground,relayEnabled:true)
+        play.version=5;play.ball=ball.nodes+play.ball.filter {$0.at>ball.flight};play.battedBall=ball
+        return play
+    }
+    func testBattedSpeedPowerAccuracyBuntControlAndDistinctTrajectories() throws {
+        func shot(_ q:Double=1,_ p:Double=60,_ draw:Double=0.5,_ bunt:Bool=false) -> MatchBattedBall {
+            .make(quality:q,contact:60,power:p,bunt:bunt,speedDraw:0.5,angleDraw:draw,directionDraw:0.5)
+        }
+        XCTAssertGreaterThan(shot(1,100).speed,shot(1,0).speed)
+        XCTAssertGreaterThan(shot(1).speed,shot(0.2).speed)
+        let ground=shot(1,60,0.1),line=shot(),fly=shot(1,60,0.9),bunt=shot(1,60,0.3,true),pop=shot(0,60,0.99,true)
+        XCTAssertEqual([ground.kind,line.kind,fly.kind,bunt.kind,pop.kind],[.ground,.line,.fly,.bunt,.buntPop])
+        XCTAssertLessThan(bunt.speed,shot(0.2,60,0.3,true).speed)
+        XCTAssertLessThan(bunt.distance,shot(0.2,60,0.3,true).distance)
+        XCTAssertLessThan(bunt.distance,ground.distance)
+        XCTAssertLessThan(line.height(at:line.flight/2),fly.height(at:fly.flight/2))
+        let early=ground.point(at:ground.flight*0.25).distance(to:ground.point(at:ground.flight*0.125))
+        let late=ground.point(at:ground.flight*0.875).distance(to:ground.point(at:ground.flight*0.75))
+        XCTAssertGreaterThan(early,late)
+        for ball in [ground,line,fly,bunt,pop] {
+            XCTAssertEqual(ball.nodes.count,25);XCTAssertEqual(ball.nodes.first?.point,DetailedFieldRules.bases[0])
+            XCTAssertEqual(ball.nodes.last!.point.distance(to:ball.landing),0,accuracy:0.000001)
+            XCTAssertEqual(ball.height(at:0),0);XCTAssertEqual(ball.height(at:ball.flight),0,accuracy:0.000001)
+            try battedPlay(ball).validate()
+        }
+    }
+    func testBattedBoundaryInputsStayFiniteAndDirectionUsesContactOffsets() throws {
+        for q in [0.0,0.5,1] {for p in [0.0,50,100] {for draw in [0.0,0.5,0.999999] {for bunt in [false,true] {
+            let ball=MatchBattedBall.make(quality:q,contact:p,power:p,bunt:bunt,offsetX:0.2,offsetY:-0.2,timing:0.1,speedDraw:draw,angleDraw:draw,directionDraw:draw)
+            XCTAssertNoThrow(try battedPlay(ball).validate(),"q=\(q) power=\(p) draw=\(draw) bunt=\(bunt) kind=\(ball.kind) speed=\(ball.speed) flight=\(ball.flight)")
+            XCTAssertTrue(ball.kmh.isFinite)
+        }}}}
+        let left=MatchBattedBall.make(quality:0.8,contact:60,power:60,bunt:false,offsetX:-0.1,timing:-0.08,speedDraw:0.5,angleDraw:0.5,directionDraw:0.5)
+        let right=MatchBattedBall.make(quality:0.8,contact:60,power:60,bunt:false,offsetX:0.1,timing:0.08,speedDraw:0.5,angleDraw:0.5,directionDraw:0.5)
+        XCTAssertLessThan(left.landing.x,0);XCTAssertGreaterThan(right.landing.x,0)
+    }
+    func testBattedArrivalChangesSafeOutAndRunnerGrowthStillMatters() throws {
+        func ball(_ speed:Double) -> MatchBattedBall {
+            MatchBattedBall(kind:.ground,quality:0.8,contact:60,power:60,speed:speed,angle:0,direction:-25,distance:30,flight:30/(speed*0.68))
+        }
+        let fast=battedPlay(ball(30)),slow=battedPlay(ball(10))
+        try fast.validate();try slow.validate()
+        XCTAssertLessThan(fast.controlAt,slow.controlAt)
+        XCTAssertTrue(fast.out);XCTAssertFalse(slow.out)
+        let slowRunner=battedPlay(ball(30),runner:0),fastRunner=battedPlay(ball(30),runner:100)
+        XCTAssertLessThan(fastRunner.runnerAt!,slowRunner.runnerAt!)
+    }
+    func testBattedNewGamesResumeDeterministicallyForBothRolesAndRejectCorruption() throws {
+        for role in ["batter","pitcher"] {for seed in 1...12 {
+            var original=game(seed,role:role);original.detailedFieldVersion=5;original.battedBallVersion=1
+            original.fieldPlays=[];original.runnerProfiles=[nil,nil,nil]
+            var direct=original
+            try original.advance(.automatic)
+            while !direct.completed {
+                try direct.advance(role == "batter" ? .swing:.pitch,pitchCode:role == "pitcher" ? "four-seam":nil)
+                direct=try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(direct))
+                try direct.validateDetailedField()
+            }
+            XCTAssertEqual(direct,original)
+            XCTAssertTrue(original.fieldPlays?.allSatisfy {$0.battedBall != nil} == true)
+        }}
+        var valid=game(9);valid.detailedFieldVersion=5;valid.battedBallVersion=1;valid.fieldPlays=[];valid.runnerProfiles=[nil,nil,nil]
+        try valid.advance(.automatic);try valid.validateDetailedField()
+        var corrupt=valid;corrupt.battedBallVersion=2;XCTAssertThrowsError(try corrupt.validateDetailedField())
+        corrupt=valid;corrupt.fieldPlays![0].battedBall=nil;XCTAssertThrowsError(try corrupt.validateDetailedField())
+        corrupt=valid;corrupt.fieldPlays![0].battedBall?.version=2;XCTAssertThrowsError(try corrupt.validateDetailedField())
+        corrupt=valid;corrupt.fieldPlays![0].ball[1]=FieldNode(at:0.01,point:FieldPoint(x:999,y:999));XCTAssertThrowsError(try corrupt.validateDetailedField())
+    }
+    func testBattedManualAccuracyAndWatchAreUsedBeforeFairBallResolution() throws {
+        for action in [MatchInput.swing,.bunt] {
+            var state=game(12);state.detailedFieldVersion=5;state.battedBallVersion=1;state.fieldPlays=[];state.runnerProfiles=[nil,nil,nil]
+            let delivery=state.delivery()
+            var miss=state,watch=state
+            try miss.advance(action,control:ManualMatchInput(x:delivery.x,y:delivery.y,timing:0))
+            try watch.advance(action,control:ManualMatchInput())
+            XCTAssertFalse(miss.fieldPlays!.contains {$0.ownBatter});XCTAssertFalse(watch.fieldPlays!.contains {$0.ownBatter})
+            try state.advance(action,control:ManualMatchInput(x:delivery.x,y:delivery.y,timing:MatchDelivery.contactPhase))
+            let ball=try XCTUnwrap(state.fieldPlays!.first {$0.ownBatter}?.battedBall)
+            XCTAssertEqual(ball.quality,1,accuracy:0.000001)
+            XCTAssertEqual(ball.kind == .bunt || ball.kind == .buntPop,action == .bunt)
+        }
+    }
+    func testBattedLegacyAbsenceKeepsOldRuleAndNoMetadataIsBackfilled() throws {
+        var old=game(42);old.detailedFieldVersion=5;old.fieldPlays=[];old.runnerProfiles=[nil,nil,nil]
+        let data=try JSONEncoder().encode(old)
+        XCTAssertNil((try JSONSerialization.jsonObject(with:data) as? [String:Any])?["battedBallVersion"])
+        var copy=try JSONDecoder().decode(CareerMatch.self,from:data)
+        try old.advance(.automatic);try copy.advance(.automatic)
+        XCTAssertEqual(old,copy);XCTAssertNil(copy.battedBallVersion)
+        XCTAssertTrue(copy.fieldPlays!.allSatisfy {$0.battedBall == nil})
+        try copy.validateDetailedField()
+    }
+
 }

@@ -118,6 +118,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         }
         match.pitching=MatchPitching(startingFatigue:player.fatigue)
         match.detailedFieldVersion=5;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
+        match.battedBallVersion=1
         if match.appearance, match.abilityStats != nil {
             let values = try Dictionary(uniqueKeysWithValues: MatchAbilityExperience.kinds(role: player.roleRaw).map {
                 ($0.rawValue, try CareerTrainingStore.value(player: player, code: nil, kind: $0, in: context))

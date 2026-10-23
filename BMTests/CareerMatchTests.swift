@@ -102,7 +102,7 @@ import SwiftUI
             _ = try setup(role: .pitcher, in: context)
             let saved = try ready(player, state, in: context)
             try CareerMatchStore.advance(player: player, state: state, record: saved, revision: 0, input: .watch, in: context)
-            let snapshot = try saved.snapshot(); XCTAssertFalse(snapshot.completed)
+            let snapshot = try saved.snapshot(); XCTAssertFalse(snapshot.completed); XCTAssertEqual(snapshot.battedBallVersion,1)
             return snapshot
         }
         let reopened = try CareerStore.makeContainer(url: url); let context = reopened.mainContext
@@ -115,6 +115,7 @@ import SwiftUI
         var next = expected; try next.advance(.automatic)
         try CareerMatchStore.advance(player: batter, state: state, record: saved, revision: saved.revision, input: .automatic, in: context)
         XCTAssertEqual(try saved.snapshot(), next)
+        XCTAssertTrue(next.fieldPlays?.allSatisfy {$0.battedBall != nil} == true)
         XCTAssertEqual(pitcher.fatigue, 52); XCTAssertEqual(pitcher.gameDate, "2026-04-01")
         XCTAssertEqual(pitcher.pitches.sorted { $0.order < $1.order }.map(\.mastery), [72,65,48,35])
         let second = ModelContext(reopened)
@@ -535,4 +536,30 @@ import SwiftUI
             }
         }
     }
+    func testExistingStoredMatchDoesNotAcquireBattedRuleAndFinalResultStillAppliesOnce() throws {
+        for role in PlayerRole.allCases {
+            let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+            let (player,state)=try setup(role:role,in:context)
+            let record=try ready(player,state,in:context),new=try record.snapshot()
+            XCTAssertEqual(new.battedBallVersion,1)
+            var old=CareerMatch(random:41,isHome:new.isHome,role:role.rawValue,appearance:true,
+                contact:player.contact,power:player.power,discipline:player.discipline,mastery:new.mastery)
+            old.controlVersion=2;old.trainingEffectsVersion=1;old.detailedFieldVersion=5
+            old.fieldPlays=[];old.runnerProfiles=[nil,nil,nil];old.fieldStats=new.fieldStats;old.abilityStats=new.abilityStats
+            old.pitching=MatchPitching(startingFatigue:player.fatigue);old.settle()
+            record.payload=try JSONEncoder().encode(old);try context.save()
+            let bytes=record.payload,fatigue=player.fatigue
+            let loaded=try CareerMatchStore.start(player:player,state:state,in:context)
+            XCTAssertEqual(loaded.payload,bytes);XCTAssertNil(try loaded.snapshot().battedBallVersion)
+            var expected=old;try expected.advance(.automatic)
+            try CareerMatchStore.advance(player:player,state:state,record:loaded,revision:loaded.revision,input:.automatic,in:context)
+            XCTAssertEqual(try loaded.snapshot(),expected)
+            XCTAssertTrue(expected.fieldPlays!.allSatisfy {$0.battedBall == nil})
+            XCTAssertEqual(player.fatigue,min(100,fatigue+expected.appliedFatigueCost))
+            let finalBytes=loaded.payload,finalFatigue=player.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:loaded,revision:loaded.revision,input:.automatic,in:context))
+            XCTAssertEqual(loaded.payload,finalBytes);XCTAssertEqual(player.fatigue,finalFatigue)
+        }
+    }
+
 }

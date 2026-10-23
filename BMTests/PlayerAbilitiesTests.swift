@@ -1340,4 +1340,24 @@ extension PlayerAbilitiesTests {
         XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c))
         XCTAssertEqual(row.payload,bytes);XCTAssertEqual(preserved(p),before);XCTAssertFalse(c.hasChanges)
     }
+    func testBattedRuleReferencesAreSeparateAndDirectMixedAutomaticRemainComparable() throws {
+        for role in PlayerRole.allCases {
+            let position=role == .batter ? "CF":"P",values=PlayerArchetype.initial(for:role).values
+            let old=ScoutingReferenceSimulation.fixture(role:role,position:position,values:values,seed:3,home:true,tracked:true)
+            let current=ScoutingReferenceSimulation.fixture(role:role,position:position,values:values,seed:3,home:true,tracked:true,battedBallVersion:1)
+            let environment=try XCTUnwrap(current.scoutingEnvironment)
+            XCTAssertNotEqual(old.scoutingEnvironment,environment);XCTAssertTrue(environment.contains("-batted1-"))
+            var references=[ScoutingReference]()
+            for mode in ScoutingInputMode.allCases {
+                let key=environment.replacingOccurrences(of:"auto-v2",with:mode.suffix)
+                let reference=try XCTUnwrap(ScoutingReferenceSimulation.make(environment:key,role:role,position:position))
+                try reference.validate();XCTAssertEqual(reference.inputMode,mode)
+                XCTAssertEqual(reference,try ScoutingReferenceSimulation.make(environment:key,role:role,position:position))
+                references.append(reference)
+            }
+            XCTAssertEqual(references[0].totals,references[1].totals);XCTAssertEqual(references[0].totals,references[2].totals)
+            XCTAssertEqual(references[0].value,references[1].value);XCTAssertEqual(references[0].value,references[2].value)
+        }
+    }
+
 }

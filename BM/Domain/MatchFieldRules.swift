@@ -86,6 +86,80 @@ struct FieldRunnerProfile: Codable, Equatable {
     var own = false
     var responsiblePitcher: String?
 }
+/// Game balance model for fair balls, not measured ball-tracking data. Persisted only in new matches.
+struct MatchBattedBall: Codable, Equatable {
+    enum Kind: String, Codable, CaseIterable {
+        case ground, line, fly, bunt, buntPop
+        var label: String {
+            switch self {case .ground:"땅볼";case .line:"라인드라이브";case .fly:"뜬공";case .bunt:"번트 땅볼";case .buntPop:"번트 뜬공"}
+        }
+        var airborne: Bool { [.line,.fly,.buntPop].contains(self) }
+    }
+    var version = 1
+    let kind: Kind
+    let quality: Double
+    let contact: Double
+    let power: Double
+    let speed: Double // metres per second at contact
+    let angle: Double // launch angle in degrees
+    let direction: Double // fair spray angle, zero is centre field
+    let distance: Double
+    let flight: Double
+    var kmh: Double { speed*3.6 }
+    var landing: FieldPoint {
+        let radians=direction * .pi/180
+        return FieldPoint(x:sin(radians)*distance,y:cos(radians)*distance)
+    }
+    func point(at time:Double) -> FieldPoint {
+        let t=max(0,min(1,time/flight))
+        let fraction=kind.airborne ? t+0.15*t*(1-t):(t-0.32*t*t)/0.68
+        return FieldPoint(x:landing.x*fraction,y:landing.y*fraction)
+    }
+    func height(at time:Double) -> Double {
+        let t=max(0,min(1,time/flight))
+        if kind.airborne {
+            let vertical=speed*sin(angle * .pi/180)
+            return 4*t*(1-t)*vertical*vertical/(2*9.81)
+        }
+        return abs(sin(t * .pi*6))*(kind == .bunt ? 0.12:0.55)*(1-t)
+    }
+    var nodes: [FieldNode] { (0...24).map {let t=flight*Double($0)/24;return FieldNode(at:t,point:point(at:t))} }
+    static func make(quality:Double,contact:Double,power:Double,bunt:Bool,offsetX:Double=0,offsetY:Double=0,timing:Double=0,
+                     speedDraw:Double,angleDraw:Double,directionDraw:Double) -> Self {
+        let q=max(0,min(1,quality)),c=DetailedFieldRules.clamp(contact),p=DetailedFieldRules.clamp(power)
+        let direction=max(-28,min(28,(directionDraw-0.5)*48+timing*160+offsetX*70))
+        let speed:Double,angle:Double,kind:Kind,distance:Double,flight:Double
+        if bunt {
+            let pop=q<0.4 && angleDraw>0.55+q
+            kind=pop ? .buntPop:.bunt
+            speed=4+(1-q)*7+p*0.01+(speedDraw-0.5)
+            angle=pop ? 45+angleDraw*20:2+(1-q)*10
+        } else {
+            speed=12+p*0.16+q*15+(c-50)*0.025+(speedDraw-0.5)*4
+            angle=max(-18,min(65,10+(angleDraw-0.5)*90+offsetY*70+(1-q)*12))
+            kind=angle<=5 ? .ground:angle<=22 ? .line:.fly
+        }
+        if kind.airborne {
+            flight=max(0.35,2*speed*sin(angle * .pi/180)/9.81)
+            distance=min(95,speed*cos(angle * .pi/180)*flight*0.72)
+        } else {
+            distance=bunt ? 3+(1-q)*10+p*0.015+angleDraw*3:7+speed*1.35+p*0.12+angleDraw*12
+            flight=distance/(speed*0.68)
+        }
+        return Self(kind:kind,quality:q,contact:c,power:p,speed:speed,angle:angle,direction:direction,distance:distance,flight:flight)
+    }
+    func validate(for play:MatchDetailedPlay) throws {
+        guard version == 1,[quality,contact,power,speed,angle,direction,distance,flight].allSatisfy(\.isFinite),
+              (0...1).contains(quality),(0...100).contains(contact),(0...100).contains(power),
+              (3...48).contains(speed),(-18...65).contains(angle),(-28...28).contains(direction),
+              distance>0,distance<=95,flight>0,flight<=12,abs(flight-play.flight)<0.000001,
+              landing.distance(to:play.landing)<0.000001,kind.airborne == (play.fly != nil),
+              kind != .bunt || play.doublePlayGrounder == false,
+              play.ball.count>=nodes.count,
+              zip(nodes,play.ball).allSatisfy({abs($0.at-$1.at)<0.000001 && $0.point.distance(to:$1.point)<0.000001}) else {throw MatchError.invalidRecord}
+    }
+}
+
 struct DetailedRunner: Codable, Equatable {
     let from: Int
     var destination: Int
@@ -148,7 +222,7 @@ struct MatchDetailedPlay: Codable, Equatable {
     let out: Bool
     let runnerAt: Double?
     var runners: [DetailedRunner]
-    let ball: [FieldNode]
+    var ball: [FieldNode]
     let fielders: [[FieldNode]]
     var afterRunners: [FieldRunnerProfile?]
     let runs: Int
@@ -160,6 +234,7 @@ struct MatchDetailedPlay: Codable, Equatable {
     var fly: FieldFlyPlay?
     var relay: FieldRelay?
     var misplay: FieldMisplay?
+    var battedBall: MatchBattedBall?
     var sacrificeFly: Bool { if let misplay { return misplay.sacrificeFly }; return fly?.caught == true && fielder >= 6 && runs > 0 && (outsBefore ?? 2) < 2 }
     var ownParticipation: Bool { if let misplay { return misplay.participation }; return ownDefense || secondThrow?.ownThrower == true || relay?.ownThrower == true }
     var outAt: Double { fly?.caught == true ? controlAt : force ? controlAt : runnerAt ?? controlAt }
@@ -203,6 +278,7 @@ struct MatchDetailedPlay: Codable, Equatable {
                        appliedTraits: appliedTraits, positionDelay: ownDefense ? positionDelay : nil)
     }
     func validate() throws {
+        try battedBall?.validate(for:self)
         if misplay != nil { try FieldMisplayRules.validate(self);return }
         guard [1,2,3,4,5].contains(version), (0..<18).contains(half), order >= 0, (0..<9).contains(fielder), (0..<9).contains(receiver),
               fielder != receiver, (1...4).contains(targetBase), (0...2).contains(outsAdded), outsAdded == (out ? 1 : 0) + (secondThrow?.out == true ? 1 : 0) + (fly?.caught == true ? 1 : 0),
@@ -496,13 +572,17 @@ enum DetailedFieldRules {
 
 extension CareerMatch {
     func validateDetailedField() throws {
+        guard battedBallVersion == nil || battedBallVersion == 1 && detailedFieldVersion == 5 else {throw MatchError.invalidRecord}
         if let version=detailedFieldVersion {
             guard [1,2,3,4,5].contains(version), let plays=fieldPlays, let runners=runnerProfiles,runners.count == 3,
                   runners.map({ $0 != nil }) == bases,Set(plays.map(\.eventID)).count == plays.count else { throw MatchError.invalidRecord }
             for runner in runners.compactMap({ $0 }) {
                 guard runner.speed.isFinite,(0...100).contains(runner.speed),TraitLoadout.valid(runner.traits) else { throw MatchError.invalidRecord }
             }
-            for play in plays { guard play.version == version else { throw MatchError.invalidRecord };try play.validate() }
+            for play in plays {
+                guard play.version == version,(play.battedBall != nil) == (battedBallVersion != nil) else { throw MatchError.invalidRecord }
+                try play.validate()
+            }
         } else if fieldPlays != nil || runnerProfiles != nil { throw MatchError.invalidRecord }
     }
 }
@@ -642,7 +722,7 @@ enum FieldMisplayRules {
     }
     static func opportunities(_ p:MatchDetailedPlay) -> [Opportunity] {
         var result=[Opportunity(stage:0,fielder:p.fielder,kind:.fielding,at:p.pickupAt,target:p.landing)]
-        guard p.ball.count > 2 else { return result }
+        guard p.battedBall == nil ? p.ball.count>2:p.releaseAt>p.pickupAt else { return result }
         result.append(Opportunity(stage:1,fielder:p.fielder,kind:.throwing,at:p.releaseAt,target:p.relay?.point ?? DetailedFieldRules.bases[p.targetBase]))
         if let relay=p.relay {
             result.append(Opportunity(stage:2,fielder:relay.fielder,kind:.fielding,at:relay.receiveAt,target:relay.point))

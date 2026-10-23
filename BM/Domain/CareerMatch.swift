@@ -36,6 +36,7 @@ struct CareerMatch: Codable, Equatable {
     var positionExperience: MatchPositionExperience?
     var abilityExperience: MatchAbilityExperience?
     var detailedFieldVersion: Int?
+    var battedBallVersion: Int?
     var fieldPlays: [MatchDetailedPlay]?
     var runnerProfiles: [FieldRunnerProfile?]?
     var trainingEffectsVersion: Int?
@@ -198,9 +199,15 @@ struct CareerMatch: Codable, Equatable {
             let value = roll()
             if value < hitChance {
                 let homeRun = input != .bunt && roll() < (pitcher ? (abilityStats?.homeRunChance(quality: quality) ?? (0.16 - quality * 0.10)) : power / 500 * quality)
-                endPlate(homeRun ? "홈런" : "안타", batter: !pitcher, pitcher: pitcher, bunt:input == .bunt)
+                endPlate(homeRun ? "홈런" : "안타", batter: !pitcher, pitcher: pitcher, bunt:input == .bunt,
+                    battingQuality:pitcher ? nil:quality,pitchingQuality:pitcher ? quality:nil,
+                    offsetX:pitcher ? 0:control.x-plan.x,offsetY:pitcher ? 0:control.y-plan.y,
+                    timing:pitcher ? 0:(control.timing ?? MatchDelivery.contactPhase)-MatchDelivery.contactPhase)
             } else if !pitcher || value < hitChance + 0.35 {
-                endPlate("범타", batter: !pitcher, pitcher: pitcher, bunt:input == .bunt)
+                endPlate("범타", batter: !pitcher, pitcher: pitcher, bunt:input == .bunt,
+                    battingQuality:pitcher ? nil:quality,pitchingQuality:pitcher ? quality:nil,
+                    offsetX:pitcher ? 0:control.x-plan.x,offsetY:pitcher ? 0:control.y-plan.y,
+                    timing:pitcher ? 0:(control.timing ?? MatchDelivery.contactPhase)-MatchDelivery.contactPhase)
             } else { strikes += 1; message = "헛스윙" }
         }
         if strikes >= 3 { endPlate("삼진", batter: !pitcher, pitcher: pitcher) }
@@ -209,26 +216,43 @@ struct CareerMatch: Codable, Equatable {
                                        x: x, y: y, speed: plan.speed, outcome: message, pitchCode: pitcher ? pitchCode : "four-seam")
     }
 
-    private mutating func endPlate(_ initial: String, batter: Bool, pitcher: Bool, bunt:Bool=false) {
+    private mutating func endPlate(_ initial: String, batter: Bool, pitcher: Bool, bunt:Bool=false,
+            battingQuality:Double?=nil,pitchingQuality:Double?=nil,offsetX:Double=0,offsetY:Double=0,timing:Double=0) {
         var result = initial
         var detailed: MatchDetailedPlay?
         let newRunner = FieldRunnerProfile(speed:batter ? fieldStats?.speed ?? 60 : 60,
             traits:batter ? (fieldStats?.activeTraits ?? []).filter { $0 == .cheetah } : [],own:batter, responsiblePitcher:pitching?.activeID(home:half % 2 == 0))
         if let version=detailedFieldVersion,[1,2,3,4,5].contains(version), ["안타","범타"].contains(initial) {
-            let flyBall = version >= 3 && !bunt && roll() < 0.30
-            let depth = flyBall ? 20 + roll()*65 : bunt ? 3 + roll()*13 : initial == "안타" ? 40 + roll() * 45 : 5 + roll() * 36
-            let landing = FieldPoint(x:(roll()-0.5)*depth*1.5,y:depth)
-            let flight = flyBall ? 2.2 + depth/27 : DetailedFieldRules.bases[0].distance(to:landing)/(initial == "안타" ? 28 : 20)
+            let shot:MatchBattedBall?
+            let flyBall:Bool,landing:FieldPoint,flight:Double
+            if battedBallVersion == 1 {
+                let a=roll(),b=roll(),c=roll()
+                let quality=battingQuality ?? max(0.05,0.3+a*0.55-(pitchingQuality ?? 0)*0.35)
+                let ball=MatchBattedBall.make(quality:quality,contact:batter ? contact:60,power:batter ? power:60,bunt:bunt,
+                    offsetX:offsetX,offsetY:offsetY,timing:timing,speedDraw:a,angleDraw:b,directionDraw:c)
+                shot=ball;flyBall=ball.kind.airborne;landing=ball.landing;flight=ball.flight
+            } else {
+                shot=nil
+                flyBall = version >= 3 && !bunt && roll() < 0.30
+                let depth = flyBall ? 20 + roll()*65 : bunt ? 3 + roll()*13 : initial == "안타" ? 40 + roll() * 45 : 5 + roll() * 36
+                landing = FieldPoint(x:(roll()-0.5)*depth*1.5,y:depth)
+                flight = flyBall ? 2.2 + depth/27 : DetailedFieldRules.bases[0].distance(to:landing)/(initial == "안타" ? 28 : 20)
+            }
             var play = flyBall ? DetailedFieldRules.resolveFly(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
                 runners:runnerProfiles ?? bases.map { $0 ? FieldRunnerProfile(speed:60) : nil },batter:newRunner,outs:outs,
                 stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),ownBatter:batter,relayEnabled:version >= 4) : DetailedFieldRules.resolve(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
                 runners:runnerProfiles ?? bases.map { $0 ? FieldRunnerProfile(speed:60) : nil },batter:newRunner,outs:outs,
                 stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),ownBatter:batter,
-                doublePlayEnabled:version >= 2,groundBall:initial == "범타" && !bunt,relayEnabled:version >= 4)
+                doublePlayEnabled:version >= 2,groundBall:shot.map {$0.kind == .ground} ?? (initial == "범타" && !bunt),relayEnabled:version >= 4)
+            if let shot {
+                play.ball=shot.nodes+play.ball.filter {$0.at>shot.flight}
+                play.battedBall=shot
+            }
             if version == 5 {
                 let draws=(0..<7).map { _ in roll() }
                 play=FieldMisplayRules.applying(to:play,stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),draws:draws)
             }
+            play.battedBall=shot
             if version >= 3 { play.version=version }
             if pitching != nil { MatchPitching.transferChoiceResponsibility(&play) }
             detailed=play;fieldPlays?.append(play)

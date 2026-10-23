@@ -507,7 +507,10 @@ enum FieldReplayPresentation {
     static func phase(_ play:MatchDetailedPlay,time:Double,finished:Bool) -> String {
         if finished {return play.summary}
         if let error=play.misplay,time>=error.at && time<error.recoveredAt {return "벗어난 공 회수 · 주자 이동 중"}
-        if time < play.flight {return play.fly == nil ? "타격 · 땅볼 이동 / 야수 추격":"타격 · 공중 타구 / 야수 추격"}
+        if time < play.flight {
+            if let ball=play.battedBall {return "\(ball.kind.label) · 타구 \(Int(ball.kmh.rounded())) km/h / 야수 추격"}
+            return play.fly == nil ? "타격 · 땅볼 이동 / 야수 추격":"타격 · 공중 타구 / 야수 추격"
+        }
         if time < play.pickupAt {return "타구 도착 · 야수 포구 준비"}
         if let relay=play.relay,time>=play.releaseAt {
             if time < relay.receiveAt {return "외야 송구 · 중계 야수 수신 대기"}
@@ -520,6 +523,7 @@ enum FieldReplayPresentation {
     }
     static func lift(_ play:MatchDetailedPlay,time:Double,height:Double) -> Double {
         if time < play.flight {
+            if let ball=play.battedBall {return min(height*0.28,ball.height(at:time)*height*0.009)}
             let t=max(0,min(1,time/max(0.001,play.flight)))
             return play.fly == nil ? abs(sin(t * .pi * 4))*3:sin(t * .pi)*height*0.19
         }
@@ -1003,6 +1007,10 @@ struct FieldReplayDetails: View {
     var body: some View {
         DisclosureGroup("플레이 상세",isExpanded:$expanded) {
             let second=play.secondThrow
+            if let ball=play.battedBall {
+                Text("\(ball.kind.label) · 타구 \(ball.kmh,specifier:"%.1f") km/h · 발사각 \(ball.angle,specifier:"%.1f")°")
+                    .font(.subheadline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldBattedBallDetails")
+            }
                 if let error=play.misplay {
                     Text("실책 \(error.at,specifier:"%.2f")초 → 회수 \(error.recoveredAt,specifier:"%.2f")초 · 추가 \(error.extraBases.values.reduce(0,+))베이스")
                         .font(.subheadline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayMisplayTimes")
