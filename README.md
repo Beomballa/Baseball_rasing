@@ -887,6 +887,14 @@ iOS 실제 타자·투수 인플레이와 결과 다시 보기에 포수 전용 
 
 ## 타격 접촉→인플레이 연속 전환 (native-contact-handoff-v1 · 2026-10-23)
 
-완료: 실제 타자 스윙/번트·투수 동일 타석 페어볼의 접촉 후 저장 경로 비행과 연속 시계 인플레이 전환. 같은 타구를 다시0초부터 표시하던 경로를 교체했다. MatchPresentation의 순수 표시 계산/보드, BallparkScene의 접촉 flight와 CareerGameView의 메모리 handoff만 런타임 변경했다. Domain/Persistence/스키마/NPC/판정·저장·이어하기·XP/결과1회는 그대로다. 원장 없는 홈런·다른 자동 타석의 전환 범위를 완료로 확대하지 않는다.
+완료: 실제 타자 스윙/번트·투수 동일 타석 페어볼의 접촉 후 저장 경로 비행과 연속 시계 인플레이 전환. 같은 타구를 다시0초부터 표시하던 경로를 교체했다. MatchPresentation의 순수 표시 계산/보드, BallparkScene의 접촉 flight와 CareerGameView의 메모리 handoff만 런타임 변경했다. Domain/Persistence/스키마/NPC/판정·저장·이어하기·XP/결과1회는 그대로다. 다른 자동 타석의 접촉 전환 범위를 완료로 확대하지 않는다. 홈런은 별도 native-home-run-v1 완료분을 따른다.
 
 검증: 관련 단위/회귀225개와 최종 집중6개(그중 새 종료/카메라 렌더2개), 실제 타자·좌투 경기/큰 글자/재실행 이어하기 UI1개 통과, 실패·건너뜀0/runtimeWarnings=[]다. Python 스프라이트9개·Git 보안7개와 개인 설정 제외 공유 Simulator Release 빌드도 통과했다. 근거는 로컬 ios/qa/contact-handoff-units.json·contact-handoff-focused.json·contact-handoff-ui.json 및 native-contact-camera-entry.png·native-contact-camera-settled.png·native-contact-live-field.png다. 사용자 기존 세이브/보호 기기·개인 project.pbxproj는 보존했다. 실기기/iOS17·장기 FPS/메모리 인수는 별도다.
+
+## 홈런 비행·베이스 일주·홈 도착 배너 (native-home-run-v1 · 2026-10-23)
+
+완료: 확정 홈런의 optional homeRuns 표시 입력 저장/검증과 공의 펜스 통과·외야 추적 후 정지·주자 남은 베이스 일주·홈 도착 후 비거리/득점 배너. 실제 타자·투수 경기의 접촉 시계와 경기 중/결과의 최근 홈런 다시 보기를 연결했다. 기존 접촉 전환 절에서 후속으로 남긴 홈런 연출은 이 버전에서 완료했다. 이전 저장은 nil 그대로 읽고 이후 새 홈런부터 기록하며 이전 거리를 추정해 채우지 않는다.
+
+기존 홈런 판정·RNG 소비·점수/책임 주자·기록/경기 XP·피로/완료1회·SwiftData V12를 유지한다. 주자 조깅/외야 추적·비거리는 표시 모델이고 실제 물리/구장 계측값이 아니다. 영상 프레임 단위 이어하기·홈런 확률/능력 밸런스 조정·특별 축하 전용 스프라이트/음향·다이빙·도루/견제는 미구현/후속이다.
+
+검증: 관련 단위/회귀232개와 최종 홈런 집중8개(회귀와 일부 중복), 홈런 양 역할/큰 글자·실시간 일주 및 실제 타자/좌투 경기·재실행 이어하기 UI2개, 최종 공 표시 변경 후 홈런 UI1개 재검증이 모두 통과했다. 실패·건너뜀0/runtimeWarnings=[]이며 Python 스프라이트9개·Git 보안7개와 개인 설정 제외 공유 Simulator Release도 통과했다. 8가지 베이스 점유/남은 모든 루 통과·펜스 투영·홈 도착 전 배너 숨김·동작 줄이기/표시 취소·디스크 거리 보존/기존 nil 비소급·완료 후 중복 반영 거부를 검사했다. 근거는 로컬 ios/qa/home-run-units.json·home-run-final-focused.json·home-run-ui.json·home-run-final-ui.json 및 native-home-run-contact.png·native-home-run-fence.png·native-home-run-bases.png·native-home-run-home.png·native-home-run-large-ui.png다. 기존 사용자 세이브/보호 기기·개인 project.pbxproj를 유지했다. 실기기/iOS17·장기 FPS/메모리·전체 경기 시각 인수는 후속이다.

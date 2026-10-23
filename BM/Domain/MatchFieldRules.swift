@@ -631,6 +631,7 @@ enum DetailedFieldRules {
 
 extension CareerMatch {
     func validateDetailedField() throws {
+        try validateHomeRuns()
         if let npcFielders {
             try npcFielders.validate()
             guard detailedFieldVersion == 5,battedBallVersion == 1,(0...18).contains(half),homeOrder>=0,awayOrder>=0,npcFielders.competition == (competition ?? "highschool") else {throw MatchError.invalidRecord}

@@ -39,6 +39,7 @@ struct CareerMatch: Codable, Equatable {
     var battedBallVersion: Int?
     var npcFielders:MatchNPCFielders?
     var fieldPlays: [MatchDetailedPlay]?
+    var homeRuns: [MatchHomeRun]?
     var runnerProfiles: [FieldRunnerProfile?]?
     var trainingEffectsVersion: Int?
     var controlVersion: Int?
@@ -234,6 +235,15 @@ struct CareerMatch: Codable, Equatable {
         var detailed: MatchDetailedPlay?
         let newRunner = FieldRunnerProfile(speed:batter ? fieldStats?.speed ?? 60 : npcBatterSpeed,
             traits:batter ? (fieldStats?.activeTraits ?? []).filter { $0 == .cheetah } : [],own:batter, responsiblePitcher:pitching?.activeID(home:half % 2 == 0))
+        if initial == "홈런" {
+            let before=bases.enumerated().map {index,occupied in occupied ? (runnerProfiles?[index] ?? FieldRunnerProfile(speed:60)):nil}
+            let ownIndex = !offense && appearance && (role != "pitcher" || ownPitcherActive) ? DetailedFieldRules.names.firstIndex(of:fieldStats?.position ?? ""):nil
+            let speeds=DetailedFieldRules.names.indices.map {index in index == ownIndex ? fieldStats?.speed ?? 60:npcDefenders?[index].speed ?? 60}
+            let event=MatchHomeRun(half:half,order:half%2 == 1 ? homeOrder:awayOrder,seed:random,
+                power:batter ? power:60,quality:battingQuality ?? 0.65,directionOffset:offsetX,
+                before:before,batter:newRunner,defenderSpeeds:speeds,ownDefender:ownIndex)
+            if homeRuns == nil {homeRuns=[]};homeRuns?.append(event)
+        }
         if let version=detailedFieldVersion,[1,2,3,4,5].contains(version), ["안타","범타"].contains(initial) {
             let shot:MatchBattedBall?
             let flyBall:Bool,landing:FieldPoint,flight:Double
@@ -532,5 +542,65 @@ struct MatchAbilityExperience: Codable, Equatable {
               l.homeRuns <= l.hits, l.hits <= l.atBats, l.atBats + l.walks <= l.plateAppearances,
               l.strikeouts <= l.atBats, l.pitchingStrikeouts <= l.pitchingOuts,
               match.completed ? result == reward(for: match) : result == nil else { throw MatchError.invalidRecord }
+    }
+}
+
+/// Frozen display inputs for an already-decided home run. Does not consume match RNG or award runs.
+struct MatchHomeRun:Codable,Equatable {
+    var version=1
+    let half:Int
+    let order:Int
+    let seed:UInt64
+    let power:Double
+    let quality:Double
+    let directionOffset:Double
+    let before:[FieldRunnerProfile?]
+    let batter:FieldRunnerProfile
+    let defenderSpeeds:[Double]
+    var ownDefender:Int? = nil
+    var eventID:String {"hr-v1/\(half)/\(order)"}
+    private var variation:Double {Double(MatchNPCFielders.hash("hr-v1/\(seed)/\(half)/\(order)")%1001)/1000}
+    var direction:Double {max(-25,min(25,(variation-0.5)*40+directionOffset*18))}
+    var fence:Double {110-abs(direction)*0.45}
+    var distance:Int {Int((fence+8+power*0.12+quality*8+variation*8).rounded())}
+    var flight:Double {3.8+Double(distance-110)*0.025}
+    var duration:Double {max(flight,runners.map(\.arrival).max() ?? 0)}
+    var runs:Int {before.compactMap {$0}.count+1}
+    var runners:[DetailedRunner] {
+        ([0]+(1...3).filter {before[$0-1] != nil}).map {from in
+            let profile=from == 0 ? batter:before[from-1]!
+            let leg=27.43/(6.3+profile.speed*0.012)
+            var nodes=[FieldNode(at:0,point:DetailedFieldRules.bases[from]),FieldNode(at:0.45,point:DetailedFieldRules.bases[from])]
+            for base in (from+1)...4 {nodes.append(FieldNode(at:0.45+Double(base-from)*leg,point:DetailedFieldRules.bases[base]))}
+            return DetailedRunner(from:from,destination:4,profile:profile,nodes:nodes)
+        }
+    }
+    func ball(at time:Double) -> FieldPoint {
+        let p=max(0,min(1,time/flight)),distance=Double(distance)*p*(1.15-0.15*p),radians=direction * .pi/180
+        return FieldPoint(x:sin(radians)*distance,y:cos(radians)*distance)
+    }
+    func height(at time:Double) -> Double {sin(.pi*max(0,min(1,time/flight)))*(24+power*0.05)}
+    func defender(_ index:Int,at time:Double) -> FieldPoint {
+        let start=DetailedFieldRules.positions[index]
+        guard index>=6 else {return start}
+        let destination=FieldPoint(x:ball(at:flight).x*0.72,y:88)
+        let distance=start.distance(to:destination),travel=max(0,min(flight,time)-0.35)*(4+defenderSpeeds[index]*0.03)
+        return start.towards(destination,fraction:travel/max(0.001,distance))
+    }
+    func validate() throws {
+        guard version == 1,(0...17).contains(half),(0...100_000).contains(order),
+              [power,quality,directionOffset].allSatisfy(\.isFinite),(0...100).contains(power),(0...1).contains(quality),(-1...1).contains(directionOffset),
+              before.count == 3,ownDefender.map({(0..<9).contains($0)}) ?? true,defenderSpeeds.count == 9,defenderSpeeds.allSatisfy({$0.isFinite && (0...100).contains($0)}),
+              ([batter]+before.compactMap {$0}).allSatisfy({$0.speed.isFinite && (0...100).contains($0.speed) && TraitLoadout.valid($0.traits)}) else {throw MatchError.invalidRecord}
+    }
+}
+extension CareerMatch {
+    func validateHomeRuns() throws {
+        guard let homeRuns else {return}
+        guard homeRuns.count<=1000,Set(homeRuns.map(\.eventID)).count == homeRuns.count else {throw MatchError.invalidRecord}
+        for event in homeRuns {
+            try event.validate()
+            guard event.half<=half,event.order < (event.half%2 == 1 ? homeOrder:awayOrder) else {throw MatchError.invalidRecord}
+        }
     }
 }

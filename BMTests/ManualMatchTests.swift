@@ -724,4 +724,31 @@ extension ManualMatchTests {
         }
     }
 
+    func testRenderedHomeRunContactBothRolesWaitsForFlightAndHandsOffWithoutCatch() async throws {
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:windowScene),controller=UIViewController()
+        let view=SKView(frame:CGRect(x:0,y:0,width:320,height:340));controller.view=view;window.rootViewController=controller;window.makeKeyAndVisible()
+        defer {view.presentScene(nil);window.isHidden=true;previous?.makeKey()}
+        let event=MatchHomeRun(half:0,order:0,seed:42,power:80,quality:1,directionOffset:0,before:[nil,nil,nil],batter:FieldRunnerProfile(speed:60,own:true),defenderSpeeds:Array(repeating:60,count:9))
+        for role in PlayerRole.allCases {
+            let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:"left",kit:2,role:role);view.presentScene(scene)
+            var calls=0
+            let done=expectation(description:role.rawValue+" home run contact")
+            let arrival={ @MainActor in
+                calls+=1
+                guard let h=scene.fieldHandoff else {XCTFail("Missing contact handoff");return}
+                XCTAssertGreaterThanOrEqual(h.cutAt-h.startedAt,0.28)
+                XCTAssertTrue(scene.childNode(withName:"receivedBaseball")!.isHidden)
+                let start=role == .batter ? MatchPresentation.batContact(action:"swing"):CGPoint(x:0.54,y:0.43)
+                let target=HomeRunPresentation.sourcePoint(event,time:h.cutAt-h.startedAt,origin:start,size:scene.size)
+                XCTAssertEqual(target.x,h.sourcePoint.x,accuracy:0.001);XCTAssertEqual(target.y,h.sourcePoint.y,accuracy:0.001)
+            }
+            if role == .pitcher {scene.demonstrate(reduceMotion:false,flightDuration:0.4,preparedRelease:true,homeRun:event,onArrival:arrival,completion:{done.fulfill()})}
+            else {scene.finishBat(action:"swing",outcome:"홈런",reduced:false,homeRun:event,onArrival:arrival,completion:{done.fulfill()})}
+            try await Task.sleep(for:.seconds(0.12));XCTAssertEqual(calls,0)
+            await fulfillment(of:[done],timeout:3);XCTAssertEqual(calls,1)
+            scene.cancelDelivery();XCTAssertNil(scene.fieldHandoff)
+        }
+    }
+
 }

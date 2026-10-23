@@ -383,4 +383,38 @@ struct FieldReplayVerification:View {
         clock.seek(next,duration:play.duration)
     }
 }
+
+struct HomeRunVerification:View {
+    @State private var pitcher=false
+    @State private var time=0.0
+    @State private var live=false
+    @State private var replayID=0
+    private var event:MatchHomeRun {
+        MatchHomeRun(half:0,order:0,seed:42,power:72,quality:0.9,directionOffset:0,
+            before:[FieldRunnerProfile(speed:50),FieldRunnerProfile(speed:65),FieldRunnerProfile(speed:80)],
+            batter:FieldRunnerProfile(speed:60,own:!pitcher),defenderSpeeds:Array(repeating:60,count:9),ownDefender:pitcher ? 0:nil)
+    }
+    var body:some View {
+        GeometryReader {geometry in
+            ScrollView {
+                VStack(spacing:12) {
+                    Text("홈런 연출 검증 · 실제 저장 미사용").font(.headline).foregroundStyle(GameTheme.gold)
+                    Button(pitcher ? "투수 시점":"타자 시점") {pitcher.toggle();live=false;time=0;replayID+=1}
+                        .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("homeRunVerifyRole")
+                    HStack {
+                        Button("접촉") {live=false;time=0;replayID+=1}.accessibilityIdentifier("homeRunVerifyContact")
+                        Button("펜스 통과") {live=false;time=event.flight*0.85;replayID+=1}.accessibilityIdentifier("homeRunVerifyFence")
+                        Button("일주") {live=false;time=event.flight+2;replayID+=1}.accessibilityIdentifier("homeRunVerifyBases")
+                        Button("홈 도착") {live=false;time=event.duration;replayID+=1}.accessibilityIdentifier("homeRunVerifyHome")
+                    }.buttonStyle(MatchPixelButtonStyle())
+                    Button("처음부터 재생") {live=true;time=0;replayID+=1}.buttonStyle(MatchPixelButtonStyle(primary:true))
+                        .accessibilityIdentifier("homeRunVerifyPlay")
+                    HomeRunReplayBoard(event:event,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:"left",ownTeamFielding:pitcher,
+                        previewTime:live ? nil:time) {live=false;time=event.duration}
+                        .id(replayID).frame(height:max(550,geometry.size.width*1.55+80))
+                }.padding(8)
+            }.background(GameTheme.navy.ignoresSafeArea())
+        }.navigationTitle("홈런 재현실").toolbarColorScheme(.dark,for:.navigationBar)
+    }
+}
 #endif

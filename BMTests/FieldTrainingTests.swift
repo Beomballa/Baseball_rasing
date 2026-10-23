@@ -1943,4 +1943,100 @@ import SwiftUI
         XCTAssertEqual(original.ball,play.ball)
     }
 
+    private func homeRunSample(before:[FieldRunnerProfile?]=[nil,nil,nil],power:Double=72,quality:Double=0.9) -> MatchHomeRun {
+        MatchHomeRun(half:0,order:0,seed:42,power:power,quality:quality,directionOffset:0,before:before,
+            batter:FieldRunnerProfile(speed:60,own:true),defenderSpeeds:Array(repeating:60,count:9))
+    }
+    func testHomeRunFrozenInputsDistanceFlightAndFenceProjection() throws {
+        let event=homeRunSample(),copy=try JSONDecoder().decode(MatchHomeRun.self,from:JSONEncoder().encode(event))
+        XCTAssertEqual(copy,event);XCTAssertEqual(copy.distance,event.distance);XCTAssertGreaterThan(Double(event.distance),event.fence)
+        XCTAssertGreaterThan(homeRunSample(power:100,quality:1).distance,homeRunSample(power:0,quality:0).distance)
+        let size=CGSize(width:390,height:585)
+        let fence=HomeRunPresentation.ballPoint(event,time:event.flight*0.85,size:size)
+        XCTAssertLessThan(fence.y/size.height,0.22,"Ball crosses above the painted outfield fence")
+        for t in [0.0,event.flight/2,event.flight,event.duration] {
+            let p=HomeRunPresentation.ballPoint(event,time:t,size:size)
+            XCTAssertTrue(p.x.isFinite && p.y.isFinite);XCTAssertTrue((0...size.width).contains(p.x));XCTAssertTrue((0...size.height).contains(p.y))
+        }
+        XCTAssertEqual(event.ball(at:0),FieldPoint(x:0,y:0));XCTAssertEqual(event.height(at:0),0)
+        XCTAssertEqual(event.defender(6,at:event.flight),event.defender(6,at:event.duration))
+        XCTAssertNotEqual(event.defender(6,at:0),event.defender(6,at:event.flight))
+    }
+    func testHomeRunAllOccupanciesTouchEveryRemainingBaseBeforeCelebration() throws {
+        for mask in 0..<8 {
+            let before=(0..<3).map {mask & (1 << $0) == 0 ? nil:FieldRunnerProfile(speed:Double(30+$0*30))}
+            let event=homeRunSample(before:before)
+            try event.validate();XCTAssertEqual(event.runs,1+mask.nonzeroBitCount)
+            XCTAssertEqual(event.runners.count,event.runs)
+            for runner in event.runners {
+                XCTAssertFalse(runner.out);XCTAssertEqual(runner.destination,4)
+                XCTAssertEqual(Array(runner.nodes.dropFirst(2).map(\.point)),Array(DetailedFieldRules.bases[(runner.from+1)...4]))
+                XCTAssertLessThanOrEqual(runner.arrival,event.duration)
+                XCTAssertEqual(FieldNode.sample(runner.nodes,at:event.duration),DetailedFieldRules.bases[4])
+            }
+            XCTAssertGreaterThan(event.duration,event.flight)
+            XCTAssertFalse(HomeRunPresentation.phase(event,time:event.flight,finished:false).contains("홈런"))
+            XCTAssertEqual(HomeRunPresentation.phase(event,time:event.duration,finished:true),"홈 도착 · 홈런")
+            for t in [0.0,event.flight,event.duration] {XCTAssertLessThanOrEqual(HomeRunPresentation.time(event,elapsed:t,reduced:true),t)}
+        }
+    }
+    func testHomeRunLegacyDecodeAndMalformedMetadataAreRejectedWithoutBackfill() throws {
+        let state=game(42),data=try JSONEncoder().encode(state)
+        XCTAssertNil(try JSONDecoder().decode(CareerMatch.self,from:data).homeRuns)
+        var stateWithRun=state;stateWithRun.half=0;stateWithRun.awayOrder=1;stateWithRun.homeRuns=[homeRunSample()]
+        try stateWithRun.validateHomeRuns()
+        stateWithRun.homeRuns?.append(homeRunSample());XCTAssertThrowsError(try stateWithRun.validateHomeRuns())
+        stateWithRun.homeRuns=[homeRunSample()];stateWithRun.awayOrder=0;XCTAssertThrowsError(try stateWithRun.validateHomeRuns())
+        var invalid=homeRunSample();invalid.version=99;XCTAssertThrowsError(try invalid.validate())
+        let short=MatchHomeRun(half:0,order:0,seed:0,power:60,quality:1,directionOffset:0,before:[],batter:FieldRunnerProfile(speed:60),defenderSpeeds:[])
+        XCTAssertThrowsError(try short.validate())
+    }
+    func testHomeRunActualBothRolesFullGameResumeAndNoDuplicateEvents() throws {
+        var seen=false
+        for role in ["batter","pitcher"] {
+            for seed in 1...4 {
+                var state=CareerMatch(random:UInt64(seed),isHome:true,role:role,appearance:true,contact:90,power:100,discipline:60,mastery:["four-seam":72])
+                state.half=role == "batter" ? 1:0;state.controlVersion=2
+                var restored=state
+                while !state.completed {
+                    try state.advance(role == "batter" ? .swing:.pitch,pitchCode:role == "pitcher" ? "four-seam":nil)
+                    try restored.advance(role == "batter" ? .swing:.pitch,pitchCode:role == "pitcher" ? "four-seam":nil)
+                    XCTAssertEqual(state,restored)
+                    try state.validateHomeRuns()
+                    restored=try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(restored))
+                }
+                if let events=state.homeRuns,!events.isEmpty {seen=true;XCTAssertEqual(events.count,Set(events.map(\.eventID)).count)}
+                let data=try JSONEncoder().encode(state);XCTAssertThrowsError(try state.advance(.automatic));XCTAssertEqual(try JSONEncoder().encode(state).count,data.count)
+            }
+        }
+        XCTAssertTrue(seen)
+    }
+    func testHomeRunNativeFramesPreserveBallAndRunnerLayers() throws {
+        let event=homeRunSample(before:[FieldRunnerProfile(speed:60),nil,FieldRunnerProfile(speed:60)])
+        for (name,time) in [("contact",0.28),("fence",event.flight*0.85),("bases",event.flight+2),("home",event.duration)] {
+            let view=HomeRunReplayBoard(event:event,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:"CF",previewTime:time).frame(width:390,height:680)
+            let renderer=ImageRenderer(content:view);renderer.scale=2
+            let shot=XCTAttachment(image:try XCTUnwrap(renderer.uiImage));shot.name="Home run native \(name)";shot.lifetime = .keepAlways;add(shot)
+        }
+    }
+
+    func testHomeRunBoardResolvesOnceAfterLastRunnerAndPreviewNeverRewards() async throws {
+        let event=homeRunSample(before:[FieldRunnerProfile(speed:60),nil,nil]),window=UIWindow(frame:CGRect(x:0,y:0,width:390,height:700))
+        var resolved=0,completed=0
+        let now=ProcessInfo.processInfo.systemUptime
+        let handoff=FieldContactHandoff(startedAt:now-event.duration+0.8,cutAt:now,sourcePoint:.zero)
+        window.rootViewController=UIHostingController(rootView:HomeRunReplayBoard(event:event,appearance:PlayerAppearance(),handoff:handoff,onResolved:{resolved+=1}) {completed+=1})
+        window.makeKeyAndVisible();defer {window.isHidden=true;window.rootViewController=nil}
+        try await Task.sleep(for:.seconds(0.1));XCTAssertEqual(resolved,0);XCTAssertEqual(completed,0)
+        try await Task.sleep(for:.seconds(1));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,0)
+        try await Task.sleep(for:.seconds(2.2));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+        for time in [0.0,event.flight,event.duration] {
+            window.rootViewController=UIHostingController(rootView:HomeRunReplayBoard(event:event,appearance:PlayerAppearance(),previewTime:time,onResolved:{resolved+=1}) {completed+=1})
+            try await Task.sleep(for:.seconds(0.1));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+        }
+        window.rootViewController=UIHostingController(rootView:HomeRunReplayBoard(event:event,appearance:PlayerAppearance(),onResolved:{resolved+=1}) {completed+=1})
+        try await Task.sleep(for:.seconds(0.1));window.rootViewController=nil
+        try await Task.sleep(for:.seconds(0.1));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+    }
+
 }

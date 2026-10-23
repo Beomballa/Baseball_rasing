@@ -632,4 +632,32 @@ import SwiftUI
         XCTAssertEqual(row.payload,damaged)
     }
 
+    func testHomeRunDiskRecordPreservesDistanceAndCompletionOnlyAppliesOnce() throws {
+        for role in PlayerRole.allCases {
+            let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+            defer {try? FileManager.default.removeItem(at:directory)}
+            let url=directory.appendingPathComponent("home-run.store")
+            let expected:CareerMatch=try autoreleasepool {
+                let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+                let (player,state)=try setup(role:role,in:context),record=try ready(player,state,in:context)
+                let original=record.payload
+                XCTAssertNil(try record.snapshot().homeRuns)
+                XCTAssertEqual(try CareerMatchStore.start(player:player,state:state,in:context).payload,original)
+                try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:.automatic,in:context)
+                let final=try record.snapshot();XCTAssertFalse((final.homeRuns ?? []).isEmpty)
+                return final
+            }
+            let container=try CareerStore.makeContainer(url:url),context=container.mainContext
+            let player=try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let state=try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let record=try CareerMatchStore.start(player:player,state:state,in:context)
+            XCTAssertEqual(try record.snapshot(),expected)
+            XCTAssertEqual(try record.snapshot().homeRuns?.map(\.distance),expected.homeRuns?.map(\.distance))
+            let before=(record.payload,player.fatigue,state.revision)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:.automatic,in:context))
+            XCTAssertEqual(record.payload,before.0);XCTAssertEqual(player.fatigue,before.1);XCTAssertEqual(state.revision,before.2)
+        }
+    }
+
 }

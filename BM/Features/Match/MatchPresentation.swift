@@ -1474,3 +1474,126 @@ struct PitchLocationBoard: View {
         context.draw(Image(uiImage:image).interpolation(.none),in:CGRect(x:point.x-diameter/2,y:point.y-height/2,width:diameter,height:height))
     }
 }
+
+// Presentation version 1 is fixed for persisted home-run inputs; no result or reward mutation here.
+enum HomeRunPresentation {
+    static func ballPoint(_ event:MatchHomeRun,time:Double,size:CGSize) -> CGPoint {
+        let world=event.ball(at:time),point=InplayFieldProjection.point(world,size:size)
+        let beyond=max(0,min(1,(hypot(world.x,world.y)-65)/max(1,Double(event.distance)-65)))
+        return CGPoint(x:point.x,y:point.y-event.height(at:time)*size.height*0.003-beyond*size.height*0.11)
+    }
+    static func sourcePoint(_ event:MatchHomeRun,time:Double,origin:CGPoint,size:CGSize) -> CGPoint {
+        let start=ballPoint(event,time:0,size:size),point=ballPoint(event,time:max(0,time),size:size)
+        return CGPoint(x:origin.x+(point.x-start.x)/size.width,y:origin.y+(point.y-start.y)/size.height)
+    }
+    static func time(_ event:MatchHomeRun,elapsed:Double,reduced:Bool) -> Double {
+        let t=max(0,min(event.duration,elapsed))
+        guard reduced else {return t}
+        let moments:[Double]=[0,event.flight/2,event.flight,event.duration]+event.runners.flatMap {$0.nodes.map(\.at)}
+        return moments.filter {$0<=t}.max() ?? 0
+    }
+    static func runner(_ runner:DetailedRunner,time:Double,reduced:Bool) -> (FieldPoint,FieldSpriteMotion) {
+        let p=FieldNode.sample(runner.nodes,at:time),after=FieldNode.sample(runner.nodes,at:min(runner.arrival,time+0.08))
+        let before=FieldNode.sample(runner.nodes,at:max(0,time-0.08))
+        let moving=time>=0.45 && time<runner.arrival
+        var motion=FieldSpriteMotion(facing:.direction(dx:after.x-before.x,dy:after.y-before.y),stage:moving && !reduced ? .run:.ready,gait:time*12)
+        if let at=runner.nodes.dropFirst(2).first(where:{$0.at>=time}),at.at-time<0.25 {motion.runnerPose = .turn}
+        return (p,motion)
+    }
+    static func phase(_ event:MatchHomeRun,time:Double,finished:Bool) -> String {
+        finished ? "홈 도착 · 홈런":time<event.flight ? "타구 비행 · 외야 추적":"베이스 일주 중"
+    }
+}
+
+struct HomeRunReplayBoard:View {
+    let event:MatchHomeRun
+    let appearance:PlayerAppearance
+    var jerseyNumber=1
+    var ownPosition:String?=nil
+    var throwingHand="right"
+    var ownTeamFielding=false
+    var scoreText="IN PLAY"
+    var handoff:FieldContactHandoff?=nil
+    var animated=true
+    var previewTime:Double?=nil
+    var onResolved:@MainActor () -> Void = {}
+    var complete:@MainActor () -> Void = {}
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @State private var start=ProcessInfo.processInfo.systemUptime
+    @State private var resolved=false
+    var body:some View {
+        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved)) {_ in
+            let now=ProcessInfo.processInfo.systemUptime
+            let elapsed=handoff?.elapsed(at:now) ?? max(0,now-start)
+            let time=previewTime.map {max(0,min(event.duration,$0))} ?? (resolved || !animated ? event.duration:HomeRunPresentation.time(event,elapsed:elapsed,reduced:reduced))
+            let finished=previewTime.map {$0>=event.duration} ?? (resolved || !animated)
+            VStack(spacing:8) {
+                Text(HomeRunPresentation.phase(event,time:time,finished:finished)).font(.headline.monospaced()).foregroundStyle(GameTheme.gold)
+                    .accessibilityIdentifier("homeRunPhase")
+                GeometryReader {geometry in
+                    Canvas {context,size in
+                        var context=context
+                        if let handoff {
+                            let cut=max(0,min(event.duration,handoff.cutAt-handoff.startedAt))
+                            let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:HomeRunPresentation.ballPoint(event,time:cut,size:size),canvas:geometry.frame(in:.global),now:now,reduced:reduced)
+                            context.clip(to:Path(CGRect(origin:.zero,size:size)));context.translateBy(x:offset.x,y:offset.y)
+                        }
+                        if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
+                        let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
+                        var actors:[(FieldPoint,FieldSpriteMotion,Bool,Bool,Int,String)]=[]
+                        for index in 0..<9 {
+                            let p=event.defender(index,at:time),previous=event.defender(index,at:max(0,time-0.08)),next=event.defender(index,at:time+0.08)
+                            let moving=index>=6 && time<event.flight && p.distance(to:next)>0.001
+                            let motion=FieldSpriteMotion(facing:.direction(dx:next.x-previous.x,dy:next.y-previous.y),stage:moving && !reduced ? .run:.ready,gait:time*12)
+                            let own=ownTeamFielding && event.ownDefender == index
+                            actors.append((p,motion,own,ownTeamFielding,own ? jerseyNumber:index+1,index == 1 ? "catcher":"fielder"))
+                        }
+                        for runner in event.runners where time<=runner.arrival+0.6 || runner.from == 0 {
+                            let (p,motion)=HomeRunPresentation.runner(runner,time:time,reduced:reduced)
+                            actors.append((p,motion,runner.profile.own,!ownTeamFielding,runner.profile.own ? jerseyNumber:runner.from+10,"runner"))
+                        }
+                        for (p,motion,own,teamOwn,number,kind) in actors.sorted(by:{$0.0.y>$1.0.y}) {
+                            _=FieldRasterArt.draw(in:context,at:InplayFieldProjection.point(p,size:size),scale:InplayFieldProjection.actorScale(p,size:size),motion:InplayFieldProjection.motion(motion,at:p,size:size),kind:kind,
+                                kit:teamOwn ? ownKit:opponent,skin:own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
+                                hair:own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:number,left:own && throwingHand == "left",selected:own,out:false)
+                        }
+                        let scoreboard=CGRect(x:size.width*0.38,y:size.height*0.14,width:size.width*0.24,height:size.height*0.04)
+                        context.fill(Path(scoreboard),with:.color(GameTheme.navy))
+                        context.draw(Text(scoreText).font(.system(size:max(12,size.width*0.027),weight:.bold,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:scoreboard.midX,y:scoreboard.midY))
+                        if time<=event.flight {
+                            let p=HomeRunPresentation.ballPoint(event,time:time,size:size)
+                            for i in 1...3 where !reduced {
+                                let tail=HomeRunPresentation.ballPoint(event,time:max(0,time-Double(i)*0.04),size:size)
+                                context.fill(Path(CGRect(x:tail.x,y:tail.y,width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
+                            }
+                            let diameter=max(6,size.width*0.016)
+                            context.fill(Path(ellipseIn:CGRect(x:p.x-diameter/2-1,y:p.y-diameter/2-1,width:diameter+2,height:diameter+2)),with:.color(GameTheme.navy))
+                            PixelBaseball.draw(in:context,at:p,diameter:diameter)
+                        }
+                        if finished {
+                            let banner=CGRect(x:size.width*0.08,y:size.height*0.24,width:size.width*0.84,height:size.height*0.12)
+                            context.fill(Path(banner),with:.color(GameTheme.navy.opacity(0.97)))
+                            context.stroke(Path(banner),with:.color(GameTheme.gold),lineWidth:3)
+                            context.draw(Text("HOME RUN · \(event.distance)m").font(.system(size:max(16,size.width*0.052),weight:.black,design:.monospaced)).foregroundStyle(GameTheme.gold),at:CGPoint(x:banner.midX,y:banner.minY+banner.height*0.36))
+                            context.draw(Text("\(event.runs)점 · \(ownTeamFielding ? "상대 팀":"우리 팀") 홈 도착").font(.system(size:max(12,size.width*0.035),weight:.bold)).foregroundStyle(GameTheme.paper),at:CGPoint(x:banner.midX,y:banner.minY+banner.height*0.75))
+                        }
+                    }
+                }.aspectRatio(2.0/3,contentMode:.fit)
+                    .accessibilityElement(children:.ignore)
+                    .accessibilityLabel(finished ? "홈런 · \(event.distance)m · \(event.runs)점":"타구 비행과 주자 베이스 일주")
+                    .accessibilityValue(finished ? "홈 도착 완료":"진행 \(Int(time/event.duration*100))%")
+                    .accessibilityIdentifier("homeRunCanvas")
+                if finished {Text("HOME RUN · \(event.distance)m · \(event.runs)점").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeRunCelebration")}
+            }.padding(4).background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
+        }
+        .task(id:event.eventID+(animated ? ":live":":still")) {
+            guard previewTime == nil,animated else {return}
+            start=ProcessInfo.processInfo.systemUptime;resolved=false
+            let elapsed=handoff?.elapsed(at:start) ?? 0
+            do {try await Task.sleep(for:.seconds(max(0,event.duration-elapsed)))} catch {return}
+            guard !Task.isCancelled else {return};resolved=true;onResolved()
+            do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:reduced,match:true)))} catch {return}
+            if !Task.isCancelled {complete()}
+        }
+    }
+}

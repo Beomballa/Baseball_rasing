@@ -2585,4 +2585,31 @@ extension CareerFlowTests {
             app.terminate()
         }
     }
+    @MainActor func testHomeRunFlightBasesAndCelebrationBothRolesWithoutCareerStore() throws {
+        let app=XCUIApplication();app.launchArguments=["-home-run-verification"];app.launch()
+        for pitcher in [false,true] {
+            if pitcher {app.buttons["homeRunVerifyRole"].tap()}
+            app.buttons["homeRunVerifyFence"].tap()
+            let canvas=app.otherElements["homeRunCanvas"]
+            XCTAssertTrue(canvas.waitForExistence(timeout:3))
+            XCTAssertFalse(app.staticTexts["homeRunCelebration"].exists)
+            let flight=XCTAttachment(screenshot:app.screenshot());flight.name=pitcher ? "Pitcher home run fence flight":"Batter home run fence flight";flight.lifetime = .keepAlways;add(flight)
+            app.buttons["homeRunVerifyBases"].tap();XCTAssertFalse(app.staticTexts["homeRunCelebration"].exists)
+            app.buttons["homeRunVerifyHome"].tap()
+            let celebration=app.staticTexts["homeRunCelebration"]
+            XCTAssertTrue(celebration.waitForExistence(timeout:3))
+            XCTAssertTrue(celebration.label.contains("m"));XCTAssertTrue(celebration.label.contains("4점"))
+            let home=XCTAttachment(screenshot:app.screenshot());home.name=pitcher ? "Pitcher home run home arrival banner":"Batter home run home arrival banner";home.lifetime = .keepAlways;add(home)
+        }
+        app.buttons["homeRunVerifyContact"].tap();app.buttons["homeRunVerifyPlay"].tap()
+        XCTAssertFalse(app.staticTexts["homeRunCelebration"].exists)
+        let banner=app.staticTexts["homeRunCelebration"]
+        XCTAssertTrue(banner.waitForExistence(timeout:24),"Banner appears after the final runner reaches home")
+        app.terminate();app.launchArguments=["-home-run-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        let home=app.buttons["homeRunVerifyHome"];reveal(home,in:app);home.tap()
+        reveal(app.staticTexts["homeRunCelebration"],in:app)
+        XCTAssertTrue(app.staticTexts["homeRunCelebration"].exists)
+        let large=XCTAttachment(screenshot:app.screenshot());large.name="Home run accessibility banner";large.lifetime = .keepAlways;add(large)
+    }
+
 }

@@ -27,11 +27,13 @@ import SpriteKit
         let receipt: Double
         let outcome: String?
         let fieldPlay:MatchDetailedPlay?
+        let homeRun:MatchHomeRun?
         let arrival: (@MainActor () -> Void)?
         let completion: (@MainActor () -> Void)?
     }
     private struct ContactFlight {
-        let play:MatchDetailedPlay
+        let play:MatchDetailedPlay?
+        let homeRun:MatchHomeRun?
         let startedAt:Double
         let origin:CGPoint
         let reduced:Bool
@@ -59,6 +61,9 @@ import SpriteKit
                 if let play=flight.fieldPlay {
                     pitchStage = .received
                     startContact(play,origin:CGPoint(x:flight.end.x/size.width,y:1-flight.end.y/size.height),reduced:flight.reduced,arrival:flight.arrival,completion:flight.completion)
+                } else if let homeRun=flight.homeRun {
+                    pitchStage = .received
+                    startContact(nil,homeRun:homeRun,origin:CGPoint(x:flight.end.x/size.width,y:1-flight.end.y/size.height),reduced:flight.reduced,arrival:flight.arrival,completion:flight.completion)
                 } else {
                     finishPitch(outcome:flight.outcome,reduced:flight.reduced)
                     pitchReceipt=(now+flight.receipt,flight.completion)
@@ -68,10 +73,11 @@ import SpriteKit
         }
         if let contact=contactFlight {
             let elapsed=max(0,now-contact.startedAt)
-            let p=FieldContactPresentation.sourcePoint(contact.play,time:elapsed,origin:contact.origin,size:size)
+            let p=contact.homeRun.map {HomeRunPresentation.sourcePoint($0,time:elapsed,origin:contact.origin,size:size)}
+                ?? contact.play.map {FieldContactPresentation.sourcePoint($0,time:elapsed,origin:contact.origin,size:size)} ?? contact.origin
             ball.position=point(p.x,p.y)
             ball.setScale(contact.reduced ? 0.8:max(0.5,1-elapsed*0.6))
-            if elapsed>=FieldContactPresentation.duration(contact.play) {
+            if elapsed >= (contact.play.map {FieldContactPresentation.duration($0)} ?? 0.28) {
                 contactFlight=nil
                 fieldHandoff=FieldContactHandoff(startedAt:contact.startedAt,cutAt:now,sourcePoint:p)
                 contact.arrival?();contact.completion?()
@@ -189,7 +195,7 @@ import SpriteKit
         }
     }
     @discardableResult func demonstrate(reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5,
-                                       pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false, matchJudgment: Bool = false, fieldPlay:MatchDetailedPlay? = nil, onArrival: (@MainActor () -> Void)? = nil, completion: (@MainActor () -> Void)? = nil) -> Bool {
+                                       pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false, matchJudgment: Bool = false, fieldPlay:MatchDetailedPlay? = nil, homeRun:MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil, completion: (@MainActor () -> Void)? = nil) -> Bool {
         guard ready else { return false }
         cancelDelivery()
         // The batting input clock reaches contact at 82%; a pitcher's full trip has no batting phase.
@@ -211,7 +217,7 @@ import SpriteKit
             // Movement and receipt share elapsed time; an early first SKAction tick cannot shorten a pitch.
             if self.role == .pitcher {
                 self.pitchFlight=PitchFlight(start:release,end:self.destination,started:ProcessInfo.processInfo.systemUptime,
-                    duration:duration,code:pitchCode,reduced:reduceMotion,receipt:DeliveryPresentation.receipt(reduced:reduceMotion,match:matchJudgment),outcome:outcome,fieldPlay:fieldPlay,arrival:onArrival,completion:completion)
+                    duration:duration,code:pitchCode,reduced:reduceMotion,receipt:DeliveryPresentation.receipt(reduced:reduceMotion,match:matchJudgment),outcome:outcome,fieldPlay:fieldPlay,homeRun:homeRun,arrival:onArrival,completion:completion)
                 return
             }
             self.ball.run(.sequence([
@@ -254,20 +260,20 @@ import SpriteKit
             if !reduced { mitt.run(.sequence([.moveBy(x: 0, y: -2, duration: 0.06), .moveBy(x: 0, y: 2, duration: 0.1)])) }
         }
     }
-    private func startContact(_ play:MatchDetailedPlay,origin:CGPoint,reduced:Bool,arrival:(@MainActor () -> Void)?,completion:(@MainActor () -> Void)?) {
+    private func startContact(_ play:MatchDetailedPlay?,homeRun:MatchHomeRun? = nil,origin:CGPoint,reduced:Bool,arrival:(@MainActor () -> Void)?,completion:(@MainActor () -> Void)?) {
         ball.removeAllActions();receivedBall.isHidden=true;ball.isHidden=false
         ball.position=point(origin.x,origin.y)
-        contactFlight=ContactFlight(play:play,startedAt:ProcessInfo.processInfo.systemUptime,origin:origin,reduced:reduced,arrival:arrival,completion:completion)
+        contactFlight=ContactFlight(play:play,homeRun:homeRun,startedAt:ProcessInfo.processInfo.systemUptime,origin:origin,reduced:reduced,arrival:arrival,completion:completion)
     }
-    func finishBat(action: String, outcome: String, reduced: Bool, matchJudgment: Bool = false, fieldPlay:MatchDetailedPlay? = nil, onArrival: (@MainActor () -> Void)? = nil, completion: @escaping @MainActor () -> Void) {
+    func finishBat(action: String, outcome: String, reduced: Bool, matchJudgment: Bool = false, fieldPlay:MatchDetailedPlay? = nil, homeRun:MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil, completion: @escaping @MainActor () -> Void) {
         let hit = ["안타", "홈런", "범타"].contains(outcome)
         let remaining = max(0, contactAt - ProcessInfo.processInfo.systemUptime)
         if action != "watch" { batterPose(action == "bunt" ? 4 : 1) }
-        if let play=fieldPlay {
+        if fieldPlay != nil || homeRun != nil {
             run(.sequence([.wait(forDuration:remaining),.run { [weak self] in
                 guard let self else {return}
                 self.batterPose(action == "bunt" ? 5:2)
-                self.startContact(play,origin:MatchPresentation.batContact(action:action),reduced:reduced,arrival:onArrival,completion:completion)
+                self.startContact(fieldPlay,homeRun:homeRun,origin:MatchPresentation.batContact(action:action),reduced:reduced,arrival:onArrival,completion:completion)
                 if action == "swing" && !reduced {
                     self.batter.run(.sequence([.wait(forDuration:0.12),.run { [weak self] in self?.batterPose(3) }]))
                 }
