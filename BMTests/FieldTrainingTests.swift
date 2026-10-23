@@ -857,15 +857,15 @@ import SwiftUI
         let view=Canvas { context,size in
             context.fill(Path(CGRect(origin:.zero,size:size)),with:.color(GameTheme.navy))
             for (i,facing) in FieldFacing.allCases.enumerated() {
-                FieldActorArt.draw(in:context,at:CGPoint(x:35+i*68,y:75),scale:2,motion:.init(facing:facing,stage:.run,gait:.pi/2),kit:0x80464b,skin:0xefbe91,hair:0x68432e,number:47,left:false,selected:i==0)
-                context.draw(Text(String(describing:facing)).font(.system(size:10)).foregroundStyle(.white),at:CGPoint(x:35+i*68,y:95))
+                FieldActorArt.draw(in:context,at:CGPoint(x:35+i*68,y:85),scale:2,motion:.init(facing:facing,stage:.run,gait:.pi/2),kit:0x80464b,skin:0xefbe91,hair:0x68432e,number:47,left:false,selected:i==0)
+                context.draw(Text(String(describing:facing)).font(.system(size:10)).foregroundStyle(.white),at:CGPoint(x:35+i*68,y:105))
             }
             let stages:[FieldSpriteStage]=[.catchBall,.gather,.windup,.release,.followThrough,.ready]
             for (i,stage) in stages.enumerated() {
-                FieldActorArt.draw(in:context,at:CGPoint(x:45+i*85,y:180),scale:2,motion:.init(facing:.southEast,stage:stage,progress:stage == .windup ? 0.5:0.8),kit:0x214e72,skin:0xc88d62,hair:0x242b35,number:18,left:i%2 == 0,selected:false)
-                context.draw(Text(String(describing:stage)).font(.system(size:11)).foregroundStyle(.white),at:CGPoint(x:45+i*85,y:203))
+                FieldActorArt.draw(in:context,at:CGPoint(x:45+i*85,y:195),scale:2,motion:.init(facing:.southEast,stage:stage,progress:stage == .windup ? 0.5:0.8),kit:0x214e72,skin:0xc88d62,hair:0x242b35,number:18,left:i%2 == 0,selected:false)
+                context.draw(Text(String(describing:stage)).font(.system(size:11)).foregroundStyle(.white),at:CGPoint(x:45+i*85,y:223))
             }
-        }.frame(width:550,height:230)
+        }.frame(width:550,height:250)
         let renderer=ImageRenderer(content:view);renderer.scale=2
         let image=try XCTUnwrap(renderer.uiImage),attachment=XCTAttachment(image:image)
         attachment.name="Eight-direction running and catch-transfer-throw sprites";attachment.lifetime = .keepAlways;add(attachment)
@@ -945,7 +945,7 @@ import SwiftUI
         let phone=CGSize(width:390,height:585)
         for feet in DetailedFieldRules.bases+DetailedFieldRules.positions {
             let point=InplayFieldProjection.point(feet,size:phone)
-            let reach=12*InplayFieldProjection.actorScale(feet,size:phone)
+            let reach=FieldActorArt.horizontalReach*InplayFieldProjection.actorScale(feet,size:phone)
             XCTAssertGreaterThan(point.x-reach,0)
             XCTAssertLessThan(point.x+reach,phone.width)
         }

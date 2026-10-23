@@ -564,64 +564,100 @@ enum FieldSpriteAnimation {
 }
 
 @MainActor enum FieldActorArt {
+    // Includes glove, throwing hand and the running lean at every displayed heading.
+    static let horizontalReach = 15.0
     static func draw(in context:GraphicsContext,at c:CGPoint,scale u:Double,motion:FieldSpriteMotion,
                      kit:Int,skin:Int,hair:Int,number:Int,left:Bool,selected:Bool,out:Bool=false) {
-        let outline=0x102735,pants=0xe8e9dd
+        let outline=0x102336,pants=0xf1f3e9
         let bob=motion.bodyOffset.y,lean=motion.bodyOffset.x
+        func tone(_ color:Int,_ delta:Int) -> Int {
+            [0,8,16].reduce(0) {$0 | (max(0,min(255,((color >> $1)&255)+delta)) << $1)}
+        }
+        let kitDark=tone(kit,-35),kitLight=tone(kit,30),skinDark=tone(skin,-35)
         func box(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int,_ body:Bool=true) {
             let rect=CGRect(x:(c.x+(x+(body ? lean:0))*u).rounded(),y:(c.y+(y+(body ? bob:0))*u).rounded(),width:max(1,(w*u).rounded()),height:max(1,(h*u).rounded()))
             context.fill(Path(rect),with:.color(Color(hex:hex).opacity(out ? 0.38:1)))
         }
         func limb(_ a:CGPoint,_ b:CGPoint,_ color:Int,_ body:Bool=true) {
             let steps=max(1,Int(max(abs(b.x-a.x),abs(b.y-a.y))))
-            for i in 0...steps {let t=Double(i)/Double(steps);box(a.x+(b.x-a.x)*t-1,a.y+(b.y-a.y)*t-1,3,3,outline,body)}
-            for i in 0...steps {let t=Double(i)/Double(steps);box(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,1,2,color,body)}
+            for i in 0...steps {
+                let t=Double(i)/Double(steps),x=a.x+(b.x-a.x)*t,y=a.y+(b.y-a.y)*t
+                box(x-2,y-2,5,5,outline,body)
+            }
+            for i in 0...steps {
+                let t=Double(i)/Double(steps),x=a.x+(b.x-a.x)*t,y=a.y+(b.y-a.y)*t
+                box(x-1,y-1,3,3,color,body);box(x-1,y-1,1,2,tone(color,18),body)
+            }
         }
-        let side=motion.facing.side,width=side ? 7.0:motion.facing.diagonal ? 9:10
-        box(-8,2,16,3,0x246b39,false)
-        box(-6,2,12,2,0x213d32,false)
-        for (hip,phase) in [(side ? -2.0:-3,0.0),(side ? 1.0:3,Double.pi)] {
+        let side=motion.facing.side,width=side ? 9.0:motion.facing.diagonal ? 11:12
+        box(-9,2,18,3,0x246b39,false);box(-7,3,14,2,0x174b32,false)
+        let crouch=max(0,bob)
+        for (hip,phase) in [(side ? -2.0:-3.5,0.0),(side ? 2.0:3.5,Double.pi)] {
             let stride=motion.stage == .run ? sin(motion.gait+phase):0
             let foot=CGPoint(x:hip+motion.facing.vector.x*stride*4,y:3+(abs(motion.facing.vector.y)>0.4 ? stride*2:-max(0,stride)*3))
-            let knee=CGPoint(x:hip+motion.facing.vector.x*stride,y:-4-max(0,stride)*2)
-            limb(CGPoint(x:hip,y:-8),knee,pants,false);limb(knee,foot,pants,false)
-            box(foot.x-1,foot.y-1,3,2,kit,false)
-            box(foot.x-(side && motion.facing.horizontal<0 ? 3:1),foot.y+1,4,2,outline,false)
-            box(foot.x-1,foot.y+1,2,1,0x71817d,false)
+            let knee=CGPoint(x:hip+motion.facing.vector.x*stride,y:-3-max(0,stride)*2+crouch*0.6)
+            limb(CGPoint(x:hip,y:-8+crouch),knee,pants,false);limb(knee,foot,pants,false)
+            box(knee.x+1,knee.y,1,3,0xa2b6b9,false)
+            box(foot.x-2,foot.y-2,4,3,kitDark,false)
+            let toe=side && motion.facing.horizontal<0 ? -4.0:-2
+            box(foot.x+toe,foot.y+1,6,3,outline,false)
+            box(foot.x+toe+1,foot.y+1,4,1,pants,false)
+            box(foot.x+toe,foot.y+3,6,1,0x6d8791,false)
         }
         box(-width/2-1,-20,width+2,14,outline)
-        box(-width/2,-19,width,12,kit);box(-width/2,-19,1,12,0x294454)
-        box(width/2-1,-18,1,10,0x294454);box(-width/2+1,-19,width-2,1,0xd0d6c2)
-        box(-2,-19,4,2,0xddd7bd);box(-1,-17,1,7,0x9aa899)
-        box(-width/2+1,-9,width-2,1,0x63756e)
-        box(-width/2,-7,width,2,0x182d3b);box(-1,-7,2,1,0xcbb17b)
-        let headShift=motion.facing.diagonal ? motion.facing.horizontal:0
-        func head(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {box(x+headShift,y,w,h,hex)}
-        head(-5,-25,10,10,outline);head(-4,-23,8,7,skin)
-        head(-4,-19,8,3,hair)
-        if motion.facing.back {
-            head(-3,-23,6,5,hair);head(-2,-18,4,2,skin)
-            if motion.facing.diagonal {head(motion.facing.horizontal*3,-21,1,3,skin)}
-        } else {
-            head(-3,-21,6,4,skin)
-            let eye=side || motion.facing.diagonal ? motion.facing.horizontal*2:2
-            head(eye,-21,1,1,outline);if !side && !motion.facing.diagonal {head(-2,-21,1,1,outline)}
-            head(side || motion.facing.diagonal ? motion.facing.horizontal*4:-1,-20,side ? 2:1,2,skin)
-            head(-1,-18,2,1,0xaa7457)
-        }
-        head(-5,-25,10,3,kit);head(-3,-25,6,1,0x819b98)
-        let brim=motion.facing == .north ? -3:motion.facing == .south ? -5:motion.facing.horizontal>0 ? 2:-8
-        head(Double(brim),-23,motion.facing == .south ? 10:6,2,kit)
+        box(-width/2-2,-19,width+4,5,outline)
+        box(-width/2,-19,width,12,kit)
+        box(-width/2-1,-18,width+2,3,kit)
+        box(-width/2,-18,2,10,kitLight);box(width/2-2,-17,2,10,kitDark)
+        box(-2,-19,4,2,pants);box(-1,-17,1,8,kitDark)
+        box(-width/2+2,-8,width-4,1,kitLight)
+        box(-width/2,-7,width,2,outline);box(-1,-7,2,1,0xd6bf88)
+        if !side {
+            context.draw(Text("\(number)").font(.system(size:7*u,weight:.black,design:.monospaced)).foregroundStyle(Color(hex:kit == 0xf0ead9 ? outline:0xf6f2d8).opacity(out ? 0.38:1)),at:CGPoint(x:c.x+lean*u,y:c.y+(-12+bob)*u))
+        } else {box(-1,-18,1,9,pants)}
         let hand=motion.throwingHand(left:left),glove=motion.glove(left:left)
         let anatomical=(left ? -1.0:1)*(motion.facing.back ? 1:-1)
-        limb(CGPoint(x:anatomical*width/2,y:-18),hand,skin)
-        limb(CGPoint(x:-anatomical*width/2,y:-18),glove,skin)
-        box(glove.x-2,glove.y-2,6,5,outline);box(glove.x-1,glove.y-2,4,4,0x986338)
-        box(glove.x,glove.y-2,2,1,0xd1a471);box(glove.x+1,glove.y,1,2,0x5a3b28)
-        if !side {
-            context.draw(Text("\(number)").font(.system(size:6.5*u,weight:.black,design:.monospaced)).foregroundStyle(Color(hex:kit == 0xf0ead9 ? 0x18344b:0xf3ecd3).opacity(out ? 0.38:1)),at:CGPoint(x:c.x+lean*u,y:c.y+(-12+bob)*u))
-        } else {box(-1,-18,1,9,0xc1c8b8)}
-        if selected {box(-2,-30,4,2,0xecc66b);box(-1,-28,2,1,0xecc66b)}
+        func arm(_ shoulder:CGPoint,_ end:CGPoint) {
+            let elbow=CGPoint(x:shoulder.x*0.4+end.x*0.6,y:shoulder.y*0.45+end.y*0.55+1)
+            limb(shoulder,elbow,kit);limb(elbow,end,skin)
+            box(shoulder.x-1,shoulder.y-1,3,1,pants)
+            box(end.x-1,end.y,2,1,skinDark)
+        }
+        arm(CGPoint(x:anatomical*(width/2+1),y:-18),hand)
+        arm(CGPoint(x:-anatomical*(width/2+1),y:-18),glove)
+        let headShift=motion.facing.diagonal ? motion.facing.horizontal:0
+        func head(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {box(x+headShift,y,w,h,hex)}
+        head(-5,-32,10,1,outline);head(-7,-31,14,11,outline)
+        head(-6,-21,12,3,outline);head(-4,-18,8,1,outline)
+        head(-6,-28,12,8,skin);head(-5,-20,10,2,skinDark)
+        head(-8,-25,2,4,skinDark);head(6,-25,2,4,skinDark)
+        if motion.facing.back {
+            head(-6,-27,12,7,hair);head(-5,-21,10,2,tone(hair,20))
+            head(-2,-20,4,2,skin)
+            if motion.facing.diagonal {head(motion.facing.horizontal*5,-25,2,4,skin)}
+        } else {
+            head(-5,-27,10,2,hair);head(-5,-25,10,5,skin)
+            head(-4,-24,2,3,tone(skin,20))
+            let eye=side || motion.facing.diagonal ? motion.facing.horizontal*3:3
+            head(eye-1,-25,3,3,0xf7f3e7);head(eye,-25,2,2,outline)
+            if !side && !motion.facing.diagonal {head(-4,-25,3,3,0xf7f3e7);head(-3,-25,2,2,outline)}
+            head(side || motion.facing.diagonal ? motion.facing.horizontal*6:-1,-23,2,2,skinDark)
+            head(-1,-20,3,1,0x9b634a)
+        }
+        head(-5,-33,10,1,outline);head(-6,-32,12,4,kit)
+        head(-4,-32,7,1,kitLight);head(3,-31,3,3,kitDark)
+        head(-7,-28,14,2,outline)
+        let brim=motion.facing == .north ? -4:motion.facing == .south ? -8:motion.facing.horizontal>0 ? 4:-11
+        head(Double(brim),-28,motion.facing == .south ? 16:7,2,kitDark)
+        head(Double(brim)+1,-28,motion.facing == .south ? 13:5,1,kitLight)
+        if !motion.facing.back && !side {head(-1,-31,2,2,pants)}
+        // The glove and fingers are drawn last, at the same anchors used by the ball layer.
+        box(hand.x-1,hand.y-1,3,3,skin);box(hand.x,hand.y-1,1,1,tone(skin,20))
+        box(glove.x-4,glove.y-3,8,7,outline)
+        box(glove.x-3,glove.y-3,6,6,0x8e562d);box(glove.x-2,glove.y-2,4,4,0xb88145)
+        box(glove.x-1,glove.y-1,2,3,0x654026);box(glove.x-3,glove.y-2,1,4,0xd5a56b)
+        for finger in 0..<3 {box(glove.x-2+Double(finger)*2,glove.y-3,1,2,0xd5a56b)}
+        if selected {box(-2,-38,4,2,0xecc66b);box(-1,-36,2,1,0xecc66b)}
     }
 }
 
