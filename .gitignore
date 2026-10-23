@@ -114,3 +114,15 @@
 !/BM/Resources/MatchArt/fielder-se-v1.png
 !/BM/Resources/MatchArt/fielder-sw-v1.png
 !/BM/Resources/MatchArt/fielder-w-v1.png
+
+# Role-specific reviewed frame sources and display geometry.
+!/BM/Resources/MatchArt/field-runtime-v1.json
+!/BM/Resources/MatchArt/catcher-catch-v1.png
+!/BM/Resources/MatchArt/catcher-gather-v1.png
+!/BM/Resources/MatchArt/catcher-ready-v1.png
+!/BM/Resources/MatchArt/catcher-release-v1.png
+!/BM/Resources/MatchArt/catcher-windup-v1.png
+!/BM/Resources/MatchArt/fielder-air-v1.png
+!/BM/Resources/MatchArt/runner-ready-v1.png
+!/BM/Resources/MatchArt/runner-run-a-v1.png
+!/BM/Resources/MatchArt/runner-run-b-v1.png

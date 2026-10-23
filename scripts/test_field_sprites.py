@@ -45,6 +45,27 @@ class FieldSpriteSourceTests(unittest.TestCase):
         self.assertIn('prefers-reduced-motion',source)
         self.assertIn('imageSmoothingEnabled=false',source)
 
+class RuntimeSpriteTests(unittest.TestCase):
+    def test_role_sources_contacts_and_masks_are_bundled(self):
+        m=json.loads((ART/'field-runtime-v1.json').read_text())
+        self.assertEqual(set(m['kinds']),{'fielder','runner','catcher'})
+        for kind,entries in m['kinds'].items():
+            self.assertEqual(set(entries),set(MANIFEST['directionOrder']))
+            for sh in entries.values():
+                actions={f['action'] for f in sh['frames']}
+                required={'ready','runA','runB'} if kind=='runner' else {'ready','catch','gather','windup','release'}
+                self.assertTrue(required<=actions)
+                self.assertGreater(sh['referenceHeight'],100)
+                for f in sh['frames']:
+                    self.assertEqual(blob_issues(str((ART/f['file']).relative_to(ROOT)),(ART/f['file']).read_bytes()),[])
+                    x,y,w,h=f['rect']
+                    for row,left,width in f['clipRows']:
+                        self.assertTrue(0<=row<h and 0<=left<w and 0<width<=w-left)
+                    for anchor in ['hand','glove']:
+                        self.assertTrue(0<=f[anchor][0]<=w and 0<=f[anchor][1]<=h)
+                    self.assertIsInstance(f['sourceLeft'],bool)
+                    if kind=='runner':self.assertTrue(f['file'].startswith('runner-'))
+
 class ThrowPreviewTests(unittest.TestCase):
     def test_release_flight_arrival_catch_and_loop_for_all_targets(self):
         source=(ROOT/'scripts/preview_field_sprites.html').read_text()

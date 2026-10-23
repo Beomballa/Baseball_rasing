@@ -2,28 +2,34 @@
 <style>
 :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#112938;color:#eee9cd}body{max-width:1080px;margin:auto;padding:20px}h1{font-size:24px;margin:8px 0}p{line-height:1.6;color:#bac9cf}button,select{font:inherit;color:inherit;background:#203e57;border:2px solid #7695a6;padding:10px 14px;min-height:44px}button:focus-visible,select:focus-visible{outline:3px solid #edc96a;outline-offset:3px}button[aria-pressed=true]{background:#307855;border-color:#edc96a}.controls{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}main{display:grid;grid-template-columns:minmax(0,390px) minmax(0,1fr);gap:24px}canvas{max-width:100%;height:auto;image-rendering:pixelated}#field{width:390px;background:#194f3c}#poses{width:640px;background:#263c49}#state{font-size:20px;color:#edc96a;min-height:30px}label{display:flex;gap:8px;align-items:center}small{display:block;line-height:1.6;color:#bac9cf}@media(max-width:760px){main{grid-template-columns:1fr}body{padding:14px}#field{display:block;margin:auto}h1{font-size:21px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
 </style>
-<h1>수비 선수 · 원본 동작 검증</h1><p>8방향 × 8동작. 기존 경기 캐릭터에 맞춘 원본 아트입니다. 실제 경기·저장과 연결되지 않는 별도 미리보기입니다.</p>
-<div class="controls"><label>방향 <select disabled id="direction" aria-label="선수 방향"></select></label><label>구장 배율 <select disabled id="height"><option value="0.85">85%</option><option value="1" selected>100%</option><option value="1.15">115%</option></select></label><label>송구 대상 <select disabled id="target"><option value="first">1루수</option><option value="second">2루수</option><option value="third">3루수</option></select></label><button disabled id="play" aria-pressed="false">송구·포구 재생</button><button disabled id="step">한 단계씩 보기</button></div>
-<main><section><div id="state" role="status">불러오는 중</div><canvas id="field" width="780" height="1170" aria-label="실제 경기장 위 스프라이트 미리보기"></canvas><small>구장 폭에 맞춘 선수 크기와 원근을 적용합니다. 외야는 작게, 내야는 조금 크게 표시합니다. 대상을 선택하면 송구 → 공 비행 → 상대 포구 → 공 확보로 이어집니다. 실제 경기 판정과 무관한 동작 시연입니다.</small></section><section><h2>선택 방향의 8동작</h2><canvas id="poses" width="640" height="400" aria-label="8개 동작 원본 비교"></canvas><div class="controls" id="actions"></div><small>각 동작의 실제 불투명 경계를 사용합니다. 방향별 준비 자세의 키로 크기를 정하고, 포구 자세를 세로로 늘리지 않습니다. 파란 기준선은 발 위치입니다.</small></section></main>
+<h1>수비 선수 · 원본 동작 검증</h1><p>야수·포수·주자의 8방향 원본과 동작입니다. 실제 경기·저장과 연결되지 않는 별도 미리보기입니다.</p>
+<div class="controls"><label>원본 종류 <select disabled id="actor"><option value="fielder">야수</option><option value="runner">주자</option><option value="catcher">포수</option></select></label><label>방향 <select disabled id="direction" aria-label="선수 방향"></select></label><label>구장 배율 <select disabled id="height"><option value="0.85">85%</option><option value="1" selected>100%</option><option value="1.15">115%</option></select></label><label>송구 대상 <select disabled id="target"><option value="first">1루수</option><option value="second">2루수</option><option value="third">3루수</option><option value="home">홈 · 포수</option></select></label><button disabled id="play" aria-pressed="false">송구·포구 재생</button><button disabled id="step">한 단계씩 보기</button></div>
+<main><section><div id="state" role="status">불러오는 중</div><canvas id="field" width="780" height="1170" aria-label="실제 경기장 위 스프라이트 미리보기"></canvas><small>구장 폭에 맞춘 선수 크기와 원근을 적용합니다. 외야는 작게, 내야는 조금 크게 표시합니다. 홈 송구는 포수가 받으며, 헬멧을 쓴 주자는 홈에서 1루로 달립니다. 대상을 선택하면 송구 → 공 비행 → 상대 포구 → 공 확보로 이어집니다. 실제 경기 판정과 무관한 동작 시연입니다.</small></section><section><h2>선택 종류의 동작</h2><canvas id="poses" width="640" height="400" aria-label="8개 동작 원본 비교"></canvas><div class="controls" id="actions"></div><small>각 동작의 실제 불투명 경계를 사용합니다. 방향별 준비 자세의 키로 크기를 정하고, 포구 자세를 세로로 늘리지 않습니다. 파란 기준선은 발 위치입니다.</small></section></main>
 <script type="module">
 const root='../BM/Resources/MatchArt/';
 const labels=['준비','달리기 A','달리기 B','땅볼 포구','공 모으기','송구 준비','릴리스','팔로스루'];
 const names={n:'뒤 · N',ne:'뒤 오른쪽 · NE',e:'오른쪽 · E',se:'앞 오른쪽 · SE',s:'앞 · S',sw:'앞 왼쪽 · SW',w:'왼쪽 · W',nw:'뒤 왼쪽 · NW'};
 const direction=document.querySelector('#direction'),height=document.querySelector('#height'),play=document.querySelector('#play');
-const target=document.querySelector('#target'),step=document.querySelector('#step');
+const actor=document.querySelector('#actor'),target=document.querySelector('#target'),step=document.querySelector('#step');
 const field=document.querySelector('#field'),poses=document.querySelector('#poses'),state=document.querySelector('#state');
-let manifest,images={},background,selected=0,running=false,start=0,raf,manualTime=null,stepIndex=-1;
+let manifest,runtime,images={},background,selected=0,running=false,start=0,raf,manualTime=null,stepIndex=-1;
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 async function load(url){const i=new Image();i.src=url;await i.decode();return i;}
 const spriteCache=new Map();
-function sprite(ctx,d,index,x,y,h){
- const sheet=manifest.sheets[d],f=sheet.frames[index],scale=h/sheet.referenceHeight,key=d+index;
+function poseName(i){return actor.value==='runner'&&i===3?'베이스 도착':actor.value==='catcher'&&i===3?'미트 포구':actor.value==='catcher'&&i===7?'자세 복귀':labels[i];}
+function frameFor(kind,d,index){
+ const actions=['ready','runA','runB','catch','gather','windup','release','followThrough'];
+ const sheet=runtime.kinds[kind][d];
+ return {sheet,frame:sheet.frames.find(f=>f.action===actions[index])??sheet.frames.find(f=>f.action==='ready')};
+}
+function sprite(ctx,d,index,x,y,h,kind='fielder'){
+ const {sheet,frame:f}=frameFor(kind,d,index),scale=h/sheet.referenceHeight,key=kind+d+index;
  if(!spriteCache.has(key)){
   const image=document.createElement('canvas');image.width=f.rect[2];image.height=f.rect[3];const c=image.getContext('2d');
   c.imageSmoothingEnabled=false;c.beginPath();for(const [row,left,width] of f.clipRows)c.rect(left,row,width,1);c.clip();
-  c.drawImage(images[d],...f.rect,0,0,image.width,image.height);spriteCache.set(key,image);
+  c.drawImage(images[f.file],...f.rect,0,0,image.width,image.height);spriteCache.set(key,image);
  }
- ctx.imageSmoothingEnabled=false;ctx.drawImage(spriteCache.get(key),x-f.pivot[0]*scale,y-f.pivot[1]*scale,f.rect[2]*scale,f.rect[3]*scale);
+ ctx.save();ctx.translate(x,y);if(f.sourceLeft)ctx.scale(-1,1);ctx.imageSmoothingEnabled=false;ctx.drawImage(spriteCache.get(key),-f.pivot[0]*scale,-f.pivot[1]*scale,f.rect[2]*scale,f.rect[3]*scale);ctx.restore();
 }
 // Canvas uses two pixels per displayed point at the reference 390-point field width.
 function fieldSpriteHeight(y){
@@ -32,7 +38,7 @@ function fieldSpriteHeight(y){
 }
 // Pure presentation timeline: the ball cannot be caught before arrival.
 function throwSequence(elapsed,key){
- const targets={first:{name:'1루수',x:670,y:640,facing:'w',throwFacing:'e'},second:{name:'2루수',x:435,y:475,facing:'sw',throwFacing:'ne'},third:{name:'3루수',x:110,y:640,facing:'e',throwFacing:'w'}};
+ const targets={first:{name:'1루수',x:670,y:640,facing:'w',throwFacing:'e'},second:{name:'2루수',x:435,y:475,facing:'sw',throwFacing:'ne'},third:{name:'3루수',x:110,y:640,facing:'e',throwFacing:'w'},home:{name:'포수',x:390,y:890,facing:'n',throwFacing:'se'}};
  const target=targets[key],time=Math.max(0,elapsed)%7.8;
  const duration=.65+Math.hypot(target.x-315,target.y-550)/600;
  const progress=Math.min(1,Math.max(0,(time-3.9)/duration)),arrival=3.9+duration;
@@ -43,9 +49,9 @@ function throwSequence(elapsed,key){
   ballVisible:time>=3.9 && time<arrival,caught:time>=arrival,
   label:time<3.9?'송구 준비':time<arrival?'송구 중':time<arrival+.8?'포구 완료':'공 확보'};
 }
-function anchor(d,index,x,y,h,uv){
- const sh=manifest.sheets[d],f=sh.frames[index],scale=h/sh.referenceHeight;
- return {x:x+(uv[0]*f.rect[2]-f.pivot[0])*scale,y:y+(uv[1]*f.rect[3]-f.pivot[1])*scale};
+function anchor(d,index,x,y,h,kind='fielder',part='glove'){
+ const {sheet,frame:f}=frameFor(kind,d,index),scale=h/sheet.referenceHeight,a=f[part];
+ return {x:x+(a[0]-f.pivot[0])*scale,y:y+(a[1]-f.pivot[1])*scale};
 }
 function baseball(ctx,x,y){
  const rows=['....oooo....','..oowwwwoo..','.owrwwwwrwo.','.owwrwwrwwwo','owwwwrrwwwwo','owwwwwwwwwwo','owwwwwwwwwwo','owwwwrrwwwwo','.owwrwwrwwwo','.owrwwwwrwo.','..oossssoo..','....oooo....'];
@@ -57,22 +63,25 @@ function render(t=0){
  const demo=running||manualTime!==null,seq=throwSequence(running?(t-start)/1000:manualTime??0,target.value);
  const phase=demo?seq.phase:selected,x=demo?seq.x:315,d=demo?seq.target.throwFacing:direction.value;
  const defenders=[{x:170,y:430,d:'s'},{x:620,y:430,d:'s'},{x:390,y:360,d:'s'},
-  {x:110,y:640,d:'se',key:'third'},{x:670,y:640,d:'sw',key:'first'},{x:435,y:475,d:'s',key:'second'}];
+  {x:110,y:640,d:'se',key:'third'},{x:670,y:640,d:'sw',key:'first'},{x:435,y:475,d:'s',key:'second'},{x:390,y:890,d:'n',key:'home'}];
  const receiver=seq.target;
  if(demo){
   ctx.strokeStyle='#edc96a';ctx.lineWidth=2;ctx.setLineDash([5,5]);ctx.beginPath();ctx.ellipse(receiver.x,receiver.y+4,20,7,0,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
  }
- for(const f of defenders){const active=demo&&f.key===target.value;sprite(ctx,active?receiver.facing:f.d,active?seq.receiverPhase:0,f.x,f.y,fieldSpriteHeight(f.y));}
- sprite(ctx,d,phase,x,550,fieldSpriteHeight(550));
- const receiveUV={w:[.17,.85],e:[.87,.85],sw:[.18,.85]};
- const handUV={e:[.97,.36],ne:[.97,.36],w:[.04,.39]};
- const from=anchor(demo?receiver.throwFacing:'e',6,315,550,fieldSpriteHeight(550),handUV[receiver.throwFacing]);
- const to=anchor(receiver.facing,3,receiver.x,receiver.y,fieldSpriteHeight(receiver.y),receiveUV[receiver.facing]);
+ for(const f of defenders){const active=demo&&f.key===target.value;sprite(ctx,active?receiver.facing:f.d,active?seq.receiverPhase:0,f.x,f.y,fieldSpriteHeight(f.y),f.key==='home'?'catcher':'fielder');}
+ sprite(ctx,d,phase,x,550,fieldSpriteHeight(550),demo?'fielder':actor.value);
+ const runProgress=demo?Math.min(1,Math.max(0,(seq.time-1.2)/5)):0;
+ const runnerX=345+(735-345)*runProgress,runnerY=860+(600-860)*runProgress;
+ const runnerFrame=demo&&runProgress>0&&runProgress<1?(Math.floor(seq.time*6)%2)+1:0;
+ sprite(ctx,runProgress>0?'ne':'e',runnerFrame,runnerX,runnerY,fieldSpriteHeight(runnerY),'runner');
+ const receiverKind=target.value==='home'?'catcher':'fielder';
+ const from=anchor(receiver.throwFacing,6,315,550,fieldSpriteHeight(550),'fielder','hand');
+ const to=anchor(receiver.facing,3,receiver.x,receiver.y,fieldSpriteHeight(receiver.y),receiverKind);
  if(demo&&seq.ballVisible){const q=seq.progress;const bx=from.x+(to.x-from.x)*q,by=from.y+(to.y-from.y)*q;
   ctx.fillStyle='#11293866';ctx.beginPath();ctx.ellipse(bx,by+12,5,2,0,0,Math.PI*2);ctx.fill();baseball(ctx,bx,by-Math.sin(Math.PI*q)*18);
  }
  if(demo&&seq.caught){
-  const secured=anchor(receiver.facing,4,receiver.x,receiver.y,fieldSpriteHeight(receiver.y),[.4,.43]);
+  const secured=anchor(receiver.facing,4,receiver.x,receiver.y,fieldSpriteHeight(receiver.y),receiverKind);
   const q=Math.min(1,Math.max(0,(seq.time-seq.arrival-.65)/.3));
   // Ball disappears into the mitt, then stays secured as the hands gather.
   if(seq.time<seq.arrival+.16)baseball(ctx,to.x,to.y);
@@ -80,22 +89,22 @@ function render(t=0){
   ctx.strokeStyle='#edc96a';ctx.lineWidth=2;ctx.beginPath();ctx.arc(point.x,point.y,9,0,Math.PI*2);ctx.stroke();
  }
  ctx.strokeStyle='#80ced5';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-12,550);ctx.lineTo(x+12,550);ctx.stroke();
- const text=demo?`${receiver.name} · ${seq.label}`:`${names[d]} · ${labels[phase]}`;
+ const text=demo?`${receiver.name} · ${seq.label}`:`${names[d]} · ${poseName(phase)}`;
  if(state.textContent!==text)state.textContent=text;
  state.dataset.stage=demo?(seq.caught?'caught':seq.ballVisible?'flight':'preparing'):'pose';
  const p=poses.getContext('2d');p.clearRect(0,0,640,400);
- for(let i=0;i<8;i++){const cx=(i%4)*160+80,cy=Math.floor(i/4)*200+158;p.strokeStyle='#80ced5';p.beginPath();p.moveTo(cx-40,cy);p.lineTo(cx+40,cy);p.stroke();sprite(p,direction.value,i,cx,cy,112);p.fillStyle='#eee9cd';p.font='15px system-ui';p.textAlign='center';p.fillText(labels[i],cx,cy+28);}
+ for(let i=0;i<8;i++){if((actor.value==='runner'&&i>3)||(actor.value==='catcher'&&(i===1||i===2)))continue;const cx=(i%4)*160+80,cy=Math.floor(i/4)*200+158;p.strokeStyle='#80ced5';p.beginPath();p.moveTo(cx-40,cy);p.lineTo(cx+40,cy);p.stroke();sprite(p,direction.value,i,cx,cy,112,actor.value);p.fillStyle='#eee9cd';p.font='15px system-ui';p.textAlign='center';p.fillText(poseName(i),cx,cy+28);}
  if(running)raf=requestAnimationFrame(render);
 }
 function stop(){running=false;cancelAnimationFrame(raf);play.setAttribute('aria-pressed','false');play.textContent='송구·포구 재생';}
 try{
- manifest=await(await fetch(root+'fielders-v1.json')).json();
- await Promise.all(manifest.directionOrder.map(async d=>{images[d]=await load(root+manifest.sheets[d].file);direction.add(new Option(names[d],d));}));
+ manifest=await(await fetch(root+'fielders-v1.json')).json();runtime=await(await fetch(root+'field-runtime-v1.json')).json();
+ const files=[...new Set(Object.values(runtime.kinds).flatMap(kind=>Object.values(kind).flatMap(sh=>sh.frames.map(f=>f.file))))];await Promise.all(files.map(async file=>{images[file]=await load(root+file);}));
  // Async image completion must not reorder the direction selector.
  direction.replaceChildren(...manifest.directionOrder.map(d=>new Option(names[d],d)));direction.value='se';
  background=await load(root+'inplay-stadium-arcade-v1.png');
  labels.forEach((label,i)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>{stop();manualTime=null;selected=i;render();};document.querySelector('#actions').append(b);});
- direction.onchange=()=>{if(!running)render();};target.onchange=()=>{stop();manualTime=null;stepIndex=-1;render();};height.onchange=()=>{if(!running)render();};
+ actor.onchange=()=>{stop();manualTime=null;selected=0;document.querySelectorAll('#actions button').forEach((b,i)=>{b.hidden=(actor.value==='runner'&&i>3)||(actor.value==='catcher'&&(i===1||i===2));b.textContent=poseName(i);});render();};direction.onchange=()=>{if(!running)render();};target.onchange=()=>{stop();manualTime=null;stepIndex=-1;render();};height.onchange=()=>{if(!running)render();};
  step.onclick=()=>{stop();stepIndex=(stepIndex+1)%9;manualTime=[0,1.2,2.3,3,3.6,3.91,4.55,5.4,6.4][stepIndex];render();};
  play.onclick=()=>{if(running){stop();manualTime=null;render();}else if(reduced.matches){step.click();}else{manualTime=null;running=true;start=performance.now();play.setAttribute('aria-pressed','true');play.textContent='재생 멈추기';raf=requestAnimationFrame(render);}};
  reduced.onchange=()=>{stop();render();};document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});render();document.querySelectorAll('select,button').forEach(control=>control.disabled=false);document.documentElement.dataset.ready='true';

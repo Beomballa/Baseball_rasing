@@ -960,7 +960,7 @@ import SwiftUI
                     let feet=FieldNode.sample(play.fielders[index],at:time)
                     let origin=InplayFieldProjection.point(feet,size:size),u=InplayFieldProjection.actorScale(feet,size:size)
                     let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:feet,size:size)
-                    let anchor=release ? motion.throwingHand(left:left):motion.glove(left:left)
+                    let anchor=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:left,hand:release) ?? (release ? motion.throwingHand(left:left):motion.glove(left:left))
                     let actual=FieldBallPresentation.point(play,time:time,size:size,leftIndex:left ? index:nil)
                     XCTAssertEqual(actual.x,origin.x+(anchor.x+motion.bodyOffset.x)*u,accuracy:0.2)
                     XCTAssertEqual(actual.y,origin.y+(anchor.y+motion.bodyOffset.y)*u,accuracy:0.2)
@@ -974,6 +974,61 @@ import SwiftUI
             }
             XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
         }
+    }
+
+    func testRasterKindsDirectionsAndPoseWeightsStayAlignedForBothHands() throws {
+        let manifest=try XCTUnwrap(FieldRasterArt.manifest)
+        XCTAssertEqual(Set(manifest.kinds.keys),Set(["fielder","runner","catcher"]))
+        for kind in ["fielder","runner","catcher"] {for facing in FieldFacing.allCases {for left in [false,true] {
+            for stage in [FieldSpriteStage.ready,.run,.catchBall,.gather,.windup,.release,.followThrough] {
+                let m=FieldSpriteMotion(facing:facing,stage:stage,progress:0.4,gait:1,airCatch:kind == "fielder",willThrow:true)
+                let samples=FieldRasterArt.samples(m,kind:kind,left:left)
+                XCTAssertFalse(samples.isEmpty)
+                XCTAssertEqual(samples.reduce(0){$0+$1.weight},1,accuracy:0.00001)
+                for sample in samples {
+                    XCTAssertLessThanOrEqual(sample.frame.rect[2]*sample.unit/2+abs(m.bodyOffset.x),FieldActorArt.horizontalReach+0.01)
+                    let image=try XCTUnwrap(FieldRasterArt.image(sample,kit:0x316841,skin:0xba7750,hair:0x382416,number:47,back:facing.back))
+                    XCTAssertEqual(image.cgImage?.width,Int(sample.frame.rect[2]))
+                }
+                let p=try XCTUnwrap(FieldRasterArt.contact(m,kind:kind,left:left,hand:stage == .release))
+                XCTAssertTrue(p.x.isFinite && p.y.isFinite)
+            }
+        }}}
+    }
+    func testRasterPersonalizationAndGlovelessRunnerAreDistinct() throws {
+        let runner=FieldRasterArt.samples(.init(facing:.north,stage:.ready),kind:"runner",left:false)[0]
+        XCTAssertTrue(runner.frame.file.hasPrefix("runner-"))
+        let catcher=FieldRasterArt.samples(.init(facing:.north,stage:.ready),kind:"catcher",left:false)[0]
+        XCTAssertTrue(catcher.frame.file.hasPrefix("catcher-"))
+        let normal=try XCTUnwrap(FieldRasterArt.image(runner,kit:0x316841,skin:0xba7750,hair:0x382416,number:47,back:true)?.pngData())
+        let changed=try XCTUnwrap(FieldRasterArt.image(runner,kit:0x7e2835,skin:0xf5c799,hair:0x9e773d,number:12,back:true)?.pngData())
+        XCTAssertNotEqual(normal,changed)
+        for variant in [(0x7e2835,0xba7750,0x382416,47),(0x316841,0xf5c799,0x382416,47),(0x316841,0xba7750,0x9e773d,47),(0x316841,0xba7750,0x382416,12)] {
+            let image=try XCTUnwrap(FieldRasterArt.image(runner,kit:variant.0,skin:variant.1,hair:variant.2,number:variant.3,back:true)?.pngData())
+            XCTAssertNotEqual(normal,image)
+        }
+        let view=Canvas {context,_ in
+            for (row,kind) in ["fielder","runner","catcher"].enumerated() {
+                for (column,facing) in FieldFacing.allCases.enumerated() {
+                    FieldRasterArt.draw(in:context,at:CGPoint(x:30+column*64,y:55+row*80),scale:1.6,motion:.init(facing:facing,stage:row == 1 ? .run:.release,progress:0.5,gait:1),kind:kind,
+                        kit:row == 1 ? 0x7e2835:0x316841,skin:0xba7750,hair:0x382416,number:47,left:false,selected:false,out:false)
+                }
+            }
+        }.frame(width:540,height:250).background(GameTheme.board)
+        let renderer=ImageRenderer(content:view);renderer.scale=2
+        let image=try XCTUnwrap(renderer.uiImage)
+        let attachment=XCTAttachment(image:image);attachment.name="Raster fielders runners catchers eight directions";attachment.lifetime = .keepAlways;add(attachment)
+    }
+
+    func testRasterGatherToWindupAndReleaseAnchorsAreContinuous() throws {
+        for kind in ["fielder","catcher"] {for facing in FieldFacing.allCases {for left in [false,true] {
+            let gather=try XCTUnwrap(FieldRasterArt.contact(.init(facing:facing,stage:.gather,progress:1,willThrow:true),kind:kind,left:left,hand:false))
+            let windup=try XCTUnwrap(FieldRasterArt.contact(.init(facing:facing,stage:.windup,progress:0,willThrow:true),kind:kind,left:left,hand:true))
+            XCTAssertEqual(gather.x,windup.x,accuracy:0.00001);XCTAssertEqual(gather.y,windup.y,accuracy:0.00001)
+            let ready=try XCTUnwrap(FieldRasterArt.contact(.init(facing:facing,stage:.ready),kind:kind,left:left,hand:false))
+            let held=try XCTUnwrap(FieldRasterArt.contact(.init(facing:facing,stage:.gather,progress:1),kind:kind,left:left,hand:false))
+            XCTAssertEqual(ready.x,held.x,accuracy:0.00001);XCTAssertEqual(ready.y,held.y,accuracy:0.00001)
+        }}}
     }
 
 }

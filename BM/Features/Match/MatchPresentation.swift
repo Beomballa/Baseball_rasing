@@ -20,6 +20,117 @@ enum MatchArt {
     }
 }
 
+// Bundled raster presentation only. None of these samples are written to the match ledger.
+@MainActor enum FieldRasterArt {
+    struct Frame: Decodable {
+        let file: String
+        let action: String
+        let rect: [Double]
+        let pivot: [Double]
+        let clipRows: [[Int]]
+        let hand: [Double]
+        let glove: [Double]
+        let sourceLeft: Bool
+    }
+    struct Sheet: Decodable {let referenceHeight: Double;let frames: [Frame]}
+    struct Manifest: Decodable {let kinds: [String:[String:Sheet]]}
+    struct Sample {let frame:Frame;let weight:Double;let unit:Double;let mirrored:Bool}
+    static let directions=["n","ne","e","se","s","sw","w","nw"]
+    static let manifest: Manifest? = {
+        guard let url=Bundle.main.url(forResource:"field-runtime-v1",withExtension:"json",subdirectory:"MatchArt"),
+              let data=try? Data(contentsOf:url) else {return nil}
+        return try? JSONDecoder().decode(Manifest.self,from:data)
+    }()
+    private static let cache: NSCache<NSString,UIImage> = {let c=NSCache<NSString,UIImage>();c.totalCostLimit=48*1024*1024;return c}()
+    static func samples(_ motion:FieldSpriteMotion,kind:String,left:Bool) -> [Sample] {
+        let direction=left ? (8-motion.facing.rawValue)%8:motion.facing.rawValue
+        guard let sheet=manifest?.kinds[kind]?[directions[direction]] else {return []}
+        let p=max(0,min(1,motion.progress))
+        var poses:[(String,Double)]
+        switch motion.stage {
+        case .ready:poses=[("ready",1)]
+        case .run:
+            let blend=(sin(motion.gait)+1)/2
+            poses=kind == "catcher" ? [("gather",1)]:[("runA",1-blend),("runB",blend)]
+        case .catchBall:poses=[("ready",1-p),(motion.airCatch && kind == "fielder" ? "airCatch":"catch",p)]
+        case .gather:
+            let caught=motion.airCatch && kind == "fielder" ? "airCatch":"catch"
+            poses=motion.willThrow ? [(caught,1-p),("gather",p)]:p<0.5 ? [(caught,1-p*2),("gather",p*2)]:[("gather",2-p*2),("ready",p*2-1)]
+        case .windup:poses=p<0.5 ? [("gather",1-p*2),("windup",p*2)]:[("windup",2-p*2),("release",p*2-1)]
+        case .release:poses=[("release",1)]
+        case .followThrough:
+            poses=kind == "catcher" ? [("release",1-p),("ready",p)]:p<0.5 ? [("release",1-p*2),("followThrough",p*2)]:[("followThrough",2-p*2),("ready",p*2-1)]
+        }
+        // A single physical scale for the whole direction avoids pose-dependent size pulses.
+        let widest=sheet.frames.map {$0.rect[2]}.max() ?? sheet.referenceHeight
+        let unit=min(24/sheet.referenceHeight,26/widest)
+        return poses.compactMap {action,weight in
+            guard weight>0,let frame=sheet.frames.first(where:{$0.action==action}) ?? sheet.frames.first(where:{$0.action=="ready"}) else {return nil}
+            return Sample(frame:frame,weight:weight,unit:unit,mirrored:left != frame.sourceLeft)
+        }
+    }
+    static func contact(_ motion:FieldSpriteMotion,kind:String,left:Bool,hand:Bool) -> CGPoint? {
+        let frames=samples(motion,kind:kind,left:left);guard !frames.isEmpty else {return nil}
+        return frames.reduce(CGPoint.zero) {point,sample in
+            let f=sample.frame,a=hand ? f.hand:f.glove
+            return CGPoint(x:point.x+(a[0]-f.pivot[0])*sample.unit*sample.weight*(sample.mirrored ? -1:1),
+                           y:point.y+(a[1]-f.pivot[1])*sample.unit*sample.weight)
+        }
+    }
+    static func image(_ sample:Sample,kit:Int,skin:Int,hair:Int,number:Int,back:Bool) -> UIImage? {
+        let f=sample.frame
+        let key="\(f.file):\(f.rect):\(kit):\(skin):\(hair):\(number):\(back):\(sample.mirrored)" as NSString
+        if let result=cache.object(forKey:key) {return result}
+        guard let url=Bundle.main.url(forResource:f.file,withExtension:nil,subdirectory:"MatchArt"),
+              let original=UIImage(contentsOfFile:url.path)?.cgImage,
+              let crop=original.cropping(to:CGRect(x:f.rect[0],y:f.rect[1],width:f.rect[2],height:f.rect[3])) else {return nil}
+        let w=crop.width,h=crop.height,format=CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue
+        var bytes=[UInt8](repeating:0,count:w*h*4)
+        let ok=bytes.withUnsafeMutableBytes {buffer -> Bool in
+            guard let c=CGContext(data:buffer.baseAddress,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:format) else {return false}
+            c.draw(crop,in:CGRect(x:0,y:0,width:w,height:h));return true
+        }
+        guard ok else {return nil}
+        var bounds=[(Int,Int)](repeating:(0,0),count:h)
+        for row in f.clipRows where row.count==3 && row[0]<h {bounds[row[0]]=(row[1],row[1]+row[2])}
+        for y in 0..<h {for x in 0..<w {
+            let i=(y*w+x)*4,a=Int(bytes[i+3])
+            guard x>=bounds[y].0 && x<bounds[y].1 else {bytes[i+3]=0;bytes[i]=0;bytes[i+1]=0;bytes[i+2]=0;continue}
+            guard a>128 else {continue}
+            let r=Double(bytes[i])*255/Double(a),g=Double(bytes[i+1])*255/Double(a),b=Double(bytes[i+2])*255/Double(a)
+            var color:Int?,shade=1.0
+            if b>40 && b>r*1.35 && b>g*1.08 {color=kit;shade=max(0.3,min(1.5,b/155))}
+            // Keep the glove's brown leather independent from skin recoloring.
+            else if (f.file.hasPrefix("runner-") || abs(Double(x)-f.glove[0])>Double(w)*0.16 || abs(Double(y)-f.glove[1])>Double(h)*0.18) && r>185 && r>g*1.13 && g>b*1.12 && g>95 {color=skin;shade=max(0.45,min(1.2,r/240))}
+            else if Double(y)>Double(h)*0.19 && Double(y)<Double(h)*0.36 && Double(x)>Double(w)*0.23 && Double(x)<Double(w)*0.77 && r<65 && abs(r-g)<22 && abs(g-b)<22 {color=hair;shade=max(0.5,(r+g+b)/100)}
+            if let color {for (offset,shift) in [(0,16),(1,8),(2,0)] {bytes[i+offset]=UInt8(min(255,Double((color>>shift)&255)*shade)*Double(a)/255)}}
+        }}
+        if back {
+            PlayerMotionArt.drawNumber(number,at:CGPoint(x:Double(w)*0.5,y:Double(h)*0.49),angle:0,
+                mirrored:sample.mirrored,unit:max(2,w/60),bytes:&bytes,width:w,height:h)
+        }
+        guard let provider=CGDataProvider(data:Data(bytes) as CFData),let cg=CGImage(width:w,height:h,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:format),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else {return nil}
+        let result=UIImage(cgImage:cg);cache.setObject(result,forKey:key,cost:w*h*4);return result
+    }
+    @discardableResult static func draw(in context:GraphicsContext,at point:CGPoint,scale:Double,motion:FieldSpriteMotion,
+            kind:String,kit:Int,skin:Int,hair:Int,number:Int,left:Bool,selected:Bool,out:Bool) -> Bool {
+        let frames=samples(motion,kind:kind,left:left);guard !frames.isEmpty else {return false}
+        var c=context
+        c.opacity=out ? 0.38:1
+        c.fill(Path(ellipseIn:CGRect(x:point.x-7*scale,y:point.y-1*scale,width:14*scale,height:3*scale)),with:.color(.black.opacity(0.25)))
+        if selected {c.stroke(Path(ellipseIn:CGRect(x:point.x-8*scale,y:point.y-2*scale,width:16*scale,height:4*scale)),with:.color(GameTheme.gold),lineWidth:1)}
+        for sample in frames {
+            guard let image=image(sample,kit:kit,skin:skin,hair:hair,number:number,back:motion.facing.back && kind != "catcher") else {return false}
+            let f=sample.frame,u=sample.unit*scale
+            var layer=c;layer.opacity *= sample.weight
+            layer.translateBy(x:point.x+motion.bodyOffset.x*scale,y:point.y+motion.bodyOffset.y*scale)
+            if sample.mirrored {layer.scaleBy(x:-1,y:1)}
+            layer.draw(Image(uiImage:image).interpolation(.none),in:CGRect(x:-f.pivot[0]*u,y:-f.pivot[1]*u,width:f.rect[2]*u,height:f.rect[3]*u))
+        }
+        return true
+    }
+}
+
 enum MatchPresentation {
     static func batContact(action: String) -> CGPoint {
         let bunt = action == "bunt"
@@ -325,7 +436,7 @@ struct MatchResultSummary {
         return UIImage(cgImage: image)
     }
     static let digits = ["111101101101111", "010110010010111", "111001111100111", "111001111001111", "101101111001001", "111100111001111", "111100111101111", "111001001001001", "111101111101111", "111101111001111"]
-    private static func drawNumber(_ number: Int, at center: CGPoint, angle: Double, mirrored: Bool, unit: Int, bytes: inout [UInt8], width: Int, height: Int) {
+    fileprivate static func drawNumber(_ number: Int, at center: CGPoint, angle: Double, mirrored: Bool, unit: Int, bytes: inout [UInt8], width: Int, height: Int) {
         let masks = String(number).compactMap { $0.wholeNumberValue }.map { Array(digits[$0]) }
         let columns = masks.count * 4 - 1, textWidth = Double(columns * unit), textHeight = Double(5 * unit)
         let cosine = cos(angle), sine = sin(angle)
@@ -685,7 +796,7 @@ enum InplayFieldProjection {
     }
 }
 
-enum FieldBallPresentation {
+@MainActor enum FieldBallPresentation {
     static func handOffset(_ play:MatchDetailedPlay,time:Double,size:CGSize,leftIndex:Int?) -> CGPoint {
         let position=FieldNode.sample(play.ball,at:time)
         let motionIndex=play.fielders.indices.first {FieldNode.sample(play.fielders[$0],at:time).distance(to:position)<0.9}
@@ -694,7 +805,6 @@ enum FieldBallPresentation {
         if let index=motionIndex {
             let display=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:position,size:size)
             // Preserve the gather interpolation while using the projected screen-facing pose.
-            let original=FieldSpriteAnimation.motion(play,index:index,time:time)
             let left=index == leftIndex
             func anchor(_ motion:FieldSpriteMotion) -> CGPoint {
                 var p=motion.glove(left:left)
@@ -703,11 +813,12 @@ enum FieldBallPresentation {
                     let hand=motion.throwingHand(left:left)
                     p=CGPoint(x:p.x+(hand.x-p.x)*motion.progress,y:p.y+(hand.y-p.y)*motion.progress)
                 }
+                if let raster=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:left,hand:[.windup,.release].contains(motion.stage)) {p=raster}
                 return CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y)
             }
             if offset != .zero {
-                let a=anchor(original),b=anchor(display)
-                offset=CGPoint(x:offset.x+b.x-a.x,y:offset.y+b.y-a.y)
+                let b=anchor(display)
+                offset=b
             }
         }
         return CGPoint(x:offset.x*scale,y:offset.y*scale)
@@ -775,23 +886,27 @@ struct DetailedFieldReplayBoard: View {
                     }
                     let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
                     let defenseOwn=ownTeamFielding ?? !play.ownBatter
-                    var actors:[(point:FieldPoint,motion:FieldSpriteMotion,own:Bool,teamOwn:Bool,number:Int,out:Bool)]=[]
+                    var actors:[(point:FieldPoint,motion:FieldSpriteMotion,own:Bool,teamOwn:Bool,number:Int,out:Bool,kind:String)]=[]
                     for index in play.fielders.indices {
                         let own=defenseOwn && (ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index==play.fielder))
-                        actors.append((FieldNode.sample(play.fielders[index],at:time),FieldSpriteAnimation.motion(play,index:index,time:time),own,defenseOwn,own ? jerseyNumber:index+1,false))
+                        actors.append((FieldNode.sample(play.fielders[index],at:time),FieldSpriteAnimation.motion(play,index:index,time:time),own,defenseOwn,own ? jerseyNumber:index+1,false,index == 1 ? "catcher":"fielder"))
                     }
                     for runner in play.runners {
-                        actors.append((FieldNode.sample(runner.nodes,at:time),FieldSpriteAnimation.travel(runner.nodes,time:time),runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,finished && runner.out))
+                        actors.append((FieldNode.sample(runner.nodes,at:time),FieldSpriteAnimation.travel(runner.nodes,time:time),runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,finished && runner.out,"runner"))
                     }
                     for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
-                        FieldActorArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),
+                        let raster=FieldRasterArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),kind:actor.kind,
                             kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
                             hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,
                             left:actor.own && throwingHand == "left",selected:actor.own,out:actor.out)
+                        if !raster {FieldActorArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),
+                            kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
+                            hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,
+                            left:actor.own && throwingHand == "left",selected:actor.own,out:actor.out)}
                     }
                     let ownIndex=defenseOwn ? play.fielders.indices.first {index in ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index == play.fielder)}:nil
                     let leftIndex=throwingHand == "left" ? ownIndex:nil
-                    func ballPoint(_ t:Double) -> CGPoint {
+                    @MainActor func ballPoint(_ t:Double) -> CGPoint {
                         FieldBallPresentation.point(play,time:t,size:size,leftIndex:leftIndex)
                     }
                     let groundBall=point(FieldNode.sample(play.ball,at:time))
