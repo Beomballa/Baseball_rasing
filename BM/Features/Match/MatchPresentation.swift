@@ -5,7 +5,7 @@ import SpriteKit
 // Presentation geometry never changes the saved pitch, timing window or RNG.
 enum MatchArt {
     static let names = ["batter-view-clean", "stadium-clean", "batter-actions", "pitcher-delivery-v2", "catcher-parts",
-                        "grip-fastball", "grip-slider", "grip-changeup", "grips-extra", "inplay-stadium-sunset-v1"]
+                        "grip-fastball", "grip-slider", "grip-changeup", "grips-extra", "inplay-stadium-arcade-v1"]
     private static let images: [String: UIImage] = Dictionary(uniqueKeysWithValues: names.compactMap { name in
         guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "MatchArt"),
               let image = UIImage(contentsOfFile: url.path) else { return nil }
@@ -120,8 +120,8 @@ struct MatchScoreStrip: View {
                     }.accessibilityLabel("예시 날씨 맑음 22도, 외야 방향 바람 초속 2미터")
                 }
             }.foregroundStyle(ink).padding(8).frame(maxWidth: .infinity, minHeight: 64)
-                .background(Color(hex: 0x173c32))
-                .overlay(Rectangle().strokeBorder(Color(hex: 0x93a48c), lineWidth: 1))
+                .background(Color(hex: 0x0b3552))
+                .overlay(Rectangle().strokeBorder(Color(hex: 0x69a4bf), lineWidth: 1))
         }.accessibilityElement(children: .contain).accessibilityIdentifier("matchScoreboard")
     }
     private func lamps(_ label: String, count: Int, total: Int, blink: Bool) -> some View {
@@ -130,7 +130,7 @@ struct MatchScoreStrip: View {
             HStack(spacing: 3) {
                 ForEach(0..<total, id: \.self) { i in
                     let confirming = pulse == label && i == (count == 0 ? total - 1 : min(count, total) - 1)
-                    Rectangle().fill(i < count || confirming ? (label == "B" ? Color(hex: 0x82e6b2) : Color(hex: 0xed7c6b)) : Color(hex: 0x0a211c))
+                    Rectangle().fill(i < count || confirming ? (label == "B" ? Color(hex: 0x82e6b2) : Color(hex: 0xed7c6b)) : Color(hex: 0x082337))
                         .frame(width: 6, height: 6).overlay(Rectangle().strokeBorder(ink.opacity(0.5), lineWidth: 0.5))
                         .opacity(confirming && blink ? 0.2 : 1)
                 }
@@ -578,7 +578,7 @@ enum FieldSpriteAnimation {
             for i in 0...steps {let t=Double(i)/Double(steps);box(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,1,2,color,body)}
         }
         let side=motion.facing.side,width=side ? 7.0:motion.facing.diagonal ? 9:10
-        for step in 0..<7 {box(Double(-step)-5,Double(step)*0.7+2,10,2,0x31503a,false)}
+        box(-8,2,16,3,0x246b39,false)
         box(-6,2,12,2,0x213d32,false)
         for (hip,phase) in [(side ? -2.0:-3,0.0),(side ? 1.0:3,Double.pi)] {
             let stride=motion.stage == .run ? sin(motion.gait+phase):0
@@ -596,7 +596,7 @@ enum FieldSpriteAnimation {
         box(-width/2+1,-9,width-2,1,0x63756e)
         box(-width/2,-7,width,2,0x182d3b);box(-1,-7,2,1,0xcbb17b)
         let headShift=motion.facing.diagonal ? motion.facing.horizontal:0
-        func head(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {box((x+headShift)*0.8,(y+25)*0.8-29,w*0.8,h*0.8,hex)}
+        func head(_ x:Double,_ y:Double,_ w:Double,_ h:Double,_ hex:Int) {box(x+headShift,y,w,h,hex)}
         head(-5,-25,10,10,outline);head(-4,-23,8,7,skin)
         head(-4,-19,8,3,hair)
         if motion.facing.back {
@@ -621,7 +621,7 @@ enum FieldSpriteAnimation {
         if !side {
             context.draw(Text("\(number)").font(.system(size:6.5*u,weight:.black,design:.monospaced)).foregroundStyle(Color(hex:kit == 0xf0ead9 ? 0x18344b:0xf3ecd3).opacity(out ? 0.38:1)),at:CGPoint(x:c.x+lean*u,y:c.y+(-12+bob)*u))
         } else {box(-1,-18,1,9,0xc1c8b8)}
-        if selected {box(-2,-34,4,2,0xecc66b);box(-1,-32,2,1,0xecc66b)}
+        if selected {box(-2,-30,4,2,0xecc66b);box(-1,-28,2,1,0xecc66b)}
     }
 }
 
@@ -632,9 +632,9 @@ enum InplayFieldProjection {
         CGRect(x:size.width*0.025,y:size.height*0.025,width:size.width*0.95,height:size.height*0.95)
     }
     static func point(_ p:FieldPoint,size:CGSize) -> CGPoint {
-        let depth=max(-6,p.y),denominator=33+depth,frame=viewport(size)
-        return CGPoint(x:frame.minX+frame.width*(0.5+1.28*p.x/denominator),
-                       y:frame.minY+frame.height*(0.75-0.626*depth/denominator))
+        let depth=max(-6,p.y),denominator=28+depth,frame=viewport(size)
+        return CGPoint(x:frame.minX+frame.width*(0.5+1.16*p.x/denominator),
+                       y:frame.minY+frame.height*(0.739-0.59*depth/denominator))
     }
     static func actorScale(_ p:FieldPoint,size:CGSize) -> Double {
         viewport(size).width/310*(1.12-0.36*min(1,max(0,p.y)/80))
@@ -692,7 +692,7 @@ enum FieldBallPresentation {
 // The bundled art contains no players, ball or score; live layers own every moving object.
 @MainActor enum InplayStadiumArt {
     static let size=CGSize(width:1024,height:1536)
-    static let image=MatchArt.image("inplay-stadium-sunset-v1")
+    static let image=MatchArt.image("inplay-stadium-arcade-v1")
 }
 
 struct DetailedFieldReplayBoard: View {
@@ -729,7 +729,7 @@ struct DetailedFieldReplayBoard: View {
                         context.draw(Text("구장 이미지를 불러오지 못했습니다").foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width/2,y:size.height/4))
                     }
                     let viewport=InplayFieldProjection.viewport(size)
-                    let scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.174,width:viewport.width*0.22,height:viewport.height*0.038)
+                    let scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.123,width:viewport.width*0.22,height:viewport.height*0.039)
                     context.fill(Path(scoreFrame),with:.color(Color(hex:0x0b2030)))
                     context.stroke(Path(scoreFrame),with:.color(GameTheme.gold),lineWidth:2)
                     context.draw(Text(scoreText).font(.system(size:max(12,size.width*0.028),weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:scoreFrame.midX,y:scoreFrame.midY))

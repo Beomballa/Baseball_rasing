@@ -31,22 +31,40 @@ struct BattingAimZone: View {
     @Binding var x: Double
     @Binding var y: Double
     let locked: Bool
+    var showsGrid = true
     var body: some View {
         GeometryReader { size in
             ZStack {
-                Rectangle().fill(GameTheme.paper.opacity(0.08))
-                Rectangle().strokeBorder(Color(hex: 0x9fb7bf), lineWidth: 2)
-                    .frame(width: size.size.width * 0.6, height: size.size.height * 0.6)
-                Path { path in
-                    for part in [0.4, 0.6] {
-                        path.move(to: CGPoint(x: size.size.width * part, y: size.size.height * 0.2))
-                        path.addLine(to: CGPoint(x: size.size.width * part, y: size.size.height * 0.8))
-                        path.move(to: CGPoint(x: size.size.width * 0.2, y: size.size.height * part))
-                        path.addLine(to: CGPoint(x: size.size.width * 0.8, y: size.size.height * part))
-                    }
-                }.stroke(Color(hex: 0xf3edcf).opacity(0.4), lineWidth: 1)
-                Rectangle().strokeBorder(GameTheme.gold, lineWidth: 3).frame(width: 16, height: 16)
-                    .position(x: size.size.width * x, y: size.size.height * y)
+                Color.clear
+                if showsGrid {
+                    Rectangle().fill(GameTheme.paper.opacity(0.08))
+                    Rectangle().strokeBorder(Color(hex: 0x9fb7bf), lineWidth: 2)
+                        .frame(width: size.size.width * 0.6, height: size.size.height * 0.6)
+                    Path { path in
+                        for part in [0.4, 0.6] {
+                            path.move(to: CGPoint(x: size.size.width * part, y: size.size.height * 0.2))
+                            path.addLine(to: CGPoint(x: size.size.width * part, y: size.size.height * 0.8))
+                            path.move(to: CGPoint(x: size.size.width * 0.2, y: size.size.height * part))
+                            path.addLine(to: CGPoint(x: size.size.width * 0.8, y: size.size.height * part))
+                        }
+                    }.stroke(Color(hex: 0xf3edcf).opacity(0.4), lineWidth: 1)
+                }
+                if showsGrid {
+                    Rectangle().strokeBorder(GameTheme.gold,lineWidth:3).frame(width:16,height:16)
+                        .position(x:size.size.width*x,y:size.size.height*y)
+                } else {
+                    Canvas { context,canvas in
+                        let c=CGPoint(x:canvas.width*x,y:canvas.height*y)
+                        for dx in [-1.0,1] {for dy in [-1.0,1] {
+                            var corner=Path()
+                            corner.move(to:CGPoint(x:c.x+dx*3,y:c.y+dy*6))
+                            corner.addLine(to:CGPoint(x:c.x+dx*6,y:c.y+dy*6))
+                            corner.addLine(to:CGPoint(x:c.x+dx*6,y:c.y+dy*3))
+                            context.stroke(corner,with:.color(GameTheme.gold),lineWidth:2)
+                        }}
+                        context.fill(Path(CGRect(x:c.x-1,y:c.y-1,width:2,height:2)),with:.color(GameTheme.paper))
+                    }.allowsHitTesting(false)
+                }
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in

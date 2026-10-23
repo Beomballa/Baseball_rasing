@@ -96,8 +96,8 @@ import SpriteKit
         }
         ball.name="baseball";ball.zPosition=8;ball.size=CGSize(width:10,height:10)
         ball.isHidden=true;addChild(ball)
-        strikeZone.name="pitchStrikeZone";strikeZone.zPosition=5;strikeZone.strokeColor=UIColor(white:1,alpha:0.55)
-        strikeZone.lineWidth=0.8;strikeZone.fillColor = .clear
+        strikeZone.name="pitchStrikeZone";strikeZone.zPosition=5;strikeZone.strokeColor=UIColor(white:1,alpha:0.8)
+        strikeZone.lineWidth=0.65;strikeZone.fillColor = .clear
         let a=arrivalPoint(x:0.2,y:0.2),b=arrivalPoint(x:0.8,y:0.8)
         let path=CGMutablePath();path.addRect(CGRect(x:a.x,y:b.y,width:b.x-a.x,height:a.y-b.y))
         for value in [0.4,0.6] {

@@ -934,6 +934,9 @@ extension CareerFlowTests {
         createDashboardSample(app,name:"FieldPitcher",motionStyle:true)
         reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
         reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        assertArenaFits(app,button:"gamePitch",ratio:1219.0/1290)
+        XCTAssertTrue(app.otherElements["releaseGauge"].exists)
+        let pitcherScreen=XCTAttachment(screenshot:app.screenshot());pitcherScreen.name="Arcade pitcher gameplay";pitcherScreen.lifetime = .keepAlways;add(pitcherScreen)
         let stage=app.descendants(matching:.any).matching(identifier:"inplayFieldStage").firstMatch
         var found=false
         for _ in 0..<16 {
@@ -956,6 +959,15 @@ extension CareerFlowTests {
         createDashboardSample(app,name:"FieldBatter",motionStyle:true)
         reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
         reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        assertArenaFits(app,button:"requestGamePitch",ratio:1)
+        XCTAssertTrue(app.otherElements["battingTimingGauge"].exists)
+        let aim=app.otherElements["battingAimZone"],aimBefore=aim.value as? String
+        let countBeforeAim=app.otherElements["careerGameCount"].label
+        let start=aim.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5))
+        start.press(forDuration:0.05,thenDragTo:aim.coordinate(withNormalizedOffset:CGVector(dx:0.75,dy:0.25)))
+        XCTAssertNotEqual(aim.value as? String,aimBefore)
+        XCTAssertEqual(app.otherElements["careerGameCount"].label,countBeforeAim)
+        let batterScreen=XCTAttachment(screenshot:app.screenshot());batterScreen.name="Arcade batter gameplay and aim";batterScreen.lifetime = .keepAlways;add(batterScreen)
         for _ in 0..<12 {
             if app.buttons["replayLastFieldPlay"].exists {break}
             app.buttons["gameInput-watch"].tap();app.buttons["requestGamePitch"].tap()

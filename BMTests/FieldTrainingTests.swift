@@ -922,14 +922,14 @@ import SwiftUI
         }
     }
 
-    func testSunsetBackdropLandmarksAndPerspectiveScaleMatchLiveLayers() throws {
+    func testArcadeBackdropLandmarksAndPerspectiveScaleMatchLiveLayers() throws {
         let size=InplayStadiumArt.size
         let landmarks:[(FieldPoint,CGPoint)]=[
-            (DetailedFieldRules.bases[0],CGPoint(x:512,y:1152)),
-            (DetailedFieldRules.bases[1],CGPoint(x:997,y:795)),
-            (DetailedFieldRules.bases[2],CGPoint(x:512,y:632)),
-            (DetailedFieldRules.bases[3],CGPoint(x:27,y:795)),
-            (DetailedFieldRules.positions[0],CGPoint(x:512,y:817))]
+            (DetailedFieldRules.bases[0],CGPoint(x:512,y:1135)),
+            (DetailedFieldRules.bases[1],CGPoint(x:997,y:765)),
+            (DetailedFieldRules.bases[2],CGPoint(x:512,y:609)),
+            (DetailedFieldRules.bases[3],CGPoint(x:27,y:765)),
+            (DetailedFieldRules.positions[0],CGPoint(x:512,y:786))]
         for (world,expected) in landmarks {
             let screen=InplayFieldProjection.point(world,size:size)
             let viewport=InplayFieldProjection.viewport(size)

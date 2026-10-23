@@ -267,12 +267,12 @@ struct CareerGameView: View {
                     }
                     if replay != nil { EmptyView() }
                     else if judgment == nil && player.role == .batter && !match.completed {
-                        BattingAimZone(x: $aimX, y: $aimY, locked: retrySave != nil || presenting)
+                        BattingAimZone(x: $aimX, y: $aimY, locked: retrySave != nil || presenting, showsGrid:false)
                             .frame(width: field.width * 0.16, height: field.height * 0.22)
                             .position(x: field.width * 0.5, y: field.height * 0.68)
                     } else if judgment == nil && player.role == .pitcher && !match.completed {
                         let target = match.delivery(pitchCode: pitchCode)
-                        BattingAimZone(x: .constant(target.x), y: .constant(target.y), locked: true)
+                        BattingAimZone(x: .constant(target.x), y: .constant(target.y), locked: true, showsGrid:false)
                             .frame(width: field.width * 0.22, height: field.height * 0.24)
                             .position(x: field.width * 0.54, y: field.height * 0.43)
                             .allowsHitTesting(false)
