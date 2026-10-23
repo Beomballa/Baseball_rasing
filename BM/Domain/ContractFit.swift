@@ -130,7 +130,8 @@ extension CareerMatch {
               fieldStats?.version == (role == .batter ? 3:2),
               let position = fieldStats?.position else { return nil }
         let batted=battedBallVersion.map {"-batted\($0)"} ?? ""
-        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1\(batted)-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
+        let npc=npcFielders.map {"-npc\($0.version)"} ?? ""
+        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1\(batted)\(npc)-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
     }
 }
 
@@ -167,13 +168,14 @@ struct ScoutingReference: Codable, Equatable {
         let mode=ScoutingInputMode.allCases.first{environment.hasSuffix("/"+$0.suffix)}
         let tracked=mode != nil
         guard (tracked || environment.hasSuffix("/auto-v1")), role == .pitcher ? position == "P" : FieldPosition(rawValue:position) != nil else { return nil }
+        if environment.contains("-npc1-") && !environment.contains("-batted1-") {return nil}
         if let found = cache[environment] { return found }
         let profiles = PlayerArchetype.choices(for:role).map(\.values), count = role == .batter ? 20:6
         var totals = PersonalSeasonTotals(), performance = tracked ? MatchScoutingPerformance.tracked:MatchScoutingPerformance()
         for (index, profile) in profiles.enumerated() {
             for game in 0..<count {
                 var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0,tracked:tracked,
-                    battedBallVersion:environment.contains("-batted1-") ? 1:nil)
+                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil)
                 // Empty input counts initially identify automatic; match rules/position must still match exactly.
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
                 try run(&match,mode:mode ?? .automatic)
@@ -200,11 +202,16 @@ struct ScoutingReference: Codable, Equatable {
             pitches += 1
         }
     }
-    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil) -> CareerMatch {
+    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil) -> CareerMatch {
         var match = CareerMatch(random:seed,isHome:home,role:role.rawValue,appearance:true,
             contact:values.contact,power:values.power,discipline:values.discipline,mastery:values.pitches)
         match.controlVersion=2;match.trainingEffectsVersion=1;match.detailedFieldVersion=5
         match.battedBallVersion=battedBallVersion
+        if npcFieldersVersion == 1 {
+            // Standard high-school reference pool; this is not the user's exact opponent roster.
+            let own="hs-ref-001",opponent=String(format:"hs-ref-%03d",2+Int(seed%5))
+            match.npcFielders=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:home ? own:opponent,awayID:home ? opponent:own)
+        }
         match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.abilityStats=MatchAbilityStats(mental:values.mental,velocity:values.velocity,control:values.control,stuff:values.stuff,stamina:values.stamina,fatigue:24)
         match.fieldStats=MatchFieldStats(speed:values.speed,defense:values.defense,arm:values.arm,position:position)

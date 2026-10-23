@@ -457,6 +457,7 @@ struct CareerGameView: View {
                                     VStack(spacing: 6) { controls(match) }
                                 }.id("gameControls").background { measure("controls") }
                             }
+                            MatchNPCFieldersPanel(match:match,schools:schools)
                         } else {
                             Text(error ?? "경기 불러오는 중")
                             Button("다시 확인") { load() }.buttonStyle(MatchPixelButtonStyle())
@@ -508,5 +509,44 @@ private struct MatchChromeHeightKey: PreferenceKey {
     static var defaultValue: [String: CGFloat] { [:] }
     static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+
+private struct MatchNPCFieldersPanel:View {
+    let match:CareerMatch
+    let schools:[School]
+    @State private var expanded=false
+    var body:some View {
+        VStack(alignment:.leading,spacing:8) {
+            Button(expanded ? "출전 야수 능력치 · 접기":"출전 야수 능력치 · 펼치기") {expanded.toggle()}
+                .font(.subheadline.bold()).frame(maxWidth:.infinity,minHeight:44,alignment:.leading)
+                .buttonStyle(.plain).accessibilityIdentifier("gameNPCFielders")
+            if expanded {
+                if let roster=match.npcFielders {
+                    Text("NPC v\(roster.version) · \(roster.year)시즌 · 게임용 가상 기량")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    ForEach([true,false],id:\.self) {home in
+                        let team=roster.team(home:home)
+                        Text(CareerTeamDirectory.name(team.teamID,schools:schools)+" · 기본 전력 \(Int(team.strength))")
+                            .font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                        ForEach(team.players,id:\.id) {npc in
+                            let own=home == match.isHome && match.appearance && (match.role != "pitcher" || match.ownPitcherActive) && npc.position == match.fieldStats?.position
+                            let speed=own ? match.fieldStats?.speed ?? npc.speed:npc.speed
+                            let defense=own ? match.fieldStats?.defense ?? npc.defense:npc.defense
+                            let arm=own ? match.fieldStats?.arm ?? npc.arm:npc.arm
+                            Text("\(npc.position) \(own ? "내 선수":"가상 선수") · 스피드 \(speed,specifier:"%.1f") / 수비 \(defense,specifier:"%.1f") / 송구 \(arm,specifier:"%.1f")")
+                                .font(.caption.monospaced()).accessibilityIdentifier("gameNPC-"+(home ? "home-":"away-")+npc.position)
+                        }
+                    }
+                    Text("내 선수는 실제 능력치·특성이 우선합니다. NPC 값은 훈련·재실행으로 다시 뽑지 않습니다.")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                } else {
+                    Text("기존 경기 · 일반 야수는 스피드/수비/송구 60 기준 유지")
+                        .font(.caption).accessibilityIdentifier("gameNPCLegacy")
+                }
+            }
+        }.padding(10).background(GameTheme.boardPanel)
+            .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
     }
 }

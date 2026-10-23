@@ -1,5 +1,55 @@
 import Foundation
 
+/// Versioned game-balance profiles, not real school or club player ratings.
+struct MatchNPCPlayer:Codable,Equatable {
+    let id:String
+    let position:String
+    var speed:Double
+    var defense:Double
+    var arm:Double
+}
+struct MatchNPCTeam:Codable,Equatable {
+    let teamID:String
+    let strength:Double
+    var players:[MatchNPCPlayer]
+}
+struct MatchNPCFielders:Codable,Equatable {
+    var version=1
+    let year:Int
+    let competition:String
+    var home:MatchNPCTeam
+    var away:MatchNPCTeam
+    static func hash(_ text:String) -> UInt64 {
+        text.utf8.reduce(UInt64(14695981039346656037)) {($0 ^ UInt64($1)) &* 1099511628211}
+    }
+    static func make(year:Int,competition:String,homeID:String,awayID:String) -> Self {
+        let base=competition == "college" ? 60.0:competition == "domestic-development" ? 66:54
+        let offsets:[(Double,Double,Double)]=[(-10,-4,6),(-9,5,8),(-5,3,-3),(5,6,0),(-2,3,7),(6,8,5),(3,0,0),(10,5,1),(4,1,8)]
+        func team(_ id:String) -> MatchNPCTeam {
+            let key="npc-v1/\(competition)/\(year)/\(id)"
+            let strength=base+Double(Int(hash(key+"/team")%13)-6)
+            let players=DetailedFieldRules.names.enumerated().map {index,position in
+                let playerID=key+"/"+position,offset=offsets[index]
+                func value(_ stat:String,_ adjustment:Double) -> Double {
+                    min(95,max(20,strength+adjustment+Double(Int(hash(playerID+"/"+stat)%15)-7)))
+                }
+                return MatchNPCPlayer(id:playerID,position:position,speed:value("speed",offset.0),defense:value("defense",offset.1),arm:value("arm",offset.2))
+            }
+            return MatchNPCTeam(teamID:id,strength:strength,players:players)
+        }
+        return Self(year:year,competition:competition,home:team(homeID),away:team(awayID))
+    }
+    func team(home isHome:Bool) -> MatchNPCTeam {isHome ? home:away}
+    func validate() throws {
+        guard version == 1,(1...9999).contains(year),["highschool","college","domestic-development"].contains(competition),
+              !home.teamID.isEmpty,!away.teamID.isEmpty,home.teamID != away.teamID else {throw MatchError.invalidRecord}
+        for team in [home,away] {
+            guard team.strength.isFinite,(0...100).contains(team.strength),team.players.map(\.position) == DetailedFieldRules.names,
+                  team.players.allSatisfy({$0.id == "npc-v1/\(competition)/\(year)/\(team.teamID)/\($0.position)" && [$0.speed,$0.defense,$0.arm].allSatisfy {$0.isFinite && (0...100).contains($0)}}) else {throw MatchError.invalidRecord}
+        }
+    }
+}
+
 struct MatchFieldStats: Codable, Equatable {
     var version = 1
     let speed: Double
@@ -385,6 +435,17 @@ enum DetailedFieldRules {
         var throwVelocity: Double { (18 + arm * 0.18) * (traits.contains(.strongArm) ? 1.05 : 1) }
         var transfer: Double { 0.6 - defense * 0.0035 }
     }
+    static func skills(stats:MatchFieldStats?,defending:Bool,npc:[MatchNPCPlayer]?) -> [Skill] {
+        let ownIndex=defending ? names.firstIndex(of:stats?.position ?? ""):nil
+        return names.indices.map {index in
+            if index == ownIndex,let stats {
+                return Skill(speed:clamp(stats.speed),defense:clamp(stats.defense),arm:clamp(stats.arm),traits:stats.activeTraits ?? [],
+                    positionDelay:stats.positionMastery.map {0.25*(1-clamp($0)/100)} ?? 0)
+            }
+            if let npc {return Skill(speed:npc[index].speed,defense:npc[index].defense,arm:npc[index].arm)}
+            return Skill()
+        }
+    }
     private struct Throw {
         let base: Int, receiver: Int
         let release: Double, ball: Double, control: Double
@@ -408,7 +469,9 @@ enum DetailedFieldRules {
             let middle=skills[index]
             let ready=middle.reaction+positions[index].distance(to:point)/middle.velocity+middle.pickup
             let first=flight(landing.distance(to:point),skill),second=flight(point.distance(to:bases[base]),middle)
-            let start=max(pickup+skill.transfer,ready-first),receive=start+first
+            let start=max(pickup+skill.transfer,ready-first)
+            // Subtracting then adding the flight can round one ULP before the relay is ready.
+            let receive=max(ready,start+first)
             let next=max(receive+middle.transfer,cover-second),arrival=next+second
             if arrival+tag < best.control {
                 best=Throw(base:base,receiver:receiver,release:start,ball:arrival,control:arrival+tag,
@@ -432,13 +495,9 @@ enum DetailedFieldRules {
     }
     static func resolve(half: Int, order: Int, landing: FieldPoint, flight: Double, runners before: [FieldRunnerProfile?],
                         batter: FieldRunnerProfile, outs: Int, stats: MatchFieldStats?, defending: Bool, ownBatter: Bool,
-                        doublePlayEnabled: Bool = false, groundBall: Bool = true,relayEnabled:Bool=false) -> MatchDetailedPlay {
+                        doublePlayEnabled: Bool = false, groundBall: Bool = true,relayEnabled:Bool=false,npc:[MatchNPCPlayer]?=nil) -> MatchDetailedPlay {
         let ownIndex = defending ? names.firstIndex(of: stats?.position ?? "") : nil
-        let skills = names.indices.map { index -> Skill in
-            guard index == ownIndex, let stats else { return Skill() }
-            return Skill(speed:clamp(stats.speed),defense:clamp(stats.defense),arm:clamp(stats.arm),traits:stats.activeTraits ?? [],
-                         positionDelay:stats.positionMastery.map { 0.25 * (1 - clamp($0)/100) } ?? 0)
-        }
+        let skills=DetailedFieldRules.skills(stats:stats,defending:defending,npc:npc)
         let handler = names.indices.min {
             max(flight, skills[$0].reaction + positions[$0].distance(to:landing)/skills[$0].velocity) + skills[$0].pickup <
             max(flight, skills[$1].reaction + positions[$1].distance(to:landing)/skills[$1].velocity) + skills[$1].pickup
@@ -572,6 +631,10 @@ enum DetailedFieldRules {
 
 extension CareerMatch {
     func validateDetailedField() throws {
+        if let npcFielders {
+            try npcFielders.validate()
+            guard detailedFieldVersion == 5,battedBallVersion == 1,(0...18).contains(half),homeOrder>=0,awayOrder>=0,npcFielders.competition == (competition ?? "highschool") else {throw MatchError.invalidRecord}
+        }
         guard battedBallVersion == nil || battedBallVersion == 1 && detailedFieldVersion == 5 else {throw MatchError.invalidRecord}
         if let version=detailedFieldVersion {
             guard [1,2,3,4,5].contains(version), let plays=fieldPlays, let runners=runnerProfiles,runners.count == 3,
@@ -590,18 +653,14 @@ extension CareerMatch {
 extension DetailedFieldRules {
     // A caught fly removes the force. Runners wait on their original bag, then attempt one base.
     static func resolveFly(half:Int,order:Int,landing:FieldPoint,flight:Double,runners before:[FieldRunnerProfile?],
-                           batter:FieldRunnerProfile,outs:Int,stats:MatchFieldStats?,defending:Bool,ownBatter:Bool,relayEnabled:Bool=false) -> MatchDetailedPlay {
+                           batter:FieldRunnerProfile,outs:Int,stats:MatchFieldStats?,defending:Bool,ownBatter:Bool,relayEnabled:Bool=false,npc:[MatchNPCPlayer]?=nil) -> MatchDetailedPlay {
         let ownIndex=defending ? names.firstIndex(of:stats?.position ?? "") : nil
-        let skills=names.indices.map { index -> Skill in
-            guard index == ownIndex,let stats else { return Skill() }
-            return Skill(speed:clamp(stats.speed),defense:clamp(stats.defense),arm:clamp(stats.arm),traits:stats.activeTraits ?? [],
-                         positionDelay:stats.positionMastery.map { 0.25*(1-clamp($0)/100) } ?? 0)
-        }
+        let skills=DetailedFieldRules.skills(stats:stats,defending:defending,npc:npc)
         func reach(_ index:Int) -> Double { skills[index].reaction + positions[index].distance(to:landing)/skills[index].velocity + skills[index].pickup }
         let handler=names.indices.min { reach($0) < reach($1) }!,skill=skills[handler],reachAt=reach(handler)
         guard reachAt <= flight else {
             var dropped=resolve(half:half,order:order,landing:landing,flight:flight,runners:before,batter:batter,outs:outs,
-                                stats:stats,defending:defending,ownBatter:ownBatter,doublePlayEnabled:true,groundBall:false,relayEnabled:relayEnabled)
+                                stats:stats,defending:defending,ownBatter:ownBatter,doublePlayEnabled:true,groundBall:false,relayEnabled:relayEnabled,npc:npc)
             dropped.version=relayEnabled ? 4:3;dropped.fly=FieldFlyPlay(caught:false,reachAt:reachAt)
             return dropped
         }
@@ -735,13 +794,10 @@ enum FieldMisplayRules {
         }
         return result.sorted { $0.at == $1.at ? $0.stage < $1.stage : $0.at < $1.at }
     }
-    static func applying(to clean:MatchDetailedPlay,stats:MatchFieldStats?,defending:Bool,draws:[Double]) -> MatchDetailedPlay {
+    static func applying(to clean:MatchDetailedPlay,stats:MatchFieldStats?,defending:Bool,draws:[Double],npc:[MatchNPCPlayer]?=nil) -> MatchDetailedPlay {
         precondition(draws.count == 7 && draws.allSatisfy { $0.isFinite && (0..<1).contains($0) })
         let own=defending ? DetailedFieldRules.names.firstIndex(of:stats?.position ?? "") : nil
-        let skills=DetailedFieldRules.names.indices.map { index -> DetailedFieldRules.Skill in
-            guard index == own,let stats else {return DetailedFieldRules.Skill()}
-            return DetailedFieldRules.Skill(speed:DetailedFieldRules.clamp(stats.speed),defense:DetailedFieldRules.clamp(stats.defense),arm:DetailedFieldRules.clamp(stats.arm),traits:stats.activeTraits ?? [],positionDelay:stats.positionMastery.map { 0.25*(1-DetailedFieldRules.clamp($0)/100) } ?? 0)
-        }
+        let skills=DetailedFieldRules.skills(stats:stats,defending:defending,npc:npc)
         for event in opportunities(clean) {
             let skill=skills[event.fielder],start=FieldNode.sample(clean.ball,at:event.at)
             let chance=probability(kind:event.kind,defense:skill.defense,arm:skill.arm,distance:start.distance(to:event.target),traits:skill.traits)

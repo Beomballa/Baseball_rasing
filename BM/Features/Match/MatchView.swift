@@ -301,7 +301,7 @@ struct FieldReplayVerification:View {
             ScrollView {
                 VStack(alignment:.leading,spacing:12) {
                     Text("인플레이 재현실").font(.title2.bold()).foregroundStyle(GameTheme.gold)
-                    Text("검증 전용 · 선수 저장/날짜/피로/XP 변경 없음")
+                    Text("고정 재현 자료 · 실전 팀별 NPC와 별도 / 선수 저장·날짜·피로·XP 변경 없음")
                         .font(.caption).accessibilityIdentifier("fieldVerificationNotice")
                     Picker("상황",selection:$scenario) {
                         ForEach(FieldVerificationScenario.allCases) {Text($0.rawValue).tag($0)}

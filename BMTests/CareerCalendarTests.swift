@@ -1550,6 +1550,9 @@ extension CareerCalendarTests {
             try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
             let record=try CareerMatchStore.start(player:p,state:s,in:c)
             XCTAssertEqual(try record.snapshot().competition,"domestic-development")
+            let npc=try XCTUnwrap(record.snapshot().npcFielders)
+            XCTAssertEqual(npc.competition,"domestic-development");XCTAssertEqual(npc.year,2030)
+            XCTAssertTrue((60...72).contains(npc.home.strength))
             XCTAssertTrue(try record.snapshot().scoutingEnvironment?.hasPrefix("domestic-development/") == true)
             try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? p.pitches[0].code:nil,in:c)
             let bytes=record.payload,revision=record.revision
@@ -1635,6 +1638,9 @@ extension CareerCalendarTests {
         try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
         let record=try CareerMatchStore.start(player:p,state:s,in:c)
         XCTAssertEqual(try record.snapshot().competition,"college")
+        let npc=try XCTUnwrap(record.snapshot().npcFielders)
+        XCTAssertEqual(npc.competition,"college");XCTAssertEqual(npc.year,2030)
+        XCTAssertTrue((54...66).contains(npc.home.strength))
         try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c)
         XCTAssertEqual(try CareerSeasonStore.load(player:p,state:s,year:2030,in:c).totals.games,1)
     }

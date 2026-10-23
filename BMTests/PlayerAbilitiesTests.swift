@@ -1360,4 +1360,24 @@ extension PlayerAbilitiesTests {
         }
     }
 
+    func testNPCReferencesSeparateOldEnvironmentAndKeepEquivalentControlModes() throws {
+        for role in PlayerRole.allCases {
+            let position=role == .batter ? "CF":"P",values=PlayerArchetype.initial(for:role).values
+            let legacy=ScoutingReferenceSimulation.fixture(role:role,position:position,values:values,seed:3,home:true,tracked:true,battedBallVersion:1)
+            let current=ScoutingReferenceSimulation.fixture(role:role,position:position,values:values,seed:3,home:true,tracked:true,battedBallVersion:1,npcFieldersVersion:1)
+            XCTAssertNotEqual(legacy.scoutingEnvironment,current.scoutingEnvironment)
+            XCTAssertNotNil(current.npcFielders);XCTAssertNil(legacy.npcFielders)
+            let environment=try XCTUnwrap(current.scoutingEnvironment)
+            XCTAssertTrue(environment.contains("-batted1-npc1-"))
+            var references=[ScoutingReference]()
+            for mode in ScoutingInputMode.allCases {
+                let key=environment.replacingOccurrences(of:"auto-v2",with:mode.suffix)
+                let reference=try XCTUnwrap(ScoutingReferenceSimulation.make(environment:key,role:role,position:position))
+                try reference.validate();references.append(reference)
+                XCTAssertEqual(reference,try ScoutingReferenceSimulation.make(environment:key,role:role,position:position))
+            }
+            XCTAssertEqual(references[0].totals,references[1].totals);XCTAssertEqual(references[0].totals,references[2].totals)
+        }
+    }
+
 }

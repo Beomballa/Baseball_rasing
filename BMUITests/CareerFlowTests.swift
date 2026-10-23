@@ -928,6 +928,46 @@ extension CareerFlowTests {
         reveal(app.staticTexts["gameResultFatigue"], in: app); XCTAssertEqual(app.staticTexts["gameResultFatigue"].label, fatigue)
     }
 
+    @MainActor func testNPCFieldersPanelBothRolesPersistsAcrossRelaunchWithoutAdvancingGame() throws {
+        let app=XCUIApplication();app.launch()
+        for pitcher in [false,true] {
+            if pitcher {
+                reveal(app.buttons["createOtherRole"],in:app);app.buttons["createOtherRole"].tap()
+                app.buttons["role-pitcher"].tap()
+            }
+            createDashboardSample(app,name:pitcher ? "RosterPitch":"RosterBat")
+            reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            let count=app.otherElements["careerGameCount"].label
+            let panel=app.descendants(matching:.any).matching(identifier:"gameNPCFielders").firstMatch
+            reveal(panel,in:app);panel.tap()
+            var values=[String:String]()
+            for side in ["home","away"] {for position in ["P","C","1B","2B","3B","SS","LF","CF","RF"] {
+                let key="gameNPC-"+side+"-"+position
+                XCTAssertTrue(app.staticTexts[key].exists,key);values[key]=app.staticTexts[key].label
+            }}
+            reveal(app.staticTexts["gameNPC-away-RF"],in:app)
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "NPC pitcher stored fielders":"NPC batter stored fielders";shot.lifetime = .keepAlways;add(shot)
+            XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
+            app.terminate();app.launch()
+            let roleButton=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"]
+            if roleButton.exists {reveal(roleButton,in:app);roleButton.tap()}
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
+            let resumed=app.descendants(matching:.any).matching(identifier:"gameNPCFielders").firstMatch
+            reveal(resumed,in:app);resumed.tap()
+            for (key,value) in values {XCTAssertEqual(app.staticTexts[key].label,value,key)}
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate();app.launchArguments=["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        reveal(app.buttons["homeRole-pitcher"],in:app);app.buttons["homeRole-pitcher"].tap()
+        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        let panel=app.buttons["gameNPCFielders"];reveal(panel,in:app);panel.tap()
+        let row=app.staticTexts["gameNPC-home-P"];reveal(row,in:app)
+        XCTAssertLessThanOrEqual(row.frame.maxX,app.windows.firstMatch.frame.maxX)
+        let large=XCTAttachment(screenshot:app.screenshot());large.name="NPC large text inspector";large.lifetime = .keepAlways;add(large)
+    }
+
     @MainActor func testFieldVerificationControlsScenariosAndCareerStoreIsolation() throws {
         let app=XCUIApplication();app.launch()
         if app.textFields["playerName"].waitForExistence(timeout:2) {createDashboardSample(app,name:"ReplayKeeper")}

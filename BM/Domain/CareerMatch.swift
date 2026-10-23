@@ -37,6 +37,7 @@ struct CareerMatch: Codable, Equatable {
     var abilityExperience: MatchAbilityExperience?
     var detailedFieldVersion: Int?
     var battedBallVersion: Int?
+    var npcFielders:MatchNPCFielders?
     var fieldPlays: [MatchDetailedPlay]?
     var runnerProfiles: [FieldRunnerProfile?]?
     var trainingEffectsVersion: Int?
@@ -50,6 +51,17 @@ struct CareerMatch: Codable, Equatable {
     var teamScore: Int { isHome ? homeScore : awayScore }
     var opponentScore: Int { isHome ? awayScore : homeScore }
     var inningLabel: String { completed ? "경기 종료" : "\(half / 2 + 1)회 \(half % 2 == 0 ? "초" : "말")" }
+
+    var npcDefenders:[MatchNPCPlayer]? {npcFielders?.team(home:half % 2 == 0).players}
+    var npcBatterSpeed:Double {
+        guard let roster=npcFielders else {return 60}
+        let home=half % 2 == 1,team=roster.team(home:home)
+        var lineup=[7,5,2,8,4,6,1,3,0]
+        if home == isHome,appearance,role == "batter",let own=DetailedFieldRules.names.firstIndex(of:fieldStats?.position ?? "") {
+            lineup=[own]+lineup.filter {$0 != own}
+        }
+        return team.players[lineup[(home ? homeOrder:awayOrder)%9]].speed
+    }
 
     var executionFactor: Double {
         guard let stats = abilityStats, stats.version == 1 else { return 1 }
@@ -220,7 +232,7 @@ struct CareerMatch: Codable, Equatable {
             battingQuality:Double?=nil,pitchingQuality:Double?=nil,offsetX:Double=0,offsetY:Double=0,timing:Double=0) {
         var result = initial
         var detailed: MatchDetailedPlay?
-        let newRunner = FieldRunnerProfile(speed:batter ? fieldStats?.speed ?? 60 : 60,
+        let newRunner = FieldRunnerProfile(speed:batter ? fieldStats?.speed ?? 60 : npcBatterSpeed,
             traits:batter ? (fieldStats?.activeTraits ?? []).filter { $0 == .cheetah } : [],own:batter, responsiblePitcher:pitching?.activeID(home:half % 2 == 0))
         if let version=detailedFieldVersion,[1,2,3,4,5].contains(version), ["안타","범타"].contains(initial) {
             let shot:MatchBattedBall?
@@ -240,17 +252,17 @@ struct CareerMatch: Codable, Equatable {
             }
             var play = flyBall ? DetailedFieldRules.resolveFly(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
                 runners:runnerProfiles ?? bases.map { $0 ? FieldRunnerProfile(speed:60) : nil },batter:newRunner,outs:outs,
-                stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),ownBatter:batter,relayEnabled:version >= 4) : DetailedFieldRules.resolve(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
+                stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),ownBatter:batter,relayEnabled:version >= 4,npc:npcDefenders) : DetailedFieldRules.resolve(half:half,order:half % 2 == 1 ? homeOrder : awayOrder,landing:landing,flight:flight,
                 runners:runnerProfiles ?? bases.map { $0 ? FieldRunnerProfile(speed:60) : nil },batter:newRunner,outs:outs,
                 stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),ownBatter:batter,
-                doublePlayEnabled:version >= 2,groundBall:shot.map {$0.kind == .ground} ?? (initial == "범타" && !bunt),relayEnabled:version >= 4)
+                doublePlayEnabled:version >= 2,groundBall:shot.map {$0.kind == .ground} ?? (initial == "범타" && !bunt),relayEnabled:version >= 4,npc:npcDefenders)
             if let shot {
                 play.ball=shot.nodes+play.ball.filter {$0.at>shot.flight}
                 play.battedBall=shot
             }
             if version == 5 {
                 let draws=(0..<7).map { _ in roll() }
-                play=FieldMisplayRules.applying(to:play,stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),draws:draws)
+                play=FieldMisplayRules.applying(to:play,stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),draws:draws,npc:npcDefenders)
             }
             play.battedBall=shot
             if version >= 3 { play.version=version }

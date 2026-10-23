@@ -569,4 +569,67 @@ import SwiftUI
         }
     }
 
+    func testNPCSnapshotDiskReopenStartRollbackAndCompletionApplyOnlyOnce() throws {
+        enum Failure:Error {case injected}
+        for role in PlayerRole.allCases {
+            let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+            defer {try? FileManager.default.removeItem(at:directory)}
+            let url=directory.appendingPathComponent("npc.store")
+            let partial=try autoreleasepool {
+                let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+                let (p,s)=try growthSetup(role:role,in:c)
+                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let revision=s.revision,fatigue=p.fatigue
+                XCTAssertThrowsError(try CareerMatchStore.start(player:p,state:s,in:c,save:{_ in throw Failure.injected}))
+                XCTAssertEqual(s.revision,revision);XCTAssertEqual(p.fatigue,fatigue)
+                XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerMatchRecord>()),0)
+                let row=try CareerMatchStore.start(player:p,state:s,in:c)
+                let first=try row.snapshot(),npc=try XCTUnwrap(first.npcFielders)
+                try npc.validate();XCTAssertEqual(npc.year,2026)
+                XCTAssertEqual(npc.team(home:!first.isHome).teamID,row.opponentID)
+                XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,row.payload)
+                try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:role == .batter ? .watch:.pitch,
+                    pitchCode:role == .pitcher ? "four-seam":nil,control:role == .pitcher ? ManualMatchInput(release:0.68):nil,in:c)
+                XCTAssertEqual(try row.snapshot().npcFielders,npc);XCTAssertFalse(row.completed)
+                return (row.payload,npc,p.fatigue)
+            }
+            try autoreleasepool {
+                let container=try CareerStore.makeContainer(url:url),c=container.mainContext
+                let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first)
+                let s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let row=try XCTUnwrap(c.fetch(FetchDescriptor<CareerMatchRecord>()).first)
+                XCTAssertEqual(row.payload,partial.0);XCTAssertEqual(try row.snapshot().npcFielders,partial.1)
+                let before=row.payload,revision=s.revision
+                XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c,save:{_ in throw Failure.injected}))
+                XCTAssertEqual(row.payload,before);XCTAssertEqual(s.revision,revision);XCTAssertEqual(p.fatigue,partial.2)
+                try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+                let final=row.payload,fatigue=p.fatigue
+                XCTAssertTrue(row.completed);XCTAssertEqual(try row.snapshot().npcFielders,partial.1)
+                XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+                XCTAssertEqual(row.payload,final);XCTAssertEqual(p.fatigue,fatigue)
+                XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,final)
+            }
+        }
+    }
+
+    func testExistingNPCNilMatchIsNotBackfilledAndCorruptNPCIsNeverReset() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        let (p,s)=try growthSetup(in:c),row=try ready(p,s,in:c)
+        var old=try row.snapshot();old.npcFielders=nil
+        row.payload=try JSONEncoder().encode(old);try c.save()
+        let original=row.payload
+        XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,original)
+        XCTAssertNil(try row.snapshot().npcFielders)
+        try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+        XCTAssertNil(try row.snapshot().npcFielders)
+        var corrupt=try row.snapshot()
+        corrupt.npcFielders=MatchNPCFielders.make(year:2025,competition:"highschool",homeID:"a",awayID:"b")
+        row.payload=try JSONEncoder().encode(corrupt);try c.save()
+        let damaged=row.payload
+        XCTAssertThrowsError(try row.snapshot())
+        XCTAssertThrowsError(try CareerMatchStore.start(player:p,state:s,in:c))
+        XCTAssertEqual(row.payload,damaged)
+    }
+
 }

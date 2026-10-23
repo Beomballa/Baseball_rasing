@@ -47,6 +47,9 @@ enum CareerSchemaV3: VersionedSchema {
             }
             try match.validatePitching()
             try match.validateDetailedField()
+            if let roster=match.npcFielders {
+                guard roster.year == (try GameDate(gameDate)).year,roster.team(home:!match.isHome).teamID == opponentID else {throw MatchError.invalidRecord}
+            }
             try match.positionExperience?.validate(match: match)
             try match.abilityExperience?.validate(match: match)
             if let growth = match.abilityExperience {
@@ -119,6 +122,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         match.pitching=MatchPitching(startingFatigue:player.fatigue)
         match.detailedFieldVersion=5;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.battedBallVersion=1
+        match.npcFielders=MatchNPCFielders.make(year:fixture.date.year,competition:match.competition ?? "highschool",homeID:fixture.homeID,awayID:fixture.awayID)
         if match.appearance, match.abilityStats != nil {
             let values = try Dictionary(uniqueKeysWithValues: MatchAbilityExperience.kinds(role: player.roleRaw).map {
                 ($0.rawValue, try CareerTrainingStore.value(player: player, code: nil, kind: $0, in: context))
@@ -130,6 +134,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         }
         match.scoutingPerformance = .tracked
         if match.appearance { match.settle() }
+        try match.validateDetailedField()
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"
         context.insert(saved); state.revision += 1

@@ -1411,4 +1411,106 @@ import SwiftUI
         window.isHidden=true;window.rootViewController=nil
     }
 
+    func testNPCProfilesAreStableByTeamSeasonPositionAndIndependentFromPitchRandom() throws {
+        let first=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:"hs-ref-001",awayID:"hs-ref-002")
+        XCTAssertEqual(first,MatchNPCFielders.make(year:2026,competition:"highschool",homeID:"hs-ref-001",awayID:"hs-ref-002"))
+        let swapped=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:"hs-ref-002",awayID:"hs-ref-001")
+        XCTAssertEqual(first.home,swapped.away);XCTAssertEqual(first.away,swapped.home)
+        XCTAssertNotEqual(first.home.players,first.away.players)
+        XCTAssertEqual(Set(first.home.players.map(\.id)).count,9)
+        for (level,base) in [("highschool",54.0),("college",60.0),("domestic-development",66.0)] {
+            let value=MatchNPCFielders.make(year:2026,competition:level,homeID:"team-a",awayID:"team-b")
+            try value.validate()
+            XCTAssertTrue((base-6...base+6).contains(value.home.strength))
+            XCTAssertTrue(value.home.players.flatMap {[$0.speed,$0.defense,$0.arm]}.allSatisfy {(20...95).contains($0)})
+        }
+        XCTAssertNotEqual(first,MatchNPCFielders.make(year:2027,competition:"highschool",homeID:"hs-ref-001",awayID:"hs-ref-002"))
+        var match=game(42);let random=match.random
+        match.npcFielders=first;XCTAssertEqual(match.random,random)
+        XCTAssertEqual(first,try JSONDecoder().decode(MatchNPCFielders.self,from:JSONEncoder().encode(first)))
+    }
+
+    func testNPCSkillsUseSavedValuesAndOnlyActiveOwnFielderOverridesThem() throws {
+        let roster=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:"a",awayID:"b")
+        let stats=MatchFieldStats(speed:91,defense:92,arm:93,position:"SS",activeTraits:[.strongArm],positionMastery:80)
+        let own=DetailedFieldRules.skills(stats:stats,defending:true,npc:roster.home.players)
+        let opponent=DetailedFieldRules.skills(stats:stats,defending:false,npc:roster.home.players)
+        for index in 0..<9 {
+            XCTAssertEqual(opponent[index].speed,roster.home.players[index].speed)
+            XCTAssertEqual(own[index].defense,index == 5 ? 92:roster.home.players[index].defense)
+        }
+        XCTAssertEqual(own[5].speed,91);XCTAssertEqual(own[5].arm,93);XCTAssertEqual(own[5].traits,[.strongArm])
+        XCTAssertEqual(own[5].positionDelay,0.05,accuracy:0.000001)
+        XCTAssertEqual(DetailedFieldRules.skills(stats:nil,defending:false,npc:nil).map(\.speed),Array(repeating:60,count:9))
+        var match=game(42);match.npcFielders=roster
+        match.half=0;XCTAssertEqual(match.npcDefenders,roster.home.players)
+        match.half=1;XCTAssertEqual(match.npcDefenders,roster.away.players)
+        match.homeOrder=0;match.awayOrder=0
+        XCTAssertEqual(match.npcBatterSpeed,roster.home.players[7].speed)
+    }
+
+    func testNPCDefenseArmAndSpeedReachGroundFlyThrowAndErrorRules() throws {
+        let base=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:"a",awayID:"b").home.players
+        let low=base.map {MatchNPCPlayer(id:$0.id,position:$0.position,speed:20,defense:20,arm:20)}
+        let high=base.map {MatchNPCPlayer(id:$0.id,position:$0.position,speed:95,defense:95,arm:95)}
+        func ground(_ npc:[MatchNPCPlayer]) -> MatchDetailedPlay {
+            DetailedFieldRules.resolve(half:0,order:0,landing:.init(x:-14,y:35),flight:1,runners:[nil,nil,nil],batter:.init(speed:60),outs:0,
+                stats:nil,defending:false,ownBatter:true,doublePlayEnabled:true,groundBall:true,relayEnabled:true,npc:npc)
+        }
+        let weak=ground(low),strong=ground(high);try weak.validate();try strong.validate()
+        XCTAssertGreaterThan(weak.pickupAt,strong.pickupAt);XCTAssertGreaterThan(weak.controlAt,strong.controlAt)
+        func fly(_ npc:[MatchNPCPlayer]) -> MatchDetailedPlay {
+            DetailedFieldRules.resolveFly(half:0,order:0,landing:.init(x:0,y:90),flight:4,runners:[nil,nil,FieldRunnerProfile(speed:60)],
+                batter:.init(speed:60),outs:0,stats:nil,defending:false,ownBatter:true,relayEnabled:true,npc:npc)
+        }
+        XCTAssertEqual(fly(low).fly?.caught,false);XCTAssertEqual(fly(high).fly?.caught,true)
+        let clean=ground(base)
+        var draws=Array(repeating:0.999999,count:7);draws[0]=0.01
+        let error=FieldMisplayRules.applying(to:clean,stats:nil,defending:false,draws:draws,npc:low)
+        XCTAssertNotNil(error.misplay)
+        XCTAssertNil(FieldMisplayRules.applying(to:clean,stats:nil,defending:false,draws:draws,npc:high).misplay)
+        try error.validate()
+    }
+
+    func testNPCBothRolesFullGamesResumeAndRejectMalformedProfiles() throws {
+        for role in ["batter","pitcher"] {for seed in 1...20 {
+            var match=game(seed,role:role);match.detailedFieldVersion=5;match.battedBallVersion=1
+            match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
+            match.npcFielders=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:"hs-ref-001",awayID:"hs-ref-002")
+            let original=match.npcFielders
+            var resumed=match;try match.advance(.automatic)
+            while !resumed.completed {
+                try resumed.advance(role == "batter" ? .swing:.pitch,pitchCode:role == "pitcher" ? "four-seam":nil)
+                resumed=try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(resumed))
+                try resumed.validateDetailedField()
+            }
+            XCTAssertEqual(resumed,match);XCTAssertEqual(match.npcFielders,original)
+        }}
+        var match=game(9);match.detailedFieldVersion=5;match.battedBallVersion=1;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
+        match.npcFielders=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:"a",awayID:"b")
+        try match.validateDetailedField()
+        var corrupt=match;corrupt.npcFielders?.version=2;XCTAssertThrowsError(try corrupt.validateDetailedField())
+        corrupt=match;corrupt.npcFielders?.home.players.removeLast();XCTAssertThrowsError(try corrupt.validateDetailedField())
+        corrupt=match;corrupt.npcFielders?.home.players[0].defense = .nan;XCTAssertThrowsError(try corrupt.validateDetailedField())
+        corrupt=match;corrupt.battedBallVersion=nil;XCTAssertThrowsError(try corrupt.validateDetailedField())
+    }
+
+    func testRelayFloatingPointBoundaryCannotReceiveBeforeReadyInFullSeasonInput() throws {
+        var match=CareerMatch(random:16_713_080_429_857_878_884,isHome:false,role:"pitcher",appearance:false,
+            contact:65,power:75,discipline:60,mastery:["changeup":42,"fork":35,"four-seam":62,"slider":55])
+        match.detailedFieldVersion=5;match.battedBallVersion=1;match.controlVersion=2;match.trainingEffectsVersion=1
+        match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
+        match.fieldStats=MatchFieldStats(version:2,speed:55,defense:60,arm:65,position:"P",activeTraits:[.safeHands])
+        match.abilityStats=MatchAbilityStats(mental:55.2226,velocity:50,control:64.4004,stuff:54.2609,stamina:56.2016,fatigue:0)
+        match.pitching=MatchPitching(startingFatigue:0);match.scoutingPerformance = .tracked
+        match.npcFielders=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:"hs-ref-040",awayID:"hs-ref-001")
+        try match.advance(.automatic);try match.validateDetailedField();try match.validatePitching()
+        XCTAssertTrue(match.completed)
+        let play=try XCTUnwrap(match.fieldPlays?.first {$0.half == 12 && $0.order == 33})
+        let relay=try XCTUnwrap(play.relay)
+        XCTAssertGreaterThanOrEqual(relay.receiveAt,relay.readyAt)
+        XCTAssertEqual(FieldNode.sample(play.ball,at:relay.receiveAt),relay.point)
+        for p in match.fieldPlays ?? [] {try p.validate()}
+    }
+
 }
