@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import struct
+import subprocess
 import unittest
 from check_staged import blob_issues
 
@@ -43,6 +44,31 @@ class FieldSpriteSourceTests(unittest.TestCase):
             self.assertNotIn(forbidden,source)
         self.assertIn('prefers-reduced-motion',source)
         self.assertIn('imageSmoothingEnabled=false',source)
+
+class ThrowPreviewTests(unittest.TestCase):
+    def test_release_flight_arrival_catch_and_loop_for_all_targets(self):
+        source=(ROOT/'scripts/preview_field_sprites.html').read_text()
+        timeline=source[source.index('function throwSequence('):source.index('function anchor(')]
+        assertions = """
+const assert=require('node:assert/strict');
+for(const key of ['first','second','third']){
+ const before=throwSequence(3.899,key),release=throwSequence(3.9,key);
+ assert.equal(before.ballVisible,false); assert.equal(before.caught,false);
+ assert.equal(release.phase,6); assert.equal(release.ballVisible,true); assert.equal(release.progress,0);
+ const arrival=release.arrival;
+ const flying=throwSequence(arrival-.001,key),caught=throwSequence(arrival+.001,key);
+ assert.equal(flying.ballVisible,true); assert.equal(flying.caught,false); assert.ok(flying.progress<1);
+ assert.equal(caught.ballVisible,false); assert.equal(caught.caught,true); assert.equal(caught.receiverPhase,3);
+ assert.equal(throwSequence(arrival+.81,key).receiverPhase,4);
+ assert.equal(throwSequence(7.8,key).caught,false);
+ assert.equal(throwSequence(7.8,key).ballVisible,false);
+ assert.ok(arrival>4.7 && arrival<5.3);
+}
+assert.equal(throwSequence(4,'first').target.throwFacing,'e');
+assert.equal(throwSequence(4,'second').target.throwFacing,'ne');
+assert.equal(throwSequence(4,'third').target.throwFacing,'w');
+"""
+        subprocess.run(['node','-e',timeline+assertions],check=True,capture_output=True,text=True)
 
 if __name__ == '__main__':
     unittest.main()
