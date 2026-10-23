@@ -2200,3 +2200,74 @@ import SpriteKit
         }
     }
 }
+
+@MainActor final class MatchMotionPreparationTests:XCTestCase {
+    func testPreparationCoversActualPosesAndPreservesReplayData() async throws {
+        let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+        for pitcher in [false,true] {
+            let fixtures=try MatchReplayFixture.make(pitcher:pitcher)
+            let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:pitcher ? "left":"right",ownTeamFielding:pitcher)
+            for fixture in [fixtures[0],fixtures[fixtures.count-2],fixtures.last!] {
+                let before=try fixture.field.map {try encoder.encode($0)} ?? fixture.homeRun.map {try encoder.encode($0)}
+                let actors:(Double)->[FieldReplaySprites.Actor] = {time in
+                    if let play=fixture.field {return sprites.actors(play,time:time,reduced:false,finished:time>=play.duration)}
+                    return sprites.actors(fixture.homeRun!,time:time,reduced:false)
+                }
+                let planned=await sprites.requests(duration:fixture.duration,reduced:false,actorsAt:actors)
+                let requests=try XCTUnwrap(planned)
+                let generated=await FieldRasterArt.prepare(requests)
+                let prepared=try XCTUnwrap(generated)
+                XCTAssertEqual(prepared.images.count,requests.count)
+                XCTAssertLessThan(prepared.bytes,48*1024*1024,"Per-play pinned pixels must fit the existing cache budget")
+                for step in 0...Int(fixture.duration*59) {
+                    for actor in actors(min(fixture.duration,(Double(step)+0.37)/59)) {
+                        let motion=InplayFieldProjection.motion(actor.motion,at:actor.point,size:CGSize(width:390,height:585))
+                        let ownKit=PlayerAppearance.kitColors[2]
+                        for sample in FieldRasterArt.samples(motion,kind:actor.kind,left:actor.own && pitcher) {
+                            let request=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:FieldReplayPresentation.opponentKit(ownKit),skin:actor.own ? PlayerAppearance.skinColors[0]:0xefbe91,hair:actor.own ? PlayerAppearance.hairColors[0]:0x263b48,number:actor.number,back:motion.facing.back && actor.kind != "catcher")
+                            XCTAssertNotNil(prepared.images[request.key],"Missing \(fixture.name) \(actor.kind) \(step)")
+                        }
+                    }
+                }
+                if let request=requests.values.first {
+                    let sample=FieldRasterArt.Sample(frame:request.frame,weight:1,unit:1,mirrored:request.mirrored)
+                    let original=FieldRasterArt.image(sample,kit:request.kit,skin:request.skin,hair:request.hair,number:request.number,back:request.back)
+                    XCTAssertEqual(prepared.images[request.key]?.pngData(),original?.pngData())
+                }
+                let after=try fixture.field.map {try encoder.encode($0)} ?? fixture.homeRun.map {try encoder.encode($0)}
+                XCTAssertEqual(before,after)
+            }
+        }
+    }
+    func testPreparedHomeRunKeepsCutAndCompletesOnce() async throws {
+        let event=try XCTUnwrap(MatchReplayFixture.make(pitcher:true).last?.homeRun)
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:windowScene)
+        window.frame=CGRect(x:0,y:0,width:390,height:700)
+        let now=ProcessInfo.processInfo.systemUptime
+        var resolved=0,completed=0,resolvedAt=0.0
+        MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true
+        defer {MatchRenderMetrics.enabled=false;window.isHidden=true;window.rootViewController=nil;previous?.makeKey()}
+        let handoff=FieldContactHandoff(startedAt:now-event.duration+0.9,cutAt:now,sourcePoint:.zero)
+        window.rootViewController=UIHostingController(rootView:HomeRunReplayBoard(event:event,appearance:PlayerAppearance(kit:2),jerseyNumber:27,throwingHand:"left",ownTeamFielding:true,handoff:handoff,preparesMotion:true,onResolved:{resolved+=1;resolvedAt=ProcessInfo.processInfo.systemUptime}) {completed+=1})
+        window.makeKeyAndVisible()
+        try await Task.sleep(for:.seconds(0.1));XCTAssertEqual(resolved,0)
+        let deadline=ProcessInfo.processInfo.systemUptime+8
+        while completed == 0 && ProcessInfo.processInfo.systemUptime<deadline {try await Task.sleep(for:.seconds(0.1))}
+        XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+        let preparation=try XCTUnwrap(MatchRenderMetrics.preparations.first)
+        XCTAssertGreaterThan(resolvedAt-preparation.endedAt,0.6)
+        XCTAssertGreaterThan(MatchRenderMetrics.preparedHits,0);XCTAssertEqual(MatchRenderMetrics.preparedMisses,0)
+    }
+    func testPreparationCancellationAndHandoffDelayPreserveCut() async throws {
+        let fixture=try MatchReplayFixture.make(pitcher:false)[0]
+        let sprites=FieldReplaySprites(appearance:PlayerAppearance(),jerseyNumber:1,ownPosition:"CF",throwingHand:"right",ownTeamFielding:false)
+        let task=Task {await sprites.requests(duration:fixture.duration,reduced:false,actorsAt:{sprites.actors(fixture.field!,time:$0,reduced:false,finished:false)})}
+        task.cancel();let cancelled=await task.value;XCTAssertNil(cancelled)
+        let handoff=FieldContactHandoff(startedAt:10,cutAt:10.28,sourcePoint:CGPoint(x:0.3,y:0.4),sourceFrame:CGRect(x:1,y:2,width:3,height:4))
+        let shifted=handoff.delayed(by:0.7)
+        XCTAssertEqual(shifted.elapsed(at:11.1),handoff.elapsed(at:10.4),accuracy:0.000001)
+        XCTAssertEqual(shifted.cutAt-shifted.startedAt,0.28,accuracy:0.000001)
+        XCTAssertEqual(shifted.sourcePoint,handoff.sourcePoint);XCTAssertEqual(shifted.sourceFrame,handoff.sourceFrame)
+    }
+}

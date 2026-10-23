@@ -1,6 +1,9 @@
 import SwiftUI
 import UIKit
 import SpriteKit
+#if DEBUG
+import Darwin
+#endif
 
 // Presentation geometry never changes the saved pitch, timing window or RNG.
 enum MatchArt {
@@ -22,7 +25,7 @@ enum MatchArt {
 
 // Bundled raster presentation only. None of these samples are written to the match ledger.
 @MainActor enum FieldRasterArt {
-    struct Frame: Decodable {
+    struct Frame: Decodable, Sendable {
         let file: String
         let action: String
         let rect: [Double]
@@ -117,11 +120,18 @@ enum MatchArt {
                            y:point.y+(a[1]-f.pivot[1])*sample.unit*sample.weight)
         }
     }
-    static func image(_ sample:Sample,kit:Int,skin:Int,hair:Int,number:Int,back:Bool) -> UIImage? {
-        let f=sample.frame
-        // Front poses contain no jersey digits; only back numbers need mirrored raster variants.
-        let drawnNumber=back ? number:0,numberMirrored=back && sample.mirrored
-        let key="\(f.file):\(f.rect):\(kit):\(skin):\(hair):\(drawnNumber):\(back):\(numberMirrored)" as NSString
+    static func image(_ sample:Sample,kit:Int,skin:Int,hair:Int,number:Int,back:Bool,prepared:Prepared?=nil) -> UIImage? {
+        let request=Request(sample:sample,kit:kit,skin:skin,hair:hair,number:number,back:back)
+        let key=request.key as NSString
+        if let result=prepared?.images[request.key] {
+            #if DEBUG
+            if MatchRenderMetrics.enabled {MatchRenderMetrics.preparedHits+=1}
+            #endif
+            return result
+        }
+        #if DEBUG
+        if prepared != nil && MatchRenderMetrics.enabled {MatchRenderMetrics.preparedMisses+=1}
+        #endif
         if let result=cache.object(forKey:key) {
             #if DEBUG
             cacheMetrics.hit()
@@ -131,9 +141,49 @@ enum MatchArt {
         #if DEBUG
         cacheMetrics.miss()
         #endif
-        guard let url=Bundle.main.url(forResource:f.file,withExtension:nil,subdirectory:"MatchArt"),
-              let original=UIImage(contentsOfFile:url.path)?.cgImage,
-              let crop=original.cropping(to:CGRect(x:f.rect[0],y:f.rect[1],width:f.rect[2],height:f.rect[3])) else {return nil}
+        guard let url=Bundle.main.url(forResource:request.frame.file,withExtension:nil,subdirectory:"MatchArt"),
+              let original=UIImage(contentsOfFile:url.path)?.cgImage,let result=build(request,original:original) else {return nil}
+        #if DEBUG
+        cacheMetrics.insert(result,cost:result.cgImage!.bytesPerRow*result.cgImage!.height)
+        #endif
+        cache.setObject(result,forKey:key,cost:result.cgImage!.bytesPerRow*result.cgImage!.height);return result
+    }
+    struct Request:Sendable {
+        let frame:Frame
+        let kit:Int,skin:Int,hair:Int,number:Int
+        let back:Bool,mirrored:Bool
+        init(sample:Sample,kit:Int,skin:Int,hair:Int,number:Int,back:Bool) {
+            frame=sample.frame;self.kit=kit;self.skin=skin;self.hair=hair
+            self.number=back ? number:0;self.back=back;mirrored=back && sample.mirrored
+        }
+        var key:String {"\(frame.file):\(frame.rect):\(kit):\(skin):\(hair):\(number):\(back):\(mirrored)"}
+    }
+    // Immutable images cross the worker boundary, then live only for this replay.
+    struct Prepared:Sendable {
+        let images:[String:UIImage]
+        var bytes:Int {images.values.reduce(0) {$0+($1.cgImage.map {$0.bytesPerRow*$0.height} ?? 0)}}
+    }
+    static func prepare(_ requests:[String:Request]) async -> Prepared? {
+        let worker=Task.detached(priority:.userInitiated) { () -> Prepared? in
+            var images:[String:UIImage]=[:],sources:[String:CGImage]=[:]
+            for (key,request) in requests.sorted(by:{$0.key<$1.key}) {
+                guard !Task.isCancelled else {return nil}
+                let image:UIImage?=autoreleasepool {
+                    if sources[request.frame.file] == nil,
+                       let url=Bundle.main.url(forResource:request.frame.file,withExtension:nil,subdirectory:"MatchArt") {
+                        sources[request.frame.file]=UIImage(contentsOfFile:url.path)?.cgImage
+                    }
+                    return sources[request.frame.file].flatMap {build(request,original:$0)}
+                }
+                if let image {images[key]=image}
+            }
+            return Prepared(images:images)
+        }
+        return await withTaskCancellationHandler(operation:{await worker.value},onCancel:{worker.cancel()})
+    }
+    nonisolated private static func build(_ request:Request,original:CGImage) -> UIImage? {
+        let f=request.frame,kit=request.kit,skin=request.skin,hair=request.hair,number=request.number,back=request.back
+        guard let crop=original.cropping(to:CGRect(x:f.rect[0],y:f.rect[1],width:f.rect[2],height:f.rect[3])) else {return nil}
         let w=crop.width,h=crop.height,format=CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue
         var bytes=[UInt8](repeating:0,count:w*h*4)
         let ok=bytes.withUnsafeMutableBytes {buffer -> Bool in
@@ -157,17 +207,13 @@ enum MatchArt {
         }}
         if back {
             PlayerMotionArt.drawNumber(number,at:CGPoint(x:f.numberCenter?[0] ?? Double(w)*0.5,y:f.numberCenter?[1] ?? Double(h)*0.49),angle:0,
-                mirrored:sample.mirrored,unit:max(2,w/60),bytes:&bytes,width:w,height:h)
+                mirrored:request.mirrored,unit:max(2,w/60),bytes:&bytes,width:w,height:h)
         }
         guard let provider=CGDataProvider(data:Data(bytes) as CFData),let cg=CGImage(width:w,height:h,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:format),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else {return nil}
-        let result=UIImage(cgImage:cg)
-        #if DEBUG
-        cacheMetrics.insert(result,cost:w*h*4)
-        #endif
-        cache.setObject(result,forKey:key,cost:w*h*4);return result
+        return UIImage(cgImage:cg)
     }
     @discardableResult static func draw(in context:GraphicsContext,at point:CGPoint,scale:Double,motion:FieldSpriteMotion,
-            kind:String,kit:Int,skin:Int,hair:Int,number:Int,left:Bool,selected:Bool,out:Bool) -> Bool {
+            kind:String,kit:Int,skin:Int,hair:Int,number:Int,left:Bool,selected:Bool,out:Bool,prepared:Prepared?=nil) -> Bool {
         let frames=samples(motion,kind:kind,left:left);guard !frames.isEmpty else {return false}
         var c=context
         c.opacity=out ? 0.38:1
@@ -181,7 +227,7 @@ enum MatchArt {
             }
         }
         for sample in frames {
-            guard let image=image(sample,kit:kit,skin:skin,hair:hair,number:number,back:motion.facing.back && kind != "catcher") else {return false}
+            guard let image=image(sample,kit:kit,skin:skin,hair:hair,number:number,back:motion.facing.back && kind != "catcher",prepared:prepared) else {return false}
             let f=sample.frame,u=sample.unit*scale
             var layer=c;layer.opacity *= sample.weight
             layer.translateBy(x:point.x+motion.bodyOffset.x*scale,y:point.y+motion.bodyOffset.y*scale)
@@ -203,6 +249,9 @@ struct FieldContactHandoff {
     let sourcePoint:CGPoint // top-left normalized coordinates in the SpriteKit arena
     var sourceFrame:CGRect = .zero
     func elapsed(at now:Double) -> Double {max(0,now-startedAt)}
+    func delayed(by seconds:Double) -> Self {
+        Self(startedAt:startedAt+seconds,cutAt:cutAt+seconds,sourcePoint:sourcePoint,sourceFrame:sourceFrame)
+    }
 }
 
 enum FieldContactPresentation {
@@ -531,8 +580,8 @@ struct MatchResultSummary {
         guard let provider = CGDataProvider(data: Data(bytes) as CFData), let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4, space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: format), provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
         return UIImage(cgImage: image)
     }
-    static let digits = ["111101101101111", "010110010010111", "111001111100111", "111001111001111", "101101111001001", "111100111001111", "111100111101111", "111001001001001", "111101111101111", "111101111001111"]
-    fileprivate static func drawNumber(_ number: Int, at center: CGPoint, angle: Double, mirrored: Bool, unit: Int, bytes: inout [UInt8], width: Int, height: Int) {
+    nonisolated static let digits = ["111101101101111", "010110010010111", "111001111100111", "111001111001111", "101101111001001", "111100111001111", "111100111101111", "111001001001001", "111101111101111", "111101111001111"]
+    nonisolated fileprivate static func drawNumber(_ number: Int, at center: CGPoint, angle: Double, mirrored: Bool, unit: Int, bytes: inout [UInt8], width: Int, height: Int) {
         let masks = String(number).compactMap { $0.wholeNumberValue }.map { Array(digits[$0]) }
         let columns = masks.count * 4 - 1, textWidth = Double(columns * unit), textHeight = Double(5 * unit)
         let cosine = cos(angle), sine = sin(angle)
@@ -1206,6 +1255,78 @@ enum InplayFieldProjection {
     static let image=MatchArt.image("inplay-stadium-arcade-v1")
 }
 
+@MainActor struct FieldReplaySprites {
+    typealias Actor=(point:FieldPoint,motion:FieldSpriteMotion,own:Bool,teamOwn:Bool,number:Int,out:Bool,kind:String)
+    let appearance:PlayerAppearance
+    let jerseyNumber:Int
+    let ownPosition:String?
+    let throwingHand:String
+    let ownTeamFielding:Bool?
+    func actors(_ play:MatchDetailedPlay,time:Double,reduced:Bool,finished:Bool) -> [Actor] {
+        let defenseOwn=ownTeamFielding ?? !play.ownBatter
+        var actors:[Actor]=[]
+        for index in play.fielders.indices {
+            let own=defenseOwn && (ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index==play.fielder))
+            actors.append((FieldNode.sample(play.fielders[index],at:time),FieldSpriteAnimation.motion(play,index:index,time:time),own,defenseOwn,own ? jerseyNumber:index+1,false,index == 1 ? "catcher":"fielder"))
+        }
+        for runner in play.runners {
+            let display=FieldSpriteAnimation.runner(runner,play:play,time:time,reduced:reduced)
+            actors.append((display.point,display.motion,runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,FieldReplayPresentation.retired(runner,finished:finished),"runner"))
+        }
+        return actors
+    }
+    func actors(_ event:MatchHomeRun,time:Double,reduced:Bool) -> [Actor] {
+        let ownTeamFielding=ownTeamFielding ?? false
+        var actors:[Actor]=[]
+        for index in 0..<9 {
+            let p=event.defender(index,at:time),previous=event.defender(index,at:max(0,time-0.08)),next=event.defender(index,at:time+0.08)
+            let moving=index>=6 && time<event.flight && p.distance(to:next)>0.001
+            let motion=FieldSpriteMotion(facing:.direction(dx:next.x-previous.x,dy:next.y-previous.y),stage:moving && !reduced ? .run:.ready,gait:time*12)
+            let own=ownTeamFielding && event.ownDefender == index
+            actors.append((p,motion,own,ownTeamFielding,own ? jerseyNumber:index+1,false,index == 1 ? "catcher":"fielder"))
+        }
+        for runner in event.runners where time<=runner.arrival+0.6 || runner.from == 0 {
+            let (p,motion)=HomeRunPresentation.runner(runner,time:time,reduced:reduced)
+            actors.append((p,motion,runner.profile.own,!ownTeamFielding,runner.profile.own ? jerseyNumber:runner.from+10,false,"runner"))
+        }
+        return actors
+    }
+    private struct Selection:Hashable {
+        let file:String
+        let rect:[Double]
+        let own:Bool,teamOwn:Bool,back:Bool,mirrored:Bool
+        let number:Int
+    }
+    func requests(duration:Double,reduced:Bool,actorsAt:(Double)->[Actor]) async -> [String:FieldRasterArt.Request]? {
+        var result:[String:FieldRasterArt.Request]=[:],seen=Set<Selection>()
+        let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
+        // Both field canvases use 2:3; perspective direction is independent of pixel resolution.
+        let size=CGSize(width:400,height:600)
+        let steps=Int(ceil(duration*120))
+        for index in 0...steps {
+            guard !Task.isCancelled else {return nil}
+            if index%30 == 0 {await Task.yield()}
+            for actor in actorsAt(min(duration,Double(index)/120)) {
+                var motion=InplayFieldProjection.motion(actor.motion,at:actor.point,size:size)
+                // Include both sides of pose changes even when a short stage falls between samples.
+                for progress in [0.0,0.25,0.5,0.75,1.0] {
+                    motion.progress=progress
+                    for sample in FieldRasterArt.samples(motion,kind:actor.kind,left:actor.own && throwingHand == "left") {
+                        let back=motion.facing.back && actor.kind != "catcher"
+                        let selection=Selection(file:sample.frame.file,rect:sample.frame.rect,own:actor.own,teamOwn:actor.teamOwn,back:back,mirrored:back && sample.mirrored,number:back ? actor.number:0)
+                        guard seen.insert(selection).inserted else {continue}
+                        let r=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:opponent,
+                            skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
+                            hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,back:back)
+                        result[r.key]=r
+                    }
+                }
+            }
+        }
+        return result
+    }
+}
+
 struct DetailedFieldReplayBoard: View {
     let play: MatchDetailedPlay
     let appearance: PlayerAppearance
@@ -1219,18 +1340,26 @@ struct DetailedFieldReplayBoard: View {
     var reduceMotionOverride:Bool? = nil
     var handoff:FieldContactHandoff? = nil
     var showsContactPoints = false
+    var preparesMotion=false
     var onResolved: @MainActor () -> Void = {}
     let complete: @MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Environment(\.dynamicTypeSize) private var typeSize
     private var reduced:Bool {reduceMotionOverride ?? systemReduced}
     @State private var start:Double?
+    @State private var prepared:FieldRasterArt.Prepared?
+    @State private var preparationDelay=0.0
+    private var sprites:FieldReplaySprites {FieldReplaySprites(appearance:appearance,jerseyNumber:jerseyNumber,ownPosition:ownPosition,throwingHand:throwingHand,ownTeamFielding:ownTeamFielding)}
+    private var playbackHandoff:FieldContactHandoff? {
+        guard let value=handoff else {return nil}
+        return value.delayed(by:preparationDelay)
+    }
     @State private var resolved = false
     private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
     var body: some View {
-        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved)) { timeline in
+        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved || (preparesMotion && prepared == nil))) { timeline in
             let now=ProcessInfo.processInfo.systemUptime
-            let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:handoff,now:now)
+            let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:playbackHandoff,now:now)
             let time=previewTime.map {max(0,min(play.duration,$0))} ?? (resolved ? play.duration:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:animated))
             let finished=previewTime.map {$0>=play.duration} ?? (!animated || resolved)
             let phase=FieldReplayPresentation.phase(play,time:time,finished:finished)
@@ -1245,8 +1374,12 @@ struct DetailedFieldReplayBoard: View {
                     let measuredAt=MatchRenderMetrics.begin()
                     defer {MatchRenderMetrics.end("field",started:measuredAt)}
                     #endif
+                    if preparesMotion && prepared == nil && previewTime == nil {
+                        if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
+                        context.draw(Text("선수 모션 준비 중").font(.headline.monospaced()).foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width/2,y:size.height/2));return
+                    }
                     var context=context
-                    if let handoff {
+                    if let handoff=playbackHandoff {
                         let cut=max(0,min(play.duration,handoff.cutAt-handoff.startedAt))
                         let ball=FieldBallPresentation.point(play,time:cut,size:size,leftIndex:ownTeamFielding == true && throwingHand == "left" ? DetailedFieldRules.names.firstIndex(of:ownPosition ?? ""):nil)
                         let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:ball,canvas:geometry.frame(in:.global),now:now,reduced:reduced)
@@ -1270,20 +1403,12 @@ struct DetailedFieldReplayBoard: View {
                     }
                     let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
                     let defenseOwn=ownTeamFielding ?? !play.ownBatter
-                    var actors:[(point:FieldPoint,motion:FieldSpriteMotion,own:Bool,teamOwn:Bool,number:Int,out:Bool,kind:String)]=[]
-                    for index in play.fielders.indices {
-                        let own=defenseOwn && (ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index==play.fielder))
-                        actors.append((FieldNode.sample(play.fielders[index],at:time),FieldSpriteAnimation.motion(play,index:index,time:time),own,defenseOwn,own ? jerseyNumber:index+1,false,index == 1 ? "catcher":"fielder"))
-                    }
-                    for runner in play.runners {
-                        let display=FieldSpriteAnimation.runner(runner,play:play,time:time,reduced:reduced)
-                        actors.append((display.point,display.motion,runner.profile.own,!defenseOwn,runner.profile.own ? jerseyNumber:runner.from+10,FieldReplayPresentation.retired(runner,finished:finished),"runner"))
-                    }
+                    let actors=sprites.actors(play,time:time,reduced:reduced,finished:finished)
                     for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
                         let raster=FieldRasterArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),kind:actor.kind,
                             kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
                             hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,
-                            left:actor.own && throwingHand == "left",selected:actor.own,out:actor.out)
+                            left:actor.own && throwingHand == "left",selected:actor.own,out:actor.out,prepared:prepared)
                         if !raster {FieldActorArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),
                             kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
                             hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,
@@ -1334,9 +1459,18 @@ struct DetailedFieldReplayBoard: View {
         }
         .task(id:play.eventID + (animated ? ":live":":still")) {
             guard previewTime == nil else {return}
+            if preparesMotion {
+                let began=ProcessInfo.processInfo.systemUptime
+                guard let requests=await sprites.requests(duration:play.duration,reduced:reduced,actorsAt:{sprites.actors(play,time:$0,reduced:reduced,finished:false)}),
+                      let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+                prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
+                #if DEBUG
+                MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
+                #endif
+            }
             start=ProcessInfo.processInfo.systemUptime;resolved=false
             guard animated else {return}
-            let elapsed=handoff?.elapsed(at:ProcessInfo.processInfo.systemUptime) ?? 0
+            let elapsed=playbackHandoff?.elapsed(at:ProcessInfo.processInfo.systemUptime) ?? 0
             do {try await Task.sleep(for:.seconds(max(0,seconds-elapsed)))} catch {return}
             guard !Task.isCancelled else {return}
             resolved=true;onResolved()
@@ -1550,16 +1684,24 @@ struct HomeRunReplayBoard:View {
     var animated=true
     var previewTime:Double?=nil
     var reduceMotionOverride:Bool?=nil
+    var preparesMotion=false
     var onResolved:@MainActor () -> Void = {}
     var complete:@MainActor () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     private var reduced:Bool {reduceMotionOverride ?? systemReduced}
     @State private var start=ProcessInfo.processInfo.systemUptime
+    @State private var prepared:FieldRasterArt.Prepared?
+    @State private var preparationDelay=0.0
+    private var sprites:FieldReplaySprites {FieldReplaySprites(appearance:appearance,jerseyNumber:jerseyNumber,ownPosition:ownPosition,throwingHand:throwingHand,ownTeamFielding:ownTeamFielding)}
+    private var playbackHandoff:FieldContactHandoff? {
+        guard let value=handoff else {return nil}
+        return value.delayed(by:preparationDelay)
+    }
     @State private var resolved=false
     var body:some View {
-        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved)) {_ in
+        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved || (preparesMotion && prepared == nil))) {_ in
             let now=ProcessInfo.processInfo.systemUptime
-            let elapsed=handoff?.elapsed(at:now) ?? max(0,now-start)
+            let elapsed=playbackHandoff?.elapsed(at:now) ?? max(0,now-start)
             let time=previewTime.map {max(0,min(event.duration,$0))} ?? (resolved || !animated ? event.duration:HomeRunPresentation.time(event,elapsed:elapsed,reduced:reduced))
             let finished=previewTime.map {$0>=event.duration} ?? (resolved || !animated)
             VStack(spacing:8) {
@@ -1571,30 +1713,24 @@ struct HomeRunReplayBoard:View {
                         let measuredAt=MatchRenderMetrics.begin()
                         defer {MatchRenderMetrics.end("homeRun",started:measuredAt)}
                         #endif
+                        if preparesMotion && prepared == nil && previewTime == nil {
+                            if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
+                        context.draw(Text("선수 모션 준비 중").font(.headline.monospaced()).foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width/2,y:size.height/2));return
+                        }
                         var context=context
-                        if let handoff {
+                        if let handoff=playbackHandoff {
                             let cut=max(0,min(event.duration,handoff.cutAt-handoff.startedAt))
                             let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:HomeRunPresentation.ballPoint(event,time:cut,size:size),canvas:geometry.frame(in:.global),now:now,reduced:reduced)
                             context.clip(to:Path(CGRect(origin:.zero,size:size)));context.translateBy(x:offset.x,y:offset.y)
                         }
                         if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
                         let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
-                        var actors:[(FieldPoint,FieldSpriteMotion,Bool,Bool,Int,String)]=[]
-                        for index in 0..<9 {
-                            let p=event.defender(index,at:time),previous=event.defender(index,at:max(0,time-0.08)),next=event.defender(index,at:time+0.08)
-                            let moving=index>=6 && time<event.flight && p.distance(to:next)>0.001
-                            let motion=FieldSpriteMotion(facing:.direction(dx:next.x-previous.x,dy:next.y-previous.y),stage:moving && !reduced ? .run:.ready,gait:time*12)
-                            let own=ownTeamFielding && event.ownDefender == index
-                            actors.append((p,motion,own,ownTeamFielding,own ? jerseyNumber:index+1,index == 1 ? "catcher":"fielder"))
-                        }
-                        for runner in event.runners where time<=runner.arrival+0.6 || runner.from == 0 {
-                            let (p,motion)=HomeRunPresentation.runner(runner,time:time,reduced:reduced)
-                            actors.append((p,motion,runner.profile.own,!ownTeamFielding,runner.profile.own ? jerseyNumber:runner.from+10,"runner"))
-                        }
-                        for (p,motion,own,teamOwn,number,kind) in actors.sorted(by:{$0.0.y>$1.0.y}) {
+                        let actors=sprites.actors(event,time:time,reduced:reduced)
+                        for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
+                            let (p,motion,own,teamOwn,number,kind)=(actor.point,actor.motion,actor.own,actor.teamOwn,actor.number,actor.kind)
                             _=FieldRasterArt.draw(in:context,at:InplayFieldProjection.point(p,size:size),scale:InplayFieldProjection.actorScale(p,size:size),motion:InplayFieldProjection.motion(motion,at:p,size:size),kind:kind,
                                 kit:teamOwn ? ownKit:opponent,skin:own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
-                                hair:own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:number,left:own && throwingHand == "left",selected:own,out:false)
+                                hair:own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:number,left:own && throwingHand == "left",selected:own,out:false,prepared:prepared)
                         }
                         let scoreboard=CGRect(x:size.width*0.38,y:size.height*0.14,width:size.width*0.24,height:size.height*0.04)
                         context.fill(Path(scoreboard),with:.color(GameTheme.navy))
@@ -1627,8 +1763,17 @@ struct HomeRunReplayBoard:View {
         }
         .task(id:event.eventID+(animated ? ":live":":still")) {
             guard previewTime == nil,animated else {return}
+            if preparesMotion {
+                let began=ProcessInfo.processInfo.systemUptime
+                guard let requests=await sprites.requests(duration:event.duration,reduced:reduced,actorsAt:{sprites.actors(event,time:$0,reduced:reduced)}),
+                      let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+                prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
+                #if DEBUG
+                MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
+                #endif
+            }
             start=ProcessInfo.processInfo.systemUptime;resolved=false
-            let elapsed=handoff?.elapsed(at:start) ?? 0
+            let elapsed=playbackHandoff?.elapsed(at:start) ?? 0
             do {try await Task.sleep(for:.seconds(max(0,event.duration-elapsed)))} catch {return}
             guard !Task.isCancelled else {return};resolved=true;onResolved()
             do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:reduced,match:true)))} catch {return}
@@ -1657,13 +1802,43 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
 }
 @MainActor enum MatchRenderMetrics {
     struct Frame:Codable {let kind:String;let at:Double;let milliseconds:Double}
+    struct Preparation:Codable {let endedAt:Double;let seconds:Double;let images:Int;let bytes:Int}
+    struct Memory:Codable {let at:Double;let bytes:UInt64}
+    static var memory:[Memory]=[]
+    private static func sampleMemory(force:Bool=false) {
+        let now=ProcessInfo.processInfo.systemUptime
+        guard force || now-(memory.last?.at ?? 0)>=3 else {return}
+        var info=task_vm_info_data_t(),count=mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size/MemoryLayout<integer_t>.size)
+        let result=withUnsafeMutablePointer(to:&info) {pointer in
+            pointer.withMemoryRebound(to:integer_t.self,capacity:Int(count)) {task_info(mach_task_self_,task_flavor_t(TASK_VM_INFO),$0,&count)}
+        }
+        if result == KERN_SUCCESS {memory.append(Memory(at:now,bytes:info.phys_footprint))}
+    }
+    static var preparations:[Preparation]=[]
+    static var preparedHits=0,preparedMisses=0
     static var enabled=false
+    static func prepared(seconds:Double,images:FieldRasterArt.Prepared) {
+        guard enabled else {return}
+        preparations.append(Preparation(endedAt:ProcessInfo.processInfo.systemUptime,seconds:seconds,images:images.images.count,bytes:images.bytes))
+    }
+    private static var exportIndex=0
+    static func exportLive(role:String) {
+        guard enabled else {return}
+        struct Report:Encodable {let role:String;let preparations:[Preparation];let frames:[Frame];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int}
+        sampleMemory(force:true)
+        let report=Report(role:role,preparations:preparations,frames:frames,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses)
+        exportIndex+=1
+        if let data=try? JSONEncoder().encode(report) {
+            try? data.write(to:FileManager.default.temporaryDirectory.appending(path:"match-live-\(role)-\(exportIndex).json"),options:.atomic)
+        }
+    }
     private(set) static var frames:[Frame]=[]
     static func begin() -> Double? {enabled ? ProcessInfo.processInfo.systemUptime:nil}
     static func end(_ kind:String,started:Double?) {
         guard enabled,let started,frames.count<12_000 else {return}
         frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000))
+        sampleMemory()
     }
-    static func reset() {frames=[]}
+    static func reset() {frames=[];preparations=[];preparedHits=0;preparedMisses=0;memory=[];sampleMemory(force:true)}
 }
 #endif

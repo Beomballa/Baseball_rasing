@@ -1060,7 +1060,7 @@ extension CareerFlowTests {
     }
 
     @MainActor func testImmersiveInplayFieldLivePitcherBatterReplayAndLargeText() throws {
-        let app=XCUIApplication();app.launch()
+        let app=XCUIApplication();app.launchArguments=["-match-render-performance"];app.launch()
         app.buttons["role-pitcher"].tap();app.buttons["hand-left"].tap()
         createDashboardSample(app,name:"FieldPitcher",motionStyle:true)
         reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
@@ -1091,6 +1091,17 @@ extension CareerFlowTests {
         app.terminate();app.launch()
         reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
         XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
+        // Same saved play in the real screen, cold process for each mode; neither replay rewards.
+        for baseline in [true,false] {
+            app.terminate();app.launchArguments=["-match-render-performance"]+(baseline ? ["-match-render-baseline"]:[]);app.launch()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
+            XCTAssertTrue(stage.waitForExistence(timeout:5))
+            let replayEnded=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
+            XCTAssertEqual(XCTWaiter.wait(for:[replayEnded],timeout:35),.completed)
+            XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
+            waitForEnabled(app.buttons["gamePitch"],timeout:5)
+        }
         app.navigationBars.buttons.element(boundBy:0).tap()
         reveal(app.buttons["createOtherRole"],in:app);app.buttons["createOtherRole"].tap()
         createDashboardSample(app,name:"FieldBatter",motionStyle:true)

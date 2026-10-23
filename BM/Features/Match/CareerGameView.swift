@@ -49,6 +49,14 @@ struct CareerGameView: View {
     @State private var pulse: String?
     @State private var pulseAt = Date.distantPast
 
+    private var preparesFieldMotion:Bool {
+        #if DEBUG
+        !ProcessInfo.processInfo.arguments.contains("-match-render-baseline")
+        #else
+        true
+        #endif
+    }
+    private var fieldCoversArena:Bool {replay != nil || homeRunReplay != nil}
     private var inputLocked: Bool { clock.running || presenting || retrySave != nil }
     private var opponentSide: OpponentBatterSide { (visualSnapshot ?? (try? record?.snapshot()))?.opponentBatterSide ?? .right }
     private func configureScene() {
@@ -239,7 +247,7 @@ struct CareerGameView: View {
                     DetailedFieldReplayBoard(play:play,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(play.half%2 == 0) == match.isHome,
-                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,onResolved:{
+                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,preparesMotion:preparesFieldMotion,onResolved:{
                             fieldResolved=true
                             if let updated=try? record?.snapshot() {
                                 arrivedSnapshot=updated;pulse=MatchPresentation.countPulse(updated.lastManual?.outcome ?? "");pulseAt=Date()
@@ -266,7 +274,7 @@ struct CareerGameView: View {
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(event.half%2 == 0) == match.isHome,
                         scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,
-                        onResolved:{fieldResolved=true;arrivedSnapshot=try? record?.snapshot()}) {
+                        preparesMotion:preparesFieldMotion,onResolved:{fieldResolved=true;arrivedSnapshot=try? record?.snapshot()}) {
                             homeRunReplay=nil;fieldHandoff=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
                         }.id(event.eventID)
                         .frame(height:FieldReplayPresentation.stageHeight(width:geometry.size.width-16,available:geometry.size.height,accessibility:typeSize.isAccessibilitySize))
@@ -277,7 +285,7 @@ struct CareerGameView: View {
     private func arena(_ match: CareerMatch, field: CGSize) -> some View {
         VStack(spacing: 0) {
             ZStack {
-                SpriteView(scene: scene, options: [.ignoresSiblingOrder])
+                SpriteView(scene: scene, isPaused: (fieldCoversArena && preparesFieldMotion) || scenePhase != .active, options: [.ignoresSiblingOrder])
 
             }
                 .frame(width: field.width, height: field.height)
@@ -533,6 +541,13 @@ struct CareerGameView: View {
             }
         }
         .onAppear { load(); configureScene() }
+        #if DEBUG
+        .onChange(of:fieldCoversArena) {_,covered in
+            guard ProcessInfo.processInfo.arguments.contains("-match-render-performance") else {return}
+            if covered {MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true}
+            else {MatchRenderMetrics.exportLive(role:player.role.rawValue+(preparesFieldMotion ? "-prepared":"-baseline"));MatchRenderMetrics.enabled=false}
+        }
+        #endif
         .onChange(of: opponentSide) { _, _ in configureScene() }
         .task(id: pulseAt) {
             guard pulse != nil else { return }

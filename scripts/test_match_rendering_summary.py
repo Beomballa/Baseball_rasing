@@ -1,5 +1,5 @@
 import unittest
-from summarize_match_rendering import percentile, summarize
+from summarize_match_rendering import percentile, summarize, summarize_live
 
 
 class RenderingSummaryTests(unittest.TestCase):
@@ -24,6 +24,22 @@ class RenderingSummaryTests(unittest.TestCase):
     def test_incomplete_report_is_not_a_zero_cost_success(self):
         with self.assertRaises(ValueError):
             summarize({"frames": [], "memory": [], "elapsed": 1})
+
+    def test_live_filters_preparation_and_does_not_mix_covered_scene_callbacks(self):
+        report = {"role": "pitcher", "preparations": [{"endedAt": 2, "seconds": .4, "images": 3, "bytes": 2**20}],
+                  "frames": [{"kind": "field", "at": 1, "milliseconds": 80}, {"kind": "spriteUpdate", "at": 1.5, "milliseconds": .1},
+                             {"kind": "field", "at": 2.01, "milliseconds": 1}, {"kind": "field", "at": 2.043, "milliseconds": 2}],
+                  "preparedHits": 50, "preparedMisses": 0, "memory": [{"at": 1, "bytes": 2**20}, {"at": 3, "bytes": 3*2**20}]}
+        result = summarize_live(report)
+        self.assertEqual(result["fieldCallbacks"], 2)
+        self.assertEqual(result["cpuCommandMs"]["max"], 2)
+        self.assertEqual(result["callbackIntervalMs"]["max"], 33)
+        self.assertEqual(result["coveredSpriteUpdatesAfterReady"], 0)
+        self.assertEqual(result["preparation"][0]["seconds"], .4)
+        report["preparations"] = []
+        result = summarize_live(report)
+        self.assertEqual(result["cpuCommandsOver33Ms"], 1)
+        self.assertEqual(result["coveredSpriteUpdatesAfterReady"], 1)
 
 
 if __name__ == "__main__":
