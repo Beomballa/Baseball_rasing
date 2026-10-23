@@ -737,7 +737,7 @@ import SwiftUI
             XCTAssertEqual(FieldSpriteAnimation.motion(play,index:error.recoverer,time:play.releaseAt).stage,.release)
             let recovery=FieldSpriteAnimation.motion(play,index:error.recoverer,time:error.recoveredAt)
             XCTAssertFalse(recovery.airCatch);XCTAssertFalse(recovery.chestCatch)
-            XCTAssertEqual(FieldReplayPresentation.phase(play,time:error.at,finished:false),"벗어난 공 회수 · 주자 이동 중")
+            XCTAssertEqual(FieldReplayPresentation.phase(play,time:error.at,finished:false),stage == 0 ? "포구 놓침 · 공 이탈":"빗나간 송구 · 수신 시도")
             XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:saved))
         }
         XCTAssertNil(FieldReplayPresentation.errorDetail(doublePlay(),ownTeamFielding:true))
@@ -1436,6 +1436,142 @@ import SwiftUI
             let board=DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),previewTime:time,showsContactPoints:true,complete:{}).frame(width:390,height:585)
             let r=ImageRenderer(content:board);r.scale=2
             let frame=XCTAttachment(image:try XCTUnwrap(r.uiImage));frame.name="Dedicated arrival native \(scenario.rawValue)";frame.lifetime = .keepAlways;add(frame)
+        }
+    }
+
+    func testDedicatedMisplaySpritesCoverBothKindsEightDirectionsBothHandsAndFourPoses() throws {
+        for kind in ["fielder","catcher"] {for facing in FieldFacing.allCases {for left in [false,true] {
+            var actions=Set<String>()
+            for pose in [FieldErrorPose.spill,.reach,.scoop,.secured] {
+                var motion=FieldSpriteMotion(facing:facing,stage:.catchBall,progress:1);motion.errorPose=pose
+                let samples=FieldRasterArt.samples(motion,kind:kind,left:left)
+                XCTAssertEqual(samples.count,1)
+                let sample=try XCTUnwrap(samples.first);actions.insert(sample.frame.action)
+                XCTAssertEqual(sample.frame.file,"\(kind)-misplay-v1.png");XCTAssertEqual(sample.weight,1)
+                XCTAssertEqual(motion.bodyOffset,.zero);XCTAssertLessThanOrEqual(sample.frame.rect[2]*sample.unit,26.0001)
+                XCTAssertNotNil(FieldRasterArt.image(sample,kit:0x316841,skin:0xba7750,hair:0x382416,number:47,back:facing.back))
+                let glove=try XCTUnwrap(FieldRasterArt.contact(motion,kind:kind,left:left,hand:false))
+                XCTAssertEqual(glove.x,(sample.frame.glove[0]-sample.frame.pivot[0])*sample.unit*(sample.mirrored ? -1:1),accuracy:0.00001)
+            }
+            XCTAssertEqual(actions,["spill","missReach","scoop","scoopSecure"])
+        }}}
+    }
+
+    func testLooseErrorBallIsNotAttachedToFailedFielderOrReceiverBeforeSavedRecovery() throws {
+        var stages=Set<Int>()
+        for clean in [doublePlay(),relayFly(before:[FieldRunnerProfile(speed:60),nil,FieldRunnerProfile(speed:100)])] {
+            for stage in FieldMisplayRules.opportunities(clean).map(\.stage) {
+                let play=misplay(clean,stage:stage)
+                guard let e=play.misplay else {continue};stages.insert(e.stage)
+                let original=play
+                for time in stride(from:e.at+0.001,to:e.recoveredAt,by:0.027) {
+                    XCTAssertEqual(FieldSpriteAnimation.ballOffset(play,time:time,leftIndex:e.fielder),.zero)
+                    for hand in [nil,e.recoverer] {
+                        XCTAssertEqual(FieldBallPresentation.handOffset(play,time:time,size:CGSize(width:390,height:585),leftIndex:hand),.zero)
+                    }
+                }
+                for left in [false,true] {
+                    let size=CGSize(width:390,height:585),at=FieldNode.sample(play.fielders[e.recoverer],at:e.recoveredAt)
+                    let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:e.recoverer,time:e.recoveredAt),at:at,size:size)
+                    let anchor=try XCTUnwrap(FieldRasterArt.contact(motion,kind:e.recoverer == 1 ? "catcher":"fielder",left:left,hand:false))
+                    let offset=FieldBallPresentation.handOffset(play,time:e.recoveredAt,size:size,leftIndex:left ? e.recoverer:nil)
+                    let scale=InplayFieldProjection.actorScale(at,size:size)
+                    XCTAssertEqual(offset.x,anchor.x*scale,accuracy:0.00001);XCTAssertEqual(offset.y,anchor.y*scale,accuracy:0.00001)
+                }
+                XCTAssertEqual(play,original);try play.validate()
+            }
+        }
+        XCTAssertTrue(stages.contains(0));XCTAssertTrue(stages.contains(1));XCTAssertTrue(stages.contains(3));XCTAssertTrue(stages.contains(5))
+    }
+
+    func testErrorScoopStartsOnlyAfterArrivalAndSecuresOnlyAtSavedRecoveryThenThrows() throws {
+        for stage in [0,1,5] {
+            let play=misplay(doublePlay(),stage:stage),e=try XCTUnwrap(play.misplay)
+            let scoop=try XCTUnwrap(FieldMisplayAnimation.recoveryStart(play))
+            XCTAssertLessThanOrEqual(scoop,e.recoveredAt)
+            XCTAssertEqual(FieldNode.sample(play.fielders[e.recoverer],at:scoop),e.loosePoint)
+            let before=FieldSpriteAnimation.motion(play,index:e.recoverer,time:scoop-0.001)
+            XCTAssertNotEqual(before.errorPose,.scoop);XCTAssertNotEqual(before.errorPose,.secured)
+            XCTAssertEqual(FieldSpriteAnimation.motion(play,index:e.recoverer,time:(scoop+e.recoveredAt)/2).errorPose,.scoop)
+            XCTAssertEqual(FieldSpriteAnimation.motion(play,index:e.recoverer,time:e.recoveredAt).errorPose,.scoop)
+            let windup=play.releaseAt-min(0.20,(play.releaseAt-e.recoveredAt)*0.50)
+            if windup>e.recoveredAt+0.09 {XCTAssertEqual(FieldSpriteAnimation.motion(play,index:e.recoverer,time:e.recoveredAt+0.09).errorPose,.secured)}
+            let thrown=FieldSpriteAnimation.motion(play,index:e.recoverer,time:play.releaseAt)
+            XCTAssertEqual(thrown.stage,.release);XCTAssertEqual(thrown.errorPose,.none)
+            XCTAssertEqual(FieldSpriteAnimation.throwsIn(play).first?.fielder,e.recoverer)
+        }
+    }
+
+    func testFastAndSlowRecoveryTransfersStillShowSecuredPoseBeforeOriginalWindup() throws {
+        for arm in [0.0,60,100] {
+            let play=misplay(doublePlay(),stage:1,arm:arm),e=try XCTUnwrap(play.misplay)
+            let secure=try XCTUnwrap(FieldMisplayAnimation.securedAt(play))
+            let windup=play.releaseAt-min(0.20,(play.releaseAt-e.recoveredAt)*0.50)
+            XCTAssertGreaterThan(secure,e.recoveredAt);XCTAssertLessThan(secure,windup)
+            XCTAssertEqual(FieldSpriteAnimation.motion(play,index:e.recoverer,time:secure+0.0001).errorPose,.secured)
+            XCTAssertTrue(FieldMisplayAnimation.moments(play).contains {abs($0-secure-0.001)<0.00001})
+        }
+    }
+
+    func testWildThrowSourceReleasesFromHandAndNearbyReactionDoesNotClaimPossession() throws {
+        for stage in [1,5] {
+            let play=misplay(doublePlay(),stage:stage),e=try XCTUnwrap(play.misplay)
+            XCTAssertEqual(FieldSpriteAnimation.motion(play,index:e.fielder,time:e.at).stage,.release)
+            XCTAssertEqual(FieldSpriteAnimation.motion(play,index:e.fielder,time:e.at-0.01).stage,.windup)
+            if let miss=FieldMisplayAnimation.missedReception(play) {
+                XCTAssertNotEqual(miss.fielder,e.fielder)
+                XCTAssertTrue((e.at...e.scatteredAt).contains(miss.at))
+                let motion=FieldSpriteAnimation.motion(play,index:miss.fielder,time:miss.at)
+                XCTAssertEqual(motion.errorPose,.reach)
+                XCTAssertTrue(FieldMisplayAnimation.ballIsLoose(play,time:miss.at))
+            }
+            for left in [false,true] {
+                let at=FieldNode.sample(play.fielders[e.fielder],at:e.at),size=CGSize(width:390,height:585)
+                let m=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:e.fielder,time:e.at),at:at,size:size)
+                let anchor=try XCTUnwrap(FieldRasterArt.contact(m,kind:e.fielder == 1 ? "catcher":"fielder",left:left,hand:true))
+                let offset=FieldBallPresentation.handOffset(play,time:e.at,size:size,leftIndex:left ? e.fielder:nil)
+                let scale=InplayFieldProjection.actorScale(at,size:size)
+                XCTAssertEqual(offset.x,(anchor.x+m.bodyOffset.x)*scale,accuracy:0.00001)
+                XCTAssertEqual(offset.y,(anchor.y+m.bodyOffset.y)*scale,accuracy:0.00001)
+            }
+        }
+    }
+
+    func testMisplayPresentationMomentsAndBounceUseOriginalTimelineAndReducedMotion() throws {
+        for stage in [0,1] {
+            let play=misplay(doublePlay(),stage:stage),e=try XCTUnwrap(play.misplay)
+            let times=FieldMisplayAnimation.moments(play)
+            XCTAssertTrue(times.contains(try XCTUnwrap(FieldMisplayAnimation.recoveryStart(play))))
+            for time in times {XCTAssertTrue(time>=0 && time<=play.duration)}
+            XCTAssertGreaterThan(try XCTUnwrap(FieldMisplayAnimation.lift(play,time:(e.at+e.scatteredAt)/2,height:585)),0)
+            XCTAssertEqual(FieldReplayPresentation.lift(play,time:e.recoveredAt,height:585),0,accuracy:1e-12)
+            let t=try XCTUnwrap(FieldMisplayAnimation.recoveryStart(play))
+            XCTAssertEqual(FieldReplayPresentation.time(play,elapsed:t,reduced:true,animated:true),t)
+        }
+        XCTAssertTrue(FieldMisplayAnimation.moments(doublePlay()).isEmpty)
+        XCTAssertNil(FieldMisplayAnimation.motion(doublePlay(),index:0,time:0))
+    }
+
+    func testDedicatedMisplayContactSheetAndSavedErrorSequenceRenderReadOnly() throws {
+        let poses:[FieldErrorPose]=[.spill,.reach,.scoop,.secured]
+        let view=Canvas {context,_ in
+            for (row,kind) in ["fielder","catcher"].enumerated() {
+                for (column,facing) in FieldFacing.allCases.enumerated() {for (phase,pose) in poses.enumerated() {
+                    var motion=FieldSpriteMotion(facing:facing,stage:.catchBall,progress:1);motion.errorPose=pose
+                    FieldRasterArt.draw(in:context,at:CGPoint(x:60+column*72,y:65+(row*4+phase)*66),scale:1.8,motion:motion,kind:kind,kit:row == 0 ? 0x316841:0x8b3440,skin:0xba7750,hair:0x382416,number:47,left:false,selected:false,out:false)
+                }}
+            }
+        }.frame(width:640,height:540).background(GameTheme.board)
+        let r=ImageRenderer(content:view);r.scale=2
+        let sheet=XCTAttachment(image:try XCTUnwrap(r.uiImage));sheet.name="Dedicated error miss scoop secured eight directions";sheet.lifetime = .keepAlways;add(sheet)
+        for stage in [0,1] {
+            let play=misplay(doublePlay(),stage:stage),e=try XCTUnwrap(play.misplay),original=play
+            for (i,time) in [e.at+0.04,(e.recoveredAt+(FieldMisplayAnimation.recoveryStart(play) ?? e.recoveredAt))/2,play.releaseAt].enumerated() {
+                let board=DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),previewTime:time,showsContactPoints:true,complete:{}).frame(width:390,height:585)
+                let renderer=ImageRenderer(content:board);renderer.scale=2
+                let shot=XCTAttachment(image:try XCTUnwrap(renderer.uiImage));shot.name="Native error sequence \(stage) phase \(i)";shot.lifetime = .keepAlways;add(shot)
+            }
+            XCTAssertEqual(play,original)
         }
     }
 

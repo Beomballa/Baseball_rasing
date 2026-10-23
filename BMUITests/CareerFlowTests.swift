@@ -968,6 +968,36 @@ extension CareerFlowTests {
         let large=XCTAttachment(screenshot:app.screenshot());large.name="NPC large text inspector";large.lifetime = .keepAlways;add(large)
     }
 
+    @MainActor func testDedicatedErrorRecoveryScenesUseNativeBoardWithoutCareerStore() throws {
+        let app=XCUIApplication();app.launchArguments=["-field-replay-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["fieldVerificationNotice"].waitForExistence(timeout:5))
+        XCTAssertFalse(app.staticTexts["homePlayerName"].exists)
+        for scenario in ["포구 실책","악송구"] {
+            reveal(app.buttons["fieldVerificationScenario"],in:app);app.buttons["fieldVerificationScenario"].tap();app.buttons[scenario].tap()
+            XCTAssertTrue(app.staticTexts["fieldVerificationForcedError"].exists)
+            var found=false
+            for _ in 0..<36 {
+                if app.staticTexts["fieldReplayPhase"].label.contains("몸을 낮춰 회수") {found=true;break}
+                reveal(app.buttons["fieldVerificationNext"],in:app);app.buttons["fieldVerificationNext"].tap()
+            }
+            XCTAssertTrue(found,"Saved recovery phase must be reachable: \(scenario)")
+            XCTAssertFalse(app.staticTexts["fieldVerificationError"].exists)
+            let canvas=app.otherElements["fieldReplayCanvas"],window=app.windows.firstMatch.frame
+            reveal(canvas,in:app)
+            for _ in 0..<4 {
+                if canvas.frame.maxY<=window.maxY-30 {break}
+                app.swipeUp()
+            }
+            XCTAssertLessThanOrEqual(canvas.frame.maxY,window.maxY)
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Native dedicated \(scenario) scoop";shot.lifetime = .keepAlways;add(shot)
+        }
+        app.terminate();app.launchArguments=["-field-replay-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["fieldVerificationNotice"].waitForExistence(timeout:5))
+        reveal(app.buttons["fieldVerificationNext"],in:app)
+        XCTAssertLessThanOrEqual(app.buttons["fieldVerificationNext"].frame.maxX,app.windows.firstMatch.frame.maxX)
+        XCTAssertFalse(app.staticTexts["fieldVerificationError"].exists)
+    }
+
     @MainActor func testFieldVerificationControlsScenariosAndCareerStoreIsolation() throws {
         let app=XCUIApplication();app.launch()
         if app.textFields["playerName"].waitForExistence(timeout:2) {createDashboardSample(app,name:"ReplayKeeper")}

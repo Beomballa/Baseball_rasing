@@ -256,6 +256,7 @@ enum FieldVerificationScenario:String,CaseIterable,Identifiable {
         if let relay=play.relay {events += [relay.receiveAt,relay.releaseAt]}
         if let second=play.secondThrow {events += [second.releaseAt,second.ballAt,second.controlAt]}
         if let error=play.misplay {events += [error.at,error.scatteredAt,error.recoveredAt]}
+        events += FieldMisplayAnimation.moments(play)
         events += play.runners.flatMap {$0.nodes.map(\.at)}
         return Array(Set(events)).sorted()
     }

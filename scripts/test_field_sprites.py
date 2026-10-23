@@ -83,6 +83,19 @@ class RuntimeSpriteTests(unittest.TestCase):
                     self.assertEqual(data[25],6)
                     self.assertEqual(blob_issues(str((ART/f['file']).relative_to(ROOT)),data),[])
 
+    def test_dedicated_misplay_sources_and_saved_contact_metadata(self):
+        m=json.loads((ART/'field-runtime-v1.json').read_text())
+        for kind in ['fielder','catcher']:
+            for sh in m['kinds'][kind].values():
+                frames=[f for f in sh['frames'] if f['action'] in ['spill','missReach','scoop','scoopSecure']]
+                self.assertEqual(len(frames),4)
+                for f in frames:
+                    self.assertEqual(f['file'],kind+'-misplay-v1.png')
+                    for anchor in ['pivot','hand','glove']:
+                        self.assertTrue(0<=f[anchor][0]<=f['rect'][2])
+                        self.assertTrue(0<=f[anchor][1]<=f['rect'][3])
+                    self.assertEqual(blob_issues(str((ART/f['file']).relative_to(ROOT)),(ART/f['file']).read_bytes()),[])
+
 class ThrowPreviewTests(unittest.TestCase):
     def test_release_flight_arrival_catch_and_loop_for_all_targets(self):
         source=(ROOT/'scripts/preview_field_sprites.html').read_text()

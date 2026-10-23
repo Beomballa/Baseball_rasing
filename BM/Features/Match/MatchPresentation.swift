@@ -75,6 +75,9 @@ enum MatchArt {
             }
             poses=[(action,1)]
         }
+        if kind != "runner",motion.errorPose != .none {
+            poses=[(motion.errorPose == .spill ? "spill":motion.errorPose == .reach ? "missReach":motion.errorPose == .scoop ? "scoop":"scoopSecure",1)]
+        }
         // Use one opaque pose; the ball reads exactly the same hand/mitt anchor.
         if let pose=poses.enumerated().max(by: {a,b in a.element.1 == b.element.1 ? a.offset<b.offset:a.element.1<b.element.1}) {
             poses=[(pose.element.0,1)]
@@ -529,14 +532,18 @@ enum FieldReplayPresentation {
             + (play.secondThrow.map {[$0.releaseAt,$0.ballAt,$0.controlAt]} ?? [])
             + (play.misplay.map {[$0.at,$0.scatteredAt,$0.recoveredAt]} ?? [])
         let runnerMoments=play.runners.flatMap {runner in runner.nodes.map(\.at)}
-        return (moments+runnerMoments).filter {$0<=time}.max() ?? 0
+        return (moments+runnerMoments+FieldMisplayAnimation.moments(play)).filter {$0<=time}.max() ?? 0
     }
     static func retired(_ runner:DetailedRunner,finished:Bool) -> Bool {
         finished && runner.out
     }
     static func phase(_ play:MatchDetailedPlay,time:Double,finished:Bool) -> String {
         if finished {return play.summary}
-        if let error=play.misplay,time>=error.at && time<error.recoveredAt {return "벗어난 공 회수 · 주자 이동 중"}
+        if let error=play.misplay,time>=error.at && time<error.recoveredAt {
+            if time<error.scatteredAt {return error.kind == .fielding ? "포구 놓침 · 공 이탈":"빗나간 송구 · 수신 시도"}
+            if time<(FieldMisplayAnimation.recoveryStart(play) ?? error.recoveredAt) {return "벗어난 공 추격 · 주자 이동 중"}
+            return "몸을 낮춰 회수 · 주자 이동 중"
+        }
         if time < play.flight {
             if let ball=play.battedBall {return "\(ball.kind.label) · 타구 \(Int(ball.kmh.rounded())) km/h / 야수 추격"}
             return play.fly == nil ? "타격 · 땅볼 이동 / 야수 추격":"타격 · 공중 타구 / 야수 추격"
@@ -552,6 +559,7 @@ enum FieldReplayPresentation {
         return "송구 · 주자와 베이스 경합"
     }
     static func lift(_ play:MatchDetailedPlay,time:Double,height:Double) -> Double {
+        if let error=FieldMisplayAnimation.lift(play,time:time,height:height) {return error}
         if time < play.flight {
             if let ball=play.battedBall {return min(height*0.28,ball.height(at:time)*height*0.009)}
             let t=max(0,min(1,time/max(0.001,play.flight)))
@@ -609,6 +617,7 @@ enum FieldFacing: Int,CaseIterable,Equatable {
 enum FieldRunnerPose: Equatable {case stride,accelerate,turn,decelerate,slide,tagUp,settled}
 enum FieldBaseReceive: Equatable {case none,force,tag}
 enum FieldReceivePose: Equatable {case reach,secure,tag,recover}
+enum FieldErrorPose: Equatable {case none,spill,reach,scoop,secured}
 
 enum FieldSpriteStage: Equatable {case ready,run,catchBall,gather,windup,release,followThrough}
 struct FieldSpriteMotion {
@@ -624,10 +633,11 @@ struct FieldSpriteMotion {
     var arrivalProgress:Double = 0
     var receivePose:FieldReceivePose = .reach
     var reducedArrival=false
+    var errorPose:FieldErrorPose = .none
 
     var bodyOffset:CGPoint {
         // These frames already articulate knees/hips and anchor the contact cleat to the bag.
-        if runnerPose == .slide || baseReceive != .none {return .zero}
+        if runnerPose == .slide || baseReceive != .none || errorPose != .none {return .zero}
         let lean=stage == .followThrough ? facing.vector.x*sin(progress * .pi)*2:stage == .run ? facing.vector.x*1.2:0
         let bob=stage == .run ? -abs(cos(gait))*1.4:stage == .catchBall && !airCatch && !chestCatch ? sin(progress * .pi/2)*3:stage == .gather && !airCatch && !chestCatch ? (1-progress)*3:0
         let crouch=runnerPose == .tagUp ? 2.0:0
@@ -767,6 +777,7 @@ enum FieldSpriteAnimation {
         return result
     }
     static func motion(_ play:MatchDetailedPlay,index:Int,time:Double) -> FieldSpriteMotion {
+        if let error=FieldMisplayAnimation.motion(play,index:index,time:time) {return error}
         var result=fieldingMotion(play,index:index,time:time)
         // An outgoing pivot owns its gather/windup; do not replace a double-play throw.
         guard ![FieldSpriteStage.windup,.release,.followThrough].contains(result.stage) else {return result}
@@ -840,6 +851,7 @@ enum FieldSpriteAnimation {
         return motion
     }
     static func ballOffset(_ play:MatchDetailedPlay,time:Double,leftIndex:Int?) -> CGPoint {
+        if FieldMisplayAnimation.ballIsLoose(play,time:time) {return .zero}
         let events=throwsIn(play)
         let catches=[(play.fielder,play.pickupAt)]+events.map {($0.receiver,$0.receivedAt)}
         let ball=FieldNode.sample(play.ball,at:time)
@@ -847,7 +859,7 @@ enum FieldSpriteAnimation {
             let at=FieldNode.sample(play.fielders[index],at:time)
             guard ball.distance(to:at)<0.9 else {continue}
             let motion=motion(play,index:index,time:time),left=index == leftIndex
-            let active=events.contains {$0.fielder == index && time >= $0.caughtAt && time <= $0.releaseAt+0.0001}
+            let active=events.contains {$0.fielder == index && time >= $0.caughtAt && time <= $0.releaseAt+0.0001} || FieldMisplayAnimation.holdsBall(play,index:index,time:time)
             let caught=catches.contains {$0.0 == index && time >= $0.1}
             guard active || caught else {continue}
             var p=motion.glove(left:left)
@@ -859,6 +871,101 @@ enum FieldSpriteAnimation {
             return CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y)
         }
         return .zero
+    }
+}
+
+// Reads only the saved error/ball/player timeline; never resolves a new play or awards participation.
+enum FieldMisplayAnimation {
+    struct MissedReception {let fielder:Int;let at:Double}
+    static func recoveryStart(_ play:MatchDetailedPlay) -> Double? {
+        guard let e=play.misplay else {return nil}
+        return play.fielders[e.recoverer].first {$0.at>=e.scatteredAt && $0.point == e.loosePoint}?.at ?? e.recoveredAt
+    }
+    static func securedAt(_ play:MatchDetailedPlay) -> Double? {
+        guard let e=play.misplay else {return nil}
+        let windup=play.releaseAt-min(0.20,(play.releaseAt-e.recoveredAt)*0.50)
+        return e.recoveredAt+min(0.08,(windup-e.recoveredAt)*0.45)
+    }
+    static func moments(_ play:MatchDetailedPlay) -> [Double] {
+        guard let e=play.misplay else {return []}
+        return [e.at-0.08,e.at+0.08,recoveryStart(play),securedAt(play).map {$0+0.001},missedReception(play)?.at]
+            .compactMap {$0}.filter {$0>=0 && $0<=play.duration}
+    }
+    static func missedReception(_ play:MatchDetailedPlay) -> MissedReception? {
+        guard let e=play.misplay,e.kind == .throwing else {return nil}
+        // Old error JSON has no intended receiver. This is a nearby visual reaction, not a ledger participant.
+        let candidates=play.fielders.indices.filter {$0 != e.fielder}
+        guard let index=candidates.min(by:{
+            FieldNode.sample(play.fielders[$0],at:e.at).distance(to:e.loosePoint)<FieldNode.sample(play.fielders[$1],at:e.at).distance(to:e.loosePoint)
+        }) else {return nil}
+        let a=FieldNode.sample(play.ball,at:e.at),b=e.loosePoint
+        let c=FieldNode.sample(play.fielders[index],at:e.at),d=FieldNode.sample(play.fielders[index],at:e.scatteredAt)
+        guard c.distance(to:b)<=14 else {return nil}
+        let x=a.x-c.x,y=a.y-c.y,dx=(b.x-a.x)-(d.x-c.x),dy=(b.y-a.y)-(d.y-c.y)
+        let length=dx*dx+dy*dy
+        let p=length>0 ? max(0,min(1,-(x*dx+y*dy)/length)):1
+        guard p>=0.4 else {return nil}
+        return MissedReception(fielder:index,at:e.at+(e.scatteredAt-e.at)*p)
+    }
+    static func motion(_ play:MatchDetailedPlay,index:Int,time:Double) -> FieldSpriteMotion? {
+        guard let e=play.misplay else {return nil}
+        let at=FieldNode.sample(play.fielders[index],at:time)
+        var motion=FieldSpriteAnimation.travel(play.fielders[index],time:time)
+        let scoop=recoveryStart(play) ?? e.recoveredAt
+        let windup=play.releaseAt-min(0.20,(play.releaseAt-e.recoveredAt)*0.50)
+        if index == e.recoverer,time>=scoop,time<windup {
+            motion.stage = .gather;motion.progress=0;motion.willThrow=time>=e.recoveredAt
+            let secure=securedAt(play) ?? e.recoveredAt
+            motion.errorPose=time<secure ? .scoop:.secured
+            if motion.errorPose == .secured {
+                let target=FieldNode.sample(play.fielders[play.receiver],at:play.ballAt)
+                let facing=FieldFacing.direction(dx:target.x-at.x,dy:target.y-at.y)
+                motion.facing=FieldFacing.turn(from:motion.facing,to:facing,fraction:min(1,(time-secure)/0.18))
+            }
+            return motion
+        }
+        if index == e.fielder,e.kind == .fielding,time>=e.at-0.12,time<e.at+0.26 {
+            if time>=e.at,motion.stage == .run {return nil}
+            let ball=FieldNode.sample(play.ball,at:time<e.at ? max(0,e.at-0.12):e.scatteredAt)
+            motion.facing = .direction(dx:ball.x-at.x,dy:ball.y-at.y)
+            motion.stage = .catchBall;motion.progress=1
+            let low=e.stage == 0 && play.fly == nil && (play.battedBall?.angle ?? 0)<15
+            motion.errorPose=low ? .spill:.reach
+            return motion
+        }
+        if index == e.fielder,e.kind == .throwing,time>=max(play.pickupAt,e.at-0.2),time<e.at+0.30 {
+            if time>e.at+0.08,motion.stage == .run {return nil}
+            motion.facing = .direction(dx:e.loosePoint.x-at.x,dy:e.loosePoint.y-at.y);motion.willThrow=true
+            if time<e.at {motion.stage = .windup;motion.progress=max(0,min(1,(time-e.at+0.2)/0.2))}
+            else if time<e.at+0.08 {motion.stage = .release;motion.progress=1}
+            else {motion.stage = .followThrough;motion.progress=(time-e.at-0.08)/0.22}
+            return motion
+        }
+        if let miss=missedReception(play),index == miss.fielder,time>=miss.at-0.12,time<miss.at+0.18 {
+            motion.stage = .catchBall;motion.progress=1;motion.errorPose = .reach
+            let ball=FieldNode.sample(play.ball,at:miss.at)
+            motion.facing = .direction(dx:ball.x-at.x,dy:ball.y-at.y)
+            return motion
+        }
+        return nil
+    }
+    static func ballIsLoose(_ play:MatchDetailedPlay,time:Double) -> Bool {
+        guard let e=play.misplay else {return false}
+        return time>e.at && time<e.recoveredAt
+    }
+    static func holdsBall(_ play:MatchDetailedPlay,index:Int,time:Double) -> Bool {
+        guard let e=play.misplay else {return false}
+        if time == e.at {return index == e.fielder}
+        return e.kind == .throwing && index == e.fielder && time>=play.pickupAt && time<e.at
+    }
+    static func lift(_ play:MatchDetailedPlay,time:Double,height:Double) -> Double? {
+        guard let e=play.misplay,time>=e.at,time<=e.recoveredAt else {return nil}
+        if time<e.scatteredAt {
+            let p=(time-e.at)/max(0.001,e.scatteredAt-e.at)
+            return sin(.pi*p)*height*(e.kind == .throwing ? 0.035:0.018)
+        }
+        let p=min(1,(time-e.scatteredAt)/0.35)
+        return max(0,sin(p * .pi * 3))*(1-p)*height*0.007
     }
 }
 

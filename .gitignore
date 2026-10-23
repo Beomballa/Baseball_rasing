@@ -131,3 +131,7 @@
 !/BM/Resources/MatchArt/runner-arrival-v1.png
 !/BM/Resources/MatchArt/fielder-arrival-v1.png
 !/BM/Resources/MatchArt/catcher-arrival-v1.png
+
+# Reviewed dedicated missed catch and recovery source frames.
+!/BM/Resources/MatchArt/fielder-misplay-v1.png
+!/BM/Resources/MatchArt/catcher-misplay-v1.png
