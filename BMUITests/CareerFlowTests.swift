@@ -968,6 +968,27 @@ extension CareerFlowTests {
         let large=XCTAttachment(screenshot:app.screenshot());large.name="NPC large text inspector";large.lifetime = .keepAlways;add(large)
     }
 
+    @MainActor func testCatcherRunRelayTransferNativePhasesWithoutCareerStore() throws {
+        let app=XCUIApplication();app.launchArguments=["-field-replay-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["fieldVerificationNotice"].waitForExistence(timeout:5))
+        app.buttons["fieldVerificationScenario"].tap();app.buttons["중계"].tap()
+        for expected in ["공 빼기","발 디딤"] {
+            var found=false
+            for _ in 0..<36 {
+                if app.staticTexts["fieldReplayPhase"].label.contains(expected) {found=true;break}
+                reveal(app.buttons["fieldVerificationNext"],in:app);app.buttons["fieldVerificationNext"].tap()
+            }
+            XCTAssertTrue(found,"Saved relay phase must be reachable: \(expected)")
+            XCTAssertFalse(app.staticTexts["fieldVerificationError"].exists)
+            let canvas=app.otherElements["fieldReplayCanvas"],window=app.windows.firstMatch.frame
+            reveal(canvas,in:app)
+            for _ in 0..<4 {if canvas.frame.maxY<=window.maxY-30 {break};app.swipeUp()}
+            XCTAssertLessThanOrEqual(canvas.frame.maxY,window.maxY)
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Native relay \(expected) full field";shot.lifetime = .keepAlways;add(shot)
+        }
+        XCTAssertFalse(app.staticTexts["homePlayerName"].exists)
+    }
+
     @MainActor func testDedicatedErrorRecoveryScenesUseNativeBoardWithoutCareerStore() throws {
         let app=XCUIApplication();app.launchArguments=["-field-replay-verification"];app.launch()
         XCTAssertTrue(app.staticTexts["fieldVerificationNotice"].waitForExistence(timeout:5))

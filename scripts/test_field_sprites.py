@@ -96,6 +96,19 @@ class RuntimeSpriteTests(unittest.TestCase):
                         self.assertTrue(0<=f[anchor][1]<=f['rect'][3])
                     self.assertEqual(blob_issues(str((ART/f['file']).relative_to(ROOT)),(ART/f['file']).read_bytes()),[])
 
+    def test_catcher_runs_and_relay_transfer_have_reviewed_full_body_sources(self):
+        m=json.loads((ART/'field-runtime-v1.json').read_text())
+        for kind,actions,file in [('catcher',['runA','runB'],'catcher-run-v1.png'),('fielder',['transferSecure','transferExtract','transferPlant'],'fielder-transfer-v1.png')]:
+            for sh in m['kinds'][kind].values():
+                frames=[f for f in sh['frames'] if f['action'] in actions]
+                self.assertEqual([f['action'] for f in frames],actions)
+                for f in frames:
+                    self.assertEqual(f['file'],file)
+                    for anchor in ['pivot','hand','glove']:
+                        self.assertTrue(0<=f[anchor][0]<=f['rect'][2])
+                        self.assertTrue(0<=f[anchor][1]<=f['rect'][3])
+                    self.assertEqual(blob_issues(str((ART/file).relative_to(ROOT)),(ART/file).read_bytes()),[])
+
 class ThrowPreviewTests(unittest.TestCase):
     def test_release_flight_arrival_catch_and_loop_for_all_targets(self):
         source=(ROOT/'scripts/preview_field_sprites.html').read_text()

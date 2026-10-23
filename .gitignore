@@ -135,3 +135,7 @@
 # Reviewed dedicated missed catch and recovery source frames.
 !/BM/Resources/MatchArt/fielder-misplay-v1.png
 !/BM/Resources/MatchArt/catcher-misplay-v1.png
+
+# Reviewed catcher running and relay transfer frames.
+!/BM/Resources/MatchArt/catcher-run-v1.png
+!/BM/Resources/MatchArt/fielder-transfer-v1.png

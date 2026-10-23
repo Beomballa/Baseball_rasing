@@ -54,7 +54,7 @@ enum MatchArt {
         case .ready:poses=[("ready",1)]
         case .run:
             // Pixel running is a frame cycle, not an alpha dissolve between two bodies.
-            poses=kind == "catcher" ? [("gather",1)]:[(sin(motion.gait)>=0 ? "runB":"runA",1)]
+            poses=[(sin(motion.gait)>=0 ? "runB":"runA",1)]
         case .catchBall:poses=[("ready",1-p),(caught,p)]
         case .gather:
             poses=motion.willThrow ? [(caught,1-p),("gather",p)]:p<0.5 ? [(caught,1-p*2),("gather",p*2)]:[("gather",2-p*2),("ready",p*2-1)]
@@ -74,6 +74,10 @@ enum MatchArt {
             case .tag:action="baseTag"
             }
             poses=[(action,1)]
+        }
+        if kind == "fielder",motion.relayTransfer {
+            if motion.stage == .gather {poses=[(p<0.5 ? "transferSecure":"transferExtract",1)]}
+            else if motion.stage == .windup {poses=[(p<0.25 ? "transferPlant":p<0.75 ? "windup":"release",1)]}
         }
         if kind != "runner",motion.errorPose != .none {
             poses=[(motion.errorPose == .spill ? "spill":motion.errorPose == .reach ? "missReach":motion.errorPose == .scoop ? "scoop":"scoopSecure",1)]
@@ -162,18 +166,6 @@ enum MatchArt {
             }
             if sample.mirrored {layer.scaleBy(x:-1,y:1)}
             let rect=CGRect(x:-f.pivot[0]*u,y:-f.pivot[1]*u,width:f.rect[2]*u,height:f.rect[3]*u)
-            if kind == "catcher" && motion.stage == .run {
-                // Keep mask, chest protector and mitt fixed; articulate the existing lower legs.
-                let hip=rect.minY+rect.height*0.72
-                for side in [-1.0,1.0] {
-                    var leg=layer
-                    leg.clip(to:Path(CGRect(x:side<0 ? rect.minX:rect.midX,y:hip,width:rect.width/2,height:rect.maxY-hip+2*scale)))
-                    let stride=sin(motion.gait+(side<0 ? 0:Double.pi))
-                    leg.translateBy(x:stride*0.6*scale,y:stride*1.2*scale)
-                    leg.draw(Image(uiImage:image).interpolation(.none),in:rect)
-                }
-                layer.clip(to:Path(CGRect(x:rect.minX,y:rect.minY,width:rect.width,height:hip-rect.minY)))
-            }
             layer.draw(Image(uiImage:image).interpolation(.none),in:rect)
         }
         return true
@@ -532,7 +524,7 @@ enum FieldReplayPresentation {
             + (play.secondThrow.map {[$0.releaseAt,$0.ballAt,$0.controlAt]} ?? [])
             + (play.misplay.map {[$0.at,$0.scatteredAt,$0.recoveredAt]} ?? [])
         let runnerMoments=play.runners.flatMap {runner in runner.nodes.map(\.at)}
-        return (moments+runnerMoments+FieldMisplayAnimation.moments(play)).filter {$0<=time}.max() ?? 0
+        return (moments+runnerMoments+FieldMisplayAnimation.moments(play)+FieldRelayTransfer.moments(play)).filter {$0<=time}.max() ?? 0
     }
     static func retired(_ runner:DetailedRunner,finished:Bool) -> Bool {
         finished && runner.out
@@ -551,7 +543,11 @@ enum FieldReplayPresentation {
         if time < play.pickupAt {return "타구 도착 · 야수 포구 준비"}
         if let relay=play.relay,time>=play.releaseAt {
             if time < relay.receiveAt {return "외야 송구 · 중계 야수 수신 대기"}
-            if time < relay.releaseAt {return "중계 포구 · 재송구 준비"}
+            if time < relay.releaseAt {
+                let motion=FieldSpriteAnimation.motion(play,index:relay.fielder,time:time)
+                if motion.stage == .windup {return "중계 전환 · 발 디딤/송구 준비"}
+                return motion.stage == .gather && motion.progress>=0.5 ? "중계 전환 · 공 빼기":"중계 포구 · 공 확보"
+            }
         }
         if let second=play.secondThrow,time>=play.controlAt && time<second.releaseAt {return "베이스 포구 · 1루 재송구 준비"}
         if play.fly?.caught == true && play.targetRunner == nil && play.misplay == nil {return "포구 · 플레이 확인 중"}
@@ -634,10 +630,14 @@ struct FieldSpriteMotion {
     var receivePose:FieldReceivePose = .reach
     var reducedArrival=false
     var errorPose:FieldErrorPose = .none
+    var relayTransfer=false
+    var ballInThrowingHand:Bool {
+        [.windup,.release].contains(stage) || (relayTransfer && stage == .gather && progress>=0.5)
+    }
 
     var bodyOffset:CGPoint {
         // These frames already articulate knees/hips and anchor the contact cleat to the bag.
-        if runnerPose == .slide || baseReceive != .none || errorPose != .none {return .zero}
+        if runnerPose == .slide || baseReceive != .none || errorPose != .none || relayTransfer {return .zero}
         let lean=stage == .followThrough ? facing.vector.x*sin(progress * .pi)*2:stage == .run ? facing.vector.x*1.2:0
         let bob=stage == .run ? -abs(cos(gait))*1.4:stage == .catchBall && !airCatch && !chestCatch ? sin(progress * .pi/2)*3:stage == .gather && !airCatch && !chestCatch ? (1-progress)*3:0
         let crouch=runnerPose == .tagUp ? 2.0:0
@@ -828,6 +828,7 @@ enum FieldSpriteAnimation {
             else if motion.stage == .gather {motion.facing=FieldFacing.turn(from:catchFacing,to:motion.facing,fraction:motion.progress)}
             motion.airCatch=play.misplay == nil && index == play.fielder && play.fly?.caught == true
             motion.chestCatch=play.misplay == nil && index != play.fielder
+            motion.relayTransfer=play.misplay == nil && play.relay?.fielder == index && [.gather,.windup].contains(motion.stage)
             return motion
         }
         let catches=[(play.fielder,play.pickupAt)]+events.map {($0.receiver,$0.receivedAt)}
@@ -863,7 +864,7 @@ enum FieldSpriteAnimation {
             let caught=catches.contains {$0.0 == index && time >= $0.1}
             guard active || caught else {continue}
             var p=motion.glove(left:left)
-            if active && [.windup,.release].contains(motion.stage) {p=motion.throwingHand(left:left)}
+            if active && motion.ballInThrowingHand {p=motion.throwingHand(left:left)}
             else if active && motion.stage == .gather {
                 let hand=motion.throwingHand(left:left)
                 p=CGPoint(x:p.x+(hand.x-p.x)*motion.progress,y:p.y+(hand.y-p.y)*motion.progress)
@@ -871,6 +872,16 @@ enum FieldSpriteAnimation {
             return CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y)
         }
         return .zero
+    }
+}
+
+enum FieldRelayTransfer {
+    static func moments(_ play:MatchDetailedPlay) -> [Double] {
+        guard play.misplay == nil,let relay=play.relay else {return []}
+        let length=relay.releaseAt-relay.receiveAt
+        let caught=relay.receiveAt+min(0.10,length*0.25)
+        let windup=relay.releaseAt-min(0.20,length*0.50)
+        return [caught+(windup-caught)*0.25,caught+(windup-caught)*0.75,windup+(relay.releaseAt-windup)*0.1]
     }
 }
 
@@ -1103,12 +1114,12 @@ enum InplayFieldProjection {
             let left=index == leftIndex
             func anchor(_ motion:FieldSpriteMotion) -> CGPoint {
                 var p=motion.glove(left:left)
-                if [.windup,.release].contains(motion.stage) {p=motion.throwingHand(left:left)}
+                if motion.ballInThrowingHand {p=motion.throwingHand(left:left)}
                 else if motion.stage == .gather && motion.willThrow {
                     let hand=motion.throwingHand(left:left)
                     p=CGPoint(x:p.x+(hand.x-p.x)*motion.progress,y:p.y+(hand.y-p.y)*motion.progress)
                 }
-                if let raster=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:left,hand:[.windup,.release].contains(motion.stage)) {p=raster}
+                if let raster=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:left,hand:motion.ballInThrowingHand) {p=raster}
                 return CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y)
             }
             if offset != .zero {

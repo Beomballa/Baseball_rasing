@@ -146,7 +146,7 @@
 - native-field-playback-v2는 타구/야수/송구에 저장된 초 단위를 압축하지 않는다. 실시간 보드는 시간0부터 새 이벤트별로 시작하고 종료 시 마지막 위치를 확정한다. 정적 결과 보드의 조회로 완료 콜백을 실행하지 않는다. 동작 줄이기는 순차 정지 장면과 같은 재생 시간을 사용하며 즉시 최종 위치/투명 주자로 건너뛰지 않는다. 원장/물리/판정/XP/저장을 표시 변경으로 수정하지 않는다.
 - 달리기는 runA/runB 단일 불투명 프레임 교대이며 두 몸을 alpha crossfade하지 않는다. 포구/송구의 기존 가중치·공 접촉 보간과 결과 공개 뒤에만 아웃 주자를 흐리게 하는 구분을 유지한다.
 
-- native-field-motion-v2는 포구/송구를 포함해 단일 불투명 원본과 같은 손/미트 앵커를 사용한다. 이전 전신 가중치 보간 규칙을 교체하며 저장 노드/시각/판정은 유지한다. 가슴 수신은 gather·낮은 포구는 catch·높은 포구는 airCatch다. 포수 보폭은 기존 원본 하체 분할 표시이며 새 원화로 주장하지 않는다. ERROR는 저장된 실책이며 최종 한국어 종류/수비 팀/위치·안타 제외/인정 구분을 제공한다. 실책 뒤 송구 모션은 원장의 recoverer를 사용한다.
+- native-field-motion-v2는 포구/송구를 포함해 단일 불투명 원본과 같은 손/미트 앵커를 사용한다. 이전 전신 가중치 보간 규칙을 교체하며 저장 노드/시각/판정은 유지한다. 가슴 수신은 gather·낮은 포구는 catch·높은 포구는 airCatch다. 당시 포수 보폭은 기존 원본 하체 분할 표시였으며 현행 전신 달리기는 아래 native-catcher-relay-motion-v1을 따른다. ERROR는 저장된 실책이며 최종 한국어 종류/수비 팀/위치·안타 제외/인정 구분을 제공한다. 실책 뒤 송구 모션은 원장의 recoverer를 사용한다.
 
 - native-batted-ball-v1은 신규 경기 battedBallVersion=1/플레이 MatchBattedBall version1 JSON optional이며 기존 V12/완료·중단 원문을 소급 이전하지 않는다. 품질/능력→속도·각도/방향→저장25노드·같은 도착 시각 수비/주루→기존 결과1회를 유지한다. 렌더는 저장값만 사용하고 홈런/파울/연속 가로채기 규칙을 임의 확장하지 않는다. -batted1 스카우트 환경과 동일 버전 NPC 기준을 분리하며 기존28일 고정 자료를 바꾸지 않는다. 상세 수치/게임 밸런스식은 gameplay-spec의 native-batted-ball-v1을 따른다.
 
@@ -159,3 +159,5 @@
 - native-arrival-art-v1은 표시 전용 runner/fielder/catcher-arrival-v1의5방향×3자세/좌우 반전8방향 원화다. 슬라이딩 전신 회전/축소를 복구하지 않는다. 접지 피벗/글러브와 같은 단일 불투명 프레임을 공에도 쓰고 기존 자세 배율은 유지한다. 저장된 도착340ms 전~240ms 후의 슬라이딩 진입/hold/회복, 수신120ms 전~통제280ms 후의reach/secure/tag/recover를 사용한다. 동작 줄이기는hold 정지 자세, 병살 outgoing windup/release/followThrough 우선이다. NPC/기량/도착 시간·판정/RNG/SwiftData/이어하기/XP·결과1회를 아트 변경으로 수정하지 않는다. 정확한 전이 기준/검증은 gameplay-spec의 같은 절을 따른다.
 
 - native-misplay-art-v1은 표시 전용 fielder/catcher-misplay-v1의5방향×4자세/미러8방향 원화다. 원장의 misplay.at/scatteredAt/recoveredAt·loosePoint/recoverer/기존 수습 릴리스를 사용하고 이탈 중 공을 글러브에 붙이지 않는다. 위치 도착 후 scoop, 회수 후 확보→기존 송구이며 빠른 전환도 원래 릴리스 전에 확보를 표시한다. 악송구 근처 야수 뻗기는 저장 위치 기반 표시 추정일 뿐 실제 수신/참여·XP가 아니다. NPC/기량·실책/주루·판정/RNG·스키마/저장/이어하기·결과1회를 변경하지 않는다. 동작 줄이기/DEBUG 사건 정지에 같은 실패/회수 시점을 쓴다. 세부 시간·범위는 gameplay-spec 같은 절을 따른다.
+
+- native-catcher-relay-motion-v1은 표시 전용 catcher-run-v1의5방향×2보폭과 fielder-transfer-v1의5방향×3자세/미러8방향이다. 포수 하체 분할을 복구하지 않는다. 중계 gather 전반 확보/후반 공 빼기·windup 초반 발 디딤을 기존 시각 안에 표시하고 공은 같은 원화의 글러브→실제 던지는 손을 따른다. 병살/직접/실책에는 이 전환을 적용하지 않는다. 동작 줄이기/DEBUG 사건 이동도 같은 수신/릴리스 시계다. NPC/기량·판정/노드/RNG·저장/이어하기·결과/XP1회를 아트 변경으로 수정하지 않는다. 세부 기준은 gameplay-spec 같은 절을 따른다.

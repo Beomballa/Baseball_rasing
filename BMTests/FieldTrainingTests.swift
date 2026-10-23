@@ -870,7 +870,7 @@ import SwiftUI
                 XCTAssertEqual(samples.first?.weight,1)
                 if let action=samples.first?.frame.action {actions.insert(action)}
             }
-            XCTAssertEqual(actions,kind == "catcher" ? ["gather"]:["runA","runB"])
+            XCTAssertEqual(actions,["runA","runB"])
         }}}
     }
 
@@ -1573,6 +1573,123 @@ import SwiftUI
             }
             XCTAssertEqual(play,original)
         }
+    }
+
+    func testCatcherRunningUsesTwoDedicatedFullBodyStridesForEightDirectionsBothHands() throws {
+        for facing in FieldFacing.allCases {for left in [false,true] {
+            var images=[Data](),actions=Set<String>()
+            for gait in [-1.0,1] {
+                let m=FieldSpriteMotion(facing:facing,stage:.run,gait:gait)
+                let sample=try XCTUnwrap(FieldRasterArt.samples(m,kind:"catcher",left:left).first)
+                XCTAssertEqual(sample.frame.file,"catcher-run-v1.png");XCTAssertEqual(sample.weight,1)
+                XCTAssertLessThanOrEqual(sample.frame.rect[2]*sample.unit,26.0001);actions.insert(sample.frame.action)
+                images.append(try XCTUnwrap(FieldRasterArt.image(sample,kit:0x316841,skin:0xba7750,hair:0x382416,number:47,back:false)?.pngData()))
+            }
+            XCTAssertEqual(actions,["runA","runB"]);XCTAssertNotEqual(images[0],images[1])
+        }}
+    }
+
+    func testRelaySecureExtractAndPlantSelectDedicatedFramesAtUnchangedSavedTimes() throws {
+        let play=relayFly(),relay=try XCTUnwrap(play.relay),original=play
+        let times=FieldRelayTransfer.moments(play)
+        XCTAssertEqual(times.count,3)
+        for (index,time) in times.enumerated() {
+            let m=FieldSpriteAnimation.motion(play,index:relay.fielder,time:time)
+            XCTAssertTrue(m.relayTransfer);XCTAssertEqual(m.bodyOffset,.zero)
+            XCTAssertTrue(time>relay.receiveAt && time<relay.releaseAt)
+            for left in [false,true] {
+                let s=try XCTUnwrap(FieldRasterArt.samples(m,kind:"fielder",left:left).first)
+                XCTAssertEqual(s.frame.action,["transferSecure","transferExtract","transferPlant"][index])
+                XCTAssertEqual(s.frame.file,"fielder-transfer-v1.png")
+            }
+            XCTAssertEqual(m.ballInThrowingHand,index>0)
+        }
+        let released=FieldSpriteAnimation.motion(play,index:relay.fielder,time:relay.releaseAt)
+        XCTAssertFalse(released.relayTransfer);XCTAssertEqual(released.stage,.release)
+        XCTAssertEqual(play,original);try play.validate()
+    }
+
+    func testRelayBallTransfersFromMittToBareHandUsingSameRasterPoseForBothHands() throws {
+        let play=relayFly(),relay=try XCTUnwrap(play.relay),size=CGSize(width:390,height:585)
+        for time in FieldRelayTransfer.moments(play) {for left in [false,true] {
+            let feet=FieldNode.sample(play.fielders[relay.fielder],at:time)
+            let m=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:relay.fielder,time:time),at:feet,size:size)
+            let contact=try XCTUnwrap(FieldRasterArt.contact(m,kind:"fielder",left:left,hand:m.ballInThrowingHand))
+            let offset=FieldBallPresentation.handOffset(play,time:time,size:size,leftIndex:left ? relay.fielder:nil)
+            let scale=InplayFieldProjection.actorScale(feet,size:size)
+            XCTAssertEqual(offset.x,(contact.x+m.bodyOffset.x)*scale,accuracy:0.00001)
+            XCTAssertEqual(offset.y,(contact.y+m.bodyOffset.y)*scale,accuracy:0.00001)
+        }}
+    }
+
+    func testDedicatedTransferFramesAreOpaqueAndHandAnchorsMatchAcrossEveryFacing() throws {
+        for facing in FieldFacing.allCases {for left in [false,true] {
+            for (stage,p) in [(FieldSpriteStage.gather,0.25),(.gather,0.75),(.windup,0.10)] {
+                var m=FieldSpriteMotion(facing:facing,stage:stage,progress:p,willThrow:true);m.relayTransfer=true
+                let sample=try XCTUnwrap(FieldRasterArt.samples(m,kind:"fielder",left:left).first)
+                XCTAssertEqual(sample.weight,1);XCTAssertLessThanOrEqual(sample.frame.rect[2]*sample.unit,26.0001)
+                let anchor=m.ballInThrowingHand ? sample.frame.hand:sample.frame.glove
+                let contact=try XCTUnwrap(FieldRasterArt.contact(m,kind:"fielder",left:left,hand:m.ballInThrowingHand))
+                XCTAssertEqual(contact.x,(anchor[0]-sample.frame.pivot[0])*sample.unit*(sample.mirrored ? -1:1),accuracy:0.00001)
+                XCTAssertNotNil(FieldRasterArt.image(sample,kit:0x8b3440,skin:0xba7750,hair:0x382416,number:47,back:facing.back))
+            }
+        }}
+    }
+
+    func testRelayPresentationStillsUseSameTransferMomentsWithoutChangingMisplaysOrDoublePlays() throws {
+        let relay=relayFly()
+        for time in FieldRelayTransfer.moments(relay) {
+            XCTAssertEqual(FieldReplayPresentation.time(relay,elapsed:time,reduced:true,animated:true),time)
+            XCTAssertTrue(FieldVerificationScenario.moments(relay).contains(time))
+        }
+        let error=misplay(relayFly(before:[FieldRunnerProfile(speed:60),nil,FieldRunnerProfile(speed:100)]),stage:3)
+        XCTAssertNotNil(error.misplay,"The error fixture must actually cancel an out or allow an extra base")
+        for play in [doublePlay(),misplay(doublePlay(),stage:1),error] {
+            XCTAssertTrue(FieldRelayTransfer.moments(play).isEmpty)
+            let original=play
+            for time in stride(from:0.0,through:play.duration,by:0.03) {for index in play.fielders.indices {
+                XCTAssertFalse(FieldSpriteAnimation.motion(play,index:index,time:time).relayTransfer)
+            }}
+            XCTAssertEqual(play,original)
+        }
+    }
+
+    func testActualSavedCatcherMovementUsesRunningArtAndLeavesAllScenarioNodesUntouched() throws {
+        var sawRun=false
+        for scenario in FieldVerificationScenario.allCases {
+            let play=try scenario.make(),data=try JSONEncoder().encode(play)
+            for time in stride(from:0.0,through:play.duration,by:0.05) {
+                let motion=FieldSpriteAnimation.motion(play,index:1,time:time)
+                if motion.stage == .run {
+                    sawRun=true
+                    XCTAssertEqual(FieldRasterArt.samples(motion,kind:"catcher",left:false).first?.frame.file,"catcher-run-v1.png")
+                }
+            }
+            XCTAssertEqual(play,try JSONDecoder().decode(MatchDetailedPlay.self,from:data))
+        }
+        XCTAssertTrue(sawRun,"The running sprite must be wired into a real saved catcher path")
+    }
+
+    func testCatcherRunningAndRelayTransferContactSheetAndNativeSequenceRenderReadOnly() throws {
+        let view=Canvas {context,_ in
+            for column in 0..<8 {
+                let facing=FieldFacing.allCases[column]
+                for row in 0..<5 {
+                    var m=FieldSpriteMotion(facing:facing,stage:row<2 ? .run:row == 4 ? .windup:.gather,progress:row == 2 ? 0.25:row == 3 ? 0.75:0.1,gait:row == 0 ? -1:1,willThrow:row>=2)
+                    m.relayTransfer=row>=2
+                    FieldRasterArt.draw(in:context,at:CGPoint(x:60+column*72,y:65+row*70),scale:1.8,motion:m,kind:row<2 ? "catcher":"fielder",kit:row<2 ? 0x8b3440:0x316841,skin:0xba7750,hair:0x382416,number:47,left:false,selected:false,out:false)
+                }
+            }
+        }.frame(width:640,height:365).background(GameTheme.board)
+        let r=ImageRenderer(content:view);r.scale=2
+        let sheet=XCTAttachment(image:try XCTUnwrap(r.uiImage));sheet.name="Catcher running relay transfer eight directions";sheet.lifetime = .keepAlways;add(sheet)
+        let play=relayFly(),original=play
+        for (i,time) in FieldRelayTransfer.moments(play).enumerated() {
+            let board=DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),previewTime:time,showsContactPoints:true,complete:{}).frame(width:390,height:585)
+            let renderer=ImageRenderer(content:board);renderer.scale=2
+            let shot=XCTAttachment(image:try XCTUnwrap(renderer.uiImage));shot.name="Native relay transfer phase \(i)";shot.lifetime = .keepAlways;add(shot)
+        }
+        XCTAssertEqual(play,original)
     }
 
     func testFirstBaseOverrunSpriteStaysInsidePhoneFieldViewport() throws {
