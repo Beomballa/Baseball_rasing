@@ -42,7 +42,7 @@ enum CareerSchemaV2: VersionedSchema {
                 }
                 guard members.count <= 1 else {throw ContractRegistrationError.invalid}
                 if let member=members.first {
-                    let ids=member.route == .rookie ? CareerTeamDirectory.domesticIDs:CareerTeamDirectory.collegeIDs
+                    let ids=CareerTeamDirectory.teams(level:member.level)
                     return CareerCompetitionPlan(teamID:member.teamID,teamIDs:ids,fixtures:try SeasonSchedule.fixtures(year:year,schoolIDs:ids),membership:member)
                 }
             }

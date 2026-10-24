@@ -2451,3 +2451,80 @@ extension CareerCalendarTests {
         XCTAssertThrowsError(try ContractRegistrationStore.journal(player:p,calendar:s,in:c));c.rollback()
     }
 }
+
+extension CareerCalendarTests {
+    private func overseasOfferFixture(_ role:PlayerRole,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,OverseasOffer) {
+        let (store,p,s)=try collegeProFixture(role,legacyURL:legacyURL),c=store.mainContext
+        try OverseasContractStore.register(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        try OverseasContractStore.evaluate(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let offer=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer?.evaluations.last?.offers.first)
+        return (store,p,s,offer)
+    }
+    func testOverseasDevelopmentOffersFreezeAndAcceptanceSchedulesForeignSeasonBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,offer)=try overseasOfferFixture(role),c=store.mainContext
+            let original=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),college=try s.registration(for:p),date=p.gameDate,fatigue=p.fatigue
+            let evaluations=try XCTUnwrap(original.overseasCareer?.evaluations)
+            XCTAssertEqual(evaluations.last?.offers.count,2)
+            try OverseasContractStore.evaluate(player:p,calendar:s,date:date,revision:s.revision,in:c,save:{_ in XCTFail("same window")})
+            try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:date,revision:s.revision,in:c)
+            let value=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertEqual(value.overseasCareer?.evaluations,evaluations);XCTAssertEqual(try s.registration(for:p),college)
+            XCTAssertEqual(value.overseasCareer?.decisions.filter {$0.kind == .closed}.count,1)
+            XCTAssertEqual(value.memberships,original.memberships);XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue)
+            XCTAssertEqual(try s.competition(for:p,year:2032).membership?.level,"college")
+            XCTAssertEqual(try s.competition(for:p,year:2033).membership?.level,"mlb-development")
+            XCTAssertEqual(try s.fixtures(for:p,year:2033).count,30)
+            try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:date,revision:-1,in:c,save:{_ in XCTFail("duplicate")})
+            XCTAssertThrowsError(try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:false,date:date,revision:s.revision,in:c))
+        }
+    }
+    func testOverseasOfferFailureRejectionAndExpiryPreserveCurrentAcademic() throws {
+        let (store,p,s,offer)=try overseasOfferFixture(.pitcher),c=store.mainContext,row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),before=row.payload,revision=s.revision
+        XCTAssertThrowsError(try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+        XCTAssertEqual(row.payload,before);XCTAssertEqual(s.revision,revision)
+        try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:false,date:p.gameDate,revision:revision,in:c)
+        XCTAssertEqual(try s.registration(for:p)?.level,"college");XCTAssertTrue(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer?.transitions.isEmpty == true)
+        let other=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer?.evaluations.last?.offers.last)
+        p.gameDate="2032-11-08";try c.save()
+        XCTAssertThrowsError(try OverseasContractStore.decide(player:p,calendar:s,offerID:other.id,accept:true,date:p.gameDate,revision:s.revision,in:c))
+    }
+    func testOverseasForeignMatchResumeAndOneTimeResultKeepsOldCollegeSeasonBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,offer)=try overseasOfferFixture(role),c=store.mainContext
+            let old=try CareerSeasonStore.load(player:p,state:s,year:2032,in:c).totals.games
+            try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            p.gameDate="2033-04-01";try c.save()
+            XCTAssertEqual(try s.registration(for:p)?.level,"mlb-development")
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let record=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertEqual(try record.snapshot().competition,"mlb-development")
+            try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? p.pitches[0].code:nil,in:c)
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,record.payload)
+            try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c)
+            let bytes=record.payload,fatigue=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c))
+            XCTAssertEqual(record.payload,bytes);XCTAssertEqual(p.fatigue,fatigue)
+            XCTAssertEqual(try CareerSeasonStore.load(player:p,state:s,year:2033,in:c).totals.games,1)
+            XCTAssertEqual(try CareerSeasonStore.load(player:p,state:s,year:2032,in:c).totals.games,old)
+            XCTAssertTrue(try OverseasEligibilityStore.current(player:p,calendar:s,in:c).evidence.matches.contains {$0.level == "mlb-development"})
+        }
+    }
+    func testOverseasOfferLegacyDiskReopenPreservesMembershipAndFrozenTerms() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store");var id:UUID!,terms:OverseasOffer!,college:CareerMembership!
+        do {
+            let (store,p,s,offer)=try overseasOfferFixture(.batter,legacyURL:url),c=store.mainContext
+            id=p.id;terms=offer;college=try s.registration(for:p)
+            try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        let value=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+        XCTAssertEqual(value.overseasCareer?.evaluations.last?.offers.first,terms)
+        XCTAssertEqual(try s.registration(for:p),college)
+        p.gameDate="2033-04-01";try c.save();XCTAssertEqual(try s.registration(for:p)?.teamID,terms.teamID)
+    }
+}

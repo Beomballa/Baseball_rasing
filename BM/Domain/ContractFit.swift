@@ -658,12 +658,13 @@ struct CareerMembership:Codable,Equatable {
     let economicIndex:Int
     var releasedOn:String? = nil
     var economicStart:String? = nil
+    var competitionLevel:String? = nil
     func renewing(_ terms:DomesticRenewalOffer) -> Self {
         var value=Self(offerID:offerID,route:route,teamID:teamID,name:name,since:since,economicEnd:terms.economicEnd,enrollmentEnd:enrollmentEnd,economicIndex:terms.economicIndex)
         value.economicStart=terms.effectiveDate;return value
     }
-    var level:String {route == .rookie ? "domestic-development":"college"}
-    var label:String {route == .rookie ? "국내 육성팀":"대학 소속"}
+    var level:String {competitionLevel ?? (route == .rookie ? "domestic-development":"college")}
+    var label:String {level == "mlb-development" ? "MLB 조직 육성":level == "npb-first-team" ? "NPB 전력":level == "mlb-first-team" ? "MLB 메이저":route == .rookie ? "국내 육성팀":"대학 소속"}
     func contains(_ date:GameDate) throws -> Bool {
         try date >= GameDate(since) && (enrollmentEnd.map {try date <= GameDate($0)} ?? true) && (releasedOn.map {try date < GameDate($0)} ?? true)
     }
@@ -682,11 +683,14 @@ struct CareerMembership:Codable,Equatable {
 enum CareerTeamDirectory {
     static let domesticIDs=["harbors","comets","tides","stars","foxes","falcons"].map {"dev-"+$0}
     static let collegeIDs=(0..<6).map {"college-\($0)"}
+    static let americanDevelopmentIDs=(0..<6).map {"us-dev-\($0)"}
+    static func teams(level:String) -> [String] {level == "mlb-development" ? americanDevelopmentIDs:level == "college" ? collegeIDs:domesticIDs}
     static let domesticNames=["인천 하버스 육성","대전 코멧츠 육성","부산 타이즈 육성","서울 스타즈 육성","광주 폭시스 육성","대구 팔콘스 육성"]
     static let collegeNames=["해솔대","한빛대","푸른대","다온대","누리대","가온대"]
     static func name(_ id:String,schools:[School]=[]) -> String {
         if let i=domesticIDs.firstIndex(of:id) {return domesticNames[i]}
         if let i=collegeIDs.firstIndex(of:id) {return collegeNames[i]}
+        if let i=americanDevelopmentIDs.firstIndex(of:id) {return OverseasMarket.americanNames[i]}
         return schools.first {$0.id == id}?.name ?? id
     }
 }
@@ -716,10 +720,14 @@ struct CareerContractJournal:Codable,Equatable {
     var collegeTransitions:[CollegeProTransition]? = nil
     var overseasEligibility:[OverseasEligibilitySnapshot]? = nil
     var overseasReports:[OverseasScoutingReport]? = nil
+    var overseasCareer:OverseasCareerJournal? = nil
     func membershipHistory() -> [CareerMembership] {
-        memberships.map {member in
+        (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
             value.releasedOn=releases?.first {$0.membershipOfferID == member.offerID}?.date ?? collegeTransitions?.first {$0.source.membershipOfferID == member.offerID}?.source.effectiveDate
+            if let end=overseasCareer?.transitions.first(where:{$0.sourceMembershipID == member.offerID})?.destination.since {
+                value.releasedOn=value.releasedOn.map {min($0,end)} ?? end
+            }
             return value
         }
     }
@@ -733,6 +741,7 @@ struct CareerContractJournal:Codable,Equatable {
     }
     func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer],reviews:[String:DomesticRenewalReview]=[:]) throws {
         let today=try GameDate(player.gameDate),origin=try GameDate(calendar.originDate)
+        try overseasCareer?.validate(owner:self,today:today)
         guard version == 1,playerID == player.id,revision >= 0,
               Set(decisions.map(\.offerID)).count == decisions.count,Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractRegistrationError.invalid}
         let overseas=overseasEligibility ?? []
@@ -1113,11 +1122,11 @@ struct OverseasCareerEvidence:Codable,Equatable {
     var recognizedForeignProSeasons:Int? {nil}
     func validate() throws {
         let today=try GameDate(date)
-        guard version == 1,age == (try GameDate(origin).age(startingAt:startAge,on:today)),startAge == 16,age >= 16,calendarRevision >= 0,registrationRevision >= 0,
+        guard [1,2].contains(version),age == (try GameDate(origin).age(startingAt:startAge,on:today)),startAge == 16,age >= 16,calendarRevision >= 0,registrationRevision >= 0,
               ["initial-v1","legacy-v1"].contains(historySource),Set(matches.map(\.key)).count == matches.count,
               matches == matches.sorted(by:{$0.key<$1.key}),Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractEvaluationError.invalid}
         for row in matches {
-            guard try GameDate(row.date) <= today,["highschool","college","domestic-development"].contains(row.level),row.key.hasPrefix(playerID.uuidString+":") else {throw ContractEvaluationError.invalid}
+            guard try GameDate(row.date) <= today,(version == 1 ? ["highschool","college","domestic-development"]:["highschool","college","domestic-development","mlb-development"]).contains(row.level),row.key.hasPrefix(playerID.uuidString+":") else {throw ContractEvaluationError.invalid}
         }
         if let current {guard memberships.contains(where:{$0.offerID == current.offerID}),try current.contains(today) else {throw ContractEvaluationError.invalid}}
         if let release {guard try GameDate(release.date) <= today,memberships.contains(where:{$0.offerID == release.membershipOfferID && $0.route == .rookie}) else {throw ContractEvaluationError.invalid}}
@@ -1347,5 +1356,112 @@ struct OverseasMarket:Codable,Equatable {
             }}
         }
         return Self(version:1,seed:seed,clubs:rows)
+    }
+}
+
+struct OverseasOffer:Codable,Equatable,Identifiable {
+    let id:String
+    let clubID:String
+    let teamID:String
+    let name:String
+    let route:OverseasRoute
+    let roleID:String
+    let issued:String
+    let expires:String
+    let effective:String
+    let economicEnd:String
+    let economicIndex:Int
+    let years:Int
+    let h:Double
+    let c:Double
+    let p:Double
+    let margin:Double
+    func membership() -> CareerMembership {
+        var value=CareerMembership(offerID:id,route:.rookie,teamID:teamID,name:name,since:effective,economicEnd:economicEnd,enrollmentEnd:nil,economicIndex:economicIndex)
+        value.competitionLevel=route == .mlbDevelopment ? "mlb-development":route == .npbFirstTeam ? "npb-first-team":"mlb-first-team"
+        return value
+    }
+}
+struct OverseasOfferEvaluation:Codable,Equatable,Identifiable {
+    let version:Int
+    let id:String
+    let window:ContractEvaluationWindow
+    let date:String
+    let reportID:String
+    let source:CareerMembership?
+    let registeredAt:String?
+    let reservedAtEvaluation:Bool
+    var sourceMembershipID:String? {source?.offerID}
+    let offers:[OverseasOffer]
+    let reasons:[String]
+    static func make(report:OverseasScoutingReport,window:ContractEvaluationWindow,on date:GameDate,registrationDate:String?,member:CareerMembership?,reserved:Bool) throws -> Self {
+        guard window == ContractEvaluationWindow.containing(date),date.year < 9995,
+              report.observation.observedDate <= date.description else {throw ContractEvaluationError.invalid}
+        let id=report.observation.playerID.uuidString+":overseas-offer-v1:"+window.id
+        var reasons:[String]=[],offers:[OverseasOffer]=[]
+        if registrationDate == nil || registrationDate! > date.description {reasons.append("게임 국제계약 지원자 등록 필요")}
+        if report.observation.age < 20 {reasons.append("게임 성인 진로20세 미충족")}
+        if member?.route == .rookie {reasons.append("현 구단 보유권리/이적 승인 확인 필요")}
+        if reserved {reasons.append("이미 수락한 소속 전환 예약이 있음")}
+        let source=report.selected,enough=source.map {report.observation.role == .batter ? $0.totals.line.plateAppearances >= 40:$0.totals.line.pitchingOuts >= 45} ?? false
+        if !enough {reasons.append("검증된 동일 환경 관찰40타석/15이닝 필요")}
+        let strengths=report.observation.abilities.originals.filter {$0.id != "homeMental"}+report.observation.abilities.pitches
+        if !strengths.contains(where:{$0.current >= 75}) {reasons.append("멘탈 제외 핵심 능력/구종75 이상 필요")}
+        if report.market == nil {reasons.append("해외 모집 자료 없음 · 다음 보고서 필요")}
+        if reasons.isEmpty {
+            let candidates=(report.market?.clubs ?? []).filter {row in
+                guard row.route == .mlbDevelopment,row.seats == 1,let h=row.h,let projected=row.projection else {return false}
+                let roleSpecific=row.blockers.contains {$0.contains("수비70") || $0.contains("포수 전용")}
+                let margin=projected-row.criterion+row.p
+                return !roleSpecific && h >= row.criterion-5 && projected >= row.criterion && margin >= 0 && 100+Int((6*margin).rounded()) <= row.budget
+            }.sorted {a,b in
+                let left=(a.projection ?? 0)-a.criterion+a.p,right=(b.projection ?? 0)-b.criterion+b.p
+                return left == right ? a.id<b.id:left>right
+            }
+            // At most two external clubs; one best role per club.
+            var teams=Set<String>()
+            for row in candidates {
+                let parts=row.id.components(separatedBy:"/")
+                guard teams.insert(parts[1]).inserted else {continue}
+                let start=try GameDate(String(format:"%04d-04-01",date.year+1)),margin=(row.projection ?? 0)-row.criterion+row.p
+                offers.append(OverseasOffer(id:id+"/"+row.id,clubID:row.id,teamID:"us-dev-"+parts[1],name:row.name,route:.mlbDevelopment,roleID:row.roleID,issued:date.description,expires:min(date.adding(days:6),window.end).description,effective:start.description,economicEnd:start.anniversary(in:start.year+1).adding(days:-1).description,economicIndex:100+Int((6*margin).rounded()),years:1,h:row.h!,c:row.criterion,p:row.p,margin:margin))
+                if offers.count == 2 {break}
+            }
+            if offers.isEmpty {reasons.append("성장 전망/현재 기량·역할 조건 또는 모집 예산/경쟁 기준 미달")}
+        }
+        return Self(version:1,id:id,window:window,date:date.description,reportID:report.id,source:member,registeredAt:registrationDate,reservedAtEvaluation:reserved,offers:offers,reasons:reasons)
+    }
+}
+struct OverseasDecision:Codable,Equatable {let offerID:String;let kind:DomesticOfferDecisionKind;let date:String}
+struct OverseasTransition:Codable,Equatable {let offerID:String;let sourceMembershipID:String?;let acceptedDate:String;let destination:CareerMembership}
+struct OverseasCareerJournal:Codable,Equatable {
+    var version=1
+    var registrationDate:String?
+    var evaluations:[OverseasOfferEvaluation]=[]
+    var decisions:[OverseasDecision]=[]
+    var transitions:[OverseasTransition]=[]
+    func hasPending(on date:String) -> Bool {transitions.contains {$0.destination.since > date}}
+    func validate(owner:CareerContractJournal,today:GameDate) throws {
+        guard version == 1,Set(evaluations.map(\.id)).count == evaluations.count,Set(decisions.map(\.offerID)).count == decisions.count,
+              Set(transitions.map(\.offerID)).count == transitions.count else {throw ContractRegistrationError.invalid}
+        if let registrationDate {guard try GameDate(registrationDate) <= today else {throw ContractRegistrationError.invalid}}
+        for evaluation in evaluations {
+            guard let report=owner.overseasReports?.first(where:{$0.id == evaluation.reportID}),try GameDate(evaluation.date)<=today,
+                  evaluation == (try OverseasOfferEvaluation.make(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,
+                    member:evaluation.source,reserved:evaluation.reservedAtEvaluation)) else {throw ContractRegistrationError.invalid}
+        }
+        for evaluation in evaluations {
+            if let registered=evaluation.registeredAt {guard registered == registrationDate,registered <= evaluation.date else {throw ContractRegistrationError.invalid}}
+            if let source=evaluation.source {guard owner.membershipHistory().contains(where:{$0.offerID == source.offerID}) else {throw ContractRegistrationError.invalid}}
+        }
+        let offers=evaluations.flatMap(\.offers)
+        for decision in decisions {
+            guard let offer=offers.first(where:{$0.id == decision.offerID}),decision.date >= offer.issued,decision.date <= offer.expires,decision.date <= today.description else {throw ContractRegistrationError.invalid}
+            if decision.kind == .accepted {guard transitions.contains(where:{$0.offerID == offer.id && $0.acceptedDate == decision.date && $0.destination == offer.membership()}) else {throw ContractRegistrationError.invalid}}
+        }
+        for transition in transitions {
+            guard decisions.contains(where:{$0.offerID == transition.offerID && $0.kind == .accepted && $0.date == transition.acceptedDate}),
+                  let evaluation=evaluations.first(where:{$0.offers.contains {$0.id == transition.offerID}}),evaluation.sourceMembershipID == transition.sourceMembershipID else {throw ContractRegistrationError.invalid}
+        }
     }
 }

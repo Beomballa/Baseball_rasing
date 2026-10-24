@@ -40,7 +40,7 @@ enum CareerSchemaV3: VersionedSchema {
                     guard let mastery = stats.positionMastery, mastery.isFinite, (0...100).contains(mastery), FieldPosition(rawValue: stats.position) != nil else { throw MatchError.invalidRecord }
                 }
             }
-            guard match.competition == nil || ["college","domestic-development"].contains(match.competition!) else {throw MatchError.invalidRecord}
+            guard match.competition == nil || ["college","domestic-development","mlb-development"].contains(match.competition!) else {throw MatchError.invalidRecord}
             if let performance = match.scoutingPerformance {
                 guard let role = PlayerRole(rawValue:match.role) else {throw MatchError.invalidRecord}
                 try performance.validate(line:match.line,role:role)

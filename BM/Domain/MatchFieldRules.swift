@@ -23,7 +23,7 @@ struct MatchNPCFielders:Codable,Equatable {
         text.utf8.reduce(UInt64(14695981039346656037)) {($0 ^ UInt64($1)) &* 1099511628211}
     }
     static func make(year:Int,competition:String,homeID:String,awayID:String) -> Self {
-        let base=competition == "college" ? 60.0:competition == "domestic-development" ? 66:54
+        let base=competition == "college" ? 60.0:competition == "domestic-development" ? 66:competition == "mlb-development" ? 72:54
         let offsets:[(Double,Double,Double)]=[(-10,-4,6),(-9,5,8),(-5,3,-3),(5,6,0),(-2,3,7),(6,8,5),(3,0,0),(10,5,1),(4,1,8)]
         func team(_ id:String) -> MatchNPCTeam {
             let key="npc-v1/\(competition)/\(year)/\(id)"
@@ -41,7 +41,7 @@ struct MatchNPCFielders:Codable,Equatable {
     }
     func team(home isHome:Bool) -> MatchNPCTeam {isHome ? home:away}
     func validate() throws {
-        guard version == 1,(1...9999).contains(year),["highschool","college","domestic-development"].contains(competition),
+        guard version == 1,(1...9999).contains(year),["highschool","college","domestic-development","mlb-development"].contains(competition),
               !home.teamID.isEmpty,!away.teamID.isEmpty,home.teamID != away.teamID else {throw MatchError.invalidRecord}
         for team in [home,away] {
             guard team.strength.isFinite,(0...100).contains(team.strength),team.players.map(\.position) == DetailedFieldRules.names,

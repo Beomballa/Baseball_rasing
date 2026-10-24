@@ -825,11 +825,13 @@ struct CareerContractStatusPanel: View {
                             .font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("contractPendingRenewal")
                     }
                     Text(value.rightsLabel).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractRightsStatus")
-                    if value.membership.route == .rookie {
+                    if value.membership.level == "domestic-development" {
                         Text("갱신 평가 창 · "+(value.nextReview ?? "—")+"부터 14일까지")
                             .font(.caption).accessibilityIdentifier("contractNextRenewal")
                         Text("11월 창 안에서는 최초 적격일의 평가·제의를 한 번 고정합니다. 경제 기간 종료나 제의 만료로 소속/권리가 자동 해제되지 않습니다.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    } else if value.membership.route == .rookie {
+                        Text(value.membership.label+" · 조직 보유권리 유지 / 승격·이적은 별도 심사").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     } else {
                         Text("학적 종료 · "+(value.membership.enrollmentEnd ?? "—")+" · 프로 지원:22~23세/재학2년 이상 · 11월")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -1125,6 +1127,8 @@ struct OverseasEligibilityPanel:View {
                     Text(interests.isEmpty ? "최근 해외 보고서 · 관심 없음":"최근 해외 보고서 · 관심 역할 \(interests.count)건 / 정식 제의 별도")
                         .font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homeOverseasInterest")
                 }
+                NavigationLink {OverseasContractsView(player:player,calendar:calendar)} label: {Text("해외 실제 제의 · 상세/비교")}
+                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openOverseasContracts")
                 HomeDetailButton(title:"경력 근거 · 부족 조건",expanded:$details,identifier:"overseasEligibilityDetails")
                 if details {
                     ForEach(value.routes) {row in
@@ -1237,4 +1241,74 @@ struct OverseasMarketPanel:View {
         }
     }
     private func number(_ value:Double?) -> String {value.map {String(format:"%.1f",$0)} ?? "—"}
+}
+
+struct OverseasContractsView:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var failure:String?
+    @State private var refreshed=0
+    @State private var command:(offerID:String,accept:Bool,date:String,revision:Int)?
+    var body:some View {
+        let _=calendar.revision;let _=refreshed
+        ScrollView {
+            VStack(alignment:.leading,spacing:16) {
+                GamePanel(title:"MLB 조직 육성 · 실제 제의",onBoard:true,contentSpacing:12) {
+                    Text("가상 선수의 게임 내 국제계약 지원·심사입니다. 실제 리그 등록/법적 자격 인증이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasContractError")}
+                    switch Result(catching:{try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)}) {
+                    case .failure(let error):Text(error.localizedDescription).font(.caption)
+                    case .success(let owner):
+                        let value=owner.overseasCareer ?? OverseasCareerJournal()
+                        if let registration=value.registrationDate {Text("지원자 등록 · "+registration).font(.caption).accessibilityIdentifier("overseasRegistered")}
+                        else {
+                            Button("게임 국제계약 지원자 등록") {run {try OverseasContractStore.register(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}
+                                .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("registerOverseasApplicant")
+                        }
+                        if let window=try? ContractEvaluationWindow.containing(GameDate(player.gameDate)) {
+                            Text(window.label+" · 같은 창 심사1회").font(.subheadline).foregroundStyle(GameTheme.gold)
+                            if value.evaluations.contains(where:{$0.window == window}) == false {
+                                Text("먼저 이번28일 보고서를 기록하세요. 등록/표본이 없으면 부족 사유도 이번 창의 결과로 고정합니다.").font(.caption)
+                                NavigationLink {OverseasScoutingReportView(player:player,calendar:calendar)} label: {Text("평가 자료 · 보고서 기록")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openOfferScoutingReport")
+                                Button("이번 창 실제 선발 심사") {run {try OverseasContractStore.evaluate(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}
+                                    .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("evaluateOverseasOffers")
+                            }
+                        } else {Text("다음4·7·11월1~14일에 실제 심사를 신청할 수 있습니다.").font(.caption)}
+                        ForEach(value.evaluations.reversed()) {evaluation in
+                            Text(evaluation.date+" 고정 · "+evaluation.window.label).font(.headline).foregroundStyle(GameTheme.gold)
+                            if evaluation.offers.isEmpty {
+                                Text("제의 없음 · "+evaluation.reasons.joined(separator:" / ")).font(.caption).accessibilityIdentifier("overseasOffersEmpty")
+                            }
+                            ForEach(evaluation.offers) {offer in
+                                GamePanel(title:offer.name,onBoard:true,contentSpacing:12) {
+                                    Text(offer.route.label+" · "+DomesticContractOffer.roleName(offer.roleID)).font(.headline).foregroundStyle(GameTheme.gold)
+                                    Text("연봉지수\(offer.economicIndex) · \(offer.years)년 / 출전·승격 보장 없음").font(.subheadline)
+                                    Text("발효 "+offer.effective+" ~ "+offer.economicEnd+"\n수락 마감 "+offer.expires).font(.caption.monospaced()).lineSpacing(5)
+                                    Text(String(format:"H %.1f / C %.1f / P %+.1f / 전망 여유 %+.1f",offer.h,offer.c,offer.p,offer.margin)).font(.caption.monospaced())
+                                    if let decision=value.decisions.first(where:{$0.offerID == offer.id}) {
+                                        Text(decision.kind == .accepted ? (offer.effective > player.gameDate ? "수락 완료 · 해외 소속 전환 예약":"수락 완료 · 해외 소속 발효"):decision.kind == .rejected ? "거절 완료":"다른 제의 수락으로 종료").font(.subheadline.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("overseasOfferDecision")
+                                    } else if offer.expires >= player.gameDate {
+                                        Button("수락 · 해외 전환 예약") {command=(offer.id,true,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptOverseasOffer")
+                                        Button("제의 거절") {command=(offer.id,false,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("rejectOverseasOffer")
+                                    } else {Text("만료 · 같은 창 재발행 없음").font(.caption)}
+                                }
+                            }
+                        }
+                        if let transition=value.transitions.last {
+                            Text(transition.destination.since+" · "+transition.destination.name+" / "+transition.destination.label).font(.subheadline).accessibilityIdentifier("overseasAffiliationTransition")
+                            Text("그 전까지 현재 소속을 유지하고 발효일부터 해외30경기 일정/기록이 연결됩니다. 기존 학적·소속/경기 기록은 보존합니다.").font(.caption)
+                        }
+                    }
+                }
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("해외 제의 · 상세/비교").navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog("계약 결정을 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
+                if let selected=command {Button(selected.accept ? "수락 확정":"거절 확정",role:selected.accept ? nil:.destructive) {
+                    run {try OverseasContractStore.decide(player:player,calendar:calendar,offerID:selected.offerID,accept:selected.accept,date:selected.date,revision:selected.revision,in:context)};command=nil
+                }.accessibilityIdentifier("confirmOverseasDecision")}
+                Button("취소",role:.cancel) {command=nil}
+            } message: {Text("수락은 다음 해4월1일 소속 전환을 예약하고 다른 열린 제의를 닫습니다. 날짜·피로·능력은 유지하며,경제 기간 종료가 자동 FA는 아닙니다.")}
+    }
+    private func run(_ action:() throws -> Void) {do {try action();failure=nil;refreshed += 1}catch{failure=error.localizedDescription}}
 }

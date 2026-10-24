@@ -2894,3 +2894,21 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testOverseasDevelopmentActualOffersAcceptAndKeepCollegeUntilActivationBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let report=app.buttons["openOverseasReport"];revealFit(report,in:app);report.tap();app.buttons["captureOverseasReport"].tap();app.navigationBars.buttons.element(boundBy:0).tap()
+            let open=app.buttons["openOverseasContracts"];revealFit(open,in:app);open.tap()
+            app.buttons["registerOverseasApplicant"].tap();app.buttons["evaluateOverseasOffers"].tap()
+            let accept=app.buttons["acceptOverseasOffer"].firstMatch;revealFit(accept,in:app);accept.tap();app.buttons["confirmOverseasDecision"].firstMatch.tap()
+            let status=app.staticTexts["overseasOfferDecision"].firstMatch;revealFit(status,in:app);XCTAssertTrue(status.label.contains("수락 완료"))
+            XCTAssertFalse(app.staticTexts["overseasContractError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let rights=app.staticTexts["contractRightsStatus"];revealFit(rights,in:app);XCTAssertTrue(rights.label.contains("대학 학적"))
+        }
+        app.terminate()
+    }
+}
