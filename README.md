@@ -113,7 +113,7 @@ SwiftUI 선수 생성·홈, SwiftData 로컬 저장, 연간 일정·날짜 진�
 
 ## ui-training-session-v1
 
-2026-10-21 검증: 단위221개(신규3개)와 서로 다른UI5개 통과·실패/건너뜀0·runtimeWarnings=[]입니다. 일반12과제5회/코칭 직접 확인·큰 글자/1회 중단 복원·정식 구종/특성/포지션의 이어하기/성장·진척·XP/피로/보상1회와 다음 경기 연결을 확인했습니다. 공유 HEAD 설정/현재 소스 Release와 Git 보안7개도 통과했습니다. 근거는 로컬 `qa/training-session-verification.md`와 `session-*.json/PNG`입니다. 사용자 세이브/개인 Xcode 설정과 웹 런타임은 변경하지 않았습니다. 실제 사용자별 세트 시간·실기기/iOS17/VoiceOver·음향/새 동작·장기 균형은 별도 인수입니다.
+2026-10-21 검증: 단위221개(신규3개)와 서로 다른UI5개 통과·실패/건너뜀0·runtimeWarnings=[]입니다. 일반12과제5회/코칭 직접 확인·큰 글자/1회 중단 복원·정식 구종/특성/포지션의 이어하기/성장·진척·XP/피로/보상1회와 다음 경기 연결을 확인했습니다. 공유 HEAD 설정/현재 소스 Release와 Git 보안7개도 통과했습니다. 근거는 로컬 `qa/versions/legacy/training-session/notes/training-session-verification.md`와 `session-*.json/PNG`입니다. 사용자 세이브/개인 Xcode 설정과 웹 런타임은 변경하지 않았습니다. 실제 사용자별 세트 시간·실기기/iOS17/VoiceOver·음향/새 동작·장기 균형은 별도 인수입니다.
 
 iOS ui-training-session-v1은 1세트5회·권장30초~1분을 목표 확인→능력별 조작→동작/포구→점수·원인 코칭→직접 다음 시도→결산으로 구성한다. 강제 대기시간/시간제한은 없으며 실제 소요는 사용자 조작·읽기 속도에 따른다. 일반12과제는75점 이상3회, 선구안/멘탈은100점4회를 집중 목표로 표시하고 성공 수/최고 연속 성공을 기존 점수에서 계산한다. 목표/연속 성공에 추가 성장 보상을 지급하지 않는다. 컨택은 조준/타이밍, 구종은 릴리스 빠름/늦음, 파워는 실제/목표 거리, 수비·제구는 위치, 송구는 베이스/방향/강도, 구속·구위는 힘/방향, 달리기는 교대발, 멘탈은 해당 상황의 선택으로 다음 시도 코칭을 만든다. 지구력은4초 교대발과 기존 채점을 유지하며180ms 미만 과한 연타를 입력에서 제외하고 박자 안내를 표시한다. 특성/포지션은 기존 수동 다음 시도와 보상을 유지하고75점3회 목표/성공 수만 추가한다. 일반 훈련도 동작/결과 확인 뒤 자동으로 다음 시도로 넘어가지 않으며 마지막에는 세트 결산 보기를 누른다. 확정 입력/5번째 완료 보상은 기존 원자 저장 시점 그대로이며 다음 시도/결산 버튼은 표시만 바꾼다. 중단 시 코칭은 폐기하고 이미 저장된 회차/완료 결과로 복원하며 보상을 다시 지급하지 않는다. 자유 연습도 같은 흐름이며 원본 저장/날짜·피로는 변경하지 않는다. 큰 글자는 목표/연속 정보를 세로로 배치한다. 기존 성장량·하루 제한·피로/저장/이어하기/보상1회는 유지한다. 계약 관찰 과제·음향/새 스프라이트·실기기 인수는 후속이다.
 
@@ -121,7 +121,7 @@ iOS ui-training-session-v1은 1세트5회·권장30초~1분을 목표 확인→�
 
 ## native-match-ability-xp-v1
 
-2026-10-21 검증: 전체 단위229개(신규8개)+양 역할을 포함한UI1개 통과·실패/건너뜀0·runtimeWarnings=[]입니다. 성과별 독립 배분값/상한/연간기회·두 역할SQLite 중단 복원/완료save실패rollback·같은입력재시도/보상1회/다음경기 snapshot·옛경기 비소급·stale/손상거절·연도분리·RNG/원자료 불변을 확인했습니다. 실제UI는 투타 직접입력/이어하기→완료→결과/홈·펼침 일치→최대글자/재실행·재열기/피로불변·다음날 활성화를 확인했습니다. 최종 공유 프로젝트 Release와 Git보안7개도 통과했습니다. 근거는 로컬 `qa/match-growth-verification.md`, `match-growth-unit-summary.json`, `match-growth-ui-summary.json`과 결과/홈/큰글자 캡처입니다. 사용자 세이브·개인 Xcode설정과 웹 런타임은 변경하지 않았습니다. 기존 진행 경기는 이전 규칙으로 마치고 이후 새 공식 경기부터 적용합니다. 실기기/iOS17/VoiceOver·장기 균형과 구별/수비/주루 사건 성장은 후속입니다.
+2026-10-21 검증: 전체 단위229개(신규8개)+양 역할을 포함한UI1개 통과·실패/건너뜀0·runtimeWarnings=[]입니다. 성과별 독립 배분값/상한/연간기회·두 역할SQLite 중단 복원/완료save실패rollback·같은입력재시도/보상1회/다음경기 snapshot·옛경기 비소급·stale/손상거절·연도분리·RNG/원자료 불변을 확인했습니다. 실제UI는 투타 직접입력/이어하기→완료→결과/홈·펼침 일치→최대글자/재실행·재열기/피로불변·다음날 활성화를 확인했습니다. 최종 공유 프로젝트 Release와 Git보안7개도 통과했습니다. 근거는 로컬 `qa/versions/legacy/match-growth/notes/match-growth-verification.md`, `match-growth-unit-summary.json`, `match-growth-ui-summary.json`과 결과/홈/큰글자 캡처입니다. 사용자 세이브·개인 Xcode설정과 웹 런타임은 변경하지 않았습니다. 기존 진행 경기는 이전 규칙으로 마치고 이후 새 공식 경기부터 적용합니다. 실기기/iOS17/VoiceOver·장기 균형과 구별/수비/주루 사건 성장은 후속입니다.
 
 native-match-ability-xp-v1은 새 공식 출전 경기의 선택 abilityExperience(version1)에 달력연도·나이·시작피로·4개 시작능력·연간사용XP를 고정한다. 기존 V1~V7 엔티티/마이그레이션·옛 진행/완료 payload를 바꾸지 않으며 없는 필드는 소급 생성하지 않는다. 타자 기본2XP×min(PA/4,1), 투수 기본10XP×(실제투구0이면0, 있으면max(0.2,min(개인아웃/18,1)))에 성과배율1+0.3q를 적용한다. 타자 q=min(1,(H+BB+2HR)/max(PA,1)), 투수 q=0.5×min(1,K/max(개인아웃,1))+0.5×(1−min(1,(피안타+볼넷)/max(개인아웃,1)))다. 승리·타점·실점/ERA는 성장 지표로 쓰지 않는다. 연간 원시XP 상한80·완전 참여/최대성과 기준 타자30경기와투수6등판 각각78XP이며 비출전/자동 타팀 결과·자유 연습은 무보상이다.
 
@@ -194,7 +194,7 @@ V1→V2 경량 마이그레이션으로 달력 테이블만 추가합니다. 선
 ## 첫 구현 검증 기록
 
 - 전용 iPhone17 Pro / iOS27.0 시뮬레이터를 사용했습니다. 기존 사용자 시뮬레이터·웹 저장은 조작하지 않았습니다.
-- 단위4개:50교 데이터·생성 입력 검증·역할 분리/중복 거부·SwiftData 실제 파일 재열기. UI1개:두 역할 생성·재실행·경기장 이동. 최종 결과는 `qa/xcode-test-summary.json`에 기록합니다.
+- 단위4개:50교 데이터·생성 입력 검증·역할 분리/중복 거부·SwiftData 실제 파일 재열기. UI1개:두 역할 생성·재실행·경기장 이동. 최종 결과는 `qa/versions/legacy/verification/reports/xcode-test-summary.json`에 기록합니다.
 - 최소 iOS17 실기기·VoiceOver/큰 글자·실제 디스크 고장/복구본 검증은 남아 있으며 저장 경계 오류 주입은 후속 보강에서 검증했습니다. 이후 V1→V2 실제 파일 마이그레이션 검증을 추가했습니다.
 - 개발용 서명/프로비저닝 팀·앱 아이콘/스토어 제출 자산과 배포용 식별자는 출시 준비에서 설정합니다.
 
@@ -255,7 +255,7 @@ python3 scripts/check_staged.py
 
 ### 경기 원장 검증
 
-최종 전용 iOS27.0 Simulator에서 단위29+UI1=30개 통과/실패0, xcresult 런타임 경고0이다. 신규8개 단위 사례는 두 역할 종료/중복 차단·완료일만 날짜 해제, 비등판 기록/피로 제외, 잘못된 역할/구종/revision/일정 거부, 시작/종료 저장 실패 rollback/재시도, 실제 SQLite 진행 저장/재열기·다른 역할 보존, 피로 소수 경계, 400개 난수/역할/홈원정의 직접=자동 엔진 일치, 실제 V2→V3 기존 값 보존을 포함한다. 기존 V1 이전 테스트도 유지한다. UI는 타자1구 저장→재실행→이어하기→자동 종료/홈→다음 날1회, 투수 구종/투구→종료→날짜 버튼 활성화를 확인했다. QA 데이터/화면은 로컬 `qa/match-ledger-test-summary.json` 및 Xcode 첨부에 보관한다. 실제iOS17 기기·VoiceOver/큰글자·물리 디스크 장애와 최종 경기 밸런스는 별도 검증이다.
+최종 전용 iOS27.0 Simulator에서 단위29+UI1=30개 통과/실패0, xcresult 런타임 경고0이다. 신규8개 단위 사례는 두 역할 종료/중복 차단·완료일만 날짜 해제, 비등판 기록/피로 제외, 잘못된 역할/구종/revision/일정 거부, 시작/종료 저장 실패 rollback/재시도, 실제 SQLite 진행 저장/재열기·다른 역할 보존, 피로 소수 경계, 400개 난수/역할/홈원정의 직접=자동 엔진 일치, 실제 V2→V3 기존 값 보존을 포함한다. 기존 V1 이전 테스트도 유지한다. UI는 타자1구 저장→재실행→이어하기→자동 종료/홈→다음 날1회, 투수 구종/투구→종료→날짜 버튼 활성화를 확인했다. QA 데이터/화면은 로컬 `qa/versions/legacy/match-ledger/reports/match-ledger-test-summary.json` 및 Xcode 첨부에 보관한다. 실제iOS17 기기·VoiceOver/큰글자·물리 디스크 장애와 최종 경기 밸런스는 별도 검증이다.
 
 ## 2026-10-19 직접 타격·릴리스 (native-match-v2)
 
@@ -268,7 +268,7 @@ python3 scripts/check_staged.py
 
 ### 직접 조작 검증
 
-최종 Xcode 검증은 단위39+UI1=40개 통과/실패0·xcresult 런타임경고0이다. 새10개는 코스 미리보기 RNG/속도, 위치/타이밍 품질과 유효 접촉의 안타/홈런/범타 분리, 무입력 지켜보기/존 판정, 숙련도별 릴리스 구간/실제 코스 오차, 잘못된 입력 거부, 3S/4B·번트 연결, v2 AI 입력 직접/자동100조합 일치, 저장 실패/재시도/중복 입력, 실제 파일의 옛v1 payload 재열기·실패 시 버전 보존·완료 bytes 보존, 시계 취소/시간 초과1회를 검증한다. 기존 V1/V2 이전·경기 원장/날짜 진행 테스트도 유지한다. UI는 실제 조준점 이동·무입력 지켜보기·지금 타격·재실행 이어하기·구종/릴리스·자동 마무리/결과·다음 날 흐름을 확인했다. 최종 원자료는 로컬 `qa/manual-match-test-summary.json`과 `qa/manual-match-verification.md`다. 실제iOS17 하드웨어·VoiceOver/큰글자·실기기 입력/프레임 체감과 최종 밸런스는 후속 검증이다.
+최종 Xcode 검증은 단위39+UI1=40개 통과/실패0·xcresult 런타임경고0이다. 새10개는 코스 미리보기 RNG/속도, 위치/타이밍 품질과 유효 접촉의 안타/홈런/범타 분리, 무입력 지켜보기/존 판정, 숙련도별 릴리스 구간/실제 코스 오차, 잘못된 입력 거부, 3S/4B·번트 연결, v2 AI 입력 직접/자동100조합 일치, 저장 실패/재시도/중복 입력, 실제 파일의 옛v1 payload 재열기·실패 시 버전 보존·완료 bytes 보존, 시계 취소/시간 초과1회를 검증한다. 기존 V1/V2 이전·경기 원장/날짜 진행 테스트도 유지한다. UI는 실제 조준점 이동·무입력 지켜보기·지금 타격·재실행 이어하기·구종/릴리스·자동 마무리/결과·다음 날 흐름을 확인했다. 최종 원자료는 로컬 `qa/versions/legacy/manual-match/reports/manual-match-test-summary.json`과 `qa/versions/legacy/manual-match/notes/manual-match-verification.md`다. 실제iOS17 하드웨어·VoiceOver/큰글자·실기기 입력/프레임 체감과 최종 밸런스는 후속 검증이다.
 
 ## 2026-10-20 경기 화면·도트 연출 이식
 
@@ -280,7 +280,7 @@ SwiftData V3 스키마·원장·판정/난수·기존 결과는 유지합니다.
 
 `BM/Resources/MatchArt`는 기존 웹에서 쓰던 원본 9개만 복사한 번들 리소스입니다. 새 라이브러리나 런타임 다운로드는 없습니다. `.gitignore`와 개인정보 훅은 해당 파일명/검토한 SHA-256만 허용하고 다른 바이너리·QA 캡처·사용자 저장은 계속 차단합니다. 테스트/캡처는 새 전용 QA 기기와 로컬 `qa/`에만 보관합니다.
 
-최종 검증은 전용 iPhone17Pro/iOS27.0에서 단위45+UI1=46개 통과/실패0, xcresult 런타임 경고0입니다. 기존 이전/원장/중복 거부·재열기/실패 재시도 회귀를 유지하고, 배치·카운트 점멸 분류·구종 메타데이터 호환·9개 아트/프레임·스윙/번트 앵커·시각 궤적 검증을 추가했습니다. 작은 iPhone17e의 같은 배치에서도 앞선 회차44+UI1=45개가 통과했으며, 그 뒤 추가한 자동 목표 표시/접촉 앵커의 최종 검증은17Pro 결과입니다. 개인정보/Git 검사7개도 통과했습니다. 화면/원자료는 무시되는 `qa/native-batter-style.png`, `qa/native-pitcher-style.png`, `qa/match-style-test-summary.json`, `qa/match-style-verification.md`에 있습니다. 실기기iOS17·VoiceOver/큰 글자·프레임 시간 검증은 남아 있습니다.
+최종 검증은 전용 iPhone17Pro/iOS27.0에서 단위45+UI1=46개 통과/실패0, xcresult 런타임 경고0입니다. 기존 이전/원장/중복 거부·재열기/실패 재시도 회귀를 유지하고, 배치·카운트 점멸 분류·구종 메타데이터 호환·9개 아트/프레임·스윙/번트 앵커·시각 궤적 검증을 추가했습니다. 작은 iPhone17e의 같은 배치에서도 앞선 회차44+UI1=45개가 통과했으며, 그 뒤 추가한 자동 목표 표시/접촉 앵커의 최종 검증은17Pro 결과입니다. 개인정보/Git 검사7개도 통과했습니다. 화면/원자료는 무시되는 `qa/versions/legacy/match-style/captures/native-batter-style.png`, `qa/versions/legacy/match-style/captures/native-pitcher-style.png`, `qa/versions/legacy/match-style/reports/match-style-test-summary.json`, `qa/versions/legacy/match-style/notes/match-style-verification.md`에 있습니다. 실기기iOS17·VoiceOver/큰 글자·프레임 시간 검증은 남아 있습니다.
 
 ## 2026-10-20 컨택·구종 훈련 (native-training-v1 / SwiftData V4)
 
@@ -291,7 +291,7 @@ SwiftData V3 스키마·원장·판정/난수·기존 결과는 유지합니다.
 - 홈의 실제 능력/구종 막대와 최근 훈련 전후·평균을 갱신합니다. 새 공식 경기는 성장한 값을 snapshot으로 고정하고 컨택 조준/타이밍 허용과 숙련도별 GOOD/PERFECT·실제 코스 오차에 사용합니다. 진행 중/완료한 옛 경기 snapshot과 payload는 다시 쓰지 않습니다.
 - V4는 훈련 테이블만 추가합니다. V1/V2/V3의 필드·ID·학교/외형/손·능력/구종·날짜/행동·기존 경기/결과를 보존하고 과거 훈련 보상을 생성하지 않습니다. 훈련은 날짜를 자동 전진시키지 않으며 공식 경기일은 여전히 경기 종료 후에만 다음 날을 허용합니다. 휴식−18/수면−4·기존 경기 결과1회 반영도 유지합니다.
 
-훈련 차수의 최종 검증은 전용 iPhone17e/iOS27.0에서 단위53+UI1=54개 통과/실패0, xcresult 런타임 경고0입니다. 새8개 단위 테스트와 기존 경기/달력 회귀, 컨택2회 후 앱 종료/이어하기·홈 성장·결과 재열기·구종 선택/5회 훈련·두 역할 공식 경기/결과/다음 날을 확인했습니다. 실제 V3 파일 이전에서 선수/구종/달력/경기 원문을 보존했습니다. 작은 화면의 폭 초과·접근성 식별자 중복·어두운 내비게이션 제목을 발견해 수정 후 재검증했습니다. 개인정보/Git 검사7개도 통과했습니다. 로컬 근거는 `qa/training-test-summary.json`, `qa/training-verification.md`, `qa/native-contact-training.png`, `qa/native-pitch-training.png`, `qa/native-training-home.png`입니다. 실제 iOS17 하드웨어·VoiceOver/큰 글자·장기 밸런스/물리 저장 장애는 아직 검증하지 않았습니다.
+훈련 차수의 최종 검증은 전용 iPhone17e/iOS27.0에서 단위53+UI1=54개 통과/실패0, xcresult 런타임 경고0입니다. 새8개 단위 테스트와 기존 경기/달력 회귀, 컨택2회 후 앱 종료/이어하기·홈 성장·결과 재열기·구종 선택/5회 훈련·두 역할 공식 경기/결과/다음 날을 확인했습니다. 실제 V3 파일 이전에서 선수/구종/달력/경기 원문을 보존했습니다. 작은 화면의 폭 초과·접근성 식별자 중복·어두운 내비게이션 제목을 발견해 수정 후 재검증했습니다. 개인정보/Git 검사7개도 통과했습니다. 로컬 근거는 `qa/versions/legacy/training/reports/training-test-summary.json`, `qa/versions/legacy/training/notes/training-verification.md`, `qa/versions/legacy/training/captures/native-contact-training.png`, `qa/versions/legacy/training/captures/native-pitch-training.png`, `qa/versions/legacy/training/captures/native-training-home.png`입니다. 실제 iOS17 하드웨어·VoiceOver/큰 글자·장기 밸런스/물리 저장 장애는 아직 검증하지 않았습니다.
 
 ## 2026-10-20 파워·선구안 훈련 (native-training-v2 / V4 유지)
 
@@ -303,7 +303,7 @@ SwiftData 모델/스키마는 V4 그대로입니다. 새 파워/선구안은 JSO
 
 새 공식 경기는 성장한 파워/선구안을 snapshot에 넣습니다. 파워는 기존 직접/자동 타격의 홈런 확률에 반영됩니다. 선구안은 새 경기의 선택 trainingEffectsVersion=1일 때 자동 타석에서 존 밖 공을 지켜볼 확률(선구안/100)에 사용합니다. 고정 RNG의 복사본으로 판단하므로 예측이 RNG를 소비하지 않고, 직접/자동이 같은 입력을 쓰면 같은 결과입니다. 직접 스윙/번트 선택이나 심판의 실제 존 판정·무입력 지켜보기를 바꾸지 않습니다. 버전 필드 없는 옛 진행/완료 경기에는 이 보정을 소급하지 않습니다.
 
-이번 차수는 전용 iPhone17e/iOS27.0에서 단위60+UI1=61개 통과/실패0·xcresult 런타임 경고0입니다. 새7개는 채점/입력 범위, 선택 목표만 성장·다음 경기 snapshot, 두 과제의 실제 파일 이어하기/목표 고정/완료 재열기, 최종 실패 rollback·같은 입력 재시도, v1/옛 경기 호환, 새 경기 선구안 판단/RNG 불소비·직접/자동 일치, 파워별 홈런 효과를 검증합니다. UI는 기존 흐름에 파워 힘/각도 조절·2회 후 재실행·이어하기/결과 재열기·다음 날·선구안5회/홈 성장을 더했습니다. 개인정보/Git 검사7개도 통과했습니다. 근거는 `qa/power-discipline-test-summary.json`, `qa/power-discipline-verification.md`, `qa/native-power-training.png`, `qa/native-discipline-training.png`입니다. 사용자 세이브를 초기화하지 않았으며 iOS17 실기기·VoiceOver/큰 글자·장기 균형은 미검증입니다.
+이번 차수는 전용 iPhone17e/iOS27.0에서 단위60+UI1=61개 통과/실패0·xcresult 런타임 경고0입니다. 새7개는 채점/입력 범위, 선택 목표만 성장·다음 경기 snapshot, 두 과제의 실제 파일 이어하기/목표 고정/완료 재열기, 최종 실패 rollback·같은 입력 재시도, v1/옛 경기 호환, 새 경기 선구안 판단/RNG 불소비·직접/자동 일치, 파워별 홈런 효과를 검증합니다. UI는 기존 흐름에 파워 힘/각도 조절·2회 후 재실행·이어하기/결과 재열기·다음 날·선구안5회/홈 성장을 더했습니다. 개인정보/Git 검사7개도 통과했습니다. 근거는 `qa/versions/legacy/power-discipline/reports/power-discipline-test-summary.json`, `qa/versions/legacy/power-discipline/notes/power-discipline-verification.md`, `qa/versions/legacy/power-discipline/captures/native-power-training.png`, `qa/versions/legacy/power-discipline/captures/native-discipline-training.png`입니다. 사용자 세이브를 초기화하지 않았으며 iOS17 실기기·VoiceOver/큰 글자·장기 균형은 미검증입니다.
 
 ## 2026-10-20 native-training-v3: 스피드·수비·송구
 
@@ -312,7 +312,7 @@ SwiftData 모델/스키마는 V4 그대로입니다. 새 파워/선구안은 JSO
 - 홈의 스피드/수비/송구 막대와 최근 훈련 전후 값이 갱신됩니다. 새 경기의 선택 fieldStats(version1)에 능력/포지션을 고정합니다. 내 타자의 1루 주루와 내 주 포지션(투수P)의 수비 기회에만 개인 능력을 사용하고 다른 선수는 시연60을 사용합니다.
 - 기본1루 경합은 주자 시간과 추격·포구·송구 시간을 비교하며 동시 도착은 세이프입니다. 최근 개인 관여 경합의 시간을 결과에 표시하고 안타/아웃·주자/득점·타점 기록에 연결합니다. 옛 snapshot 없는 경기는 기존 규칙/난수 소비를 유지합니다. 상세 타구 코스·다베이스·병살/중계·수비 재생·특성 효과는 후속입니다.
 
-이번 차수의 최종 코드 검증은 전용 iPhone17e/iOS27.0에서 단위69+UI1=70개 통과/실패0, xcresult runtimeWarnings=[]입니다. 새9개 단위 테스트는 두 역할×3목표 선택 성장/다음 경기 snapshot, 각 과제 실제 파일 중단 복원/목표 고정/보상1회, 시작·매 시도 저장 실패 rollback/같은 입력 재시도, 능력별 실제 시간/안타·아웃 변화, 직접/자동 동일 결과·옛 경기 무보정을 검증합니다. UI는 타자3종·투수 송구 조작/성장/홈/결과 재열기/하루 행동 잠금·다음 날과 스피드 미확정 취소/재실행을 추가했습니다. 선택 버튼 대비를 보정하고 전체 테스트를 다시 통과했습니다. 개인정보/Git 검사7개도 통과했습니다. 근거는 ignored `qa/field-training-test-summary.json`, `qa/field-training-verification.md`, `qa/native-speed-training.png`, `qa/native-defense-training.png`, `qa/native-arm-training.png`, `qa/native-pitcher-arm-training.png`, `qa/native-field-home.png`입니다. 사용자 세이브/웹 런타임은 변경하지 않았습니다. 실기기iOS17·VoiceOver/큰 글자·물리 장애·장기 균형은 미검증입니다.
+이번 차수의 최종 코드 검증은 전용 iPhone17e/iOS27.0에서 단위69+UI1=70개 통과/실패0, xcresult runtimeWarnings=[]입니다. 새9개 단위 테스트는 두 역할×3목표 선택 성장/다음 경기 snapshot, 각 과제 실제 파일 중단 복원/목표 고정/보상1회, 시작·매 시도 저장 실패 rollback/같은 입력 재시도, 능력별 실제 시간/안타·아웃 변화, 직접/자동 동일 결과·옛 경기 무보정을 검증합니다. UI는 타자3종·투수 송구 조작/성장/홈/결과 재열기/하루 행동 잠금·다음 날과 스피드 미확정 취소/재실행을 추가했습니다. 선택 버튼 대비를 보정하고 전체 테스트를 다시 통과했습니다. 개인정보/Git 검사7개도 통과했습니다. 근거는 ignored `qa/versions/legacy/field-training/reports/field-training-test-summary.json`, `qa/versions/legacy/field-training/notes/field-training-verification.md`, `qa/versions/legacy/field-training/captures/native-speed-training.png`, `qa/versions/legacy/field-training/captures/native-defense-training.png`, `qa/versions/legacy/field-training/captures/native-arm-training.png`, `qa/versions/legacy/field-training/captures/native-pitcher-arm-training.png`, `qa/versions/legacy/detailed-field/captures/native-field-home.png`입니다. 사용자 세이브/웹 런타임은 변경하지 않았습니다. 실기기iOS17·VoiceOver/큰 글자·물리 장애·장기 균형은 미검증입니다.
 
 ## 2026-10-20 컨택 PERFECT 채점과 직전 입력 피드백
 
@@ -320,7 +320,7 @@ SwiftData 모델/스키마는 V4 그대로입니다. 새 파워/선구안은 JSO
 
 훈련 중과 완료 화면에는 직전 시도의 조준·타이밍·종합 점수 및 초록 목표/노란 조준의 위치 비교를 표시합니다. 선택 lastContact payload로 확정 입력의 상세를 저장하고 재실행 시 복원합니다. SwiftData V4 모델·기존 과제/확정 점수·능력값은 유지하고, 기존 미완료 회차의 다음 입력부터 수정 채점을 적용합니다. 상세가 없는 옛 기록은 상세나 점수를 소급 생성하지 않습니다. 보상1회·하루 행동·원자 저장/실패 rollback은 기존과 같습니다.
 
-최종 검증: 전용 iPhone17e/iOS27.0에서 단위73+UI1=74개 통과/실패0·xcresult runtimeWarnings=[]. 새4개 단위 테스트로 능력0/35/65/100×노란 구간101지점, 구간 밖 감점/정타100/근접99/조준 빗나감35/무입력0, 옛 점수 보존·다음 입력 적용, 실제 파일 상세 복원·최종 실패 rollback/재시도·보상1회를 검증했습니다. UI는 시도별 점수/위치 비교·입력 버튼 가시성·2시도 후 재실행 상세 동일·완료 화면과 기존 목적별7과제/두 역할 경기 흐름을 검증했습니다. 첫 UI 검사에서 부모 식별자 전파를 발견해 접근성 컨테이너를 분리한 뒤 전체 재검증했습니다. 개인정보/Git 검사7개도 통과했습니다. ignored `qa/contact-score-test-summary.json`, `qa/contact-score-verification.md`, `qa/native-contact-score-breakdown.png`, `qa/native-contact-score-result.png`에 근거가 있습니다. 사용자 시연용 데이터·웹 실행 코드는 변경하지 않았으며 실기기iOS17·VoiceOver/큰 글자·물리 장애·장기 균형은 미검증입니다.
+최종 검증: 전용 iPhone17e/iOS27.0에서 단위73+UI1=74개 통과/실패0·xcresult runtimeWarnings=[]. 새4개 단위 테스트로 능력0/35/65/100×노란 구간101지점, 구간 밖 감점/정타100/근접99/조준 빗나감35/무입력0, 옛 점수 보존·다음 입력 적용, 실제 파일 상세 복원·최종 실패 rollback/재시도·보상1회를 검증했습니다. UI는 시도별 점수/위치 비교·입력 버튼 가시성·2시도 후 재실행 상세 동일·완료 화면과 기존 목적별7과제/두 역할 경기 흐름을 검증했습니다. 첫 UI 검사에서 부모 식별자 전파를 발견해 접근성 컨테이너를 분리한 뒤 전체 재검증했습니다. 개인정보/Git 검사7개도 통과했습니다. ignored `qa/versions/legacy/contact-score/reports/contact-score-test-summary.json`, `qa/versions/legacy/contact-score/notes/contact-score-verification.md`, `qa/versions/legacy/contact-score/captures/native-contact-score-breakdown.png`, `qa/versions/legacy/contact-score/captures/native-contact-score-result.png`에 근거가 있습니다. 사용자 시연용 데이터·웹 실행 코드는 변경하지 않았으며 실기기iOS17·VoiceOver/큰 글자·물리 장애·장기 균형은 미검증입니다.
 
 ## 2026-10-20 V5 능력치·신규 선수 유형
 
@@ -332,7 +332,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 
 홈에 유형/멘탈과 투수 원본 능력 막대가 표시됩니다. 변화구 표시는 포심을 제외한 상위2구종 숙련의0.6/0.4 가중값(하나면그값/없으면0)이며 별도 능력으로 저장·성장시키지 않습니다. 구속은0~100 능력점수입니다. 이번 범위는 저장/유형/표시까지이며 새 원본 훈련·속도/코스/구위/지구력/멘탈의 경기 효과·특성/계약은 후속입니다. 기존7훈련/원장/기본1루 경합을 유지합니다.
 
-최종 검증: 전용 iPhone17e/iOS27.0에서 단위81+UI1=82개 통과/실패0·xcresult runtimeWarnings=[]. 새8개 단위 테스트는6유형의 정확한 원본/예산/기본 선택과 역할 검증·생성3모델 실패 원자성, legacyDemo 누락 보충 실패/중복0/비덮어쓰기, 실제 V4 두 역할의 모든 기존 선수 필드/구종과 완료 경기·미완료 훈련 원문 보존 및 이어 완료, V1/V2/V3 파일 이전·6유형 파일 재열기/훈련 후 초기값 불변·다음 경기 snapshot·변화구 계산을 검증했습니다. 기존73개 회귀 중 과거 시연 수치를 전제로 하는 훈련/경기 테스트는 명시적 LegacyPlayerFixture로 구버전 데이터를 생성하고, 신규 생성 테스트의 기대값만 새 프리셋으로 갱신했습니다. UI는6유형 미리보기 전환·장타형/지구력형 생성·홈 원본/유형·재실행 보존과 기존7과제/경기/날짜/보상을 검증했습니다. 개인정보/Git 검사7개도 통과했습니다. ignored `qa/player-abilities-test-summary.json`, `qa/player-abilities-verification.md`, `qa/native-batter-archetype.png`, `qa/native-pitcher-archetype.png`, `qa/native-batter-abilities.png`, `qa/native-pitcher-abilities.png`에 근거가 있습니다. 사용자 시연용 데이터와 웹 실행 코드는 변경하지 않았습니다. 실기기iOS17·VoiceOver/큰 글자·물리 장애·장기 균형은 미검증입니다.
+최종 검증: 전용 iPhone17e/iOS27.0에서 단위81+UI1=82개 통과/실패0·xcresult runtimeWarnings=[]. 새8개 단위 테스트는6유형의 정확한 원본/예산/기본 선택과 역할 검증·생성3모델 실패 원자성, legacyDemo 누락 보충 실패/중복0/비덮어쓰기, 실제 V4 두 역할의 모든 기존 선수 필드/구종과 완료 경기·미완료 훈련 원문 보존 및 이어 완료, V1/V2/V3 파일 이전·6유형 파일 재열기/훈련 후 초기값 불변·다음 경기 snapshot·변화구 계산을 검증했습니다. 기존73개 회귀 중 과거 시연 수치를 전제로 하는 훈련/경기 테스트는 명시적 LegacyPlayerFixture로 구버전 데이터를 생성하고, 신규 생성 테스트의 기대값만 새 프리셋으로 갱신했습니다. UI는6유형 미리보기 전환·장타형/지구력형 생성·홈 원본/유형·재실행 보존과 기존7과제/경기/날짜/보상을 검증했습니다. 개인정보/Git 검사7개도 통과했습니다. ignored `qa/versions/legacy/player-abilities/reports/player-abilities-test-summary.json`, `qa/versions/legacy/player-abilities/notes/player-abilities-verification.md`, `qa/versions/legacy/player-abilities/captures/native-batter-archetype.png`, `qa/versions/legacy/player-abilities/captures/native-pitcher-archetype.png`, `qa/versions/legacy/player-abilities/captures/native-batter-abilities.png`, `qa/versions/legacy/player-abilities/captures/native-pitcher-abilities.png`에 근거가 있습니다. 사용자 시연용 데이터와 웹 실행 코드는 변경하지 않았습니다. 실기기iOS17·VoiceOver/큰 글자·물리 장애·장기 균형은 미검증입니다.
 
 
 ## 2026-10-20 원본 능력치 훈련 (native-training-v4)
@@ -345,7 +345,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - 실행 폭은40 초과 피로를 반영하며 하한0.7입니다. 득점권 또는7회 이후2점 차 이내에서0.92+멘탈×0.0008을 한 번 곱합니다. 타격 조준/타이밍과 투수 릴리스·실제 판정/화면 게이지가 같은 폭을 사용합니다. 직접/자동 입력은 같은 사건 엔진과 저장 RNG를 사용하며 미리보기는 RNG를 소비하지 않습니다.
 - 옛 경기에 abilityStats를 소급 추가하거나 과거/진행 중 경기의 규칙·구속·피로비용을 바꾸지 않습니다. 새 경기만 현재 원본을 사용합니다. 사용자 시연용 세이브/웹 실행 코드는 변경하지 않았습니다. 강판/구원·책임 주자·정식 ERA, 전체 NPC 원본·특성/포지션·장기 밸런스와 실기기/큰 글자/VoiceOver 인수는 후속입니다.
 
-최종 검증: 전용 iPhone17e/iOS27.0에서 최종 빌드/단위89개와 UI시나리오1개, 총90개 검증을 통과했습니다. 두 xcresult 모두 실패0·runtimeWarnings=[]입니다. UI 포함 전체 묶음은 단위87+UI1=88개이며 회전 시작값/정밀 비행 시간 연결·2개 추가 테스트 후 최종 단위89개를 재실행했습니다. 새8개 단위 테스트는5과제 채점/입력 검증, 두 역할 멘탈/역할 제한·선택 능력만 성장/초기값·구종 불변, 각 훈련 파일2/5→완료→재열기 보상1회, 시작/중간/최종 save 실패 rollback, 실제 경기 능력별 효과·압박/피로·직접/자동 RNG 동등·옛 경기 보존, 새 능력 경기의 파일 재열기/결과1회·날짜 진행을 다룹니다. UI는 기존 생성/7과제/경기에 새5과제와 두 역할 멘탈·타자2/5 재실행 복원·홈 현재값/성장·재열기·하루 잠금을 검증했습니다. 개인정보/Git7개와 웹 보호28파일 검사도 통과했습니다. 근거는 ignored qa/raw-training-unit-test-summary.json·raw-training-ui-test-summary.json·raw-training-verification.md와 native-velocity/control/stuff/stamina-training.png·native-batter/pitcher-mental-training.png입니다. 정본 Pages4개와 docs4개를 v0.38로 갱신합니다. iOS17 실기기·VoiceOver/큰 글자·실제 디스크 장애·강판/책임 주자·장기 균형은 이번 검증 범위가 아닙니다.
+최종 검증: 전용 iPhone17e/iOS27.0에서 최종 빌드/단위89개와 UI시나리오1개, 총90개 검증을 통과했습니다. 두 xcresult 모두 실패0·runtimeWarnings=[]입니다. UI 포함 전체 묶음은 단위87+UI1=88개이며 회전 시작값/정밀 비행 시간 연결·2개 추가 테스트 후 최종 단위89개를 재실행했습니다. 새8개 단위 테스트는5과제 채점/입력 검증, 두 역할 멘탈/역할 제한·선택 능력만 성장/초기값·구종 불변, 각 훈련 파일2/5→완료→재열기 보상1회, 시작/중간/최종 save 실패 rollback, 실제 경기 능력별 효과·압박/피로·직접/자동 RNG 동등·옛 경기 보존, 새 능력 경기의 파일 재열기/결과1회·날짜 진행을 다룹니다. UI는 기존 생성/7과제/경기에 새5과제와 두 역할 멘탈·타자2/5 재실행 복원·홈 현재값/성장·재열기·하루 잠금을 검증했습니다. 개인정보/Git7개와 웹 보호28파일 검사도 통과했습니다. 근거는 ignored qa/versions/legacy/raw-training/reports/raw-training-unit-test-summary.json·raw-training-ui-test-summary.json·raw-training-verification.md와 native-velocity/control/stuff/stamina-training.png·native-batter/pitcher-mental-training.png입니다. 정본 Pages4개와 docs4개를 v0.38로 갱신합니다. iOS17 실기기·VoiceOver/큰 글자·실제 디스크 장애·강판/책임 주자·장기 균형은 이번 검증 범위가 아닙니다.
 
 
 ## 2026-10-20 V6 특성 관리와 기본 경기 효과
@@ -357,7 +357,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - v2는 기본1루 경합의 주루 출발·야수 반응/추격/공 확보/송구 준비/비행을 분리합니다. 도착 시간을 비교해 세이프/아웃·기존 안타/아웃·득점/타점에 반영하고 결과에 실제 적용 특성을 기록합니다. 상세 타구 분류·공중 직접 포구·다베이스/병살/중계·수비 재생은 구현하지 않았습니다. 영구 능력의 수비 피로 유효값도 후속입니다.
 - 진행 중/과거 경기 payload나 v1 경합 식·난수 소비는 소급 변경하지 않습니다. 새로 시작한 경기만 v2를 사용하고 경기 중 특성 변경은 차단합니다. 다음 날 구성 변경 후에도 이전 원장의 활성 목록·도착 시간·결과/피로1회 반영은 유지합니다. 기존12과제/하루 행동/저장 규칙은 유지합니다.
 
-최종 검증: 전용 iPhone17e/iOS27.0에서 빌드·단위97개+UI시나리오1개, 총98개 통과·실패0·xcresult runtimeWarnings=[]입니다. 새8개 단위 테스트는 초기 지급/고정·기존 보충/실패 rollback·3슬롯/오래된 입력·준비/훈련/경기 잠금·독립 기준식·3,000 paired seed 실제 판정/직접·자동 RNG·실제 V5 파일 이전/훈련 복원·파일 경기 snapshot/결과1회를 다룹니다. 기존12훈련과 두 역할 생성/홈/경기/달력 UI에 활성 해제→재실행→복원→재활성/행동 미소비·진행 훈련 잠금을 추가했습니다. Git 개인정보7개·보호 웹28파일과 웹141파일 해시 불변을 확인했습니다. 정본 Pages4개와 로컬 docs4개를 v0.39로 동기화하고 해당31블록을 재조회/대조했습니다. 근거는 ignored qa/traits-test-summary.json·traits-verification.md·traits-document-sync.json·native-traits-batter.png·native-traits-pitcher.png입니다. 특성 습득/진척·상실, 상세 수비/재생/병살·실기기/VoiceOver/큰 글자·물리 디스크 장애·장기 균형은 후속입니다.
+최종 검증: 전용 iPhone17e/iOS27.0에서 빌드·단위97개+UI시나리오1개, 총98개 통과·실패0·xcresult runtimeWarnings=[]입니다. 새8개 단위 테스트는 초기 지급/고정·기존 보충/실패 rollback·3슬롯/오래된 입력·준비/훈련/경기 잠금·독립 기준식·3,000 paired seed 실제 판정/직접·자동 RNG·실제 V5 파일 이전/훈련 복원·파일 경기 snapshot/결과1회를 다룹니다. 기존12훈련과 두 역할 생성/홈/경기/달력 UI에 활성 해제→재실행→복원→재활성/행동 미소비·진행 훈련 잠금을 추가했습니다. Git 개인정보7개·보호 웹28파일과 웹141파일 해시 불변을 확인했습니다. 정본 Pages4개와 로컬 docs4개를 v0.39로 동기화하고 해당31블록을 재조회/대조했습니다. 근거는 ignored qa/versions/legacy/traits/reports/traits-test-summary.json·traits-verification.md·traits-document-sync.json·native-traits-batter.png·native-traits-pitcher.png입니다. 특성 습득/진척·상실, 상세 수비/재생/병살·실기기/VoiceOver/큰 글자·물리 디스크 장애·장기 균형은 후속입니다.
 
 ## 2026-10-20 화면 정합 UI-1 · 공통 도트 보드와 선수 홈
 
@@ -368,7 +368,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - 시작 점선/표식은 저장된 initialValues만 사용합니다. 누락/읽기 실패에는 현재값만 표시하며 기존 시연 선수의 과거 시작값을 추정하지 않습니다. 내부 정밀도·소수1자리 표시·구종 순서/좌우 그립을 유지합니다. 접근성 큰 글자는 역할/행동 버튼을 세로로, 레이더를 축별 수치 목록/막대로 제공합니다.
 - 특성 변경 조건과 하루 행동·중단/이어하기·결과/보상1회·저장 실패 재시도는 기존 엔진을 그대로 사용합니다. 화면 펼침/역할 전환은 저장을 실행하지 않습니다. 이번에는 Domain/Persistence/저장 스키마·학교 데이터·웹 실행 소스와 사용자 세이브를 변경하지 않습니다.
 
-최종 검증: 전용 iPhone17e/iOS27.0에서 빌드·단위99개+UI시나리오2개, 총101개 통과·실패/건너뜀0·xcresult runtimeWarnings=[]입니다. 기존12과제/두 역할 생성·연간 일정·경기·재실행·하루 잠금/보상1회와 새 홈의 기본 크기 버튼 가시성·그래프/원본/특성 펼침·큰 글자/날짜·피로 불변을 확인했습니다. 지정 보드 색상의 본문 대비12.37:1·보조문구8.78:1·주요 버튼4.51:1, 개인정보7개·보호 웹28파일 검사를 통과했습니다. Domain/Persistence/학교18파일·웹141파일은 해시가 같고, 기존 Xcode 개인 설정은 보존합니다. MVP/일정/명세/구현 현황의 정본 Pages4개와 docs4개를 v0.40·해당26블록으로 동기화/재조회했습니다. 근거는 ignored qa/home-ui-test-summary.json·home-ui-verification.md·home-ui-document-sync.json·home-board-contrast.json과 home-top/graph/large-text-batter/pitcher.png입니다. 이전 테스트 서비스 중단과 탐색 보조 코드 실패는 QA 이력에 구분해 기록했습니다. 실기기iOS17/VoiceOver·다른 화면 최대 글자·물리 저장 장애·장기 균형은 별도 인수입니다.
+최종 검증: 전용 iPhone17e/iOS27.0에서 빌드·단위99개+UI시나리오2개, 총101개 통과·실패/건너뜀0·xcresult runtimeWarnings=[]입니다. 기존12과제/두 역할 생성·연간 일정·경기·재실행·하루 잠금/보상1회와 새 홈의 기본 크기 버튼 가시성·그래프/원본/특성 펼침·큰 글자/날짜·피로 불변을 확인했습니다. 지정 보드 색상의 본문 대비12.37:1·보조문구8.78:1·주요 버튼4.51:1, 개인정보7개·보호 웹28파일 검사를 통과했습니다. Domain/Persistence/학교18파일·웹141파일은 해시가 같고, 기존 Xcode 개인 설정은 보존합니다. MVP/일정/명세/구현 현황의 정본 Pages4개와 docs4개를 v0.40·해당26블록으로 동기화/재조회했습니다. 근거는 ignored qa/versions/legacy/home-ui/reports/home-ui-test-summary.json·home-ui-verification.md·home-ui-document-sync.json·home-board-contrast.json과 home-top/graph/large-text-batter/pitcher.png입니다. 이전 테스트 서비스 중단과 탐색 보조 코드 실패는 QA 이력에 구분해 기록했습니다. 실기기iOS17/VoiceOver·다른 화면 최대 글자·물리 저장 장애·장기 균형은 별도 인수입니다.
 
 
 ## 화면 정합 UI-2 · 선수 생성 (2026-10-20)
@@ -377,7 +377,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - 기존50교 직접/무작위 선택·검색/0건/지우기/키보드 완료를 연결합니다. 외형의6색은 번호와 함께 표시하며 선택한 실제 유형 원본을 소수1자리 막대로 보여줍니다. 접근성 큰 글자는 선택1열/색상3열로 전환하고 스크롤로 하단 생성까지 접근합니다.
 - 이름/번호/학교 입력을 바꾸면 이전 오류를 지웁니다. 유효 생성은 기존 CareerStore의 원자 저장만 사용하며 역할별1명·초기 예산/구종·적격 특성1종·기존 데이터/이전 규칙을 바꾸지 않습니다. 초안 편집/검색/창 취소는 기존 선수의 능력/날짜/피로/기록을 저장하지 않습니다. 기존 선수 편집과 초안 재실행 복원은 추가하지 않습니다.
 
-검증 결과와 정본 동기화 근거는 qa/creation-ui-verification.md 및 MVP/일정/구현 현황을 참조합니다. 단위 테스트는 기존 저장·이전·경기/훈련 원장·보상1회 회귀를 포함하며, 이번 UI 검증 범위는 생성/홈입니다. 기존12훈련/경기 전체 UI 시나리오는 UI-1 차수의 근거와 구분합니다. 실기기iOS17/VoiceOver·장기 균형/TestFlight 검증은 별도입니다.
+검증 결과와 정본 동기화 근거는 qa/versions/legacy/creation-ui/notes/creation-ui-verification.md 및 MVP/일정/구현 현황을 참조합니다. 단위 테스트는 기존 저장·이전·경기/훈련 원장·보상1회 회귀를 포함하며, 이번 UI 검증 범위는 생성/홈입니다. 기존12훈련/경기 전체 UI 시나리오는 UI-1 차수의 근거와 구분합니다. 실기기iOS17/VoiceOver·장기 균형/TestFlight 검증은 별도입니다.
 
 최종 UI-2 검증은 전용 iPhone17e/iOS27.0에서 단위99개·생성/홈 UI2개, 총101개 통과·실패/건너뜀0·runtimeWarnings=[]입니다. 실제 캡처로 검색창 상단 글자 대비도 보완했습니다. 개인정보/Git7개와 staged4파일 검사를 통과했습니다. 정본 Pages4개/로컬4개 v0.41·변경16블록을 재조회해 일치시켰고 UI-2 대기 문구/수정 표 열 구조를 확인했습니다. qa의 캡처·검증 결과는 로컬 근거로만 보관합니다.
 
@@ -399,7 +399,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - 기본 글자는 전광판·게이지·주요 행동을 첫 화면에 표시합니다. 큰 글자는 팀/점수·전광판 정보와 타자 작전을 세로로 배치하고 전체 스크롤/‘경기 조작부로 이동’을 제공합니다. 구종/속도 대시는 한 줄을 유지합니다.
 - 투수는 기존 보유4구종 그립 스와이프/목록·숙련도·좌우 손/자동 목표 코스를 유지합니다. 타격 포인트·지켜보기/스윙/번트·무입력 take와 릴리스 판정, 모션·입력 잠금/취소·동일 입력 재저장·경기 이어하기/결과1회 반영도 유지합니다. 원장/스키마·선수 능력/구종/날짜·성장 계산 변경은 없습니다.
 - 최종 검증: 전용 iPhone17e/iOS27.0에서 단위100개+투타 경기 UI1개 총101개 통과. 두 역할 기본 프레임/버튼 경계·전광판과 행동 좌우 정렬·게이지·최대 접근성 글자 조작 이동, 구종 선택·직접 타격/릴리스·무입력 지켜보기·미확정 취소/카운트 복원·완료 재열기 피로 불변/날짜 잠금 해제를 확인합니다. 컴팩트/조작 높이별 비율은 단위 테스트로 검증합니다.
-- 근거: `qa/match-ui-test-summary.json`, `match-ui-verification.md`, `match-ui-handler-check.json`, `match-ui-protected-check.json`, `match-ui-document-sync.json`, `match-batter.png`, `match-pitcher.png`, `match-large-batter.png`, `match-large-pitcher.png`. 캡처/로그/세이브는 Git에서 제외합니다. 앞선12과제 전체 UI100개 통과는 UI-3 이력이며 이번 경기 UI와 합산하지 않습니다.
+- 근거: `qa/versions/legacy/match-ui/reports/match-ui-test-summary.json`, `match-ui-verification.md`, `match-ui-handler-check.json`, `match-ui-protected-check.json`, `match-ui-document-sync.json`, `match-batter.png`, `match-pitcher.png`, `match-large-batter.png`, `match-large-pitcher.png`. 캡처/로그/세이브는 Git에서 제외합니다. 앞선12과제 전체 UI100개 통과는 UI-3 이력이며 이번 경기 UI와 합산하지 않습니다.
 - 사용자 시뮬레이터/웹4173 저장·기존 Xcode 개인 설정을 유지합니다. 실기기iOS17·실제 소형 기기·VoiceOver·장기 균형/TestFlight는 별도입니다. 다음은 UI-5 결과 화면이며 수동 투구 코스·상세 수비/다베이스/병살/탑뷰·계약은 이 화면 작업으로 완료 처리하지 않습니다.
 
 ## 화면 정합 UI-5 — 경기 결과 (2026-10-20)
@@ -409,7 +409,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - `lastFieldPlay.appliedTraits`에 저장된 마지막 개인 경합만 도트 아이콘·이름/효과·1루 판정/주자·공 도착 시간으로 표시합니다. 수비의 주자 시간은 상대 주자입니다. 비등판·경합 없음·구버전 특성 미기록·적용 없음은 구분하며 보유/활성 목록을 발동 결과로 대신하지 않습니다.
 - `MatchResultSummary`는 저장 원자료의 읽기 전용 투영입니다. 기존 load/begin/resolve/commit/cancelInput/advance·조작/구장/수명주기·스키마/원장과 입력/완료/피로1회 반영을 유지합니다. 결과/큰 글자 재열기·앱 재실행은 보상을 실행하지 않습니다.
 - 전용 iPhone17e/iOS27.0 단위103개+투타 경기/결과 UI1개, 총104개 검증을 통과했습니다. 기록·피로·특성 상태의 재실행 전후 일치, 큰 글자 기록 가로 경계·홈 접근, 기존 경기 화면/게이지/입력/중단/날짜 잠금 회귀와 단위 원장/실패 rollback/이전·비등판·옛 특성 상태를 확인합니다. 이전12과제 전체 UI는 이번에 반복하지 않았습니다.
-- 근거: `qa/result-ui-test-summary.json`, `result-ui-verification.md`, `result-ui-handler-check.json`, `result-ui-protected-check.json`, `result-ui-document-sync.json`, `result-batter/pitcher.png`, `result-details-batter/pitcher.png`, `result-large-batter/pitcher.png`. 저장/캡처·진단은 Git에서 제외합니다.
+- 근거: `qa/versions/legacy/result-ui/reports/result-ui-test-summary.json`, `result-ui-verification.md`, `result-ui-handler-check.json`, `result-ui-protected-check.json`, `result-ui-document-sync.json`, `result-batter/pitcher.png`, `result-details-batter/pitcher.png`, `result-large-batter/pitcher.png`. 저장/캡처·진단은 Git에서 제외합니다.
 - 경기 능력 성장·자책점/투수 승패·홈런 거리·전체 특성 발동 횟수/이력은 추가하지 않습니다. 실기기iOS17/VoiceOver·비등판 실제 UI·모든 특성 조합 실제 UI·장기 균형/TestFlight는 별도 인수입니다. 사용자 세이브와 기존 Xcode 개인 설정을 보존합니다.
 
 ## 사용자 지정 생성·등록 전환 (2026-10-20)
@@ -419,7 +419,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - V1~V6 모델의 저장 필드는 바꾸지 않습니다. 기존 V5 archetypeRaw=custom/productionPresetVersion=custom-v1/initialValues에 정확한 초기 배분을 기록하고 현재 능력과 홈 유형/시작 그래프에 연결합니다. 기존6유형/선수 능력/구종·기록은 덮지 않습니다. 초기 특성은 기존 조건 충족 후보만 추첨하며 후보가 없으면 없습니다.
 - 실제 원자 저장 성공 뒤900ms 동안 도트 ‘선수 등록/선수 정보 저장 완료/첫 시즌 준비’와 블록 연출을 표시합니다. 동작 줄이기는100ms 정적 표시입니다. 입력/닫기/시트 제스처를 잠그고 최초 @Query 홈 진입을 callback까지 보류합니다. 실패는 오류/초안을 유지하고 연출/홈 이동을 실행하지 않습니다. 비활성 때 저장된 홈으로 정리하며 다시 저장하지 않습니다.
 - 전용 iPhone17e/iOS27.0 단위106개+사용자 지정 두 역할 생성 UI1개 총107개 통과. 예산/상하한·초기 snapshot 디스크 재열기·실패 rollback·기존 이전/경기/훈련 회귀와 UI 잔여 포인트/생성 잠금·정확한 유형·등록 연출·홈/재실행을 확인했습니다. 기본 타자/최대 접근성 글자 투수와 등록 캡처를 검토했습니다.
-- 근거: `qa/custom-creation-test-summary.json`, `custom-creation-verification.md`, `custom-creation-document-sync.json`, `custom-batter.png`, `custom-pitcher-large.png`, `registration-batter.png`, `registration-pitcher.png`. 중간 테스트 fixture의 컨테이너 수명 오류와 큰 글자 연출 보정 전 실행은 최종 검증과 구분합니다. 실기기/VoiceOver·동작 줄이기 실제 UI·900ms 중 강제 종료/비활성의 UI 자동 검증·12과제 전체 UI 반복은 이번 범위에 포함하지 않습니다.
+- 근거: `qa/versions/legacy/custom-creation/reports/custom-creation-test-summary.json`, `custom-creation-verification.md`, `custom-creation-document-sync.json`, `custom-batter.png`, `custom-pitcher-large.png`, `registration-batter.png`, `registration-pitcher.png`. 중간 테스트 fixture의 컨테이너 수명 오류와 큰 글자 연출 보정 전 실행은 최종 검증과 구분합니다. 실기기/VoiceOver·동작 줄이기 실제 UI·900ms 중 강제 종료/비활성의 UI 자동 검증·12과제 전체 UI 반복은 이번 범위에 포함하지 않습니다.
 
 
 ## 2026-10-20 특성 상세 관리 — ui-traits-v1
@@ -430,7 +430,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 
 최종 iPhone17e/iOS27.0 QA: 단위106개 + 두 역할 상세 관리 UI1개 = **107개 통과**, 실패/건너뜀/런타임 경고0. UI는 역할별 신규 보유1종의 효과/모든 조건·활성/해제·재실행 복원·날짜/피로 불변·최대 접근성 글자·휴식/진행 훈련 잠금을 확인했습니다. 최대3·미보유 거부·stale revision·저장 실패 rollback·이전/기본 효과는 기존 특성 단위8개를 포함해 검증했습니다. 기존3보유 전체 활성 조합을 UI로 조작한 검증은 아닙니다.
 
-근거: `qa/trait-detail-test-summary.json`, `qa/trait-detail-verification.md`, 기본/큰 글자/잠금6개 캡처. 정본 Pages4개와 로컬 기획/일정/설계/현황은 v0.46으로 동기화하고 UI-6 대기 문구를 갱신했습니다. 실기기/iOS17 실행·VoiceOver 직접 조작·저장 실패 UI 주입은 남아 있습니다. 이전 생성/12훈련/경기 전체 UI를 이번에 반복 검증한 것으로 해석하지 않습니다. 사용자 시연 데이터와 웹141파일은 보존했습니다.
+근거: `qa/versions/legacy/trait-detail/reports/trait-detail-test-summary.json`, `qa/versions/legacy/trait-detail/notes/trait-detail-verification.md`, 기본/큰 글자/잠금6개 캡처. 정본 Pages4개와 로컬 기획/일정/설계/현황은 v0.46으로 동기화하고 UI-6 대기 문구를 갱신했습니다. 실기기/iOS17 실행·VoiceOver 직접 조작·저장 실패 UI 주입은 남아 있습니다. 이전 생성/12훈련/경기 전체 UI를 이번에 반복 검증한 것으로 해석하지 않습니다. 사용자 시연 데이터와 웹141파일은 보존했습니다.
 
 
 ## 2026-10-20 실제 특성 습득 훈련 — native-trait-training-v1
@@ -442,7 +442,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - 진행 중 휴식/날짜/다른 준비를 잠그고 확정한 시도부터 이어갑니다. 미확정 비행/달리기만 취소하며 결과 재열기는 무보상입니다. 습득 당일은 특성 변경 잠금을 유지하고 다음 날 직접 활성화합니다.
 - 홈 최근 훈련은 능력 성장과 특성 진척을 구분하며 보유/활성·다음 경기 snapshot 경로를 유지합니다. 모델 확장 없는 payload 연결이며 서버/계정/클라우드는 추가하지 않았습니다.
 
-최종 검증은 전체 단위112개+실제 타자/투수 UI1개, 총113개가 통과했습니다. 실패/건너뜀/런타임 경고0이며 Release 빌드도 통과했습니다. UI는2/5 종료/재실행→홈 이어하기→완료/진척·피로+6/행동→결과 재열기 무보상, 단위는 두 역할×3과제100점·디스크100습득/수동 활성·시작/중간/최종/습득 실패 rollback·구V6 원문/일반 훈련 보존을 확인합니다. 근거는 `qa/trait-native-test-summary.json`, `qa/trait-native-verification.md`입니다. 실제 UI로100까지 수십일 반복·실기기/iOS17·VoiceOver/모션 줄이기 직접 조작·물리 디스크 손상은 미검증입니다. 당시 후속이던 포지션 훈련은 아래 native-position-training-v1으로 연결했습니다. 특성 상실/실전 진척·상세 수비/리그/계약은 후속입니다.
+최종 검증은 전체 단위112개+실제 타자/투수 UI1개, 총113개가 통과했습니다. 실패/건너뜀/런타임 경고0이며 Release 빌드도 통과했습니다. UI는2/5 종료/재실행→홈 이어하기→완료/진척·피로+6/행동→결과 재열기 무보상, 단위는 두 역할×3과제100점·디스크100습득/수동 활성·시작/중간/최종/습득 실패 rollback·구V6 원문/일반 훈련 보존을 확인합니다. 근거는 `qa/versions/legacy/trait-native/reports/trait-native-test-summary.json`, `qa/versions/legacy/trait-native/notes/trait-native-verification.md`입니다. 실제 UI로100까지 수십일 반복·실기기/iOS17·VoiceOver/모션 줄이기 직접 조작·물리 디스크 손상은 미검증입니다. 당시 후속이던 포지션 훈련은 아래 native-position-training-v1으로 연결했습니다. 특성 상실/실전 진척·상세 수비/리그/계약은 후속입니다.
 
 ### 이전 화면 검증 이력
 
@@ -450,9 +450,9 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 
 도트 훈련장은 펜스/관중석·연습망·벤치/장비·잔디/흙·목표/선수로 구성합니다. 강견은 목표 베이스를 고르고 훈련장에서 방향/거리를 드래그하거나 방향/힘 버튼으로 조절해 송구 궤적과 도착 지점을 보고, 치타는4초간 교대 발 입력으로 질주·발자국을 확인합니다(같은 발 연타 제외). 안정 포구는 선수를 드래그하거나 방향 버튼으로 옮긴 뒤 포구합니다. 5회 점수/평균만 메모리에서 계산하며 실제 진척/피로/오늘 행동·보유를 변경하지 않습니다. 미확정 동작 중 비활성/닫기는 과제 타이머를 취소합니다. 동작 줄이기는 공 궤적을 생략하며 달리기 입력 시간은 유지합니다. 특성 설명은 경기에서 체감하는 문장과 기존 효과 수치를 함께 보여 줍니다.
 
-체험 개선 최종 검증(2026-10-20): iPhone17e/iOS27.0에서 기존 특성 단위8+UI2=10개 통과, 실패/건너뜀/런타임 경고0. 조건/샘플 상태·큰 글자 체험 버튼 접근, 드래그 송구5회/평균100점·포구100점, 같은 발 연타 제외·앱 전환 미확정 취소·체험 후 샘플 진척 불변을 확인했습니다. 큰 글자에서는 훈련장 드래그를 끄고 조정 버튼을 사용해 부모 스크롤 충돌을 해결했습니다. 캡처와 `qa/trait-detailed-training-summary.json`, `qa/trait-detailed-training-verification.md`를 보관합니다. 당시 체험 검증에는 실제 습득 저장이 포함되지 않았습니다. 이후 실제 저장 검증은 위 실제 기능 절에 기록하며, 모션 줄이기 UI·실기기/VoiceOver 직접 조작은 아직 별도 인수입니다.
+체험 개선 최종 검증(2026-10-20): iPhone17e/iOS27.0에서 기존 특성 단위8+UI2=10개 통과, 실패/건너뜀/런타임 경고0. 조건/샘플 상태·큰 글자 체험 버튼 접근, 드래그 송구5회/평균100점·포구100점, 같은 발 연타 제외·앱 전환 미확정 취소·체험 후 샘플 진척 불변을 확인했습니다. 큰 글자에서는 훈련장 드래그를 끄고 조정 버튼을 사용해 부모 스크롤 충돌을 해결했습니다. 캡처와 `qa/versions/legacy/trait-detailed-training/reports/trait-detailed-training-summary.json`, `qa/versions/legacy/trait-detailed-training/notes/trait-detailed-training-verification.md`를 보관합니다. 당시 체험 검증에는 실제 습득 저장이 포함되지 않았습니다. 이후 실제 저장 검증은 위 실제 기능 절에 기록하며, 모션 줄이기 UI·실기기/VoiceOver 직접 조작은 아직 별도 인수입니다.
 
-초기 정적 시안 검증 이력(2026-10-20): 전용 iPhone17e/iOS27.0 UI 테스트1개 통과(실패/건너뜀/런타임 경고0). 세 특성 조건/진척 표시·기본 버튼 가시성·과제 미리보기 왕복·5상태 버튼/진척·최대 접근성 글자 진척/버튼 접근을 확인하고6개 캡처를 검토했습니다. `qa/trait-acquisition-preview-summary.json`과 `qa/trait-acquisition-preview-verification.md`에 근거를 보관합니다. 실제 저장/보상·하루 행동·중단 복원 기능 검증이나 실기기/VoiceOver 검증은 아닙니다. 기존 MVP 기능 완료 상태를 바꾸지 않습니다.
+초기 정적 시안 검증 이력(2026-10-20): 전용 iPhone17e/iOS27.0 UI 테스트1개 통과(실패/건너뜀/런타임 경고0). 세 특성 조건/진척 표시·기본 버튼 가시성·과제 미리보기 왕복·5상태 버튼/진척·최대 접근성 글자 진척/버튼 접근을 확인하고6개 캡처를 검토했습니다. `qa/versions/legacy/trait-acquisition-preview/reports/trait-acquisition-preview-summary.json`과 `qa/versions/legacy/trait-acquisition-preview/notes/trait-acquisition-preview-verification.md`에 근거를 보관합니다. 실제 저장/보상·하루 행동·중단 복원 기능 검증이나 실기기/VoiceOver 검증은 아닙니다. 기존 MVP 기능 완료 상태를 바꾸지 않습니다.
 
 
 ## 2026-10-20 실제 포지션 훈련 — native-position-training-v1
@@ -463,7 +463,7 @@ V5는 V1 선수/구종·V2 달력·V3 경기·V4 훈련 모델을 수정하지 �
 - 각 확정 시도만 저장하고 마지막 시도에서 위치XP/숙련·profile revision/피로+6(100상한)/오늘 행동/완료를 한 save로 확정합니다. 시작/중간/최종 실패 rollback·같은 입력 재시도·선수/날짜/두 revision/시작 값/피로/나이 검증을 유지합니다. 진행 중 다른 준비·날짜·새 경기를 잠그고 미확정 포구/비행은 닫기/비활성에서 취소합니다. 확정한 시도부터 복원하고 결과 재열기는 무보상입니다.
 - 홈의8위치 막대/XP·최근 훈련과 기존 이어하기/오늘 결과를 연결합니다. 새 야수 fieldStats(version3)는 출전 위치의 숙련을 고정하며, 내 야수가 담당한 기본1루 경합의 준비 지연0.25×(1−숙련/100)초에만 적용합니다. 타격/최고속도/기본송구·NPC를 중복 보정하지 않습니다. 보조 위치를 훈련해도 현재 다른 위치로 출전하면 적용하지 않습니다. 진행/완료한 v1/v2 경기는 소급 변경하지 않습니다.
 
-최종 검증은 전체 단위122개+실제 UI1개=123개 통과, 실패/건너뜀/런타임 경고0입니다. 8위치100점·XP이월/상한·시작/중간/최종/최대 도달 실패·디스크 복원·V6 파일의 기존 값/원문·실제 경기 엔진/snapshot을 검증했습니다. 실제UI는 새 야수→8위치 선택→CF2/5 종료/재실행→홈 이어하기→5회/XP·피로/행동→결과 재열기/큰 글자 결과→경기 완료/다음 날 게이트를 확인합니다. Debug와 개인 설정을 제외한 프로젝트의Release arm64 빌드가 통과했습니다. `qa/position-native-test-summary.json`, `qa/position-native-verification.md`가 근거입니다. 당시 실전 위치XP(현재 아래 native-match-position-xp-v1으로 연결)·주 포지션 변경UI·P/DH 확대·8위치 각각의 실제UI100점/모든 조작·실기기/iOS17/VoiceOver/모션 줄이기 직접 조작·장기 균형은 별도 인수입니다. 정본/로컬 문서는v0.50입니다.
+최종 검증은 전체 단위122개+실제 UI1개=123개 통과, 실패/건너뜀/런타임 경고0입니다. 8위치100점·XP이월/상한·시작/중간/최종/최대 도달 실패·디스크 복원·V6 파일의 기존 값/원문·실제 경기 엔진/snapshot을 검증했습니다. 실제UI는 새 야수→8위치 선택→CF2/5 종료/재실행→홈 이어하기→5회/XP·피로/행동→결과 재열기/큰 글자 결과→경기 완료/다음 날 게이트를 확인합니다. Debug와 개인 설정을 제외한 프로젝트의Release arm64 빌드가 통과했습니다. `qa/versions/legacy/position-native/reports/position-native-test-summary.json`, `qa/versions/legacy/position-native/notes/position-native-verification.md`가 근거입니다. 당시 실전 위치XP(현재 아래 native-match-position-xp-v1으로 연결)·주 포지션 변경UI·P/DH 확대·8위치 각각의 실제UI100점/모든 조작·실기기/iOS17/VoiceOver/모션 줄이기 직접 조작·장기 균형은 별도 인수입니다. 정본/로컬 문서는v0.50입니다.
 
 ### 이전 포지션 화면 시안 검증 이력
 
@@ -475,7 +475,7 @@ DEBUG 선수 홈 → 커리어 메뉴 → `포지션 훈련 · 화면 미리보�
 - 포수 블로킹/2루 송구·1루 커버/포구·2루 병살 연결·3루 강습/1루 송구·유격수 백핸드/1루 송구·외야 낙하/중계 또는3루 송구 장면을 구분합니다. 준비/포구/송구는 장면 시점 선택이며 조작 채점이나 실제 병살 판정이 아닙니다.
 - 훈련 가능/오늘 행동 완료/이어하기2/5/최대/조회 오류의5상태를 비교합니다. 시안은 실제 선수·주 포지션·XP·피로·오늘 행동·기록을 변경하지 않고 재실행 시 샘플로 돌아갑니다. 당시에는 실제 XP 모델/저장·5회 채점·중단 복원·보상1회/경기 숙련 효과 연결 전이었으며 현재 실제 기능은 위 native-position-training-v1 절을 따릅니다.
 
-전용 iPhone17e/iOS27.0에서 기존 전체 단위112+시안UI3=115개 통과, 실패/건너뜀/런타임 경고0. 홈 왕복의 오늘 행동 보존·8위치/과제·조건/진척·잠금/오류·장면/샘플 불변·기본 조작 가시성·큰 글자 접근을 확인하고4개 캡처를 검토했습니다. DEBUG 및 개인 설정을 제외한 프로젝트의Release arm64 빌드를 통과했습니다. `qa/position-preview-final-summary.json`, `qa/position-preview-verification.md`에 근거를 보관합니다. 당시 시안 검증은 실제 기능 저장 인수와 구분하며 현재 실제 저장 인수는 위 절을 따릅니다. 실기기/iOS17/VoiceOver 직접 조작은 미완료입니다. 당시 정본/로컬 문서 기준은v0.49입니다.
+전용 iPhone17e/iOS27.0에서 기존 전체 단위112+시안UI3=115개 통과, 실패/건너뜀/런타임 경고0. 홈 왕복의 오늘 행동 보존·8위치/과제·조건/진척·잠금/오류·장면/샘플 불변·기본 조작 가시성·큰 글자 접근을 확인하고4개 캡처를 검토했습니다. DEBUG 및 개인 설정을 제외한 프로젝트의Release arm64 빌드를 통과했습니다. `qa/versions/legacy/position-preview/reports/position-preview-final-summary.json`, `qa/versions/legacy/position-preview/notes/position-preview-verification.md`에 근거를 보관합니다. 당시 시안 검증은 실제 기능 저장 인수와 구분하며 현재 실제 저장 인수는 위 절을 따릅니다. 실기기/iOS17/VoiceOver 직접 조작은 미완료입니다. 당시 정본/로컬 문서 기준은v0.49입니다.
 
 
 ## 2026-10-21 전체 훈련 조작·연출 보강 — ui-training-quality-v1
@@ -488,9 +488,9 @@ DEBUG 선수 홈 → 커리어 메뉴 → `포지션 훈련 · 화면 미리보�
 - 일반 훈련은 확정 입력을 먼저 저장하고 원래 목표/확정 점수를 고정해 재생합니다. 이 차수의 기본1.1초 재생은 아래 ui-delivery-feedback-v1의 동작/결과 확인 분리 시간으로 갱신했습니다. 이때 새 입력을 잠그며 마지막 회차도 기존 목표로 재생한 뒤 완료 보드로 갑니다. 재생 중 이탈/비활성은 연출만 취소하고 이미 저장된 시도는 이어집니다. 저장 실패는 같은 입력/revision 재시도를 유지합니다.
 - 이 차수의 모션 줄이기150ms 정적 확인은 아래 ui-delivery-feedback-v1에서 일반 과제 동작150ms+결과 확인800ms로 갱신했고, 투수 구종 비행은 아래 ui-pitch-flight-clock-v1에 따라 유지합니다. 달리기4초 입력은 단축하지 않습니다. 햅틱은 일반 훈련의 새 확정 저장에만 반응하고 재열기에서는 재생하지 않습니다. PERFECT99+/GREAT90+/GOOD70+/그 미만 KEEP TRYING 등급과 점수는 원본 점수의 표시입니다.
 - 포지션은 준비 중 반복 예상 타구(내야 바운드/외야 낙하)·글러브/송구 팔과 점수 등급을 보강합니다. 예상 타구는 위치를 읽는 안내로, 새 제한 시간/채점 요소를 추가하지 않습니다.
-- 검증 근거는 로컬 `qa/training-quality-verification.md`와 차수별 xcresult 요약/캡처에 보관합니다. 실기기/iOS17·VoiceOver 직접 조작·물리 햅틱·성능/프레임 유지·음향/전용 스프라이트 제작·장기 균형은 별도 인수입니다. 웹4173 런타임과 사용자 세이브/개인 Xcode 서명 설정은 이 작업의 변경 대상이 아닙니다.
+- 검증 근거는 로컬 `qa/versions/legacy/training-quality/notes/training-quality-verification.md`와 차수별 xcresult 요약/캡처에 보관합니다. 실기기/iOS17·VoiceOver 직접 조작·물리 햅틱·성능/프레임 유지·음향/전용 스프라이트 제작·장기 균형은 별도 인수입니다. 웹4173 런타임과 사용자 세이브/개인 Xcode 서명 설정은 이 작업의 변경 대상이 아닙니다.
 
-최종 검증은 단위122개와 서로 다른UI7개(일반12과제 통합·두 역할 실제 특성·실제 포지션·특성3종 체험·큰 글자·레일 드래그/복원·구위5회)를 차수별로 통과했습니다. 구위 도트 원형/배경선 보정 후 단위122개·구위UI·Release arm64를 다시 확인했고 반복한 단위는 중복 합산하지 않았습니다. 각 xcresult의 실패/건너뜀/런타임 경고는0, Git 보안7개도 통과했습니다. 기획서·일정·조작/훈련 설계·구현 현황의 정본 Pages와 로컬4개 문서를 v0.51로 동기화하고16개 수정 블록을 재조회했으며812개 블록 수를 유지했습니다. 로컬 중복 긴 문단과 변경 표 열 구조도 확인했습니다. 세부 차수/미인수 범위는 `qa/training-quality-verification.md`를 따릅니다.
+최종 검증은 단위122개와 서로 다른UI7개(일반12과제 통합·두 역할 실제 특성·실제 포지션·특성3종 체험·큰 글자·레일 드래그/복원·구위5회)를 차수별로 통과했습니다. 구위 도트 원형/배경선 보정 후 단위122개·구위UI·Release arm64를 다시 확인했고 반복한 단위는 중복 합산하지 않았습니다. 각 xcresult의 실패/건너뜀/런타임 경고는0, Git 보안7개도 통과했습니다. 기획서·일정·조작/훈련 설계·구현 현황의 정본 Pages와 로컬4개 문서를 v0.51로 동기화하고16개 수정 블록을 재조회했으며812개 블록 수를 유지했습니다. 로컬 중복 긴 문단과 변경 표 열 구조도 확인했습니다. 세부 차수/미인수 범위는 `qa/versions/legacy/training-quality/notes/training-quality-verification.md`를 따릅니다.
 
 
 ## 2026-10-21 자유 연습과 릴리스 순서 — free-training-v2 / pitch-release-flow-v1
@@ -506,7 +506,7 @@ DEBUG 선수 홈 → 커리어 메뉴 → `포지션 훈련 · 화면 미리보�
 이전 free-training-v1 검증 이력(당시 샘플 기준): 단위124개와 서로 다른UI5개를 차수별 통과했습니다. `qa/free-practice-{core,match,native}-summary.json`은 각124단위+2UI=126개·실패/건너뜀0·runtimeWarnings=[]입니다. 반복한 단위/특성·위치UI를 중복 합산하지 않습니다. 두 역할 연습/재도전·행동 사용 후 홈 진입/날짜·피로 보존·특성/위치5회 무보상·실제 투타 경기 이어하기/큰 글자/결과 무중복·실제 구종 훈련2/5 복원/보상1회를 확인했습니다. 최종 Release arm64·Git 보안7개도 통과했습니다. 정본4개와 로컬 문서를 v0.52로 맞추고 기존812블록을 유지했으며 수정11블록과 표/중복을 확인했습니다. 실기기/iOS17·VoiceOver/Reduce Motion 직접 조작·모든 과제UI100점·장기 균형은 별도입니다.
 
 
-free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다른UI3개, Release arm64·Git 보안7개를 통과했습니다. `qa/own-practice-{core,home}-summary.json`은 각각125개(124단위+1UI), `special-summary.json`은UI1개·실패/건너뜀0·runtimeWarnings=[]입니다. 실제 외형/좌투·원본/확장 능력 소수값·3구종/숙련·위치 숙련을 새 객체로 복사하고 원본과 양방향 참조를 공유하지 않는지, 생성 선수만 표시·미생성 안내·행동 사용 후 연습/재실행의 날짜/피로/행동 불변·5회 재도전·무보상을 검증했습니다. 이전 v1 검증 수는 당시 샘플 경로의 이력이며 중복 합산하지 않습니다. 정본4개와 로컬 문서는 v0.53·총812블록을 유지하며10개 수정 블록/표/중복을 확인했습니다. 자세한 근거와 미인수 범위는 `qa/own-practice-verification.md`를 따릅니다.
+free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다른UI3개, Release arm64·Git 보안7개를 통과했습니다. `qa/own-practice-{core,home}-summary.json`은 각각125개(124단위+1UI), `special-summary.json`은UI1개·실패/건너뜀0·runtimeWarnings=[]입니다. 실제 외형/좌투·원본/확장 능력 소수값·3구종/숙련·위치 숙련을 새 객체로 복사하고 원본과 양방향 참조를 공유하지 않는지, 생성 선수만 표시·미생성 안내·행동 사용 후 연습/재실행의 날짜/피로/행동 불변·5회 재도전·무보상을 검증했습니다. 이전 v1 검증 수는 당시 샘플 경로의 이력이며 중복 합산하지 않습니다. 정본4개와 로컬 문서는 v0.53·총812블록을 유지하며10개 수정 블록/표/중복을 확인했습니다. 자세한 근거와 미인수 범위는 `qa/versions/legacy/own-practice/notes/own-practice-verification.md`를 따릅니다.
 
 
 ## 2026-10-21 투구·타격 전신 개인화 — personal-motion-v1
@@ -519,7 +519,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - 체형/장발 실루엣·새 자세 제작·NPC 전체 개인화와 실기기 메모리/프레임 실측은 후속입니다. 현재 모션의 보이는 파츠를 개인화하며 캐릭터 생성 선택 항목을 추가하지 않습니다.
 
 
-검증: 최종 단위128개+실제 투타 경기UI1개=129개와 자유 연습UI1개를 통과했습니다. `qa/personal-motion-{match,practice}-summary.json`은 실패/건너뜀0·runtimeWarnings=[]이며 사전 실행/반복 단위를 합산하지 않습니다. 저장 팔레트의 실제 픽셀·12자세/알파·원본 불변, 배트/글러브/바지 표본 보존, 0/7/9/27/99와 좌투9/27 역반전·유효 범위, 캐시 재사용을 확인했습니다. UI는 개인화한 기본1번 선수의 경기 스윙/번트·좌투/이어하기/카운트·완료/재열기 무중복 및 연습 컨택/투구/5회·재도전을 확인했습니다. 큰 글자는 결과 화면 접근을 재검증했으며 전체 화면/실기기 성능 인수로 확대하지 않습니다. Release arm64·Git 보안7개도 통과했고 정본/로컬4개를 v0.54·총812블록 유지/12개 수정 블록으로 동기화했습니다. 표 열/중복도 확인했습니다. 상세 근거는 `qa/personal-motion-verification.md`를 따릅니다.
+검증: 최종 단위128개+실제 투타 경기UI1개=129개와 자유 연습UI1개를 통과했습니다. `qa/personal-motion-{match,practice}-summary.json`은 실패/건너뜀0·runtimeWarnings=[]이며 사전 실행/반복 단위를 합산하지 않습니다. 저장 팔레트의 실제 픽셀·12자세/알파·원본 불변, 배트/글러브/바지 표본 보존, 0/7/9/27/99와 좌투9/27 역반전·유효 범위, 캐시 재사용을 확인했습니다. UI는 개인화한 기본1번 선수의 경기 스윙/번트·좌투/이어하기/카운트·완료/재열기 무중복 및 연습 컨택/투구/5회·재도전을 확인했습니다. 큰 글자는 결과 화면 접근을 재검증했으며 전체 화면/실기기 성능 인수로 확대하지 않습니다. Release arm64·Git 보안7개도 통과했고 정본/로컬4개를 v0.54·총812블록 유지/12개 수정 블록으로 동기화했습니다. 표 열/중복도 확인했습니다. 상세 근거는 `qa/versions/legacy/personal-motion/notes/personal-motion-verification.md`를 따릅니다.
 
 ## 2026-10-21 실전 수비 포지션 XP — native-match-position-xp-v1
 
@@ -529,7 +529,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - 결과와 홈에 참여/아웃 횟수·XP/숙련 전후를 소수1자리로 표시합니다. 기존 포지션 그래프는 변경된 PlayerPositions를 읽고 다음 새 경기의 fieldStats v3에만 성장한 숙련을 전달합니다. 진행 중인 경기의 준비 지연은 시작 snapshot을 유지합니다.
 - 원장 없는 기존 진행/완료 경기는 소급 XP를 만들지 않습니다. 선수/구종/기록·다른 위치/원본 능력·하루 행동을 보존합니다. 무참여/숙련100은 프로필 revision도 변경하지 않습니다. 투수P/DH·수신만 한 야수/보살·상세 다베이스/중계/병살/실책은 후속입니다.
 
-최종 단위134개(신규6개)+타자·투수 경기UI1개=135개와 공유 프로젝트 Release arm64·Git 보안7개를 통과했습니다. 실제UI는 결과와 홈의 참여8회/아웃4회/XP54.6 표시, 재열기·피로·다음 날 게이트를 확인했고 캡처2개를 열어 검토했습니다. `qa/game-position-unit-summary.json`, `qa/game-position-ui-summary.json`, `qa/game-position-verification.md`에 근거를 보관합니다. 사용자 시뮬레이터/저장은 변경하지 않았습니다. 실기기/iOS17/VoiceOver·물리 장애/복구본·장기 균형은 별도 인수이며 정본/로컬 문서는v0.55입니다.
+최종 단위134개(신규6개)+타자·투수 경기UI1개=135개와 공유 프로젝트 Release arm64·Git 보안7개를 통과했습니다. 실제UI는 결과와 홈의 참여8회/아웃4회/XP54.6 표시, 재열기·피로·다음 날 게이트를 확인했고 캡처2개를 열어 검토했습니다. `qa/versions/legacy/game-position/reports/game-position-unit-summary.json`, `qa/versions/legacy/game-position/reports/game-position-ui-summary.json`, `qa/versions/legacy/game-position/notes/game-position-verification.md`에 근거를 보관합니다. 사용자 시뮬레이터/저장은 변경하지 않았습니다. 실기기/iOS17/VoiceOver·물리 장애/복구본·장기 균형은 별도 인수이며 정본/로컬 문서는v0.55입니다.
 
 ## 2026-10-21 기본 상세 수비·주루와 탑뷰 — native-field-play-v1
 
@@ -540,7 +540,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - 실제 내 위치가 처리한 수비만 기존 실전 포지션XP에 쌓고 최종 결과/XP/피로/달력 revision을 한 save로 반영합니다. 저장 실패 rollback·같은 입력 재시도·이어하기·결과 재열기 무보상을 유지합니다. 수신/백업은 XP를 추가 지급하지 않습니다.
 - 원장 없는 기존 진행/완료 경기는 기본1루 판정과 저장 원문을 유지하며 새 플래그/경로를 소급 생성하지 않습니다. 병살·중계·뜬공 포구/태그업·실책·강판/책임 주자·P/DH 숙련과 정식 NPC는 후속입니다. 실기기/접근성 직접 조작·장기 밸런스·기기 FPS/메모리는 별도 인수입니다.
 
-검증은 최종 단위141개+두 역할 경기UI1개=142개 통과(실패/건너뜀0), 개인 설정을 제외한 공유 프로젝트 Release arm64·Git 보안7개 통과입니다. 신규7단위에서 독립 시간 기준값/속도별 안타·2루타·아웃/실제 야수 능력·특성,8점유×3아웃×5코스×4깊이480상황의 점유/포스·태그/제3아웃·타점,노드 보간/정지,직접·자동 사건열/XP,실제 v0.55 SQLite 원문·구종 보존/비소급과 손상 원장 비초기화를 검증했습니다. UI는 두 역할 직접 입력/중단·큰 글자·자동 종료/저장된 결과 재생·같은 요약·홈 XP/피로·결과 재열기/날짜 게이트를 확인했습니다. 캡처4개를 직접 열어 검토했고 `qa/detailed-field-final-summary.json`, `qa/detailed-field-unit-summary.json`, `qa/detailed-field-verification.md`에 근거를 보관합니다. 사용자 시뮬레이터/세이브는 변경하지 않았습니다. 정본/로컬 문서는v0.56이며 실기기/접근성 직접 조작·모션 줄이기 UI·기기 FPS/메모리·장기 균형·수동 정타/코스별 모든 연출 조합은 별도 인수입니다.
+검증은 최종 단위141개+두 역할 경기UI1개=142개 통과(실패/건너뜀0), 개인 설정을 제외한 공유 프로젝트 Release arm64·Git 보안7개 통과입니다. 신규7단위에서 독립 시간 기준값/속도별 안타·2루타·아웃/실제 야수 능력·특성,8점유×3아웃×5코스×4깊이480상황의 점유/포스·태그/제3아웃·타점,노드 보간/정지,직접·자동 사건열/XP,실제 v0.55 SQLite 원문·구종 보존/비소급과 손상 원장 비초기화를 검증했습니다. UI는 두 역할 직접 입력/중단·큰 글자·자동 종료/저장된 결과 재생·같은 요약·홈 XP/피로·결과 재열기/날짜 게이트를 확인했습니다. 캡처4개를 직접 열어 검토했고 `qa/versions/legacy/detailed-field/reports/detailed-field-final-summary.json`, `qa/versions/legacy/detailed-field/reports/detailed-field-unit-summary.json`, `qa/versions/legacy/detailed-field/notes/detailed-field-verification.md`에 근거를 보관합니다. 사용자 시뮬레이터/세이브는 변경하지 않았습니다. 정본/로컬 문서는v0.56이며 실기기/접근성 직접 조작·모션 줄이기 UI·기기 FPS/메모리·장기 균형·수동 정타/코스별 모든 연출 조합은 별도 인수입니다.
 
 ## 2026-10-21 2루→1루 병살 — native-double-play-v1
 
@@ -550,7 +550,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - 내 선수가 실제 최초 처리 또는 피벗 재송구를 했다면 타구당XP사건1개만 기록합니다. 최초 처리자는 첫 경합,피벗은 둘째 경합의 성공 여부에 기존 참여2/성공추가3 배율을 적용합니다. 1루 수신/백업만 한 선수에게 XP를 주거나2아웃을 두 번 보상하지 않습니다. 최종 결과·XP·피로·달력 revision의 원자 save/실패 rollback·같은 입력 재시도·이어하기/보상1회는 유지합니다.
 - V1~V7 모델 필드는 유지하고 v0.56 이하 진행/완료 경기는 nil/version1 단일 송구와 원문/난수를 그대로 사용합니다. 재진입으로 새 병살을 소급 생성하지 않습니다. 새 경기부터 적용하며1루수 시작·홈연계·뜬공귀루/번트 병살·삼중살·협살·중계·실책과 정식NPC/실기기·장기 균형은 후속입니다.
 
-최종 검증: 단위 테스트150개(신규9개)와 타자·투수 경기UI1개가 모두 통과했습니다(실패/건너뜀0). 두 경합 시간·360개 상황 조합·제3아웃 득점 취소·실제 디스크 피벗XP 이어하기/저장실패 rollback/재시도/중복방지·v0.56 원문 및 난수 보존을 검증했습니다. UI에서 양 역할 모두 최근 병살 재생이 발생했으며 타자의2루 OUT→1루 SAFE와 투수의2루 OUT→1루 OUT, 두 도착 시간 및 결과 재열기 후 집계 유지를 확인했습니다. 캡처4개를 직접 열어 확인했고 공유 프로젝트 Release arm64 빌드와 Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.57이며 기존812블록을 유지했습니다. 상세 증거와 별도 인수 범위는 `qa/double-play-verification.md`를 따릅니다. 사용자 시뮬레이터/저장은 변경하지 않았습니다.
+최종 검증: 단위 테스트150개(신규9개)와 타자·투수 경기UI1개가 모두 통과했습니다(실패/건너뜀0). 두 경합 시간·360개 상황 조합·제3아웃 득점 취소·실제 디스크 피벗XP 이어하기/저장실패 rollback/재시도/중복방지·v0.56 원문 및 난수 보존을 검증했습니다. UI에서 양 역할 모두 최근 병살 재생이 발생했으며 타자의2루 OUT→1루 SAFE와 투수의2루 OUT→1루 OUT, 두 도착 시간 및 결과 재열기 후 집계 유지를 확인했습니다. 캡처4개를 직접 열어 확인했고 공유 프로젝트 Release arm64 빌드와 Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.57이며 기존812블록을 유지했습니다. 상세 증거와 별도 인수 범위는 `qa/versions/legacy/double-play/notes/double-play-verification.md`를 따릅니다. 사용자 시뮬레이터/저장은 변경하지 않았습니다.
 
 ## 2026-10-21 뜬공 포구·태그업 — native-fly-tag-v1
 
@@ -561,7 +561,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - 내 실제 포구 처리자는 타구당 기존XP사건1개를 포구 성공으로 기록합니다. 선택 `caughtFly`와 실제 준비/낙하 시각으로 동시 도착 포구 성공도 명시하며 태그아웃 추가/수신/백업 보상은 없습니다. 결과·XP·피로·달력 revision 원자 save/실패 rollback·같은 입력 재시도·중단 복원·완료1회를 유지합니다.
 - V1~V7 엔티티 필드는 유지하고 선택 fly/caughtFly JSON으로 확장합니다. 기존 nil/v1/v2 경기 원문·RNG·단일송구/병살 규칙은 보존하며 새 경기부터 뜬공을 적용합니다. 파울/라인드라이브 분류·인필드플라이 선언·조기 출발/귀루 어필·중계/추가송구·실책과 정식 NPC/장기 균형은 후속입니다. 규칙 참고는 [MLB 희생플라이](https://www.mlb.com/glossary/standard-stats/sacrifice-fly), [MLB 공식 규칙 5.08·5.09](https://img.mlbstatic.com/mlb-images/image/upload/mlb/ub08blsefk8wkkd2oemz.pdf)입니다.
 
-최종 검증: 단위162개(신규12개)+타자·좌투 투수 경기UI1개=163개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 독립 시간 기준값·288개 점유/아웃/깊이/스피드 조합·포구 동률·3아웃 시간 득점·희생플라이 PA/AB/RBI·실제 디스크 CF포구XP 중단/최종save실패rollback/재시도/1회 반영과v0.57 version2 원문/RNG 보존을 확인했습니다. UI는 양 역할 직접 조작/중단·큰 글자·자동 종료/결과·최근 뜬공 재생/포구 시간·홈XP/피로·재열기/날짜 게이트를 검증했습니다. UI의 선택된 뜬공은 양 역할 모두2사 포구 이닝종료이며 태그업 시도 UI 조작 검증으로 확대하지 않습니다. 별도 저장JSON의3루→홈 SAFE/OUT은 같은 DetailedFieldReplayBoard 읽기 전용 렌더로 확인했습니다. 캡처/렌더6개를 직접 열어 검토했고 공유 프로젝트 Release arm64·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.58·총812블록을 유지하며 사용자 시뮬레이터/세이브는 변경하지 않았습니다. 상세 근거와 별도 인수 범위는 `qa/fly-tag-verification.md`를 따릅니다.
+최종 검증: 단위162개(신규12개)+타자·좌투 투수 경기UI1개=163개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 독립 시간 기준값·288개 점유/아웃/깊이/스피드 조합·포구 동률·3아웃 시간 득점·희생플라이 PA/AB/RBI·실제 디스크 CF포구XP 중단/최종save실패rollback/재시도/1회 반영과v0.57 version2 원문/RNG 보존을 확인했습니다. UI는 양 역할 직접 조작/중단·큰 글자·자동 종료/결과·최근 뜬공 재생/포구 시간·홈XP/피로·재열기/날짜 게이트를 검증했습니다. UI의 선택된 뜬공은 양 역할 모두2사 포구 이닝종료이며 태그업 시도 UI 조작 검증으로 확대하지 않습니다. 별도 저장JSON의3루→홈 SAFE/OUT은 같은 DetailedFieldReplayBoard 읽기 전용 렌더로 확인했습니다. 캡처/렌더6개를 직접 열어 검토했고 공유 프로젝트 Release arm64·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.58·총812블록을 유지하며 사용자 시뮬레이터/세이브는 변경하지 않았습니다. 상세 근거와 별도 인수 범위는 `qa/versions/legacy/fly-tag/notes/fly-tag-verification.md`를 따릅니다.
 
 ## 2026-10-21 외야 중계 플레이 — native-relay-v1
 
@@ -572,7 +572,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - 실제 최초처리/포구 또는 중계 재송구만 타구당 기존 XP사건1개를 만듭니다. 최초 포구자는 포구 성공, 중계자는 최종 경합 성공 여부로 기존 참여2/성공추가3 배율을 적용합니다. 최종수신/백업 보상은 없습니다. 결과·XP·피로·달력 revision 원자 save/실패 rollback·같은 입력 재시도·이어하기/완료1회는 유지합니다.
 - V1~V7 엔티티 필드는 유지하고 nil/v1/v2/v3 기존 경기 원문·RNG·단일송구/병살/뜬공·태그업 규칙을 보존합니다. 새 경기부터 중계를 적용합니다. 다중중계/커트·송구실책·동적 수신자 교체·정식NPC·실기기/접근성 직접조작·장기 경로/성적 균형은 후속입니다.
 
-최종 검증: 단위171개(신규9개)+타자·좌투 투수 경기UI1개=172개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 독립2구간 시간/직접 비교·능력에 따른 직접/중계와SAFE/OUT전환·중계점 대기/노드·432개 점유/아웃/코스/속도/땅볼·뜬공 조합·두 역할 실제 엔진/직접·자동 동일 사건열·손상거절·실제 디스크 중계XP 이어하기/최종save실패rollback/재시도/1회와v0.58 version3 원문/RNG 보존을 확인했습니다. UI에서 양 역할 모두 실제 최근 중계 재생이 발생했고 타자LF→2B→1루SAFE,투수RF→2B→3루SAFE·수신/재송구·직접/중계 비교와 결과 재열기/홈XP/피로/날짜 게이트를 검증했습니다. 최종 포구표식의 구장 내부/선수 옆 위치 보정은 읽기 전용 렌더·171단위·Release로 재확인했습니다. 캡처/렌더5개를 직접 검토했고 공유 프로젝트 Release arm64·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.59·총812블록을 유지하며 사용자 시뮬레이터/세이브는 변경하지 않았습니다. 상세 근거와 별도 인수 범위는 `qa/relay-verification.md`를 따릅니다.
+최종 검증: 단위171개(신규9개)+타자·좌투 투수 경기UI1개=172개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 독립2구간 시간/직접 비교·능력에 따른 직접/중계와SAFE/OUT전환·중계점 대기/노드·432개 점유/아웃/코스/속도/땅볼·뜬공 조합·두 역할 실제 엔진/직접·자동 동일 사건열·손상거절·실제 디스크 중계XP 이어하기/최종save실패rollback/재시도/1회와v0.58 version3 원문/RNG 보존을 확인했습니다. UI에서 양 역할 모두 실제 최근 중계 재생이 발생했고 타자LF→2B→1루SAFE,투수RF→2B→3루SAFE·수신/재송구·직접/중계 비교와 결과 재열기/홈XP/피로/날짜 게이트를 검증했습니다. 최종 포구표식의 구장 내부/선수 옆 위치 보정은 읽기 전용 렌더·171단위·Release로 재확인했습니다. 캡처/렌더5개를 직접 검토했고 공유 프로젝트 Release arm64·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.59·총812블록을 유지하며 사용자 시뮬레이터/세이브는 변경하지 않았습니다. 상세 근거와 별도 인수 범위는 `qa/versions/legacy/relay/notes/relay-verification.md`를 따릅니다.
 ## 2026-10-21 포구 실책·악송구 — native-misplay-v1
 
 - 신규 `detailedFieldVersion=5` 경기에서 최초 포구/송구, 중계 수신/재송구, 베이스 수신, 병살 피벗 재송구/1루 수신의 실제 기회를 시간순으로 확인합니다. 타구당 고정7난수 중 경기 결과를 바꾸는 첫 실책1개만 적용합니다. 포구 확률은 수비·안정 포구, 악송구 확률은 송구·거리를 사용하며 수치는 게임 밸런스 모델입니다.
@@ -581,7 +581,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - 도트 탑뷰에서 ERROR/WILD THROW, 공 회수·주자 추가 진루·수습 송구와 SAFE를 보여줍니다. 결과에 내 수비 실책·팀 실책·실책 출루를 원자료에서 집계하며 최근 실책 재생과 결과 재열기는 읽기 전용입니다. 실제 처리/중계/피벗/회수 참여만 타구당XP1개를 만들고 내 실책은 성공 보너스를 받지 않습니다.
 - V1~V7 엔티티 필드와 기존 선수·구종·기록은 유지합니다. 진행 중인 nil/v1~v4 경기는 원래 규칙/난수/원문으로 이어가고 새 경기부터 적용합니다. 종료 결과·XP·피로·달력의 원자 저장, 실패 rollback/동일 입력 재시도·중단 복원·결과1회 반영을 보존합니다.
 
-최종 검증: 전체 단위184개(신규13개)+타자·좌투 투수 경기UI1개=185개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 확률/능력 경계·216개 기본 배치의 실제 기회별 변형·포구 실패 강제진루·기존 아웃/안타/RBI/SF 보존·치타 재출발·두 역할 직접/자동 사건열·손상 거절·실제 디스크 실책XP 이어하기/종료save실패rollback/재시도/1회와v0.59 version4 원문/RNG를 확인했습니다. UI에서 타자1B 포구 실책과 투수 화면의 상대P 악송구/추가2베이스, 이동/정지·재생/결과 재열기 집계 불변·홈XP/피로/날짜 게이트를 확인했습니다. UI 이후 재출발/치타 배율 보정은 최종184단위·Release로 재검증했습니다. 캡처/읽기 전용 렌더6개를 직접 검토했고 개인 설정을 제외한 공유 프로젝트 Release·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.60·812블록으로 동기화했습니다. 사용자 시뮬레이터/세이브는 변경하지 않았습니다. 상세 근거는 `qa/misplay-verification.md`입니다. 연속/복합실책·수습 후 재아웃·자책점 재구성·실기기/iOS17/접근성 직접조작·성능/장기 밸런스는 별도입니다. 이전 차수 아래 검증 이력의 실책 미구현 표시는 당시 버전의 범위입니다.
+최종 검증: 전체 단위184개(신규13개)+타자·좌투 투수 경기UI1개=185개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 확률/능력 경계·216개 기본 배치의 실제 기회별 변형·포구 실패 강제진루·기존 아웃/안타/RBI/SF 보존·치타 재출발·두 역할 직접/자동 사건열·손상 거절·실제 디스크 실책XP 이어하기/종료save실패rollback/재시도/1회와v0.59 version4 원문/RNG를 확인했습니다. UI에서 타자1B 포구 실책과 투수 화면의 상대P 악송구/추가2베이스, 이동/정지·재생/결과 재열기 집계 불변·홈XP/피로/날짜 게이트를 확인했습니다. UI 이후 재출발/치타 배율 보정은 최종184단위·Release로 재검증했습니다. 캡처/읽기 전용 렌더6개를 직접 검토했고 개인 설정을 제외한 공유 프로젝트 Release·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.60·812블록으로 동기화했습니다. 사용자 시뮬레이터/세이브는 변경하지 않았습니다. 상세 근거는 `qa/versions/legacy/misplay/notes/misplay-verification.md`입니다. 연속/복합실책·수습 후 재아웃·자책점 재구성·실기기/iOS17/접근성 직접조작·성능/장기 밸런스는 별도입니다. 이전 차수 아래 검증 이력의 실책 미구현 표시는 당시 버전의 범위입니다.
 
 ## 2026-10-21 투수 강판·교체와 책임 주자 — native-pitcher-change-v1
 
@@ -592,7 +592,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - 교체 시점/남긴 주자·책임별 실점도 기존 경기 JSON과 함께 이어갑니다. 종료 결과·실제 참여XP·피로·달력revision의 기존 원자save, 실패rollback/동일입력 재시도·완료재열기 무보상을 유지합니다. 도트 교체/결과는 읽기 전용이고 동작 줄이기를 따릅니다.
 - 자책점ER/ERA 이닝 재구성·투수 승패/홀드/세이브, 실명 불펜/재교체·실점/위기/부상·수동 강판/3타자 의무, 실기기/접근성 직접조작·장기 밸런스는 후속입니다. 실점R 귀속과 이 항목들의 완료를 구분합니다.
 
-최종 검증: 전체 단위192개(신규8개)+두 역할 경기UI1개=193개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 한도/타석 경계·피로 강판/개인 성적 고정·승계 득점/FC 책임·48개 역할/시드 자동 경기·손상 거절·실제 디스크 강판 후 중단/미완료 날짜 잠금/종료save실패rollback/재시도/보상1회·v0.60 필드 없는 원문/완투RNG 보존을 확인했습니다. UI는 정상 생성→양 역할 직접 조작/중단·큰 글자/자동 종료·결과 재열기/홈XP/피로/날짜 게이트와 실제 투수4.1이닝93구 강판/강판시11·최종11실점/책임주자실점0을 확인했습니다. UI에서 양수 승계실점이나 직접 투구로 중간 강판 화면에 도달했다고 확대하지 않으며 해당 상태는 디스크 단위/저장JSON 읽기 전용 렌더로 검증했습니다. UI 이후 양팀 책임 실점 검증·능력 snapshot 없는 선수의 시작피로 보존은 최종 단위/Release로 재검증했습니다. 캡처/렌더3개를 직접 확인했고 공유 프로젝트 Release·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.61·812블록으로 동기화했으며 표 구조/중복 본문을 확인했습니다. 이전 버전의 강판 미구현 표시는 당시 범위입니다. 근거와 Xcode 최종 실행 상태는 `qa/pitcher-change-verification.md`를 따릅니다.
+최종 검증: 전체 단위192개(신규8개)+두 역할 경기UI1개=193개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 한도/타석 경계·피로 강판/개인 성적 고정·승계 득점/FC 책임·48개 역할/시드 자동 경기·손상 거절·실제 디스크 강판 후 중단/미완료 날짜 잠금/종료save실패rollback/재시도/보상1회·v0.60 필드 없는 원문/완투RNG 보존을 확인했습니다. UI는 정상 생성→양 역할 직접 조작/중단·큰 글자/자동 종료·결과 재열기/홈XP/피로/날짜 게이트와 실제 투수4.1이닝93구 강판/강판시11·최종11실점/책임주자실점0을 확인했습니다. UI에서 양수 승계실점이나 직접 투구로 중간 강판 화면에 도달했다고 확대하지 않으며 해당 상태는 디스크 단위/저장JSON 읽기 전용 렌더로 검증했습니다. UI 이후 양팀 책임 실점 검증·능력 snapshot 없는 선수의 시작피로 보존은 최종 단위/Release로 재검증했습니다. 캡처/렌더3개를 직접 확인했고 공유 프로젝트 Release·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.61·812블록으로 동기화했으며 표 구조/중복 본문을 확인했습니다. 이전 버전의 강판 미구현 표시는 당시 범위입니다. 근거와 Xcode 최종 실행 상태는 `qa/versions/legacy/pitcher-change/notes/pitcher-change-verification.md`를 따릅니다.
 
 ## 2026-10-21 연간 리그 순위 — native-league-v1
 
@@ -603,7 +603,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 - V1~V7 모델/필드·선수/구종/훈련·경기 원문/RNG·하루 행동·원자 결과/XP/피로 저장과 기존 날짜 실패/부분 성공 규칙을 유지합니다. 자동 리그 결과는 개인 성적/피로/XP를 만들지 않습니다. 타자·투수는 선수별 달력/6교/seed/결과를 분리합니다. 경력 시작 전/고교 연령 밖 일정은 제외하고 중복/손상/과거 미완료 기록과 fetch 실패는 오류/재확인으로 표시합니다.
 - 이 리그 차수 당시 후속이던 개인 시즌 합계·결산/우승은 native-season-v1, 다음 시즌 진행은 native-offseason-v1으로 완료했습니다. 정식 NPC/리그 수준/장기 균형·실기기/접근성 직접 조작은 후속입니다. 이전 절의 리그 미구현 표시는 당시 버전 범위입니다.
 
-최종 검증: 단위203개(신규11개)+두 역할 리그UI1개=204개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 독립 seed/점수 기준값·실제 무승부 우선·3개년90대진/팀30/승패·정확 분수/공동 순위/0대시·경력/나이/연도 경계·손상/과거미완료 거절·두 역할 실제 완료/조회 무보상·날짜 실패rollback/재시도·디스크 원문/역할 분리를 확인했습니다. 최종UI는 재실행마다 이름/역할을 명시 확인해 각 선수의0→실제1→다음날3결과·순위/홈/6행 가로범위·큰 글자/재실행 피로 불변을 검증했습니다. 타자 인창고2:1승/공동1위·다른 팀6:6무, 투수 소래고0:3패/2→공동4위를 확인했고 최종 캡처6개를 직접 검토했습니다. 잘못된 기본역할 캡처는 최종 근거에서 제외했습니다. 공유 프로젝트 Release·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.62·812블록으로 동기화합니다. 상세 근거와 최종 Xcode 실행 상태는 `qa/annual-league-verification.md`를 따릅니다.
+최종 검증: 단위203개(신규11개)+두 역할 리그UI1개=204개 통과, 실패/건너뜀0·runtimeWarnings=[]입니다. 독립 seed/점수 기준값·실제 무승부 우선·3개년90대진/팀30/승패·정확 분수/공동 순위/0대시·경력/나이/연도 경계·손상/과거미완료 거절·두 역할 실제 완료/조회 무보상·날짜 실패rollback/재시도·디스크 원문/역할 분리를 확인했습니다. 최종UI는 재실행마다 이름/역할을 명시 확인해 각 선수의0→실제1→다음날3결과·순위/홈/6행 가로범위·큰 글자/재실행 피로 불변을 검증했습니다. 타자 인창고2:1승/공동1위·다른 팀6:6무, 투수 소래고0:3패/2→공동4위를 확인했고 최종 캡처6개를 직접 검토했습니다. 잘못된 기본역할 캡처는 최종 근거에서 제외했습니다. 공유 프로젝트 Release·Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서는v0.62·812블록으로 동기화합니다. 상세 근거와 최종 Xcode 실행 상태는 `qa/versions/legacy/annual-league/notes/annual-league-verification.md`를 따릅니다.
 
 ### 연도별 개인 시즌 성적·30경기 결산 (native-season-v1)
 
@@ -611,7 +611,7 @@ free-training-v2 검증(현재 생성 선수 복사): 단위124개·서로 다�
 
 리그90대진/90결과·6팀 모두30경기·미완료 없음에서만 도트 트로피·우승팀/공동 우승·최종6팀 순위·내 성적을 확정합니다. 마지막 날 내 경기만 완료한88결과는 진행 중이며 기존 다음 날 진행으로 나머지2경기가 처리됩니다. 승률 동률은 공동 순위/공동 우승, 전90경기 무승부는 결산에서6팀 공동1위/우승·승률—입니다. 중도 시작/연령 경계의 부분 시즌은30경기 완료로 표시하지 않습니다.
 
-V1~V7 모델·원장/원문·완료/보상 경로는 변경하지 않았습니다. 별도 누적/결산 카운터 없이 조회하고 원장에 확정된 개인 결과와 기존 native-league-v1의 고정 자동 결과로 과거 연도를 복원합니다. 조회는 날짜·나이·피로·XP/보상을 변경하지 않습니다. 오류는 기존 저장을 보존한 채 재확인을 제공합니다. 오프시즌/다음 시즌 버튼은 아래 native-offseason-v1으로 연결했고 계약은 후속입니다. DEBUG의 `-season-summary-verification`은 사용자 저장을 열지 않는 메모리 전용 실제30경기 QA 구성입니다. 검증 근거는 로컬 `qa/season-summary-verification.md`를 따릅니다.
+V1~V7 모델·원장/원문·완료/보상 경로는 변경하지 않았습니다. 별도 누적/결산 카운터 없이 조회하고 원장에 확정된 개인 결과와 기존 native-league-v1의 고정 자동 결과로 과거 연도를 복원합니다. 조회는 날짜·나이·피로·XP/보상을 변경하지 않습니다. 오류는 기존 저장을 보존한 채 재확인을 제공합니다. 오프시즌/다음 시즌 버튼은 아래 native-offseason-v1으로 연결했고 계약은 후속입니다. DEBUG의 `-season-summary-verification`은 사용자 저장을 열지 않는 메모리 전용 실제30경기 QA 구성입니다. 검증 근거는 로컬 `qa/versions/legacy/season-summary/notes/season-summary-verification.md`를 따릅니다.
 
 최종 검증: 단위209개(신규6개)+서로 다른UI2개=211개 통과·실패/건너뜀0·runtimeWarnings=[]입니다. 두 역할 실제30경기·마지막 날88→저장된 다음 날90결과·출전만 합계·보상1회·과거 고정/새 연도0·최종일 save 실패rollback/재시도·SQLite 재열기/역할 독립을 확인했습니다. 일반 커리어UI의 완료→홈/진행 중 성적→재실행/날짜 자동 결과와 별도 inMemory 실제30경기 결산UI의 최종/6행·큰 글자·복귀 무변경을 검증했습니다. 상태 표시줄 대비 보정 후 결산UI1개/공유 Release를 재검증했고 반복 실행은 합산하지 않습니다. Git 보안7개도 통과했습니다. 정본 Pages/로컬4문서를 v0.63으로 동기화하고 기존812블록·표 열/중복과 현재 완료 상태를 확인했습니다. 사용자 시연용 저장/웹 런타임/기존 개인 Xcode 설정은 보존했습니다. 실기기/iOS17·VoiceOver/Reduce Motion 직접·물리 디스크 장애/조회 오류 주입UI·이전연도 버튼 실제UI/장기 균형은 별도 인수입니다.
 
@@ -622,7 +622,7 @@ V1~V7 모델·원장/원문·완료/보상 경로는 변경하지 않았습니�
 
 나이·학적 변경일 직전에 멈추며 확인 후 첫 하루만 기념일을 통과합니다. 다음4월1일을 넘기거나 첫 경기를 완료하지 않고 기존 연30일정·준비/경기 완료 게이트로 돌아갑니다. 고3 뒤19세에는 졸업/진로준비와 고교 일정 없음으로 전환하며 프로/대학 소속을 자동 배정하지 않습니다. 과거 결산/부분 시즌/이미 도착/낡은 날짜·revision/미완료 훈련·경기는 진행을 거부합니다. 연도 경계 후 재진입은 전년도 최신 결산을 찾고 진행 중 결산 선택 연도를 고정합니다. 도트 날짜 전환/진행 중지·동작 줄이기를 재사용하며 전환 중 성적 원장 재조회는 보류하고 종료 후 갱신합니다.
 
-V1~V7 엔티티/필드·기존 저장/seed/보상1회 경로는 변경하지 않습니다. DEBUG `-offseason-verification`은 앱 임시 경로의 별도 SQLite에 실제30경기 QA를 만들고 앱 재실행 때 재사용합니다. 사용자 기본 store와 구분하며 출시에 포함하지 않습니다. 계약/과제/노화·성인 소속/일정은 별도입니다. 근거는 ignored `qa/offseason-verification.md`를 따릅니다.
+V1~V7 엔티티/필드·기존 저장/seed/보상1회 경로는 변경하지 않습니다. DEBUG `-offseason-verification`은 앱 임시 경로의 별도 SQLite에 실제30경기 QA를 만들고 앱 재실행 때 재사용합니다. 사용자 기본 store와 구분하며 출시에 포함하지 않습니다. 계약/과제/노화·성인 소속/일정은 별도입니다. 근거는 ignored `qa/versions/legacy/offseason/notes/offseason-verification.md`를 따릅니다.
 
 최종 검증: 단위217개(신규8개)+서로 다른UI2개=219개 통과·실패/건너뜀0·runtimeWarnings=[]입니다. 실제 두 역할190일/30일씩·각 날짜 저장/준비 사용일 수면만·기념일 정지/확인/개막·원본/구종/원장 불변과 취소·첫/중간/기념일 실패rollback/재시도·윤년/Legacy기념일·고3→19세/고교 종료·SQLite 연도 경계/역할 독립을 확인했습니다. UI는 별도 임시 SQLite에서 두 역할1월21일 재실행→4월1일17세/고2·미사용/피로0/첫 일정/새 합계0·이전 결산 불변,별도 메모리 최대 글자에서 버튼/30일/요약을 확인했습니다. 진행 중 원장 재조회 보류 후 동일10초 배치 기한 시나리오를 통과했으며 중단/실패한 사전 실행은 합산하지 않습니다. 공유 Release·보안7개도 통과했습니다. 정본 Pages/로컬4문서는 v0.64로 동기화하고812블록/표/중복·완료 상태를 확인했습니다. 사용자 저장/개인 Xcode 설정과 웹 런타임은 보존했습니다. 실제기기/iOS17·VoiceOver/Reduce Motion/백그라운드·중지 UI 직접 조작·물리 저장 장애/조회 실패UI·장기 균형은 별도 인수입니다.
 
@@ -634,7 +634,7 @@ V1~V7 엔티티/필드·기존 저장/seed/보상1회 경로는 변경하지 않
 - 동작 줄이기에서도 투수 구종 비행 시간은 유지하며 일반 과제 동작150ms와 결과 확인800ms를 분리합니다. 컨택 입력 시간과4초 달리기는 유지합니다. 큰 글자는 짧은 필드 위 알림을 세로 조작부로 옮깁니다. 특성/포지션의 기존 수동 다음 시도는 유지합니다.
 - 미트 준비 위치 복원/포구 이동·전체 연출 중 재입력 잠금·이탈/비활성 취소를 적용합니다. 별도 연습장 시연도 반복 입력 잠금·원본 비율/남색 보드와 현재 공식 경기 안내를 사용합니다.
 - V1~V7/기존 payload·구속별 조작 시간/채점·성장량·5회·날짜/피로/하루 행동·이어하기/원자 보상1회 규칙은 변경하지 않습니다. 연출 콜백에서 추가 저장/RNG/보상은 실행하지 않습니다. 자유 연습의 메모리 복사/실제 저장 불변도 유지합니다.
-- 검증 근거는 로컬 `qa/pitch-rhythm-verification.md`와 해당 xcresult/summary에 보관합니다. 캡처/진단·개인 Xcode 설정·사용자 세이브는 Git에 포함하지 않습니다.
+- 검증 근거는 로컬 `qa/versions/legacy/pitch-rhythm/notes/pitch-rhythm-verification.md`와 해당 xcresult/summary에 보관합니다. 캡처/진단·개인 Xcode 설정·사용자 세이브는 Git에 포함하지 않습니다.
 - 후속 제안: 세트별 집중 목표/무보상 연속 성공 연출·능력별 원인 코칭·훈련장 준비 동작/효과음·기존 선수 프로젝트/관찰 과제 연계입니다. 이번에 구현한 기능이나 추가 계약 가점/보상으로 표시하지 않습니다.
 
 최종 검증: 단위218개·관련UI4개(12종×5회 자유 연습/정식 구종 이어하기·1회 보상/두 역할 경기·큰 글자/좌투·시연·지구력 대기 막대) 통과, 실패·건너뜀0·runtimeWarnings=[]입니다. 공유 설정 Release와 Git 보안7개도 통과했습니다. 초기 장시간 통합UI의5초 대기 가정은15초로 수정했고 최종 관련 경로를4개UI로 나눠 검증했습니다. 기존 장시간 단일 통합 전체 재실행·실기기/iOS17/VoiceOver·모든 구종/외형/정오답 조합·음향/새 포구 스프라이트·장기 밸런스는 별도 인수입니다.
@@ -662,7 +662,7 @@ V1~V7 엔티티/필드·기존 저장/seed/보상1회 경로는 변경하지 않
 - 최초 적격일의 현 능력/구종·출전 표본·역할H·구단 모집/경쟁 기준C·동일 환경Vref/P/F를 평가 원장에 고정하며 같은 창은 성장/재실행/확인 후에도 다시 계산하지 않습니다. 다음 연도는 별도 키입니다. 기존 저장은 현재 유효 창/현재 날짜만 최초 등록하고 지난 창/첫날 자료를 소급 생성하지 않습니다.
 - 날짜/회복·하루 행동/소속·필요28일 보고서/평가를 한save로 확정하며 실패 rollback·묶음 부분 성공을 유지합니다. 묶음/오프시즌은 평가 도착 저장 직후 또는 미확인 평가가 있는 현재 날짜에 정지합니다. 홈의 자료 확인은 확인 플래그만 저장하며 날짜/피로·행동/달력revision·보상을 바꾸지 않습니다.
 - 홈의 연간 창·고정 날짜/신청 경로·역할H/심사 대기·평가 이력을 표시합니다. 현재 자료 고정은 합격/제의가 아닙니다. 졸업 성적·모집/예산/경쟁·실제 제의/수락/첫 등록·성인 일정은 완료했으며 인증 평가전·소속 선수 권리/갱신 심사는 후속이고 누락 정보를0점/통과로 대신하지 않습니다.
-- 검증: 전체 단위281개+타자/투수 평가 홈UI1개=282개 통과, 실패/건너뜀0·runtimeWarnings=[]. 창1/14/15일·나이/소속/11월 차단·최초 적격 기념일·같은 창/다음 연도·확인/실패·묶음 정지/부분 성공·V9 이전/재열기·진행 경기/결과1회·손상 보존을 확인했습니다. 공유 Simulator Release와 Git 보안7개도 통과했습니다. 근거는 ignored qa/contract-window-test-summary.json·contract-window-verification.md입니다. 실기기/VoiceOver·실제 입단 심사는 후속입니다.
+- 검증: 전체 단위281개+타자/투수 평가 홈UI1개=282개 통과, 실패/건너뜀0·runtimeWarnings=[]. 창1/14/15일·나이/소속/11월 차단·최초 적격 기념일·같은 창/다음 연도·확인/실패·묶음 정지/부분 성공·V9 이전/재열기·진행 경기/결과1회·손상 보존을 확인했습니다. 공유 Simulator Release와 Git 보안7개도 통과했습니다. 근거는 ignored qa/versions/legacy/contract-window/reports/contract-window-test-summary.json·contract-window-verification.md입니다. 실기기/VoiceOver·실제 입단 심사는 후속입니다.
 
 
 ### 인플레이 수비 재생·결과 공개 순서 (ui-inplay-field-v1, 2026-10-22)
@@ -747,7 +747,7 @@ V1~V7 엔티티/필드·기존 저장/seed/보상1회 경로는 변경하지 않
 
 송구·포구 미리보기 연결(2026-10-23):1/2/3루수 대상 선택과 대상 방향 송구·독립 PixelBaseball12×12·상대 포구/공 모으기를 연결했다. 준비/달리기/낮은 포구/모으기 후3.9초에 릴리스하고,시연 거리로0.65+거리/600초 비행한 뒤에만 포구 완료를 표시한다. 시연의7.8초 반복과 실제 경기 시각/판정을 혼동하지 않는다. 공은 릴리스 손에서 포구 자세 글러브로 작은 포물선을 따라 이동하며 도착 후 글러브에 가려진다. 대상 표시·한 단계씩 보기와 동작 줄이기 시 수동 전환,읽기 중 입력 잠금·윤곽 표시 캐시를 추가했다. 손/글러브 기준점은 시연용 상대 좌표이며 정식 iOS 접촉 앵커 인수는 후속이다.
 
-검증:자산/송구 시각 검사5개·Git 보안7개 통과,3대상의 비행→포구 완료→공 확보와 실시간 자동 재생·390px 가로 넘침 없음을 확인했다. 경계 검사에서 발견한 릴리스 시각 부동소수점 오차를 수정했다. 브라우저 자동 대기의3초 제한으로 긴 도착 대기는 나누어 확인했으며 최종 실시간 포구 상태를 관찰했다. 실제 iOS 렌더·경기 엔진·기존 저장/이어하기/XP/결과1회 반영은 수정하지 않았다. 근거는 scripts/test_field_sprites.py와 qa/fielder-throw-flight-v1.png,qa/fielder-throw-catch-v1.png다.
+검증:자산/송구 시각 검사5개·Git 보안7개 통과,3대상의 비행→포구 완료→공 확보와 실시간 자동 재생·390px 가로 넘침 없음을 확인했다. 경계 검사에서 발견한 릴리스 시각 부동소수점 오차를 수정했다. 브라우저 자동 대기의3초 제한으로 긴 도착 대기는 나누어 확인했으며 최종 실시간 포구 상태를 관찰했다. 실제 iOS 렌더·경기 엔진·기존 저장/이어하기/XP/결과1회 반영은 수정하지 않았다. 근거는 scripts/test_field_sprites.py와 qa/versions/legacy/field-characters/captures/fielder-throw-flight-v1.png,qa/fielder-throw-catch-v1.png다.
 
 
 ## iOS 수비 원본 연결 완료 (native-field-raster-v1 · 2026-10-23)
@@ -771,7 +771,7 @@ V1~V7 엔티티/필드·기존 저장/seed/보상1회 경로는 변경하지 않
 
 생성:내장 imagegen,기존 fielder-se-v1와 catcher-parts 스타일 참조,투명4×2의 N/NE/E/SE/S/SW/W/NW. 주자3행동·포수5행동·야수 높이 포구1행동을 각각 생성했으며 번호/로고/공을 그려 넣지 않도록 요청했다. 포수 송구 준비 원본의 불필요한 추가 글러브는 도구로 수정했고,방향/손 예외는 manifest로 명시했다. PNG 자체를 코드로 편집하지 않고 윤곽·색·번호는 런타임 표시에서 처리한다.
 
-검증 근거:ios/qa/native-field-raster-verification.md,field-raster-accepted-units.json,field-raster-accepted-ui.json와 실제 UI 캡처. 초기67/100개·이전UI 통과는 최종 개수에 중복 합산하지 않았다. 로컬 MVP/일정/설계/구현 현황4개를 갱신했으며 외부 Pages 저장/동기화는 수행하지 않았다.
+검증 근거:ios/qa/versions/legacy/native-field-raster/notes/native-field-raster-verification.md,field-raster-accepted-units.json,field-raster-accepted-ui.json와 실제 UI 캡처. 초기67/100개·이전UI 통과는 최종 개수에 중복 합산하지 않았다. 로컬 MVP/일정/설계/구현 현황4개를 갱신했으며 외부 Pages 저장/동기화는 수행하지 않았다.
 
 Xcode 최종 실행 확인:BM-raster-final-acceptance QA iPhone에서 최신 빌드 Running 상태와 기존 QA 선수/경기 이어하기 홈을 확인했다. 보호 기기의 재실행은 자동 승인 검토에서 거절되어 QA 기기로 실행했으며,사용자 저장의 삭제/초기화/재설치는 하지 않았다.
 
@@ -784,7 +784,7 @@ Xcode 최종 실행 확인:BM-raster-final-acceptance QA iPhone에서 최신 빌
 
 개발 일정: 수비 시각 연출의 조기 종료 수정 항목이다. 새 수비 판정·능력·리그/계약 범위를 추가하지 않는다. Domain/Persistence·스키마·RNG·저장된 노드/비행 시간·기존 경기·XP/보상/결과 1회 반영은 변경하지 않는다. 웹의 독립 스프라이트 시연은 실제 경기와 별도이며 이번 수정은 iOS 실제 경기 및 결과 재생에 적용한다.
 
-검증: 최종 소스 단위/회귀 테스트 105개와 타자·투수/큰 글자 UI 테스트 1개 통과(실패·건너뜀 0). 저장 시점 0·타구 비행·포구/송구·중계/병살·긴 플레이 비압축·단계별 동작 줄이기·불투명 달리기 프레임·정적 보드 콜백 분리·경기 이어하기/결과 1회 회귀를 확인했다. 스프라이트 검증 6개·Git 보안 7개 통과, 개인 설정을 제외한 공유 프로젝트 Simulator Release 빌드 성공. Xcode 최신 QA 빌드/실행 및 경기 이어하기/수비 다시 보기를 직접 확인했다. 실제 사용자 보호 기기·저장을 변경하지 않았다. 최종 QA 결과는 로컬 qa/field-playback-units.json, qa/field-playback-ui.json에 보관하며 실기기/iOS17·장기 성능 검증은 포함하지 않는다.
+검증: 최종 소스 단위/회귀 테스트 105개와 타자·투수/큰 글자 UI 테스트 1개 통과(실패·건너뜀 0). 저장 시점 0·타구 비행·포구/송구·중계/병살·긴 플레이 비압축·단계별 동작 줄이기·불투명 달리기 프레임·정적 보드 콜백 분리·경기 이어하기/결과 1회 회귀를 확인했다. 스프라이트 검증 6개·Git 보안 7개 통과, 개인 설정을 제외한 공유 프로젝트 Simulator Release 빌드 성공. Xcode 최신 QA 빌드/실행 및 경기 이어하기/수비 다시 보기를 직접 확인했다. 실제 사용자 보호 기기·저장을 변경하지 않았다. 최종 QA 결과는 로컬 qa/versions/legacy/field-motion/reports/field-playback-units.json, qa/field-playback-ui.json에 보관하며 실기기/iOS17·장기 성능 검증은 포함하지 않는다.
 
 
 ## 실책 안내와 포구·송구 선명화 (native-field-motion-v2 · 2026-10-23)
@@ -795,7 +795,7 @@ Xcode 최종 실행 확인:BM-raster-final-acceptance QA iPhone에서 최신 빌
 
 개발 일정은 수비 연출 1번 보완으로 처리한다. native-field-playback-v2의 저장 시간 1:1·동작 줄이기 단계 재생·종료 뒤 결과 공개를 유지하고 엔진/원장/스키마·기존 저장·날짜/피로·경기 이어하기·XP/보상/결과 1회 반영을 변경하지 않는다. 별도 4174 웹 시연을 iOS 실제 경기로 표시하지 않는다.
 
-검증: 최종 단위/회귀 108개·타자/투수/큰 글자/이어하기 UI 1개 통과,실패/건너뜀0. 최종 실책 종류/우리·상대/위치·안타 제외/인정 및 회수 선수 재송구·접촉 앵커/8방향/양손·단일 불투명 포즈를 검사했다. 최종 정적 렌더로 작은 실책 보드 줄바꿈과 포수 보폭/수신/송구 원본을 확인했다. 스프라이트6개·Git 보안7개 통과,개인 설정 제외 공유 Simulator Release 빌드 성공. Xcode 최신 QA 앱 Running·기존 포구 실책 재생 전후 카운트/주자 보존도 직접 확인했다. 실제 사용자 보호 기기/저장은 변경하지 않았고,개인 project.pbxproj 변경은 보존/커밋 제외한다. 로컬 qa/error-motion-units.json,qa/error-motion-ui.json 및 native-field-error-call.png/native-field-opaque-poses.png가 근거다. 실기기/iOS17·장기 성능·해당 당시에는 전체 실책 단계의 새 전용 원화가 인수 범위가 아니었으며 현행 실패/회수 원화는 아래 native-misplay-art-v1을 따른다.
+검증: 최종 단위/회귀 108개·타자/투수/큰 글자/이어하기 UI 1개 통과,실패/건너뜀0. 최종 실책 종류/우리·상대/위치·안타 제외/인정 및 회수 선수 재송구·접촉 앵커/8방향/양손·단일 불투명 포즈를 검사했다. 최종 정적 렌더로 작은 실책 보드 줄바꿈과 포수 보폭/수신/송구 원본을 확인했다. 스프라이트6개·Git 보안7개 통과,개인 설정 제외 공유 Simulator Release 빌드 성공. Xcode 최신 QA 앱 Running·기존 포구 실책 재생 전후 카운트/주자 보존도 직접 확인했다. 실제 사용자 보호 기기/저장은 변경하지 않았고,개인 project.pbxproj 변경은 보존/커밋 제외한다. 로컬 qa/versions/legacy/field-motion/reports/error-motion-units.json,qa/versions/legacy/field-motion/reports/error-motion-ui.json 및 native-field-error-call.png/native-field-opaque-poses.png가 근거다. 실기기/iOS17·장기 성능·해당 당시에는 전체 실책 단계의 새 전용 원화가 인수 범위가 아니었으며 현행 실패/회수 원화는 아래 native-misplay-art-v1을 따른다.
 
 
 ## 일반 타구·번트 속도와 궤적 (native-batted-ball-v1 · 2026-10-23)
@@ -816,7 +816,7 @@ Xcode 최종 실행 확인:BM-raster-final-acceptance QA iPhone에서 최신 빌
 
 개발 일정: 기존 2번을 타구 생성/저장→도트 궤적→수비·주루 연결→이전 저장/동일 환경 비교·회귀/화면 검증 순서로 반영한다. MVP12~16주 조건부 기준이나 계약/고교 확장 범위를 이번 작업으로 임의 재산정하지 않는다. 실측 타구 추적 데이터/장기 타율·장타율 균형은 별도 인수 대상이다.
 
-검증: 최종 관련 단위/회귀185개·타자/투수/큰 글자/이어하기 UI1개 통과(실패/건너뜀0). 능력/정확도/번트/경계값·타구 감속과 유형·도착 시간에 따른 세이프/아웃·양 역할 재개/결정성·기존 저장 새 규칙 미부여·디스크 재열기/rollback·결과/XP1회·스카우트 환경 분리와 직접/혼합/자동 비교를 검사했다. 스프라이트6개·Git 보안7개 통과,개인 설정을 제외한 공유 Simulator Release 빌드 성공. 실제 신규 QA 화면에서 뜬공/타구 km/h·도트 공과 주루 및 재진입을 확인했다. 로컬 qa/batted-ball-units.json,qa/batted-ball-ui.json,qa/native-batted-ball.png에 근거를 보관한다. 기존 사용자 저장/개인 project.pbxproj는 변경하지 않았다. 실기기/iOS17·장기 성적 균형/실측 물리 인수는 별도다.
+검증: 최종 관련 단위/회귀185개·타자/투수/큰 글자/이어하기 UI1개 통과(실패/건너뜀0). 능력/정확도/번트/경계값·타구 감속과 유형·도착 시간에 따른 세이프/아웃·양 역할 재개/결정성·기존 저장 새 규칙 미부여·디스크 재열기/rollback·결과/XP1회·스카우트 환경 분리와 직접/혼합/자동 비교를 검사했다. 스프라이트6개·Git 보안7개 통과,개인 설정을 제외한 공유 Simulator Release 빌드 성공. 실제 신규 QA 화면에서 뜬공/타구 km/h·도트 공과 주루 및 재진입을 확인했다. 로컬 qa/versions/legacy/batted-ball/reports/batted-ball-units.json,qa/versions/legacy/batted-ball/reports/batted-ball-ui.json,qa/native-batted-ball.png에 근거를 보관한다. 기존 사용자 저장/개인 project.pbxproj는 변경하지 않았다. 실기기/iOS17·장기 성적 균형/실측 물리 인수는 별도다.
 
 
 ## 주루와 베이스 도착 모션 (native-runner-motion-v1 · 2026-10-23)
@@ -825,7 +825,7 @@ Xcode 최종 실행 확인:BM-raster-final-acceptance QA iPhone에서 최신 빌
 
 출발 가속/베이스 회전·1루 통과 감속·2/3루 슬라이딩·태그업 대기와 포스 수신/태그를 구분한다. native-runner-motion-v1 당시 기존 래스터를 변형했으며, 현행 슬라이딩/태그/베이스 포구는 아래 native-arrival-art-v1 전용 원화를 사용한다. 홈 슬라이딩/다이빙은 별도다. 양손 손/미트 접촉·팀 색/번호·종료 뒤 결과 공개를 유지한다. 동작 줄이기는 저장된 주자 출발/도착 순차 정지 장면을 추가하며 위치 가속/통과는 생략한다.
 
-검증: 최종 관련 단위/회귀191개와 타자·투수/큰 글자/재실행 이어하기 UI1개가 통과했다(실패·건너뜀0). 반응 지연/모든 저장 베이스 도착·코너·1루 감속/양손320·390pt 화면 경계·2/3루 슬라이딩·태그업 대기/출발·병살 피벗·공/미트 앵커 및 기존 저장/결과1회 회귀를 검사했다. 스프라이트6개·Git 보안7개 통과,개인 설정을 제외한 공유 Simulator Release 빌드 성공. 로컬 qa/runner-motion-units.json·runner-motion-ui.json·native-runner-poses.png·native-runner-field.png에 근거를 보관한다. 실제 사용자 저장과 개인 project.pbxproj는 유지하며 실기기/iOS17·장기 프레임 측정은 별도다.
+검증: 최종 관련 단위/회귀191개와 타자·투수/큰 글자/재실행 이어하기 UI1개가 통과했다(실패·건너뜀0). 반응 지연/모든 저장 베이스 도착·코너·1루 감속/양손320·390pt 화면 경계·2/3루 슬라이딩·태그업 대기/출발·병살 피벗·공/미트 앵커 및 기존 저장/결과1회 회귀를 검사했다. 스프라이트6개·Git 보안7개 통과,개인 설정을 제외한 공유 Simulator Release 빌드 성공. 로컬 qa/versions/legacy/runner-motion/reports/runner-motion-units.json·runner-motion-ui.json·native-runner-poses.png·native-runner-field.png에 근거를 보관한다. 실제 사용자 저장과 개인 project.pbxproj는 유지하며 실기기/iOS17·장기 프레임 측정은 별도다.
 
 검증 중 최초 한 시즌 성장 테스트에서 invalidRecord가1회 발생했다. 같은 검사를 추가10회 실행하고 최종191개 전체를 다시 실행했을 때 재현되지 않았다. 당시 원인은 미확정이었으며 해당 테스트에 실패한 경기 입력 첨부를 추가했다. 이번 표시 작업에서는 기존 경기 엔진·타구 규칙·원장 검증을 완화하거나 변경하지 않았다.
 
@@ -842,7 +842,7 @@ NPC 도입 전 경기에서는 내 담당 위치만 경기 시작의 실제 스�
 
 가상 야수3능력·경기 고정 저장은 아래 native-npc-fielders-v1 완료분이며 정식 NPC 육성/로스터는 후속이다.
 
-검증: 최종 단위/회귀194개·재현실 조작/실제 저장 보존과 큰 글자 UI1개·실제 타자/투수 경기/이어하기 UI1개 통과(실패·건너뜀0). 9상황×3기량의 유효/결정적 자료·기준 결과·배속/일시정지/구간 이동·수동 보드 완료 콜백0회·기존 저장/보상1회를 검사했다. 스프라이트6개·Git 보안7개 통과,개인 설정 제외 공유 Simulator Release 빌드 성공. 최종 캡처에서 어두운 테마 대비와 큰 글자 세로 버튼/스크롤 접근을 확인했다. 로컬 qa/replay-lab-units.json·replay-lab-ui.json·replay-lab-game-ui.json·native-replay-lab.png·native-replay-lab-large.png가 근거다. 실제 사용자 저장/개인 project.pbxproj는 유지하며 실기기/iOS17·장기 성능/정식 NPC 육성/로스터는 별도다.
+검증: 최종 단위/회귀194개·재현실 조작/실제 저장 보존과 큰 글자 UI1개·실제 타자/투수 경기/이어하기 UI1개 통과(실패·건너뜀0). 9상황×3기량의 유효/결정적 자료·기준 결과·배속/일시정지/구간 이동·수동 보드 완료 콜백0회·기존 저장/보상1회를 검사했다. 스프라이트6개·Git 보안7개 통과,개인 설정 제외 공유 Simulator Release 빌드 성공. 최종 캡처에서 어두운 테마 대비와 큰 글자 세로 버튼/스크롤 접근을 확인했다. 로컬 qa/versions/legacy/replay-lab/reports/replay-lab-units.json·replay-lab-ui.json·replay-lab-game-ui.json·native-replay-lab.png·native-replay-lab-large.png가 근거다. 실제 사용자 저장/개인 project.pbxproj는 유지하며 실기기/iOS17·장기 성능/정식 NPC 육성/로스터는 별도다.
 
 
 ## 가상 야수 능력치와 경기 고정 저장 (native-npc-fielders-v1 · 2026-10-23)
@@ -855,7 +855,7 @@ NPC 도입 전 경기에서는 내 담당 위치만 경기 시작의 실제 스�
 
 적용 범위는 내 공식 경기와 비등판일 명시적 팀 경기 원장의 시뮬레이션이다. 날짜 진행 시 다른 팀끼리의 간이 리그 점수 생성, 정식 NPC 이름/외형·상세 타격/투구 능력·개별 훈련/노화·이적은 후속이다. 결과/능력·포지션XP/피로·리그 반영은 기존 원자 save/실패rollback·경기 이어하기·보상1회 경로를 사용한다. 기존12~16주 조건부 일정과 확장 범위 재산정 조건은 유지한다.
 
-검증: 최종 관련 단위/회귀202개+대학·국내 육성 실제 경기 원장2개(총204개),NPC 목록/양 역할 재실행·큰 글자 UI1개와 실제 타격/투구·인플레이/이어하기 UI1개가 통과했다(실패·건너뜀0). 고정 팀/시즌/위치·양팀 역할/내 실제값 우선·40개 양 역할 seed 경기 복원·실책/포구/송구·디스크 재열기/시작·완료 실패rollback·기존 nil 미이전/손상 원문 보존·중복 보상 거부·NPC1 스카우트 직접/혼합/자동을 확인했다. NPC 목록은 재실행 뒤 같은 역할을 다시 선택해18슬롯을 비교했다. 스프라이트6개·Git 보안7개 통과,개인 설정 제외 공유 Simulator Release 빌드 성공. 로컬 qa/npc-fielders-units.json·npc-fielders-adult-units.json·npc-fielders-roster-ui.json·npc-fielders-game-ui.json·native-npc-roster.png·native-npc-roster-large.png가 근거다. 실제 사용자 저장·개인 project.pbxproj는 보존/커밋 제외하며 실기기/iOS17·장기 리그 밸런스/seed 전수 인수는 별도다.
+검증: 최종 관련 단위/회귀202개+대학·국내 육성 실제 경기 원장2개(총204개),NPC 목록/양 역할 재실행·큰 글자 UI1개와 실제 타격/투구·인플레이/이어하기 UI1개가 통과했다(실패·건너뜀0). 고정 팀/시즌/위치·양팀 역할/내 실제값 우선·40개 양 역할 seed 경기 복원·실책/포구/송구·디스크 재열기/시작·완료 실패rollback·기존 nil 미이전/손상 원문 보존·중복 보상 거부·NPC1 스카우트 직접/혼합/자동을 확인했다. NPC 목록은 재실행 뒤 같은 역할을 다시 선택해18슬롯을 비교했다. 스프라이트6개·Git 보안7개 통과,개인 설정 제외 공유 Simulator Release 빌드 성공. 로컬 qa/versions/legacy/npc-fielders/reports/npc-fielders-units.json·npc-fielders-adult-units.json·npc-fielders-roster-ui.json·npc-fielders-game-ui.json·native-npc-roster.png·native-npc-roster-large.png가 근거다. 실제 사용자 저장·개인 project.pbxproj는 보존/커밋 제외하며 실기기/iOS17·장기 리그 밸런스/seed 전수 인수는 별도다.
 
 검증 중 중계1ULP 오류는 저장한 실패 입력으로 재현/수정하고 고정 회귀를 추가했다. 별도로 비동기 재생 검사1회가 완료되지 않아 QA를 재시작하고 개별 실행 시간 제한을 설정해 전체 재검사했다. 최종 전체는 통과했으며 이 검사 중단 원인을 NPC 판정 오류로 단정하지 않는다.
 
@@ -865,7 +865,7 @@ iOS 실제 타자·투수 상세 인플레이와 결과 다시 보기에 주자�
 
 기존 저장 노드/베이스·도착/통제/송구 시각으로 표시만 결정한다. NPC 프로필/능력치·타구/수비/주루 판정·난수·SwiftData V12/경기 JSON·중단 후 이어하기·XP/결과1회는 변경하지 않는다. 병살의 송구 준비/릴리스/팔로스루를 베이스 포구 자세로 덮지 않는다. 최종 결과는 기존처럼 인플레이 종료 뒤 공개한다.
 
-검증: 최종 관련 단위/회귀207개와 실제 타자·좌투 경기/큰 글자/재실행 이어하기 UI1개 통과(실패·건너뜀0, runtimeWarnings=[]). 전용 프레임8방향/양손·단일 불투명 포즈·일반/동작 줄이기·정지 뒤 회복·포구/태그 시각·병살 송구 우선·동일 글러브 공 접촉/저장 불변을 검사했다. 스프라이트7개·Git보안7개 통과, 개인 설정을 제외한 공유 Simulator Release 빌드 성공. 실제 사용자 세이브/보호 기기와 개인 project.pbxproj는 보존했다. 근거는 로컬 ios/qa/arrival-motion-units.json·arrival-motion-ui.json·native-arrival-poses.png·native-arrival-slide.png·native-arrival-tag.png·native-arrival-live-field.png다. 실기기/iOS17·장기 프레임/메모리·홈 슬라이딩/헤드퍼스트/다이빙·포수 달리기 전용 원화는 별도다.
+검증: 최종 관련 단위/회귀207개와 실제 타자·좌투 경기/큰 글자/재실행 이어하기 UI1개 통과(실패·건너뜀0, runtimeWarnings=[]). 전용 프레임8방향/양손·단일 불투명 포즈·일반/동작 줄이기·정지 뒤 회복·포구/태그 시각·병살 송구 우선·동일 글러브 공 접촉/저장 불변을 검사했다. 스프라이트7개·Git보안7개 통과, 개인 설정을 제외한 공유 Simulator Release 빌드 성공. 실제 사용자 세이브/보호 기기와 개인 project.pbxproj는 보존했다. 근거는 로컬 ios/qa/versions/legacy/arrival-motion/reports/arrival-motion-units.json·arrival-motion-ui.json·native-arrival-poses.png·native-arrival-slide.png·native-arrival-tag.png·native-arrival-live-field.png다. 실기기/iOS17·장기 프레임/메모리·홈 슬라이딩/헤드퍼스트/다이빙·포수 달리기 전용 원화는 별도다.
 
 ## 실책·악송구 전용 모션과 회수 연결 (native-misplay-art-v1 · 2026-10-23)
 
@@ -875,7 +875,7 @@ iOS 실제 타자·투수 인플레이/결과 다시 보기에 낮은 포구 놓
 
 악송구의 과거 원장에는 원래 수신자ID가 없으므로, 이탈점14m 이내의 저장 위치 야수 중 가장 가까운1명의 공 경로 접근 시점에 짧은 뻗기 반응만 표시한다. 후반 비행 접근(정규화0.4 이상)이 없으면 생략한다. 이 표시 추정을 실제 수신자/수비 참여·추가 포구 판정이나 보상으로 저장하지 않는다. 멀리 있는 야수를 순간이동시키지 않으며 실제 회수/재송구는 항상 저장 recoverer를 따른다.
 
-검증: 최종 관련 단위/회귀214개·고정 실책 회수/큰 글자 UI1개·실제 타자/좌투 경기/인플레이/재실행 이어하기 UI1개 통과(실패·건너뜀0, runtimeWarnings=[]). 원본4자세×8방향/양손·실책 원장의 느슨한 공/회수 시각·실패 송구 릴리스/미트 접촉·빠른/느린 확보 전환·동작 줄이기·기존 NPC/저장/결과1회를 검사했다. 스프라이트8개·Git보안7개 통과, 개인 설정 제외 공유 Simulator Release 빌드 성공 및 런타임 소스/아트 바이트 일치 확인. 사용자 기존 저장/보호 기기와 개인 project.pbxproj는 유지했다. 근거는 로컬 ios/qa/misplay-art-units.json·misplay-art-ui.json·native-misplay-art-poses.png·native-misplay-art-scoop.png·native-misplay-art-wild.png·native-misplay-art-field-ui.png·native-misplay-art-wild-ui.png다. 실기기/iOS17·장시간 프레임/메모리·연속 실책/수습 후 추가 아웃은 미검증/후속이다.
+검증: 최종 관련 단위/회귀214개·고정 실책 회수/큰 글자 UI1개·실제 타자/좌투 경기/인플레이/재실행 이어하기 UI1개 통과(실패·건너뜀0, runtimeWarnings=[]). 원본4자세×8방향/양손·실책 원장의 느슨한 공/회수 시각·실패 송구 릴리스/미트 접촉·빠른/느린 확보 전환·동작 줄이기·기존 NPC/저장/결과1회를 검사했다. 스프라이트8개·Git보안7개 통과, 개인 설정 제외 공유 Simulator Release 빌드 성공 및 런타임 소스/아트 바이트 일치 확인. 사용자 기존 저장/보호 기기와 개인 project.pbxproj는 유지했다. 근거는 로컬 ios/qa/versions/legacy/misplay-art/reports/misplay-art-units.json·misplay-art-ui.json·native-misplay-art-poses.png·native-misplay-art-scoop.png·native-misplay-art-wild.png·native-misplay-art-field-ui.png·native-misplay-art-wild-ui.png다. 실기기/iOS17·장시간 프레임/메모리·연속 실책/수습 후 추가 아웃은 미검증/후속이다.
 
 ## 포수 전신 달리기와 중계 전환 (native-catcher-relay-motion-v1 · 2026-10-23)
 
@@ -883,13 +883,13 @@ iOS 실제 타자·투수 인플레이와 결과 다시 보기에 포수 전용 
 
 중계 원장의 실제 cutoff receiveAt/releaseAt·공/야수/주자 노드와 기존 gather/windup 구간을 그대로 사용한다. 공을 빼기 전에는 같은 원화의 글러브, 이후에는 실제 던지는 손 기준점을 공에 적용한다. 판정용 송구 준비/비행 시간과 직접/중계 선택·NPC/실제 능력·수비/주루·실책·스키마/저장/이어하기·XP 및 결과1회를 변경하지 않는다. 병살/직접 송구/실책 수습은 기존 모션을 유지하며 새 중계 전환 프레임을 섞지 않는다.
 
-검증: 최종 관련 단위/회귀221개·고정 중계 공 빼기/발 디딤 UI1개·실제 타자/좌투 경기·큰 글자/재실행 이어하기 UI1개 통과(실패·건너뜀0, runtimeWarnings=[]). 포수 전신2보폭·8방향/양손·중계3자세·글러브→던지는 손의 동일 프레임 접촉·동작 줄이기·기존 병살/실책/직접 송구 분리·NPC/저장/결과1회를 검사했다. 스프라이트9개·Git보안7개 통과, 개인 설정 제외 공유 Simulator Release 빌드 성공 및 런타임 소스/아트 바이트 일치를 확인했다. 기존 사용자 저장/보호 기기와 개인 project.pbxproj는 보존했다. 근거는 로컬 ios/qa/relay-transfer-units.json·relay-transfer-ui.json·native-catcher-relay-poses.png·native-relay-transfer-0/1/2.png·native-relay-extract-ui.png·native-relay-plant-ui.png다. 실기기/iOS17·장기 프레임/메모리와 추가 포수 보폭 원화/다중중계는 미검증/후속이다.
+검증: 최종 관련 단위/회귀221개·고정 중계 공 빼기/발 디딤 UI1개·실제 타자/좌투 경기·큰 글자/재실행 이어하기 UI1개 통과(실패·건너뜀0, runtimeWarnings=[]). 포수 전신2보폭·8방향/양손·중계3자세·글러브→던지는 손의 동일 프레임 접촉·동작 줄이기·기존 병살/실책/직접 송구 분리·NPC/저장/결과1회를 검사했다. 스프라이트9개·Git보안7개 통과, 개인 설정 제외 공유 Simulator Release 빌드 성공 및 런타임 소스/아트 바이트 일치를 확인했다. 기존 사용자 저장/보호 기기와 개인 project.pbxproj는 보존했다. 근거는 로컬 ios/qa/versions/legacy/relay-transfer/reports/relay-transfer-units.json·relay-transfer-ui.json·native-catcher-relay-poses.png·native-relay-transfer-0/1/2.png·native-relay-extract-ui.png·native-relay-plant-ui.png다. 실기기/iOS17·장기 프레임/메모리와 추가 포수 보폭 원화/다중중계는 미검증/후속이다.
 
 ## 타격 접촉→인플레이 연속 전환 (native-contact-handoff-v1 · 2026-10-23)
 
 완료: 실제 타자 스윙/번트·투수 동일 타석 페어볼의 접촉 후 저장 경로 비행과 연속 시계 인플레이 전환. 같은 타구를 다시0초부터 표시하던 경로를 교체했다. MatchPresentation의 순수 표시 계산/보드, BallparkScene의 접촉 flight와 CareerGameView의 메모리 handoff만 런타임 변경했다. Domain/Persistence/스키마/NPC/판정·저장·이어하기·XP/결과1회는 그대로다. 다른 자동 타석의 접촉 전환 범위를 완료로 확대하지 않는다. 홈런은 별도 native-home-run-v1 완료분을 따른다.
 
-검증: 관련 단위/회귀225개와 최종 집중6개(그중 새 종료/카메라 렌더2개), 실제 타자·좌투 경기/큰 글자/재실행 이어하기 UI1개 통과, 실패·건너뜀0/runtimeWarnings=[]다. Python 스프라이트9개·Git 보안7개와 개인 설정 제외 공유 Simulator Release 빌드도 통과했다. 근거는 로컬 ios/qa/contact-handoff-units.json·contact-handoff-focused.json·contact-handoff-ui.json 및 native-contact-camera-entry.png·native-contact-camera-settled.png·native-contact-live-field.png다. 사용자 기존 세이브/보호 기기·개인 project.pbxproj는 보존했다. 실기기/iOS17·장기 FPS/메모리 인수는 별도다.
+검증: 관련 단위/회귀225개와 최종 집중6개(그중 새 종료/카메라 렌더2개), 실제 타자·좌투 경기/큰 글자/재실행 이어하기 UI1개 통과, 실패·건너뜀0/runtimeWarnings=[]다. Python 스프라이트9개·Git 보안7개와 개인 설정 제외 공유 Simulator Release 빌드도 통과했다. 근거는 로컬 ios/qa/versions/legacy/contact-handoff/reports/contact-handoff-units.json·contact-handoff-focused.json·contact-handoff-ui.json 및 native-contact-camera-entry.png·native-contact-camera-settled.png·native-contact-live-field.png다. 사용자 기존 세이브/보호 기기·개인 project.pbxproj는 보존했다. 실기기/iOS17·장기 FPS/메모리 인수는 별도다.
 
 ## 홈런 비행·베이스 일주·홈 도착 배너 (native-home-run-v1 · 2026-10-23)
 
@@ -897,7 +897,7 @@ iOS 실제 타자·투수 인플레이와 결과 다시 보기에 포수 전용 
 
 기존 홈런 판정·RNG 소비·점수/책임 주자·기록/경기 XP·피로/완료1회·SwiftData V12를 유지한다. 주자 조깅/외야 추적·비거리는 표시 모델이고 실제 물리/구장 계측값이 아니다. 영상 프레임 단위 이어하기·홈런 확률/능력 밸런스 조정·특별 축하 전용 스프라이트/음향·다이빙·도루/견제는 미구현/후속이다.
 
-검증: 관련 단위/회귀232개와 최종 홈런 집중8개(회귀와 일부 중복), 홈런 양 역할/큰 글자·실시간 일주 및 실제 타자/좌투 경기·재실행 이어하기 UI2개, 최종 공 표시 변경 후 홈런 UI1개 재검증이 모두 통과했다. 실패·건너뜀0/runtimeWarnings=[]이며 Python 스프라이트9개·Git 보안7개와 개인 설정 제외 공유 Simulator Release도 통과했다. 8가지 베이스 점유/남은 모든 루 통과·펜스 투영·홈 도착 전 배너 숨김·동작 줄이기/표시 취소·디스크 거리 보존/기존 nil 비소급·완료 후 중복 반영 거부를 검사했다. 근거는 로컬 ios/qa/home-run-units.json·home-run-final-focused.json·home-run-ui.json·home-run-final-ui.json 및 native-home-run-contact.png·native-home-run-fence.png·native-home-run-bases.png·native-home-run-home.png·native-home-run-large-ui.png다. 기존 사용자 세이브/보호 기기·개인 project.pbxproj를 유지했다. 실기기/iOS17·장기 FPS/메모리·전체 경기 시각 인수는 후속이다.
+검증: 관련 단위/회귀232개와 최종 홈런 집중8개(회귀와 일부 중복), 홈런 양 역할/큰 글자·실시간 일주 및 실제 타자/좌투 경기·재실행 이어하기 UI2개, 최종 공 표시 변경 후 홈런 UI1개 재검증이 모두 통과했다. 실패·건너뜀0/runtimeWarnings=[]이며 Python 스프라이트9개·Git 보안7개와 개인 설정 제외 공유 Simulator Release도 통과했다. 8가지 베이스 점유/남은 모든 루 통과·펜스 투영·홈 도착 전 배너 숨김·동작 줄이기/표시 취소·디스크 거리 보존/기존 nil 비소급·완료 후 중복 반영 거부를 검사했다. 근거는 로컬 ios/qa/versions/legacy/home-run/reports/home-run-units.json·home-run-final-focused.json·home-run-ui.json·home-run-final-ui.json 및 native-home-run-contact.png·native-home-run-fence.png·native-home-run-bases.png·native-home-run-home.png·native-home-run-large-ui.png다. 기존 사용자 세이브/보호 기기·개인 project.pbxproj를 유지했다. 실기기/iOS17·장기 FPS/메모리·전체 경기 시각 인수는 후속이다.
 
 ## 경기 연출 통합 검증·캐시 성능 점검 (native-match-integration-v1 · 2026-10-23)
 
@@ -909,7 +909,7 @@ iOS 실제 타자·투수 인플레이와 결과 다시 보기에 포수 전용 
 
 성능: 동일 QA/단독 Debug 약175초에서 이미지 생성426→239회, 누적 생성 픽셀187.96→101.65MiB, Canvas 명령 준비 p95 35.041→2.498ms였다. 최종 채택 코드의 -O 진단은 p95 1.172/p99 27.974/최대220.969ms, 프로세스 표본 최대122.909MiB·종료83.877MiB다. Debug의 프로세스 표본 최대는 개선 전116.299/후124.877MiB로 낮아지지 않았다. 원본 추가16MiB 캐시는 적중28/249(약11%)·p95 1.147ms로 비용 대비 이득이 작아 제외했다. 이 약0.22초는 사전 준비 도입 전 측정값이다. 사전 준비/가려진 경기장 정지는 아래 native-field-preparation-v1을 따르며 실기기 최적화 인수는 후속이다. 이 수치를 GPU 프레임률/실기기/iOS17·장기 누수 통과로 해석하지 않는다.
 
-근거는 로컬 ios/qa/match-integration-units.json·match-integration-home-run-repeat.json·match-integration-small-ui.json·match-integration-live-ui.json·match-rendering-comparison.json·match-integration-verification.md다. 약175초 외 역할별4회 투구 update도 별도로 계측했다. 기존 사용자 세이브/보호 기기와 개인 project.pbxproj는 보존했고 캡처·원시 계측/저장 데이터는 Git에 포함하지 않는다.
+근거는 로컬 ios/qa/versions/legacy/match-integration/reports/match-integration-units.json·match-integration-home-run-repeat.json·match-integration-small-ui.json·match-integration-live-ui.json·match-rendering-comparison.json·match-integration-verification.md다. 약175초 외 역할별4회 투구 update도 별도로 계측했다. 기존 사용자 세이브/보호 기기와 개인 project.pbxproj는 보존했고 캡처·원시 계측/저장 데이터는 Git에 포함하지 않는다.
 
 ## 인플레이 모션 사전 준비·가려진 경기장 정지 (native-field-preparation-v1 · 2026-10-23)
 
@@ -923,7 +923,7 @@ iOS 실제 타자·투수 인플레이와 결과 다시 보기에 포수 전용 
 
 실제 화면 성능: iPhone17e/iOS27 QA 시뮬레이터의 -O+DEBUG 진단에서 같은 저장 플레이를 프로세스 재시작 후 각각 재생했다. 투수의 CPU Canvas 명령 준비 p95 24.786→1.180ms/최대181.438→1.369ms, 33ms 초과 명령3→0회, 가려진 SpriteView update447→0회였다. 해당 화면 콜백 간격 p95 49.787→34.130ms/최대186.402→66.458ms이며 GPU 프레임률이 아니다. 준비 후 이미지 조회1890회/누락0, 준비0.357초·37장/16.949MiB였다. 타자 실제 화면 재생은 p95 1.086ms/최대1.446ms, 준비 후 조회1908회/누락0·가려진 update0, 준비0.196초·15장/7.046MiB였다. 타자 변경 전 동일 장면 성능은 별도 계측하지 않았다.
 
-투수 프로세스의3초 간격 메모리 표본 최대는 기존129.909/준비 적용131.690MiB였다. 메모리 감소나 순간 최대/누수 없음을 주장하지 않는다. 캡처로 양 역할의 불투명 선수·공/구장/전광판과 큰 글자 배치를 확인했다. 근거: 로컬 ios/qa/motion-preparation-regression.json·motion-preparation-final-focused.json·motion-live-ui.json·motion-live-performance-summary.json·motion-preparation-verification.md. 사용자 저장/보호 기기·개인 project.pbxproj는 보존했고 캡처·세이브·원시 계측은 Git에 포함하지 않는다. 실기기/GPU FPS·iOS17·장시간 발열/메모리 검증은 별도다.
+투수 프로세스의3초 간격 메모리 표본 최대는 기존129.909/준비 적용131.690MiB였다. 메모리 감소나 순간 최대/누수 없음을 주장하지 않는다. 캡처로 양 역할의 불투명 선수·공/구장/전광판과 큰 글자 배치를 확인했다. 근거: 로컬 ios/qa/versions/legacy/motion-preparation/reports/motion-preparation-regression.json·motion-preparation-final-focused.json·motion-live-ui.json·motion-live-performance-summary.json·motion-preparation-verification.md. 사용자 저장/보호 기기·개인 project.pbxproj는 보존했고 캡처·세이브·원시 계측은 Git에 포함하지 않는다. 실기기/GPU FPS·iOS17·장시간 발열/메모리 검증은 별도다.
 
 ## 일반 땅볼 SpriteKit 표시·Canvas 비교 (native-ground-spritekit-v1 · 2026-10-24)
 
@@ -941,7 +941,7 @@ V12 저장/경기 판정·NPC/능력·원장/이어하기·XP/결과1회·날짜
 
 타자는 준비0.333/0.350초·이미지36장/16.560MiB, 투수는0.347/0.358초·41장/18.377MiB였다. SpriteKit은 정적 배경/공을 포함한 텍스처38/43장을 준비하고 실제 자세 교체179/210회·런타임 추가 텍스처0을 확인했다. 가려진 기존 투구/타격 장면 update는 양쪽 모두0이었다. 프로세스 메모리3초 표본 최대는 타자 Canvas130.628/SpriteKit138.300MiB, 투수127.643/137.034MiB로 증가했다. 감소/누수 없음·물리 기기 GPU/발열 통과를 주장하지 않는다.
 
-근거: 로컬 ios/qa/ground-sprite-regression.json·ground-sprite-final-focused.json·ground-sprite-live-ui.json·ground-sprite-comparison-summary.json·ground-sprite-verification.md 및 native-ground-*.png. 기존 사용자 저장/보호 기기·개인 project.pbxproj를 보존했고 원자료/캡처/개인 설정은 Git에 포함하지 않는다. 실기기/iOS17·GPU/장기 메모리/발열과 다른 플레이의 SpriteKit 이관은 후속이다.
+근거: 로컬 ios/qa/versions/legacy/ground-sprite/reports/ground-sprite-regression.json·ground-sprite-final-focused.json·ground-sprite-live-ui.json·ground-sprite-comparison-summary.json·ground-sprite-verification.md 및 native-ground-*.png. 기존 사용자 저장/보호 기기·개인 project.pbxproj를 보존했고 원자료/캡처/개인 설정은 Git에 포함하지 않는다. 실기기/iOS17·GPU/장기 메모리/발열과 다른 플레이의 SpriteKit 이관은 후속이다.
 
 ## 경기 표시 데이터 재사용·갱신 분리와 화면 보관 (native-match-display-read-v1 · 2026-10-24)
 
@@ -955,11 +955,49 @@ V12 저장/경기 판정·NPC/능력·원장/이어하기·XP/결과1회·날짜
 
 실기기30Hz QA: 약46초 기록에100ms 이상 hang0/열 상태Nominal. 20~24초의 일반 땅볼 구간에는 snapshot 해석 표본0, surface swap120회, 간격p50/p95 약33.339ms/최대50.008ms·40ms 초과4회였다. 이 구간 개별 GPU interval 최대1.198ms는 전체 프레임 GPU 시간 합계가 아니다. 기존 앱과 QA는 선수/기록·빌드가 달라 개선율을 산출하지 않는다. 사용자는 타자에서 감소를 잠시 확인했으나 이후 타자·투수 모두 여전히 큰 끊김을 보고했다.60Hz QA도 '아주 조금 빨라진 것 같지만 여전함'으로 확인했다. 따라서 실기기 부드러움 인수는 미완료이며 해결/60fps 보장으로 기록하지 않는다. 다음은60Hz 개별 표시 간격 분석과 남은 Canvas/동작 전환의 대표 장면 분리다.
 
-근거: ios/qa/display-read-focused-summary.json, display-read-ui-summary.json, display-read-phone-summary.json 및 display-read-verification.md. 전체 기획의 기존12~16주 조건부 기준과 추가 범위 실측 재산정 원칙은 유지한다. 완료된 표시 데이터 재사용/단계 갱신은 재구현 대상에서 제외하되 성능 인수는 열린 검증 항목으로 남긴다. 외부 Pages 정본은 이번 작업에서 동기화하지 않았다.
+근거: ios/qa/versions/legacy/display-read/reports/display-read-focused-summary.json, display-read-ui-summary.json, display-read-phone-summary.json 및 display-read-verification.md. 전체 기획의 기존12~16주 조건부 기준과 추가 범위 실측 재산정 원칙은 유지한다. 완료된 표시 데이터 재사용/단계 갱신은 재구현 대상에서 제외하되 성능 인수는 열린 검증 항목으로 남긴다. 외부 Pages 정본은 이번 작업에서 동기화하지 않았다.
 
 
 추가 진단과 재생 선택: 사용자 확인에 따라 측정 중 동작 줄이기를 다시 켠 시점이 있었음을 반영했다. 자동 QA에서 UIKit/SwiftUI/effectiveReduced/저전력 값을 따로 기록했고, effectiveReduced=true인 Canvas는p50 약150.022ms, false인 비교 장면은약33.33ms였다.60Hz 일반 땅볼 업데이트는p50 약16.67ms였다. 시스템 값이 장면 사이에 바뀌었으므로 이 실행을 통제된 전체 성능 개선율로 사용하지 않는다. 이로써 단계별 위치 선택을 렌더링 부하와 구분했으며, 동작 줄이기를 껐을 때도 사용자가 보고한 잔여 끊김까지 해결됐다고 보지 않는다.
 
 실제 경기 상단 `재생` 메뉴에 시스템 설정/연속 재생/단계별 재생을 추가했다. 기본은 시스템 설정이며 선택만 앱 UserDefaults에 저장하고 SwiftData/선수/경기 원장을 바꾸지 않는다. 연속 재생은 주요 선수/공을 기존 저장 시간에 따라 계속 보간하고, 시스템 동작 줄이기가 켜져 있으면 카메라 이동·공 잔상은 줄인 상태를 유지한다. 일반 수비와 홈런에 같은 선택을 적용한다. 진행/저장 재시도 중에는 선택을 잠그고 재실행 뒤에도 선택을 유지한다.최종42개 집중 회귀와 메뉴 선택/설정 유지까지 확장한 실제 경기 UI1개가 통과했으며 아래 QA 보고서에 기록했다. DEBUG 자동 QA는 가상 저장 경로의 읽기 전용 장면8개를 별도 앱에서 재생하며 실제 선수 저장/보상/날짜를 사용하지 않는다.
 
-최종 재생 모드 자동 QA: 시스템 동작 줄이기를 켠 채 실제 제품과 같은30Hz 기본값으로8개 장면을 실행했다(qa/display-read-mode-autoplay-summary.json). 타자/투수 관점 모두 시스템 따름의 Canvas 간격 중앙값은약150.01ms, 연속 재생은약33.33ms였다. 일반 땅볼은 양쪽 모두30Hz 업데이트지만 연속 재생은 위치를 단계별로 제한하지 않는다. 강제60Hz 채택 없이 동작 정책 차이를 분리했다. 한 Canvas 연속 장면의 최대 간격79.116ms가 남아 전체 실기기 부드러움은 여전히 열린 인수 조건이다. QA 앱은 최종적으로 선수 홈으로 실행해 상단 재생 메뉴를 직접 확인할 수 있게 했다.
+최종 재생 모드 자동 QA: 시스템 동작 줄이기를 켠 채 실제 제품과 같은30Hz 기본값으로8개 장면을 실행했다(qa/versions/legacy/display-read/reports/display-read-mode-autoplay-summary.json). 타자/투수 관점 모두 시스템 따름의 Canvas 간격 중앙값은약150.01ms, 연속 재생은약33.33ms였다. 일반 땅볼은 양쪽 모두30Hz 업데이트지만 연속 재생은 위치를 단계별로 제한하지 않는다. 강제60Hz 채택 없이 동작 정책 차이를 분리했다. 한 Canvas 연속 장면의 최대 간격79.116ms가 남아 전체 실기기 부드러움은 여전히 열린 인수 조건이다. QA 앱은 최종적으로 선수 홈으로 실행해 상단 재생 메뉴를 직접 확인할 수 있게 했다.
+
+
+## 전체 인플레이 SpriteKit 통합과 동작 줄이기 대응 (native-inplay-spritekit-v2 · 2026-10-24)
+
+현행 표시 규칙은 이 절이다. 앞선 native-ground-spritekit-v1의 일반 땅볼 한정/나머지 Canvas와 native-match-display-read-v1의 시스템 설정에 따른 정지 재생은 이전 단계의 검증 이력이다. 이번 완료 범위로 대체하며 과거 측정값 자체를 새 결과로 바꾸지 않는다.
+
+InplayReplay.field/homeRun은 렌더링 입력만 통합한다. 공통 FieldReplaySprites/투영·FieldBallPresentation/HomeRunPresentation의 동일 시간 샘플을 InplayFieldScene이 읽고 기존 배우 노드와 nearest 텍스처를 갱신한다. 병살은 두 번째 릴리스부터1루 수신 위치를 표시하고 중계/실책 회수·태그업·슬라이딩/태그·홈런까지 저장된 각 단계 시점을 따른다. 저장 좌표 Double과 SpriteKit float의 표시 오차 허용은0.0001pt, 원문 정밀도는 불변이다.
+
+준비는 선택한 재생 모드와 관계없이 연속 모션 프레임 전체를 worker에서 합성하고 텍스처 사전 로딩을 마친 뒤 표시 시계를 시작한다. 준비 지연만 handoff 두 시각에 더하고 타구/주루 시간을 압축하거나 접촉을0초로 되돌리지 않는다. 화면 문구는 저장 단계 경계에서만 갱신하며 이동은 SKScene의 uptime 시계를 쓴다. static/previewTime은 조회 전용으로 resolved/complete를 호출하지 않는다. 취소 시 task/후속 callback을 폐기하고 완료 공개/다음 입력 순서를 유지한다.
+
+이동과 효과 정책은 독립이다. 기본 system/이전 continuous는 시스템 접근성 설정과 무관하게 연속 이동한다. 효과 감소는 시스템 동작 줄이기 또는 명시적 단계별에서 적용하며 카메라 전환·공 잔상·슬라이딩 먼지를 숨긴다. 명시적 stills만 기존 단계별 위치/hold를 사용한다. 메뉴에는 기본/단계별 두 항목만 보이고 이전 continuous 설정은 기본으로 표시한다. 키 bm.fieldPlaybackMode.v1·SwiftData 스키마는 변경하지 않는다.
+
+제품30Hz/전체 SpriteKit이다. Canvas는 DEBUG -field-canvas-comparison의 동일 저장 장면 비교에만 남는다. DEBUG -ground-60hz-comparison, 계측/40장면 자동 QA는 일반 Release에서 제외한다. 지표는 fieldSprite/homeRunSprite update CPU·호출 간격/표시 시각/메모리 표본이며 GPU 표시 FPS가 아니다. 실기기 QA는 별도 번들의 고정 읽기 전용 장면을 사용해 기존 BM 앱을 덮거나 선수 store를 열지 않는다. actual career UI/디스크 재열기 회귀와 구분해 보고한다.
+
+V12/물리·판정/타구 속도·NPC/성과 XP·결과1회/이어하기/하루 행동·날짜/피로는 수정하지 않는다. 렌더러가 새 물리/판정/RNG/보상을 생성하지 않는다. 최종 검증 수치/남은 인수 범위는 구현 현황을 따른다.
+
+
+## QA 버전별 기록 (2026-10-24)
+
+검증 자료는 로컬 전용 [QA 색인](qa/README.md)에서 확인한다. 이번 버전은 [native-inplay-spritekit-v2](qa/versions/2026-10-24/native-inplay-spritekit-v2/README.md)의 실행별 보고서/캡처/검증 기록을 사용한다. 기존689개는 원본 경로·SHA-256 목록과 함께 보존했고 원시 JSON/JSONL·이미지 바이트를 변경하지 않았다. 정확한 과거 릴리스가 확인되지 않는 자료는 legacy의 작업명 폴더에 두며 버전을 추정하지 않는다. 초기 실패/중단과 재검증을 별도 run에 남긴다. QA 로그/기기 식별 정보·캡처/저장은 공개 Git에서 제외한다.
+
+### 최종 검증 기록 · 2026-10-24
+
+최신 소스의 07-final-regression 단위45개/실패·건너뜀0/runtimeWarnings=[]가 통과했다. 앞선 실제 경기 UI와 전체10상황 통합 UI2개도 통과했으며 재실행 카운트/설정 보존·다시 보기 비중복·양역할/손/큰 글자를 확인했다. 최종 모션8개 재실행은45개와 중복이므로 합산하지 않는다. Python22개와 개인 설정을 제외한 공유 일반 Release arm64/x86_64·별도 실기기 QA 빌드가 통과했고 일반 바이너리에 계측/Canvas 비교/자동 QA 훅은 없다.
+
+실기기 1차40장면은 시스템 동작 줄이기ON 상태에서 모두 foreground 완료했다. 기본 이동은 연속이며 효과만 비교했다. 업데이트 간격 중앙값 약33.34ms, 그룹p95≤33.410ms/단일 최대49.786ms, update CPU p95≤0.633ms/최대1.560ms, 런타임 추가 텍스처0, 표본 메모리 최대159.13MiB였다. CPU callback을 GPU FPS·장기 발열/누수·다기기 보장으로 해석하지 않는다. 재실행의 백그라운드 중단1장면은 별도 interrupted로 남겼다. 최신 08-final-device의 최종 결과는 해당 run 기록을 따른다.
+
+초기 테스트의 홈런 대기/일반 땅볼 한정 조건과 이미지 캐시 적중 검사는 현재 전체 SpriteKit 구조에 맞게 수정 후 재검증했다. 실패/중단을 통과 자료로 덮어쓰지 않았다. PosterBoard 반복 충돌이 있었던 테스트 QA는 종료·보존했고 새 QA에서는 새 충돌이 없었다. 사용자 BM 저장/개인 Xcode 설정은 변경하지 않았다.
+
+QA는 `ios/qa/versions/2026-10-24/native-inplay-spritekit-v2/runs`에서 실행별 보고서/캡처/원시 로그를 분리한다. 기존689개는85개 작업 묶음과 원본 경로/해시 목록으로 보존했으며 원시607개(JSON/JSONL/PNG/JPG)는 바이트가 같다. 과거 릴리스 미확정 자료는 legacy에 분류했다. 루트에는 README/manifest만 두고 과거 문서 경로를 갱신했다. desing_v1과 실제 선수 데이터는 유지한다. QA/개인 로그는 공개 Git에 제외하고 공유 README/AGENTS만 커밋한다. 외부 Pages 정본 저장은 이번 로컬 반영에 포함하지 않았다.
+
+남은 인수는 iOS17/다른 기종·저전력/장기 발열/메모리·VoiceOver 직접 조작·사용자 최종 체감이다. 전체 SpriteKit 이관과 기본 동작 줄이기 대응 자체를 미구현 목록에 다시 넣지 않는다.
+
+### 08번 최신 빌드 실기기 QA 확정
+
+최신 검증 소스의 타자·투수 각10상황×효과 일반/감소40개가 모두 foreground 완료했다. 네 그룹 중앙값은33.338ms, p95 최대33.411ms, update CPU p95 최대0.602ms/단일 최대1.876ms, 런타임 추가 텍스처0, 표본 메모리 최대159.38MiB였다. 첫 타자 일반 효과/1루 세이프 장면의 표시 시각0.021→0.108초 사이에87.424ms 호출 간격1회가 있었고, 그 전후 update CPU는0.084/0.123ms였다. 단순 update 처리 비용만으로 원인을 단정하지 않으며 GPU/초기 장면 프레임 인수는 열린 항목으로 유지한다. 나머지50ms 초과 간격은 없었다. 기존 시스템 동작 줄이기의 반복 정지 정책은 제거했으나 전 구간/전 기종 무지연으로 기록하지 않는다.
+
+근거는 `ios/qa/versions/2026-10-24/native-inplay-spritekit-v2/runs/08-final-device`의 physical-summary.json·outliers.json·원시40개 JSON/실기기 PNG다. 최종 회귀45/실제·통합 UI2/Python22/공유 일반 Release·실기기 QA 빌드 통과와689개 정리 무결성/색인 링크 오류0을 함께 확인했다. 새로운 PosterBoard 충돌은0이며 QA 시뮬레이터는 종료·보존했다. 다음 성능 인수의 우선순위는 초기 첫 장면 GPU/표시 간격 재현·다른 기기/저전력이다. 기존 BM 저장·개인 프로젝트 파일은 유지했다.

@@ -511,7 +511,7 @@ struct CareerGameView: View {
                                         }.buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked).accessibilityIdentifier("replayLastHomeRun")
                                     }
                                     #if DEBUG
-                                    if ProcessInfo.processInfo.arguments.contains("-match-render-performance"),let ground=savedMatch.fieldPlays?.last(where:GroundFieldScene.supports) {
+                                    if ProcessInfo.processInfo.arguments.contains("-match-render-performance"),let ground=savedMatch.fieldPlays?.last(where:InplayFieldScene.isOrdinaryGround) {
                                         Button("일반 땅볼 비교 재생") {
                                             visualSnapshot=savedMatch;presenting=true;fieldResolved=false;fieldHandoff=nil;replay=ground
                                         }.buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked).accessibilityIdentifier("replayGroundComparison")
@@ -547,7 +547,7 @@ struct CareerGameView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Picker("인플레이 재생",selection:$fieldPlaybackRaw) {
+                    Picker("인플레이 재생",selection:Binding(get:{fieldPlaybackMode.menuValue},set:{fieldPlaybackRaw=$0})) {
                         ForEach(FieldPlaybackMode.allCases,id:\.rawValue) { mode in Text(mode.label).tag(mode.rawValue) }
                     }
                 } label: { Text("재생").font(.caption.bold()).frame(minWidth:44,minHeight:44) }
@@ -687,10 +687,12 @@ private struct MatchArenaFrameKey:PreferenceKey {
 
 enum FieldPlaybackMode: String, CaseIterable {
     case system, continuous, stills
+    static var allCases:[Self] {[.system,.stills]}
+    var menuValue:String {self == .continuous ? Self.system.rawValue:rawValue}
     var label: String {
-        switch self {case .system: "시스템 설정";case .continuous: "연속 재생";case .stills: "단계별 재생"}
+        switch self {case .system,.continuous: "기본 재생";case .stills: "단계별 재생"}
     }
     func reducesMovement(system: Bool) -> Bool {
-        switch self {case .system: system;case .continuous: false;case .stills: true}
+        switch self {case .system,.continuous: false;case .stills: true}
     }
 }

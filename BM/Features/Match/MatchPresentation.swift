@@ -1327,115 +1327,113 @@ enum InplayFieldProjection {
     }
 }
 
-struct DetailedFieldReplayBoard: View {
-    let play: MatchDetailedPlay
-    let appearance: PlayerAppearance
-    var animated = true
-    var jerseyNumber = 1
-    var ownPosition: String? = nil
-    var throwingHand = "right"
-    var ownTeamFielding: Bool? = nil
-    var scoreText = "IN PLAY"
-    var previewTime:Double? = nil
-    var reduceMotionOverride:Bool? = nil
-    var handoff:FieldContactHandoff? = nil
-    var showsContactPoints = false
+struct DetailedFieldReplayBoard:View {
+    let play:MatchDetailedPlay
+    let appearance:PlayerAppearance
+    var animated=true
+    var jerseyNumber=1
+    var ownPosition:String?=nil
+    var throwingHand="right"
+    var ownTeamFielding:Bool?=nil
+    var scoreText="IN PLAY"
+    var previewTime:Double?=nil
+    var reduceMotionOverride:Bool?=nil
+    var handoff:FieldContactHandoff?=nil
+    var showsContactPoints=false
     var playbackMode:FieldPlaybackMode = .system
     var preparesMotion=false
-    var onResolved: @MainActor () -> Void = {}
-    let complete: @MainActor () -> Void
+    var onResolved:@MainActor () -> Void = {}
+    let complete:@MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Environment(\.dynamicTypeSize) private var typeSize
-    private var reduced:Bool {reduceMotionOverride ?? playbackMode.reducesMovement(system:systemReduced)}
-    private var effectsReduced:Bool { reduceMotionOverride != nil ? reduced : (reduced || systemReduced) }
+    private var reduced:Bool {playbackMode.reducesMovement(system:systemReduced)}
+    private var replay:InplayReplay {.field(play)}
+    private var effectsReduced:Bool {reduceMotionOverride ?? (systemReduced || reduced)}
+    @State private var scene:InplayFieldScene?
+    @State private var prepared:FieldRasterArt.Prepared?
+    @State private var preparationDelay=0.0
     @State private var start:Double?
-    @State private var groundScene:GroundFieldScene?
-    private var usesGroundScene:Bool {
+    @State private var resolved=false
+    private var sprites:FieldReplaySprites {FieldReplaySprites(appearance:appearance,jerseyNumber:jerseyNumber,ownPosition:ownPosition,throwingHand:throwingHand,ownTeamFielding:ownTeamFielding)}
+    private var usesSpriteKit:Bool {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-field-canvas-comparison") {return false}
         #endif
-        return preparesMotion && animated && previewTime == nil && !showsContactPoints && GroundFieldScene.supports(play)
+        return true
     }
-    @State private var prepared:FieldRasterArt.Prepared?
-    @State private var preparationDelay=0.0
-    private var sprites:FieldReplaySprites {FieldReplaySprites(appearance:appearance,jerseyNumber:jerseyNumber,ownPosition:ownPosition,throwingHand:throwingHand,ownTeamFielding:ownTeamFielding)}
-    private var playbackHandoff:FieldContactHandoff? {
-        guard let value=handoff else {return nil}
-        return value.delayed(by:preparationDelay)
-    }
-    @State private var resolved = false
-    private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
-    private var phaseDates: [Date] {
-        guard let start else { return [.now] }
+    private var playbackHandoff:FieldContactHandoff? {handoff?.delayed(by:preparationDelay)}
+    private var phaseDates:[Date] {
+        guard let start else {return [.now]}
         let elapsed=playbackHandoff?.elapsed(at:start) ?? 0
         let origin=Date(timeIntervalSinceNow:start-ProcessInfo.processInfo.systemUptime)
-        return FieldReplayPhaseSchedule.moments(play).map { origin.addingTimeInterval(max(0,$0-elapsed)) }
+        return replay.phaseMoments.map {origin.addingTimeInterval(max(0,$0-elapsed)+0.001)}
     }
-    var body: some View {
+    var body:some View {
         Group {
-            if usesGroundScene {
-                TimelineView(.explicit(phaseDates)) { _ in replayFrame(now:ProcessInfo.processInfo.systemUptime) }
+            if usesSpriteKit {
+                TimelineView(.explicit(phaseDates)) {_ in frame(now:ProcessInfo.processInfo.systemUptime)}
             } else {
-                TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved || (preparesMotion && prepared == nil))) { _ in
-                    replayFrame(now:ProcessInfo.processInfo.systemUptime)
-                }
+                TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved || prepared == nil)) {_ in frame(now:ProcessInfo.processInfo.systemUptime)}
             }
         }
-        .task(id:play.eventID + (animated ? ":live":":still")) {
-            guard previewTime == nil else {return}
-            #if DEBUG
-            MatchRenderMetrics.motionPolicy=MatchRenderMetrics.MotionPolicy(effectiveReduced:reduced,swiftUIReduced:systemReduced,uiReduced:UIAccessibility.isReduceMotionEnabled,lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled)
-            #endif
-            if preparesMotion {
-                let began=ProcessInfo.processInfo.systemUptime
-                guard let requests=await sprites.requests(duration:play.duration,reduced:reduced,actorsAt:{sprites.actors(play,time:$0,reduced:reduced,finished:false)}),
-                      let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
-                if usesGroundScene {
-                    let scene=GroundFieldScene(play:play,sprites:sprites,prepared:images,scoreText:scoreText)
-                    await scene.preload()
-                    guard !Task.isCancelled else {return}
-                    groundScene=scene
-                }
-                prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
-                #if DEBUG
-                MatchRenderMetrics.motionPolicy=MatchRenderMetrics.MotionPolicy(effectiveReduced:reduced,swiftUIReduced:systemReduced,uiReduced:UIAccessibility.isReduceMotionEnabled,lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled)
-                MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
-                #endif
+        .task(id:replay.eventID+(animated ? ":live":":still")) {
+            let began=ProcessInfo.processInfo.systemUptime
+            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}),
+                  let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+            if usesSpriteKit {
+                let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText)
+                await next.preload()
+                guard !Task.isCancelled else {return}
+                scene=next
             }
+            prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
+            #if DEBUG
+            MatchRenderMetrics.motionPolicy=MatchRenderMetrics.MotionPolicy(effectiveReduced:reduced,effectsReduced:effectsReduced,swiftUIReduced:systemReduced,uiReduced:UIAccessibility.isReduceMotionEnabled,lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled)
+            MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
+            #endif
             start=ProcessInfo.processInfo.systemUptime;resolved=false
-            groundScene?.setClock(start:start!,handoff:playbackHandoff,reduced:reduced)
-            guard animated else {return}
-            let elapsed=playbackHandoff?.elapsed(at:ProcessInfo.processInfo.systemUptime) ?? 0
-            do {try await Task.sleep(for:.seconds(max(0,seconds-elapsed)))} catch {return}
+            scene?.setClock(start:start!,handoff:playbackHandoff,reduced:reduced)
+            guard animated,previewTime == nil else {return}
+            let elapsed=playbackHandoff?.elapsed(at:start!) ?? 0
+            do {try await Task.sleep(for:.seconds(max(0,replay.playbackSeconds-elapsed)))} catch {return}
             guard !Task.isCancelled else {return}
             resolved=true;onResolved()
-            if animated {
-                do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:reduced,match:true)))} catch {return}
-            }
+            do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:effectsReduced,match:true)))} catch {return}
             if !Task.isCancelled {complete()}
         }
     }
-    @ViewBuilder private func replayFrame(now:Double) -> some View {
-            let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:playbackHandoff,now:now)
-            let time=previewTime.map {max(0,min(play.duration,$0))} ?? (resolved ? play.duration:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:animated))
-            let finished=previewTime.map {$0>=play.duration} ?? (!animated || resolved)
-            let phase=FieldReplayPresentation.phase(play,time:time,finished:finished)
-            let second=play.secondThrow
-            let target=time >= (second?.releaseAt ?? .infinity) ? 1:play.targetBase
-            VStack(spacing:4) {
-                Text(finished ? "플레이 완료":phase).font(.system(.headline,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
-                    .lineLimit(typeSize.isAccessibilitySize ? nil:2).accessibilityIdentifier("fieldReplayPhase")
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("-match-render-performance") {
-                    Text((GroundFieldScene.supports(play) ? "일반 땅볼":"기타 플레이")+" · "+(usesGroundScene ? "SpriteKit":"Canvas"))
-                        .font(.system(size:10,design:.monospaced)).lineLimit(1).foregroundStyle(GameTheme.paper).accessibilityIdentifier("fieldRendererName")
-                }
-                #endif
-                GeometryReader { geometry in
-                if usesGroundScene,let groundScene {
-                    GroundFieldSurface(scene:groundScene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced)
+    @ViewBuilder private func frame(now:Double) -> some View {
+        let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:playbackHandoff,now:now)
+        let time=previewTime.map {max(0,min(play.duration,$0))} ?? (resolved || !animated ? play.duration:replay.time(elapsed:elapsed,reduced:reduced))
+        let finished=previewTime.map {$0>=play.duration} ?? (resolved || !animated)
+        VStack(spacing:4) {
+            Text(finished ? "플레이 완료":FieldReplayPresentation.phase(play,time:time,finished:false)).font(.system(.headline,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
+                .lineLimit(typeSize.isAccessibilitySize ? nil:2).accessibilityIdentifier("fieldReplayPhase")
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-match-render-performance") {
+                Text((InplayFieldScene.isOrdinaryGround(play) ? "일반 땅볼":"기타 플레이")+" · "+(usesSpriteKit ? "SpriteKit":"Canvas"))
+                    .font(.system(size:10,design:.monospaced)).lineLimit(1).foregroundStyle(GameTheme.paper).accessibilityIdentifier("fieldRendererName")
+            }
+            #endif
+            GeometryReader {geometry in
+                if usesSpriteKit {
+                    if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? play.duration:nil),showsContactPoints:showsContactPoints)}
+                    else {InplayPreparationView()}
                 } else {
-                Canvas { context,size in
+                    #if DEBUG
+                    legacyFrame(geometry:geometry,now:now,time:time,finished:finished)
+                    #endif
+                }
+            }.aspectRatio(2.0/3,contentMode:.fit)
+                .accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
+                .accessibilityValue(finished ? FieldReplayPresentation.errorDetail(play,ownTeamFielding:ownTeamFielding ?? !play.ownBatter) ?? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
+                .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
+        }.padding(4).background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
+    }
+    #if DEBUG
+    private func legacyFrame(geometry:GeometryProxy,now:Double,time:Double,finished:Bool) -> some View {
+        let target=time >= (play.secondThrow?.releaseAt ?? .infinity) ? 1:play.targetBase
+        return Canvas { context,size in
                     #if DEBUG
                     let measuredAt=MatchRenderMetrics.begin()
                     defer {MatchRenderMetrics.end("field",started:measuredAt)}
@@ -1517,14 +1515,8 @@ struct DetailedFieldReplayBoard: View {
                         }
                     }
                 }
-                }
-                }.aspectRatio(2.0/3,contentMode:.fit).accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
-                    .accessibilityValue(finished ? FieldReplayPresentation.errorDetail(play,ownTeamFielding:ownTeamFielding ?? !play.ownBatter) ?? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
-                    .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
-            }.padding(4).background(GameTheme.board)
-                .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
     }
-
+    #endif
 }
 
 struct FieldReplayDetails: View {
@@ -1734,28 +1726,87 @@ struct HomeRunReplayBoard:View {
     var onResolved:@MainActor () -> Void = {}
     var complete:@MainActor () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var systemReduced
-    private var reduced:Bool {reduceMotionOverride ?? playbackMode.reducesMovement(system:systemReduced)}
-    private var effectsReduced:Bool { reduceMotionOverride != nil ? reduced : (reduced || systemReduced) }
-    @State private var start=ProcessInfo.processInfo.systemUptime
+    private var reduced:Bool {playbackMode.reducesMovement(system:systemReduced)}
+    private var replay:InplayReplay {.homeRun(event)}
+    private var effectsReduced:Bool {reduceMotionOverride ?? (systemReduced || reduced)}
+    @State private var scene:InplayFieldScene?
     @State private var prepared:FieldRasterArt.Prepared?
     @State private var preparationDelay=0.0
-    private var sprites:FieldReplaySprites {FieldReplaySprites(appearance:appearance,jerseyNumber:jerseyNumber,ownPosition:ownPosition,throwingHand:throwingHand,ownTeamFielding:ownTeamFielding)}
-    private var playbackHandoff:FieldContactHandoff? {
-        guard let value=handoff else {return nil}
-        return value.delayed(by:preparationDelay)
-    }
+    @State private var start:Double?
     @State private var resolved=false
+    private var sprites:FieldReplaySprites {FieldReplaySprites(appearance:appearance,jerseyNumber:jerseyNumber,ownPosition:ownPosition,throwingHand:throwingHand,ownTeamFielding:ownTeamFielding)}
+    private var usesSpriteKit:Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-field-canvas-comparison") {return false}
+        #endif
+        return true
+    }
+    private var playbackHandoff:FieldContactHandoff? {handoff?.delayed(by:preparationDelay)}
+    private var phaseDates:[Date] {
+        guard let start else {return [.now]}
+        let elapsed=playbackHandoff?.elapsed(at:start) ?? 0
+        let origin=Date(timeIntervalSinceNow:start-ProcessInfo.processInfo.systemUptime)
+        return replay.phaseMoments.map {origin.addingTimeInterval(max(0,$0-elapsed)+0.001)}
+    }
     var body:some View {
-        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved || (preparesMotion && prepared == nil))) {_ in
-            let now=ProcessInfo.processInfo.systemUptime
-            let elapsed=playbackHandoff?.elapsed(at:now) ?? max(0,now-start)
-            let time=previewTime.map {max(0,min(event.duration,$0))} ?? (resolved || !animated ? event.duration:HomeRunPresentation.time(event,elapsed:elapsed,reduced:reduced))
-            let finished=previewTime.map {$0>=event.duration} ?? (resolved || !animated)
-            VStack(spacing:8) {
-                Text(HomeRunPresentation.phase(event,time:time,finished:finished)).font(.headline.monospaced()).foregroundStyle(GameTheme.gold)
-                    .accessibilityIdentifier("homeRunPhase")
-                GeometryReader {geometry in
-                    Canvas {context,size in
+        Group {
+            if usesSpriteKit {
+                TimelineView(.explicit(phaseDates)) {_ in frame(now:ProcessInfo.processInfo.systemUptime)}
+            } else {
+                TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved || prepared == nil)) {_ in frame(now:ProcessInfo.processInfo.systemUptime)}
+            }
+        }
+        .task(id:replay.eventID+(animated ? ":live":":still")) {
+            let began=ProcessInfo.processInfo.systemUptime
+            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}),
+                  let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+            if usesSpriteKit {
+                let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText)
+                await next.preload()
+                guard !Task.isCancelled else {return}
+                scene=next
+            }
+            prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
+            #if DEBUG
+            MatchRenderMetrics.motionPolicy=MatchRenderMetrics.MotionPolicy(effectiveReduced:reduced,effectsReduced:effectsReduced,swiftUIReduced:systemReduced,uiReduced:UIAccessibility.isReduceMotionEnabled,lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled)
+            MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
+            #endif
+            start=ProcessInfo.processInfo.systemUptime;resolved=false
+            scene?.setClock(start:start!,handoff:playbackHandoff,reduced:reduced)
+            guard animated,previewTime == nil else {return}
+            let elapsed=playbackHandoff?.elapsed(at:start!) ?? 0
+            do {try await Task.sleep(for:.seconds(max(0,replay.playbackSeconds-elapsed)))} catch {return}
+            guard !Task.isCancelled else {return}
+            resolved=true;onResolved()
+            do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:effectsReduced,match:true)))} catch {return}
+            if !Task.isCancelled {complete()}
+        }
+    }
+    @ViewBuilder private func frame(now:Double) -> some View {
+        let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:playbackHandoff,now:now)
+        let time=previewTime.map {max(0,min(event.duration,$0))} ?? (resolved || !animated ? event.duration:replay.time(elapsed:elapsed,reduced:reduced))
+        let finished=previewTime.map {$0>=event.duration} ?? (resolved || !animated)
+        VStack(spacing:8) {
+            Text(HomeRunPresentation.phase(event,time:time,finished:finished)).font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeRunPhase")
+            GeometryReader {geometry in
+                if usesSpriteKit {
+                    if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? event.duration:nil))}
+                    else {InplayPreparationView()}
+                } else {
+                    #if DEBUG
+                    legacyFrame(geometry:geometry,now:now,time:time,finished:finished)
+                    #endif
+                }
+            }.aspectRatio(2.0/3,contentMode:.fit).accessibilityElement(children:.ignore)
+                .accessibilityLabel(finished ? "홈런 · \(event.distance)m · \(event.runs)점":"타구 비행과 주자 베이스 일주")
+                .accessibilityValue(finished ? "홈 도착 완료":"진행 \(Int(time/event.duration*100))%")
+                .accessibilityIdentifier("homeRunCanvas")
+            if finished {Text("HOME RUN · \(event.distance)m · \(event.runs)점").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeRunCelebration")}
+        }.padding(4).background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
+    }
+    #if DEBUG
+    private func legacyFrame(geometry:GeometryProxy,now:Double,time:Double,finished:Bool) -> some View {
+        Canvas {context,size in
                         #if DEBUG
                         let measuredAt=MatchRenderMetrics.begin()
                         defer {MatchRenderMetrics.end("homeRun",started:measuredAt)}
@@ -1800,32 +1851,16 @@ struct HomeRunReplayBoard:View {
                             context.draw(Text("\(event.runs)점 · \(ownTeamFielding ? "상대 팀":"우리 팀") 홈 도착").font(.system(size:max(12,size.width*0.035),weight:.bold)).foregroundStyle(GameTheme.paper),at:CGPoint(x:banner.midX,y:banner.minY+banner.height*0.75))
                         }
                     }
-                }.aspectRatio(2.0/3,contentMode:.fit)
-                    .accessibilityElement(children:.ignore)
-                    .accessibilityLabel(finished ? "홈런 · \(event.distance)m · \(event.runs)점":"타구 비행과 주자 베이스 일주")
-                    .accessibilityValue(finished ? "홈 도착 완료":"진행 \(Int(time/event.duration*100))%")
-                    .accessibilityIdentifier("homeRunCanvas")
-                if finished {Text("HOME RUN · \(event.distance)m · \(event.runs)점").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeRunCelebration")}
-            }.padding(4).background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
-        }
-        .task(id:event.eventID+(animated ? ":live":":still")) {
-            guard previewTime == nil,animated else {return}
-            if preparesMotion {
-                let began=ProcessInfo.processInfo.systemUptime
-                guard let requests=await sprites.requests(duration:event.duration,reduced:reduced,actorsAt:{sprites.actors(event,time:$0,reduced:reduced)}),
-                      let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
-                prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
-                #if DEBUG
-                MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
-                #endif
-            }
-            start=ProcessInfo.processInfo.systemUptime;resolved=false
-            let elapsed=playbackHandoff?.elapsed(at:start) ?? 0
-            do {try await Task.sleep(for:.seconds(max(0,event.duration-elapsed)))} catch {return}
-            guard !Task.isCancelled else {return};resolved=true;onResolved()
-            do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:reduced,match:true)))} catch {return}
-            if !Task.isCancelled {complete()}
-        }
+    }
+    #endif
+}
+
+private struct InplayPreparationView:View {
+    var body:some View {
+        ZStack {
+            if let image=InplayStadiumArt.image {Image(uiImage:image).resizable().interpolation(.none).scaledToFit()}
+            Text("선수 모션 준비 중").font(.headline.monospaced()).foregroundStyle(GameTheme.paper).padding(8).background(GameTheme.navy)
+        }.frame(maxWidth:.infinity,maxHeight:.infinity)
     }
 }
 
@@ -1848,7 +1883,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     var snapshot:Snapshot {lock.withLock {Snapshot(hits:hits,misses:misses,entries:live.count,bytes:bytes,peakBytes:peak,generatedBytes:generated,evictions:evictions)}}
 }
 @MainActor enum MatchRenderMetrics {
-    struct Frame:Codable {let kind:String;let at:Double;let milliseconds:Double}
+    struct Frame:Codable {let kind:String;let at:Double;let milliseconds:Double;var playbackTime:Double?=nil}
     struct Preparation:Codable {let endedAt:Double;let seconds:Double;let images:Int;let bytes:Int}
     struct Memory:Codable {let at:Double;let bytes:UInt64}
     static var memory:[Memory]=[]
@@ -1864,7 +1899,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     static var preparations:[Preparation]=[]
     static var preparedHits=0,preparedMisses=0
     static var spriteTextureCount=0,spriteTextureSwaps=0,spriteFallbacks=0
-    struct MotionPolicy:Codable {let effectiveReduced:Bool;let swiftUIReduced:Bool;let uiReduced:Bool;let lowPower:Bool}
+    struct MotionPolicy:Codable {let effectiveReduced:Bool;let effectsReduced:Bool;let swiftUIReduced:Bool;let uiReduced:Bool;let lowPower:Bool}
     static var motionPolicy:MotionPolicy?
     static var enabled=false
     static func prepared(seconds:Double,images:FieldRasterArt.Prepared) {
@@ -1884,26 +1919,59 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     }
     private(set) static var frames:[Frame]=[]
     static func begin() -> Double? {enabled ? ProcessInfo.processInfo.systemUptime:nil}
-    static func end(_ kind:String,started:Double?) {
+    static func end(_ kind:String,started:Double?,playbackTime:Double?=nil) {
         guard enabled,let started,frames.count<12_000 else {return}
-        frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000))
+        frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000,playbackTime:playbackTime))
         sampleMemory()
     }
     static func reset() {motionPolicy=nil;frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
 }
 #endif
 
-// Presentation only: all movement, contact anchors and decisions come from the saved play.
-@MainActor final class GroundFieldScene:SKScene {
+// Rendering input only. All positions/times/results belong to the saved simulation.
+@MainActor enum InplayReplay {
+    case field(MatchDetailedPlay), homeRun(MatchHomeRun)
+    var eventID:String {switch self {case .field(let p):p.eventID;case .homeRun(let h):h.eventID}}
+    var duration:Double {switch self {case .field(let p):p.duration;case .homeRun(let h):h.duration}}
+    var playbackSeconds:Double {switch self {case .field: max(3,duration);case .homeRun:duration}}
+    var phaseMoments:[Double] {
+        switch self {
+        case .field(let p):FieldReplayPhaseSchedule.moments(p)
+        case .homeRun(let h):[0,h.flight,h.duration]
+        }
+    }
+    func time(elapsed:Double,reduced:Bool) -> Double {
+        switch self {
+        case .field(let p):FieldReplayPresentation.time(p,elapsed:elapsed,reduced:reduced,animated:true)
+        case .homeRun(let h):HomeRunPresentation.time(h,elapsed:elapsed,reduced:reduced)
+        }
+    }
+    func actors(_ sprites:FieldReplaySprites,time:Double,reduced:Bool,finished:Bool) -> [FieldReplaySprites.Actor] {
+        switch self {
+        case .field(let p):sprites.actors(p,time:time,reduced:reduced,finished:finished)
+        case .homeRun(let h):sprites.actors(h,time:time,reduced:reduced)
+        }
+    }
+    func ballPoint(time:Double,size:CGSize,leftIndex:Int?) -> CGPoint {
+        switch self {
+        case .field(let p):FieldBallPresentation.point(p,time:time,size:size,leftIndex:leftIndex)
+        case .homeRun(let h):HomeRunPresentation.ballPoint(h,time:time,size:size)
+        }
+    }
+}
+
+@MainActor final class InplayFieldScene:SKScene {
     static let fieldSize=CGSize(width:400,height:600)
-    static func supports(_ play:MatchDetailedPlay) -> Bool {
-        play.fly == nil && play.secondThrow == nil && play.relay == nil && play.misplay == nil
-        && (play.battedBall == nil || play.battedBall?.kind == .ground)
+    static func isOrdinaryGround(_ play:MatchDetailedPlay) -> Bool {
+        play.fly == nil && play.secondThrow == nil && play.relay == nil && play.misplay == nil && (play.battedBall == nil || play.battedBall?.kind == .ground)
     }
     @MainActor private final class ActorNode {
         let root=SKNode(),body=SKSpriteNode(),shadow=SKShapeNode(ellipseOf:CGSize(width:14,height:3)),selection=SKShapeNode(ellipseOf:CGSize(width:16,height:4))
         let dust=(0..<3).map {_ in SKSpriteNode(color:UIColor(red:0.76,green:0.60,blue:0.38,alpha:1),size:CGSize(width:2,height:1))}
         var textureKey:String?
+        #if DEBUG
+        let contact=SKShapeNode(circleOfRadius:3)
+        #endif
         init() {
             shadow.fillColor=UIColor.black.withAlphaComponent(0.25);shadow.strokeColor = .clear;shadow.position.y = -0.5
             selection.fillColor = .clear;selection.strokeColor=UIColor(GameTheme.gold);selection.lineWidth=1
@@ -1911,48 +1979,80 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
             root.addChild(shadow);root.addChild(selection)
             for node in dust {node.zPosition = -1;node.anchorPoint=CGPoint(x:0,y:1);root.addChild(node)}
             root.addChild(body)
+            #if DEBUG
+            contact.fillColor = .clear;contact.strokeColor=UIColor(GameTheme.gold);contact.lineWidth=1;contact.zPosition=3;contact.isHidden=true;root.addChild(contact)
+            #endif
         }
     }
-    let play:MatchDetailedPlay
-    let sprites:FieldReplaySprites
-    let prepared:FieldRasterArt.Prepared
+    private let replay:InplayReplay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared
     private let content=SKNode(),score=SKLabelNode(fontNamed:"Menlo-Bold")
-    private let ball=SKSpriteNode(texture:PixelBaseball.texture),ballShadow=SKShapeNode(ellipseOf:CGSize(width:6,height:2))
     private let target=SKShapeNode(ellipseOf:CGSize(width:20,height:10))
+    private let ball=SKSpriteNode(texture:PixelBaseball.texture),ballShadow=SKShapeNode(ellipseOf:CGSize(width:6,height:2))
     private let trail=(0..<3).map {_ in SKSpriteNode(color:UIColor(GameTheme.paper).withAlphaComponent(0.4),size:CGSize(width:2,height:2))}
     private let result=SKNode()
     private var actors:[ActorNode]=[]
     private var textures:[String:SKTexture]=[:]
     private var started=0.0,handoff:FieldContactHandoff?
     private var reduced=false,effectsReduced=false,finished=false
+    private var previewTime:Double?
+    #if DEBUG
+    private var showsContactPoints=false
+    func setContactPoints(_ value:Bool) {showsContactPoints=value;display(time:displayedTime,finished:finished)}
+    #endif
     var canvasFrame:CGRect = .zero
     private(set) var displayedTime=0.0
     private(set) var textureChanges=0
     private(set) var fallbackTextures=0
-    init(play:MatchDetailedPlay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String) {
-        self.play=play;self.sprites=sprites;self.prepared=prepared
+    convenience init(play:MatchDetailedPlay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String) {
+        self.init(replay:.field(play),sprites:sprites,prepared:prepared,scoreText:scoreText)
+    }
+    convenience init(event:MatchHomeRun,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String) {
+        self.init(replay:.homeRun(event),sprites:sprites,prepared:prepared,scoreText:scoreText)
+    }
+    init(replay:InplayReplay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String) {
+        self.replay=replay;self.sprites=sprites;self.prepared=prepared
         super.init(size:Self.fieldSize)
-        scaleMode = .aspectFit;backgroundColor=UIColor(GameTheme.board)
-        addChild(content)
+        scaleMode = .aspectFit;backgroundColor=UIColor(GameTheme.board);addChild(content)
         if let image=InplayStadiumArt.image {
             let backdrop=SKSpriteNode(texture:SKTexture(image:image));backdrop.texture?.filteringMode = .nearest
             let frame=InplayFieldProjection.viewport(size)
             backdrop.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));backdrop.size=frame.size;backdrop.zPosition = -1000;content.addChild(backdrop)
         }
-        let viewport=InplayFieldProjection.viewport(size)
-        let scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.123,width:viewport.width*0.22,height:viewport.height*0.039)
-        let board=SKShapeNode(rectOf:scoreFrame.size);board.position=convertPoint(CGPoint(x:scoreFrame.midX,y:scoreFrame.midY));board.fillColor=UIColor(red:11/255,green:32/255,blue:48/255,alpha:1);board.strokeColor=UIColor(GameTheme.gold);board.lineWidth=2
+        let scoreFrame:CGRect
+        switch replay {
+        case .field:
+            let viewport=InplayFieldProjection.viewport(size)
+            scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.123,width:viewport.width*0.22,height:viewport.height*0.039)
+        case .homeRun:scoreFrame=CGRect(x:size.width*0.38,y:size.height*0.14,width:size.width*0.24,height:size.height*0.04)
+        }
+        let board=SKShapeNode(rectOf:scoreFrame.size);board.position=convertPoint(CGPoint(x:scoreFrame.midX,y:scoreFrame.midY));board.fillColor=UIColor(GameTheme.navy);board.strokeColor=UIColor(GameTheme.gold);board.lineWidth=2
         content.addChild(board);score.fontSize=max(12,size.width*0.028);score.fontColor=UIColor(GameTheme.paper);score.verticalAlignmentMode = .center;score.position=board.position;score.zPosition=1;content.addChild(score);setScore(scoreText)
         target.strokeColor=UIColor(GameTheme.gold).withAlphaComponent(0.8);target.lineWidth=1;target.zPosition=2;content.addChild(target)
-        for _ in 0..<(play.fielders.count+play.runners.count) {let node=ActorNode();actors.append(node);content.addChild(node.root)}
+        for _ in replay.actors(sprites,time:0,reduced:false,finished:false) {let node=ActorNode();actors.append(node);content.addChild(node.root)}
         ballShadow.fillColor=UIColor.black.withAlphaComponent(0.4);ballShadow.strokeColor = .clear;ballShadow.zPosition=1900;content.addChild(ballShadow)
         for node in trail {node.zPosition=1999;content.addChild(node)}
-        ball.zPosition=2000;content.addChild(ball)
-        let panel=SKShapeNode(rectOf:CGSize(width:size.width*0.64,height:32));panel.position=convertPoint(CGPoint(x:size.width*0.5,y:size.height*0.27+16));panel.fillColor=UIColor(GameTheme.board).withAlphaComponent(0.96);panel.strokeColor=UIColor(GameTheme.gold);panel.lineWidth=2
-        result.addChild(panel)
-        let label=SKLabelNode(fontNamed:"Menlo-Bold");label.text=FieldReplayPresentation.resultTitle(play);label.fontSize=18;label.fontColor=UIColor(GameTheme.paper);label.verticalAlignmentMode = .center;label.position=panel.position;label.zPosition=1;result.addChild(label);result.zPosition=3000;result.isHidden=true;content.addChild(result)
+        ball.zPosition=2000;content.addChild(ball);configureResult();result.zPosition=3000;result.isHidden=true;content.addChild(result)
     }
     required init?(coder:NSCoder) {fatalError("init(coder:) has not been implemented")}
+    private func configureResult() {
+        let frame:CGRect,title:String,detail:String?,home:Bool
+        switch replay {
+        case .field(let p):
+            detail=FieldReplayPresentation.errorDetail(p,ownTeamFielding:sprites.ownTeamFielding ?? !p.ownBatter)
+            frame=CGRect(x:size.width*(detail == nil ? 0.18:0.04),y:size.height*0.27,width:size.width*(detail == nil ? 0.64:0.92),height:detail == nil ? 32:78)
+            title=FieldReplayPresentation.resultTitle(p);home=false
+        case .homeRun(let h):
+            frame=CGRect(x:size.width*0.08,y:size.height*0.24,width:size.width*0.84,height:size.height*0.12)
+            title="HOME RUN · \(h.distance)m";detail="\(h.runs)점 · \(sprites.ownTeamFielding == true ? "상대 팀":"우리 팀") 홈 도착";home=true
+        }
+        let panel=SKShapeNode(rectOf:frame.size);panel.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));panel.fillColor=UIColor(GameTheme.navy).withAlphaComponent(0.97);panel.strokeColor=UIColor(GameTheme.gold);panel.lineWidth=home ? 3:2;result.addChild(panel)
+        let label=SKLabelNode(fontNamed:"Menlo-Bold");label.text=title;label.fontSize=home ? max(16,size.width*0.052):18;label.fontColor=UIColor(home ? GameTheme.gold:GameTheme.paper);label.verticalAlignmentMode = .center
+        label.position=convertPoint(CGPoint(x:frame.midX,y:detail == nil ? frame.midY:frame.minY+(home ? frame.height*0.36:16)));label.zPosition=1;result.addChild(label)
+        if let detail {
+            let note=SKLabelNode(fontNamed:"Menlo-Bold");note.text=detail;note.fontSize=home ? max(12,size.width*0.035):12;note.fontColor=UIColor(GameTheme.paper);note.verticalAlignmentMode = .center;note.numberOfLines=0;note.preferredMaxLayoutWidth=frame.width-12
+            note.position=convertPoint(CGPoint(x:frame.midX,y:home ? frame.minY+frame.height*0.75:frame.minY+50));note.zPosition=1;result.addChild(note)
+        }
+    }
     func preload() async {
         for (key,image) in prepared.images {let texture=SKTexture(image:image);texture.filteringMode = .nearest;textures[key]=texture}
         let values=Array(textures.values)+content.children.compactMap {($0 as? SKSpriteNode)?.texture}
@@ -1960,35 +2060,68 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         if MatchRenderMetrics.enabled {MatchRenderMetrics.spriteTextureCount=values.count}
         #endif
         await withCheckedContinuation {continuation in SKTexture.preload(values) {continuation.resume()}}
+        display(time:displayedTime,finished:finished)
     }
     func setClock(start:Double,handoff:FieldContactHandoff?,reduced:Bool) {started=start;self.handoff=handoff;self.reduced=reduced}
-    func setReduced(_ value:Bool) {reduced=value;effectsReduced=value}
-    func setEffectsReduced(_ value:Bool) {effectsReduced=value}
+    func setReduced(_ value:Bool) {reduced=value}
+    func setEffectsReduced(_ value:Bool) {
+        guard effectsReduced != value else {return}
+        effectsReduced=value
+        if value {content.position = .zero}
+        display(time:displayedTime,finished:finished)
+    }
     func setScore(_ text:String) {score.text=text}
-    func setFinished(_ value:Bool) {finished=value;if value {display(time:play.duration,finished:true)}}
+    func setFinished(_ value:Bool) {finished=value;display(time:previewTime ?? (value ? replay.duration:displayedTime),finished:value)}
+    func setPreviewTime(_ value:Double?) {
+        previewTime=value
+        if let value {display(time:max(0,min(replay.duration,value)),finished:finished || value>=replay.duration)}
+    }
     private func convertPoint(_ point:CGPoint) -> CGPoint {CGPoint(x:point.x,y:size.height-point.y)}
     override func update(_ currentTime:TimeInterval) {
-        guard started>0,!finished else {return}
+        guard started>0,!finished,previewTime == nil else {return}
         #if DEBUG
-        let measured=MatchRenderMetrics.begin();defer {MatchRenderMetrics.end("groundSprite",started:measured)}
+        let measured=MatchRenderMetrics.begin()
+        defer {MatchRenderMetrics.end(replay.metricKind,started:measured,playbackTime:displayedTime)}
         #endif
         let now=ProcessInfo.processInfo.systemUptime
         let elapsed=FieldReplayPresentation.elapsed(start:started,handoff:handoff,now:now)
-        display(time:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:true),finished:false)
+        display(time:replay.time(elapsed:elapsed,reduced:reduced),finished:false)
         if let handoff,canvasFrame.width>0,canvasFrame.height>0 {
-            let cut=handoff.cutAt-handoff.startedAt
-            let point=FieldBallPresentation.point(play,time:cut,size:canvasFrame.size,leftIndex:leftIndex)
+            let point=replay.ballPoint(time:max(0,handoff.cutAt-handoff.startedAt),size:canvasFrame.size,leftIndex:leftIndex)
             let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:point,canvas:canvasFrame,now:now,reduced:effectsReduced)
             content.position=CGPoint(x:offset.x*size.width/canvasFrame.width,y:-offset.y*size.height/canvasFrame.height)
         }
     }
     private var leftIndex:Int? {
-        guard sprites.throwingHand == "left",sprites.ownTeamFielding ?? !play.ownBatter else {return nil}
+        guard case .field(let play)=replay,sprites.throwingHand == "left",sprites.ownTeamFielding ?? !play.ownBatter else {return nil}
         return play.fielders.indices.first {index in sprites.ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index == play.fielder)}
     }
     func display(time:Double,finished:Bool) {
         displayedTime=time
-        let samples=sprites.actors(play,time:time,reduced:reduced,finished:finished)
+        let samples=replay.actors(sprites,time:time,reduced:reduced,finished:finished)
+        updateActors(samples)
+        let ballVisible:Bool,trailEnd:Double
+        switch replay {
+        case .field(let play):
+            let targetBase=time >= (play.secondThrow?.releaseAt ?? .infinity) ? 1:play.targetBase
+            target.isHidden=time<play.pickupAt;target.position=convertPoint(InplayFieldProjection.point(DetailedFieldRules.bases[targetBase],size:size))
+            let ground=InplayFieldProjection.point(FieldNode.sample(play.ball,at:time),size:size)
+            ballShadow.isHidden=false;ballShadow.position=convertPoint(ground)
+            let diameter=max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size));ball.size=CGSize(width:diameter,height:diameter)
+            ballVisible=true;trailEnd=play.ball.last?.at ?? 0
+        case .homeRun(let event):
+            target.isHidden=true;ballShadow.isHidden=true
+            let diameter=max(6,size.width*0.016);ball.size=CGSize(width:diameter,height:diameter)
+            ballVisible=time<=event.flight;trailEnd=event.flight
+        }
+        ball.isHidden = !ballVisible;ball.position=convertPoint(replay.ballPoint(time:time,size:size,leftIndex:leftIndex))
+        for (index,node) in trail.enumerated() {
+            node.isHidden=effectsReduced || time>=trailEnd
+            let p=replay.ballPoint(time:max(0,time-Double(index+1)*0.04),size:size,leftIndex:leftIndex);node.position=convertPoint(CGPoint(x:p.x+1,y:p.y+1))
+        }
+        result.isHidden = !finished
+    }
+    private func updateActors(_ samples:[FieldReplaySprites.Actor]) {
         let ownKit=PlayerAppearance.kitColors[sprites.appearance.kit]
         for (index,actor) in samples.enumerated() {
             let node=actors[index],scale=InplayFieldProjection.actorScale(actor.point,size:size)
@@ -2009,56 +2142,82 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
                 node.body.anchorPoint=CGPoint(x:f.pivot[0]/f.rect[2],y:1-f.pivot[1]/f.rect[3]);node.body.size=CGSize(width:f.rect[2]*u,height:f.rect[3]*u)
                 node.body.position=CGPoint(x:motion.bodyOffset.x*scale,y:-motion.bodyOffset.y*scale);node.body.xScale=sample.mirrored ? -1:1;node.body.yScale=actor.kind == "runner" && motion.runnerPose == .tagUp ? 0.9:1
             }
+            #if DEBUG
+            node.contact.isHidden=true
+            if showsContactPoints,actor.kind != "runner",let contact=FieldRasterArt.contact(motion,kind:actor.kind,left:left,hand:motion.ballInThrowingHand) {
+                node.contact.position=CGPoint(x:(contact.x+motion.bodyOffset.x)*scale,y:-(contact.y+motion.bodyOffset.y)*scale);node.contact.isHidden=false
+            }
+            #endif
             for (i,dust) in node.dust.enumerated() {
-                dust.isHidden = actor.kind != "runner" || ![.slide,.decelerate].contains(motion.runnerPose)
+                dust.isHidden = effectsReduced || actor.kind != "runner" || ![.slide,.decelerate].contains(motion.runnerPose)
                 dust.position=CGPoint(x:-motion.facing.vector.x*Double(i+1)*3*scale,y:-Double(i%2)*scale);dust.setScale(scale);dust.alpha=(1-motion.arrivalProgress)*0.55
             }
         }
-        target.isHidden=time<play.pickupAt;target.position=convertPoint(InplayFieldProjection.point(DetailedFieldRules.bases[play.targetBase],size:size))
-        let ground=InplayFieldProjection.point(FieldNode.sample(play.ball,at:time),size:size)
-        ballShadow.position=convertPoint(ground)
-        let point=FieldBallPresentation.point(play,time:time,size:size,leftIndex:leftIndex);ball.position=convertPoint(point)
-        let diameter=max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size));ball.size=CGSize(width:diameter,height:diameter)
-        for (index,node) in trail.enumerated() {node.isHidden=effectsReduced || time>=(play.ball.last?.at ?? 0);let p=FieldBallPresentation.point(play,time:max(0,time-Double(index+1)*0.04),size:size,leftIndex:leftIndex);node.position=convertPoint(CGPoint(x:p.x+1,y:p.y+1))}
-        result.isHidden = !finished
+
     }
     #if DEBUG
     var actorIDs:[ObjectIdentifier] {actors.map {ObjectIdentifier($0.root)}}
-    var actorPositions:[CGPoint] {actors.map { $0.root.position }}
+    var actorPositions:[CGPoint] {actors.map {$0.root.position}}
     var ballPosition:CGPoint {ball.position}
+    var ballVisible:Bool {!ball.isHidden}
     var resultVisible:Bool {!result.isHidden}
+    var effectsVisible:Bool {trail.contains {!$0.isHidden} || actors.contains {$0.dust.contains {!$0.isHidden}}}
+    var targetPosition:CGPoint {target.position}
+    var contactPointCount:Int {actors.filter {!$0.contact.isHidden}.count}
     #endif
 }
 
-private struct GroundFieldSurface:View {
-    private var frameRate: Int {
+private struct InplayFieldSurface:View {
+    private var frameRate:Int {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-ground-60hz-comparison") { return 60 }
+        if ProcessInfo.processInfo.arguments.contains("-ground-60hz-comparison") {return 60}
         #endif
         return 30
     }
-    let scene:GroundFieldScene
+    let scene:InplayFieldScene
     let scoreText:String
     let finished:Bool
     let reduced:Bool
     let effectsReduced:Bool
+    let previewTime:Double?
+    var showsContactPoints=false
     var body:some View {
         GeometryReader {geometry in
             SpriteView(scene:scene,preferredFramesPerSecond:frameRate,options:[.ignoresSiblingOrder])
-                .onAppear {scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText);scene.setReduced(reduced);scene.setEffectsReduced(effectsReduced);scene.setFinished(finished)}
+                .onAppear {
+                    scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText)
+                    scene.setReduced(reduced);scene.setEffectsReduced(effectsReduced);scene.setPreviewTime(previewTime);scene.setFinished(finished)
+                    #if DEBUG
+                    scene.setContactPoints(showsContactPoints)
+                    #endif
+                }
                 .onChange(of:geometry.frame(in:.global)) {_,frame in scene.canvasFrame=frame}
-                .onChange(of:scoreText) {_,text in scene.setScore(text)}
+                .onChange(of:scoreText) {_,value in scene.setScore(value)}
                 .onChange(of:finished) {_,value in scene.setFinished(value)}
+                .onChange(of:previewTime) {_,value in scene.setPreviewTime(value)}
                 .onChange(of:reduced) {_,value in scene.setReduced(value);scene.setEffectsReduced(effectsReduced)}
                 .onChange(of:effectsReduced) {_,value in scene.setEffectsReduced(value)}
+                #if DEBUG
+                .onChange(of:showsContactPoints) {_,value in scene.setContactPoints(value)}
+                #endif
                 .onDisappear {scene.isPaused=true}
         }
     }
 }
 
-// Only the text/receipt changes on these boundaries; SpriteKit owns moving frames.
+// All text boundaries, including chained throws/errors, use the same saved clock.
 enum FieldReplayPhaseSchedule {
-    static func moments(_ play: MatchDetailedPlay) -> [Double] {
-        Array(Set([0,play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration])).sorted()
+    static func moments(_ play:MatchDetailedPlay) -> [Double] {
+        let base=[0,play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration]
+        let relay=play.relay.map {[$0.receiveAt,$0.releaseAt]} ?? []
+        let second=play.secondThrow.map {[$0.releaseAt,$0.ballAt,$0.controlAt]} ?? []
+        let errors=play.misplay.map {[$0.at,$0.scatteredAt,$0.recoveredAt]} ?? []
+        return Array(Set(base+relay+second+errors+FieldMisplayAnimation.moments(play)+FieldRelayTransfer.moments(play))).sorted()
     }
 }
+
+#if DEBUG
+extension InplayReplay {
+    var metricKind:String {switch self {case .field:"fieldSprite";case .homeRun:"homeRunSprite"}}
+}
+#endif

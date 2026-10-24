@@ -2257,7 +2257,8 @@ import SpriteKit
         XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
         let preparation=try XCTUnwrap(MatchRenderMetrics.preparations.first)
         XCTAssertGreaterThan(resolvedAt-preparation.endedAt,0.6)
-        XCTAssertGreaterThan(MatchRenderMetrics.preparedHits,0);XCTAssertEqual(MatchRenderMetrics.preparedMisses,0)
+        XCTAssertTrue(MatchRenderMetrics.frames.contains {$0.kind == "homeRunSprite"})
+        XCTAssertEqual(MatchRenderMetrics.spriteFallbacks,0);XCTAssertEqual(MatchRenderMetrics.preparedMisses,0)
     }
     func testPreparationCancellationAndHandoffDelayPreserveCut() async throws {
         let fixture=try MatchReplayFixture.make(pitcher:false)[0]
@@ -2273,26 +2274,26 @@ import SpriteKit
 }
 
 @MainActor final class GroundFieldSceneTests:XCTestCase {
-    func testOnlyOrdinaryGroundUsesSpriteKit() throws {
+    func testOrdinaryGroundLabelIsOnlyADiagnosticFilter() throws {
         for scenario in FieldVerificationScenario.allCases {
             let play=try scenario.make()
-            XCTAssertEqual(GroundFieldScene.supports(play),[FieldVerificationScenario.single,.groundOut].contains(scenario),scenario.rawValue)
+            XCTAssertEqual(InplayFieldScene.isOrdinaryGround(play),[FieldVerificationScenario.single,.groundOut].contains(scenario),scenario.rawValue)
         }
         var legacy=try FieldVerificationScenario.groundOut.make();legacy.battedBall=nil
-        XCTAssertTrue(GroundFieldScene.supports(legacy))
+        XCTAssertTrue(InplayFieldScene.isOrdinaryGround(legacy))
         var line=legacy;line.battedBall=MatchBattedBall(kind:.line,quality:0.75,contact:60,power:60,speed:110/3.6,angle:15,direction:0,distance:hypot(legacy.landing.x,legacy.landing.y),flight:legacy.flight)
-        XCTAssertFalse(GroundFieldScene.supports(line))
+        XCTAssertFalse(InplayFieldScene.isOrdinaryGround(line))
     }
     func testRetainedActorsBallAndFramesMatchCanvasGeometryAndDoNotMutatePlay() async throws {
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
         for pitcher in [false,true] {
-            for scenario in [FieldVerificationScenario.single,.groundOut] {
+            for scenario in FieldVerificationScenario.allCases {
                 let play=try scenario.make(ownBatter:!pitcher),before=try encoder.encode(play)
                 let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:pitcher ? "left":"right",ownTeamFielding:pitcher)
                 let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false)})
                 let requests=try XCTUnwrap(planned),generated=await FieldRasterArt.prepare(requests)
                 let prepared=try XCTUnwrap(generated)
-                let scene=GroundFieldScene(play:play,sprites:sprites,prepared:prepared,scoreText:"H 0 : 0 A")
+                let scene=InplayFieldScene(play:play,sprites:sprites,prepared:prepared,scoreText:"H 0 : 0 A")
                 await scene.preload()
                 let ids=scene.actorIDs
                 let times=[0,0.28,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration]+stride(from:0.013,through:play.duration,by:1.0/60).map {$0}
@@ -2321,6 +2322,59 @@ import SpriteKit
                 let shot=XCTAttachment(image:UIImage(cgImage:image));shot.name="SpriteKit \(pitcher ? "pitcher-left":"batter-right") \(scenario.rawValue)";shot.lifetime = .keepAlways;add(shot)
                 view.presentScene(nil)
             }
+        }
+    }
+    func testHomeRunBothRolesRetainSavedGeometryAndEffectsDoNotFreezeActors() async throws {
+        let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+        for pitcher in [false,true] {
+            let event=try XCTUnwrap(MatchReplayFixture.make(pitcher:pitcher).last?.homeRun),before=try encoder.encode(event)
+            let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:pitcher ? "left":"right",ownTeamFielding:pitcher)
+            let planned=await sprites.requests(duration:event.duration,reduced:false,actorsAt:{sprites.actors(event,time:$0,reduced:false)})
+            let requests=try XCTUnwrap(planned)
+            let generated=await FieldRasterArt.prepare(requests)
+            let prepared=try XCTUnwrap(generated)
+            let scene=InplayFieldScene(event:event,sprites:sprites,prepared:prepared,scoreText:"H 0 : 0 A")
+            await scene.preload()
+            let ids=scene.actorIDs
+            for effects in [false,true] {
+                scene.setEffectsReduced(effects)
+                for time in [0.123,0.143,event.flight-0.01,event.flight+0.01,event.duration] {
+                    scene.display(time:time,finished:time>=event.duration)
+                    XCTAssertEqual(scene.displayedTime,time)
+                    XCTAssertEqual(scene.actorIDs,ids)
+                    let expected=sprites.actors(event,time:time,reduced:false)
+                    for (position,actor) in zip(scene.actorPositions,expected) {
+                        let point=InplayFieldProjection.point(actor.point,size:scene.size)
+                        XCTAssertEqual(position.x,point.x,accuracy:0.0001);XCTAssertEqual(position.y,scene.size.height-point.y,accuracy:0.0001)
+                    }
+                    let ball=HomeRunPresentation.ballPoint(event,time:time,size:scene.size)
+                    XCTAssertEqual(scene.ballPosition.x,ball.x,accuracy:0.0001);XCTAssertEqual(scene.ballPosition.y,scene.size.height-ball.y,accuracy:0.0001)
+                    XCTAssertEqual(scene.ballVisible,time<=event.flight);XCTAssertEqual(scene.resultVisible,time>=event.duration)
+                    if effects {XCTAssertFalse(scene.effectsVisible)}
+                }
+            }
+            XCTAssertEqual(scene.fallbackTextures,0);XCTAssertEqual(try encoder.encode(event),before)
+        }
+    }
+    func testEffectsReductionPreservesFieldMotionAndSecondThrowTarget() async throws {
+        let play=try FieldVerificationScenario.doublePlay.make(ownBatter:true)
+        let sprites=FieldReplaySprites(appearance:PlayerAppearance(),jerseyNumber:1,ownPosition:"CF",throwingHand:"right",ownTeamFielding:false)
+        let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false)})
+        let requests=try XCTUnwrap(planned)
+        let generated=await FieldRasterArt.prepare(requests)
+        let prepared=try XCTUnwrap(generated)
+        let scene=InplayFieldScene(play:play,sprites:sprites,prepared:prepared,scoreText:"H 0 : 0 A");await scene.preload()
+        let second=try XCTUnwrap(play.secondThrow)
+        scene.setContactPoints(true);XCTAssertEqual(scene.contactPointCount,9)
+        scene.setContactPoints(false);XCTAssertEqual(scene.contactPointCount,0)
+        for time in [0.123,0.143,second.releaseAt-0.01,second.releaseAt+0.01] {
+            scene.setEffectsReduced(false);scene.display(time:time,finished:false)
+            let positions=scene.actorPositions,ball=scene.ballPosition
+            scene.setEffectsReduced(true);XCTAssertFalse(scene.effectsVisible)
+            scene.display(time:time,finished:false)
+            XCTAssertEqual(scene.actorPositions,positions);XCTAssertEqual(scene.ballPosition,ball);XCTAssertFalse(scene.effectsVisible)
+            let target=InplayFieldProjection.point(DetailedFieldRules.bases[time>=second.releaseAt ? 1:play.targetBase],size:scene.size)
+            XCTAssertEqual(scene.targetPosition.x,target.x,accuracy:0.0001);XCTAssertEqual(scene.targetPosition.y,scene.size.height-target.y,accuracy:0.0001)
         }
     }
     func testGroundCompletionAndCancellationRemainPresentationOnly() async throws {

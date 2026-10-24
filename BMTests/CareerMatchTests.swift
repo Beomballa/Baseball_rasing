@@ -51,14 +51,24 @@ import SwiftUI
         record.completed.toggle();_ = try cache.refresh(record);XCTAssertNotNil(cache.match)
         XCTAssertEqual(record.payload,payload)
     }
-    func testFieldPlaybackModeKeepsSystemDefaultAndAllowsExplicitContinuousMovement() {
+    func testSystemReduceMotionNeverQuantizesDefaultMovementAndLegacyPreferenceRemainsReadable() {
         for system in [false,true] {
-            XCTAssertEqual(FieldPlaybackMode.system.reducesMovement(system:system),system)
+            XCTAssertFalse(FieldPlaybackMode.system.reducesMovement(system:system))
             XCTAssertFalse(FieldPlaybackMode.continuous.reducesMovement(system:system))
             XCTAssertTrue(FieldPlaybackMode.stills.reducesMovement(system:system))
         }
     }
 
+    func testSystemReduceMotionStillAllowsNearbyContinuousFieldAndHomeRunTimes() throws {
+        let p=try FieldVerificationScenario.single.make()
+        let reduced=FieldPlaybackMode.system.reducesMovement(system:true)
+        XCTAssertEqual(FieldReplayPresentation.time(p,elapsed:0.123,reduced:reduced,animated:true),0.123)
+        XCTAssertEqual(FieldReplayPresentation.time(p,elapsed:0.143,reduced:reduced,animated:true),0.143)
+        let h=try XCTUnwrap(MatchReplayFixture.make(pitcher:false).last?.homeRun)
+        XCTAssertEqual(HomeRunPresentation.time(h,elapsed:0.123,reduced:reduced),0.123)
+        XCTAssertEqual(FieldPlaybackMode.continuous.menuValue,FieldPlaybackMode.system.rawValue)
+        XCTAssertEqual(FieldPlaybackMode.allCases,[.system,.stills])
+    }
     func testGroundTextScheduleUsesSavedPhaseBoundariesOnly() throws {
         let play=try FieldVerificationScenario.groundOut.make()
         let times=FieldReplayPhaseSchedule.moments(play)

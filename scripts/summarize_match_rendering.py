@@ -40,21 +40,25 @@ def summarize_live(report):
     preparations = report["preparations"]
     ready = max((p["endedAt"] for p in preparations), default=0)
     frames = [f for f in report["frames"] if f["at"] >= ready]
-    field = sorted((f for f in frames if f["kind"] in ("field", "homeRun", "groundSprite")), key=lambda f: f["at"])
+    field = sorted((f for f in frames if f["kind"] in ("field", "homeRun", "groundSprite", "fieldSprite", "homeRunSprite")), key=lambda f: f["at"])
     if not field or not report["memory"]:
         raise ValueError("Incomplete live render report")
     costs = [f["milliseconds"] for f in field]
     gaps = [(b["at"]-a["at"])*1000 for a, b in zip(field, field[1:])]
     memory = sorted(report["memory"], key=lambda m: m["at"])
+    playback = [f["playbackTime"] for f in field if f.get("playbackTime") is not None]
     return {
         "role": report["role"], "fieldCallbacks": len(field),
+        "motionPolicy": report.get("motionPolicy"),
+        "playbackClock": {"samples": len(playback), "distinctTimes": len(set(playback)),
+                          "advanceSeconds": round(max(playback)-min(playback), 4) if playback else None},
         "cpuCommandMs": {k: percentile(costs, p) for k, p in [("p50", .5), ("p95", .95), ("p99", .99), ("max", 1)]},
         "callbackIntervalMs": {k: percentile(gaps, p) for k, p in [("p50", .5), ("p95", .95), ("p99", .99), ("max", 1)]},
         "cpuCommandsOver33Ms": sum(v > 33.333 for v in costs),
         "coveredSpriteUpdatesAfterReady": sum(f["kind"] == "spriteUpdate" for f in frames),
         "preparedHits": report["preparedHits"], "preparedMisses": report["preparedMisses"],
         "spriteTextures": {"count": report.get("spriteTextureCount", 0), "swaps": report.get("spriteTextureSwaps", 0), "fallbacks": report.get("spriteFallbacks", 0)},
-        "rendererCallbacks": {kind: sum(f["kind"] == kind for f in field) for kind in ("field", "homeRun", "groundSprite")},
+        "rendererCallbacks": {kind: sum(f["kind"] == kind for f in field) for kind in ("field", "homeRun", "groundSprite", "fieldSprite", "homeRunSprite")},
         "preparation": [{"seconds": round(p["seconds"], 3), "images": p["images"], "pixelMiB": round(p["bytes"]/2**20, 3)} for p in preparations],
         "footprintMiB": {"start": round(memory[0]["bytes"]/2**20, 3), "end": round(memory[-1]["bytes"]/2**20, 3), "peakSampled": round(max(m["bytes"] for m in memory)/2**20, 3)},
         "note": "Real gameplay screen in simulator -O diagnostic build. Canvas command or SpriteKit update duration/callback interval is not GPU presentation or physical-device FPS. Preparation is asynchronous wall time. Memory sampled at entry/3s/exit, not a leak or thermal test.",

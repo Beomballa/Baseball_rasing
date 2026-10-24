@@ -343,7 +343,7 @@ struct FieldReplayVerification:View {
                         Text("\(time,specifier:"%.2f") / \(play.duration,specifier:"%.2f")초")
                             .monospacedDigit().accessibilityIdentifier("fieldVerificationTime")
                         DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),animated:false,ownPosition:scenario.position,
-                            ownTeamFielding:true,previewTime:FieldReplayPresentation.time(play,elapsed:time,reduced:reduced,animated:true),showsContactPoints:contacts) {}
+                            ownTeamFielding:true,previewTime:time,showsContactPoints:contacts) {}
                         Toggle("손·글러브 접촉점 표시",isOn:$contacts).accessibilityIdentifier("fieldVerificationContacts")
                         DisclosureGroup("시각·능력치 진단") {
                             Text("타구 \(play.battedBall?.kmh ?? 0,specifier:"%.1f") km/h · 포구 \(play.pickupAt,specifier:"%.2f")초 · 송구 수신 \(play.ballAt,specifier:"%.2f")초")
@@ -443,10 +443,10 @@ struct MatchReplaySample:View {
         Group {
             if let play=sample.field {
                 DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:left ? "left":"right",ownTeamFielding:pitcher,
-                    previewTime:FieldReplayPresentation.time(play,elapsed:time,reduced:reduced,animated:true),reduceMotionOverride:reduced,showsContactPoints:true) {}
+                    previewTime:time,reduceMotionOverride:reduced,showsContactPoints:true) {}
             } else if let event=sample.homeRun {
                 HomeRunReplayBoard(event:event,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:left ? "left":"right",ownTeamFielding:pitcher,
-                    previewTime:HomeRunPresentation.time(event,elapsed:time,reduced:reduced),reduceMotionOverride:reduced)
+                    previewTime:time,reduceMotionOverride:reduced)
             }
         }
     }
@@ -504,30 +504,45 @@ struct MatchReplayVerification:View {
 }
 // Synthetic read-only render cases: no career store, input, rewards or dates.
 struct FieldPerformanceAutoplay:View {
+    private struct Case {
+        let fixture:MatchReplayFixture
+        let pitcher:Bool
+        let effectsReduced:Bool
+        var name:String {"unified-\(pitcher ? "pitcher":"batter")-\(effectsReduced ? "reduced":"normal")-\(fixture.name)"}
+    }
     @State private var index=0
-    @State private var cases:[MatchDetailedPlay]=[]
+    @State private var cases:[Case]=[]
+    @Environment(\.scenePhase) private var phase
+    @State private var interrupted=false
     var body:some View {
         VStack(spacing:8) {
-            Text("QA 자동 렌더링 · 저장 미사용").font(.headline).foregroundStyle(GameTheme.gold)
-            if !cases.isEmpty,index<8 {
-                let pitcher=index>=4
-                let forceContinuous=index%4>=2
-                let play=cases[index%2]
-                Text("\(pitcher ? "투수":"타자") · \(GroundFieldScene.supports(play) ? "SpriteKit":"Canvas") · \(forceContinuous ? "연속 재생 강제 비교":"시스템 설정")").font(.caption)
-                DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",ownTeamFielding:pitcher,
-                    playbackMode:forceContinuous ? .continuous:.system,preparesMotion:true) {
-                        MatchRenderMetrics.exportLive(role:"autoplay-\(index)")
-                        MatchRenderMetrics.enabled=false
-                        index+=1
-                    }.id(index)
-                    .task(id:index) {MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true}
-            } else {Text(cases.isEmpty ? "준비 중":"8개 장면 측정 완료")}
+            Text("QA 자동 인플레이 · 저장 미사용").font(.headline).foregroundStyle(GameTheme.gold)
+            if !cases.isEmpty,index<cases.count {
+                let item=cases[index]
+                Text("\(index+1)/\(cases.count) · \(item.name)").font(.caption).accessibilityIdentifier("unifiedRenderCase")
+                Group {
+                    if let play=item.fixture.field {
+                        DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:item.pitcher ? "P":"CF",throwingHand:item.pitcher ? "left":"right",ownTeamFielding:item.pitcher,
+                            reduceMotionOverride:item.effectsReduced,preparesMotion:true) {advance(item)}
+                    } else if let event=item.fixture.homeRun {
+                        HomeRunReplayBoard(event:event,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:item.pitcher ? "P":"CF",throwingHand:item.pitcher ? "left":"right",ownTeamFielding:item.pitcher,
+                            reduceMotionOverride:item.effectsReduced,preparesMotion:true,complete:{advance(item)})
+                    }
+                }.id(index).task(id:index) {MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true;interrupted=false}
+            } else {Text(cases.isEmpty ? "준비 중":"전체 장면 측정 완료").accessibilityIdentifier("unifiedRenderComplete")}
         }.padding(8).background(GameTheme.navy.ignoresSafeArea()).foregroundStyle(GameTheme.paper)
+        .onChange(of:phase) {_,value in if value != .active {interrupted=true}}
         .task {
             guard cases.isEmpty else {return}
-            if let fixtures=try? MatchReplayFixture.make(pitcher:false),let ground=fixtures.compactMap(\.field).first(where:GroundFieldScene.supports),
-               let other=fixtures.compactMap(\.field).first(where:{!GroundFieldScene.supports($0)}) {cases=[ground,other]}
+            for pitcher in [false,true] {for effects in [false,true] {
+                if let fixtures=try? MatchReplayFixture.make(pitcher:pitcher) {cases+=fixtures.map {Case(fixture:$0,pitcher:pitcher,effectsReduced:effects)}}
+            }}
         }
     }
+    private func advance(_ item:Case) {
+        MatchRenderMetrics.exportLive(role:"\(item.name)-\(interrupted ? "interrupted":"foreground")")
+        MatchRenderMetrics.enabled=false;index+=1
+    }
 }
+
 #endif
