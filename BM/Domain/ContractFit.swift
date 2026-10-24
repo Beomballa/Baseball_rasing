@@ -651,6 +651,11 @@ struct CareerMembership:Codable,Equatable {
     let economicEnd:String
     let enrollmentEnd:String?
     let economicIndex:Int
+    var economicStart:String? = nil
+    func renewing(_ terms:DomesticRenewalOffer) -> Self {
+        var value=Self(offerID:offerID,route:route,teamID:teamID,name:name,since:since,economicEnd:terms.economicEnd,enrollmentEnd:enrollmentEnd,economicIndex:terms.economicIndex)
+        value.economicStart=terms.effectiveDate;return value
+    }
     var level:String {route == .rookie ? "domestic-development":"college"}
     var label:String {route == .rookie ? "국내 육성팀":"대학 소속"}
     func contains(_ date:GameDate) throws -> Bool {
@@ -679,14 +684,26 @@ enum CareerTeamDirectory {
         return schools.first {$0.id == id}?.name ?? id
     }
 }
+struct DomesticRenewalAcceptance:Codable,Equatable {
+    let membershipOfferID:String
+    let date:String
+    let terms:DomesticRenewalOffer
+}
 struct CareerContractJournal:Codable,Equatable {
     var version=1
     let playerID:UUID
     var revision=0
     var decisions:[DomesticOfferDecision]=[]
     var memberships:[CareerMembership]=[]
-    func current(on date:GameDate) throws -> CareerMembership? {try memberships.last(where:{try $0.contains(date)})}
-    func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer]) throws {
+    var renewals:[DomesticRenewalAcceptance]? = nil
+    func current(on date:GameDate,excludingRenewal:String?=nil) throws -> CareerMembership? {
+        guard var member=try memberships.last(where:{try $0.contains(date)}) else {return nil}
+        for renewal in renewals ?? [] where renewal.membershipOfferID == member.offerID && renewal.terms.id != excludingRenewal {
+            if try GameDate(renewal.date)<=date && GameDate(renewal.terms.effectiveDate)<=date {member=member.renewing(renewal.terms)}
+        }
+        return member
+    }
+    func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer],reviews:[DomesticRenewalReview]=[]) throws {
         let today=try GameDate(player.gameDate),origin=try GameDate(calendar.originDate)
         guard version == 1,playerID == player.id,revision >= 0,
               Set(decisions.map(\.offerID)).count == decisions.count,Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractRegistrationError.invalid}
@@ -698,6 +715,18 @@ struct CareerContractJournal:Codable,Equatable {
             if decision.kind == .accepted {
                 guard memberships.contains(try CareerMembership.make(offer:offer,on:date,origin:origin,startAge:player.startAge)) else {throw ContractRegistrationError.invalid}
             }
+        }
+        let accepted=renewals ?? []
+        guard Set(accepted.map { $0.terms.id }).count == accepted.count else {throw ContractRegistrationError.invalid}
+        var lastDate:GameDate?
+        for renewal in accepted {
+            let date=try GameDate(renewal.date)
+            guard let review=reviews.first(where:{$0.offer?.id == renewal.terms.id}),review.offer == renewal.terms,
+                  review.membership.offerID == renewal.membershipOfferID,review.membership.route == .rookie,
+                  date >= (try GameDate(renewal.terms.issuedDate)),date <= (try GameDate(renewal.terms.expiresDate)),date <= today,
+                  lastDate == nil || date >= lastDate!,
+                  try current(on:GameDate(renewal.terms.issuedDate),excludingRenewal:renewal.terms.id) == review.membership else {throw ContractRegistrationError.invalid}
+            lastDate=date
         }
         for (index,member) in memberships.enumerated() {
             guard decisions.contains(where:{$0.offerID == member.offerID && $0.kind == .accepted && $0.date == member.since}) else {throw ContractRegistrationError.invalid}
