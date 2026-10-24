@@ -2966,3 +2966,26 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testOverseasReleaseBothRolesConfirmRightsAndOpenResumableCertification() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-overseas-renewal-verification","-overseas-release-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let release=app.buttons["confirmOverseasRelease"];revealFit(release,in:app);XCTAssertTrue(release.exists)
+            let before=XCTAttachment(screenshot:app.screenshot());before.name="overseas-release-"+role+"-notice";before.lifetime = .keepAlways;add(before)
+            release.tap();app.buttons["commitOverseasRelease"].firstMatch.tap()
+            let status=app.staticTexts["overseasReleasedUnsigned"];revealFit(status,in:app);XCTAssertTrue(status.label.contains("권리 해제"))
+            XCTAssertFalse(app.staticTexts["overseasReleaseError"].exists)
+            let link=app.buttons["openCertification"];revealFit(link,in:app);link.tap();app.buttons["startCertification"].tap()
+            app.buttons["advanceCertification"].tap()
+            XCTAssertTrue(app.staticTexts["certificationProgress"].label.hasPrefix("1 /"));XCTAssertFalse(app.staticTexts["certificationError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let again=app.buttons["openCertification"];revealFit(again,in:app);again.tap();app.buttons["startCertification"].tap()
+            XCTAssertTrue(app.staticTexts["certificationProgress"].label.hasPrefix("1 /"))
+            let after=XCTAttachment(screenshot:app.screenshot());after.name="overseas-release-"+role+"-certification-resume";after.lifetime = .keepAlways;add(after)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

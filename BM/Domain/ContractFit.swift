@@ -729,18 +729,24 @@ struct CareerContractJournal:Codable,Equatable {
     var overseasEligibility:[OverseasEligibilitySnapshot]? = nil
     var overseasReports:[OverseasScoutingReport]? = nil
     var overseasCareer:OverseasCareerJournal? = nil
-    func membershipHistory() -> [CareerMembership] {
+    func membershipHistory(excludingOverseasRelease:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
             value.releasedOn=releases?.first {$0.membershipOfferID == member.offerID}?.date ?? collegeTransitions?.first {$0.source.membershipOfferID == member.offerID}?.source.effectiveDate
             if let end=overseasCareer?.transitions.first(where:{$0.sourceMembershipID == member.offerID})?.destination.since {
                 value.releasedOn=value.releasedOn.map {min($0,end)} ?? end
             }
+            if let released=overseasCareer?.releases?.first(where:{$0.source.offerID == member.offerID && $0.source.offerID != excludingOverseasRelease}) {
+                value.releasedOn=value.releasedOn.map {min($0,released.date)} ?? released.date
+            }
             return value
         }
     }
-    func current(on date:GameDate,excludingRenewal:String?=nil,ignoringReleases:Bool=false,excludingMembership:String?=nil,excludingOverseasRenewal:String?=nil) throws -> CareerMembership? {
-        guard var member=try (ignoringReleases ? memberships:membershipHistory()).last(where:{try $0.offerID != excludingMembership && $0.contains(date)}) else {return nil}
+    var retryReleases:[DomesticRelease] {
+        ((releases ?? [])+(overseasCareer?.releases ?? []).map {DomesticRelease(membershipOfferID:$0.source.offerID,date:$0.date,evaluationKey:$0.reviewID)}).sorted {$0.date<$1.date}
+    }
+    func current(on date:GameDate,excludingRenewal:String?=nil,ignoringReleases:Bool=false,excludingMembership:String?=nil,excludingOverseasRenewal:String?=nil,excludingOverseasRelease:String?=nil) throws -> CareerMembership? {
+        guard var member=try (ignoringReleases ? memberships:membershipHistory(excludingOverseasRelease:excludingOverseasRelease)).last(where:{try $0.offerID != excludingMembership && $0.contains(date)}) else {return nil}
         member.releasedOn=nil
         for renewal in renewals ?? [] where renewal.membershipOfferID == member.offerID && renewal.terms.id != excludingRenewal {
             if try GameDate(renewal.date)<=date && GameDate(renewal.terms.effectiveDate)<=date {member=member.renewing(renewal.terms)}
@@ -1474,12 +1480,14 @@ struct OverseasCareerJournal:Codable,Equatable {
     var service:[GameProSeasonEvidence]? = nil
     var renewalReviews:[OverseasRenewalReview]? = nil
     var renewalDecisions:[OverseasRenewalDecision]? = nil
+    var releases:[OverseasRelease]? = nil
     func hasPending(on date:String) -> Bool {transitions.contains {$0.destination.since > date}}
     func validate(owner:CareerContractJournal,today:GameDate) throws {
         guard version == 1,Set(evaluations.map(\.id)).count == evaluations.count,Set(decisions.map(\.offerID)).count == decisions.count,
               Set(transitions.map(\.offerID)).count == transitions.count else {throw ContractRegistrationError.invalid}
         if let registrationDate {guard try GameDate(registrationDate) <= today else {throw ContractRegistrationError.invalid}}
         try validateRenewals(owner:owner,today:today)
+        try validateReleases(owner:owner,today:today)
         let promotions=promotions ?? []
         guard Set(promotions.map(\.id)).count == promotions.count else {throw ContractRegistrationError.invalid}
         for item in promotions {
@@ -1776,6 +1784,38 @@ extension OverseasCareerJournal {
                 guard !transitions.contains(where:{$0.sourceMembershipID == review.source.offerID && $0.acceptedDate <= decision.date && $0.destination.since > decision.date}),
                       !(promotions ?? []).contains(where:{$0.sourceOfferID == review.source.offerID && $0.date <= decision.date && $0.effective > decision.date}) else {throw ContractRegistrationError.invalid}
             }
+        }
+    }
+}
+
+
+struct OverseasRelease:Codable,Equatable {
+    let source:CareerMembership
+    let reviewID:String
+    let date:String
+}
+extension OverseasCareerJournal {
+    func releaseReview(owner:CareerContractJournal,on date:GameDate,excludingRelease:String?=nil) throws -> OverseasRenewalReview? {
+        guard let member=try owner.current(on:date,excludingOverseasRelease:excludingRelease),OverseasRenewalReview.route(member) != nil,
+              let review=(renewalReviews ?? []).last(where:{$0.source.offerID == member.offerID && $0.date <= date.description}),
+              date > review.window.end,date <= (try CollegeProReview.effective(after:review.window.start)),
+              date > (try GameDate(member.economicEnd)),member == review.source,
+              !transitions.contains(where:{$0.sourceMembershipID == member.offerID && $0.acceptedDate <= date.description && $0.destination.since > date.description}),
+              !(promotions ?? []).contains(where:{$0.sourceOfferID == member.offerID && $0.date <= date.description && $0.effective > date.description}) else {return nil}
+        if let offer=review.offer {
+            let decision=(renewalDecisions ?? []).first {$0.offerID == offer.id && $0.date <= date.description}
+            if decision?.kind == .accepted {return nil}
+            if decision?.kind != .rejected && date.description <= offer.expires {return nil}
+        }
+        return review
+    }
+    func validateReleases(owner:CareerContractJournal,today:GameDate) throws {
+        let rows=releases ?? []
+        guard Set(rows.map {$0.source.offerID}).count == rows.count else {throw ContractRegistrationError.invalid}
+        for row in rows {
+            let date=try GameDate(row.date)
+            guard date <= today,let review=try releaseReview(owner:owner,on:date,excludingRelease:row.source.offerID),
+                  review.id == row.reviewID,review.source == row.source else {throw ContractRegistrationError.invalid}
         }
     }
 }

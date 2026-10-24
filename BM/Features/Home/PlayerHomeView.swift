@@ -641,7 +641,7 @@ struct CareerPathHomePanel: View {
                             .font(.caption.monospaced()).accessibilityIdentifier("careerAffiliationHistory")
                     }
                     if let journal=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context) {
-                        ForEach(journal.releases ?? [],id:\.membershipOfferID) {release in
+                        ForEach(journal.retryReleases,id:\.membershipOfferID) {release in
                             Text(release.date+" · 방출 확정 / 보유권리 해제 · 무소속").font(.caption).accessibilityIdentifier("careerReleaseHistory")
                         }
                         ForEach(journal.collegeTransitions ?? [],id:\.offerID) {item in
@@ -854,6 +854,7 @@ struct CareerContractStatusPanel: View {
         OverseasEligibilityPanel(player:player,calendar:calendar)
         OverseasRenewalPanel(player:player,calendar:calendar)
         ProCareerProgressPanel(player:player,calendar:calendar)
+        OverseasReleasePanel(player:player,calendar:calendar)
         DomesticReleasePanel(player:player,calendar:calendar)
     }
     private var pendingOverseasRenewal:OverseasOffer? {
@@ -1014,7 +1015,7 @@ struct DomesticReleasePanel:View {
                                 .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("confirmClubRelease")
                         } else {Text("아직 방출 확정 조건을 충족하지 않았습니다.").font(.caption).accessibilityIdentifier("releaseNotEligible")}
                     }
-                } else if state.2,let released=state.0.releases?.last {
+                } else if state.2,let released=state.0.retryReleases.last {
                     GamePanel(title:"무소속 · 국내 육성팀 재도전",onBoard:true) {
                         Text("방출 확정 · "+released.date+" / 보유권리 해제").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("releasedUnsignedStatus")
                         Text("다음 4월·7월 평가 창에 재입단 심사 · 신인 지명과 별도").font(.subheadline)
@@ -1462,4 +1463,50 @@ struct OverseasRenewalView:View {
             } message: {Text("수락하면 다음4월1일부터 경제 조건만 갱신합니다. 입단 이력·소속·보유권리·기록은 유지하고 다른 열린 해외 제의를 닫습니다.")}
     }
     private func run(_ action:() throws -> Void) {do {try action();failure=nil;refreshed += 1}catch{failure=error.localizedDescription}}
+}
+
+struct OverseasReleasePanel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var command:(id:String,date:String,revision:Int)?
+    @State private var failure:String?
+    var body:some View {
+        let _=calendar.revision
+        Group {
+            switch Result(catching:{
+                let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+                let member=try owner.current(on:GameDate(player.gameDate))
+                let review=try owner.overseasCareer?.releaseReview(owner:owner,on:GameDate(player.gameDate))
+                return (owner,member,review)
+            }) {
+            case .failure(let error):Text(error.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold)
+            case .success(let state):
+                if let member=state.1,OverseasRenewalReview.route(member) != nil {
+                    GamePanel(title:"해외 구단 · 방출 통지",onBoard:true,contentSpacing:12) {
+                        Text(member.name+" · 보유권리 유지").font(.headline).foregroundStyle(GameTheme.gold)
+                        Text("계약 만료·재계약 거절만으로는 방출되지 않습니다.").font(.subheadline)
+                        Text("11월 재계약 미체결 + 경제 기간 종료 + 갱신/이적/승격 예약 없음. 11월15일~다음4월1일 별도 통지를 확정합니다.").font(.caption).lineSpacing(5)
+                        if state.2 != nil {
+                            Button("구단 방출 통지 확인 · 권리 해제") {command=(member.offerID,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("confirmOverseasRelease")
+                        } else {Text("방출 확정 대기 · 재계약 심사/만료 날짜와 예약 상태를 확인하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("overseasReleasePending")}
+                    }
+                } else if state.1 == nil,let released=state.0.overseasCareer?.releases?.last {
+                    GamePanel(title:"해외 방출 · 무소속 재도전",onBoard:true,contentSpacing:12) {
+                        Text(released.source.name+" · "+released.date+" 권리 해제").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasReleasedUnsigned")
+                        Text("원 입단·경제 계약·경기 이력 보존 / 정식 FA 자격 취득과 구분").font(.caption)
+                        Text("국내 육성팀 재입단은 4·7월 심사입니다. 국내 표본이 부족하면 인증 평가전을 먼저 진행하세요. 해외 성적을 국내 육성 성적으로 바꾸지 않습니다.").font(.caption).lineSpacing(5)
+                        Text("미국 조직 육성 재지원은 기존 해외 보고서·지원 심사 경로를 사용합니다. 해외 전력 재취업·정식 FA 시장은 후속입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
+                }
+            }
+            if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasReleaseError")}
+        }.confirmationDialog("해외 구단 방출을 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
+            Button("방출 확정 · 보유권리 해제",role:.destructive) {
+                guard let item=command else {return};command=nil
+                do {try OverseasContractStore.release(player:player,calendar:calendar,membershipID:item.id,date:item.date,revision:item.revision,in:context);failure=nil} catch {failure=error.localizedDescription}
+            }.accessibilityIdentifier("commitOverseasRelease")
+            Button("취소",role:.cancel) {command=nil}
+        } message: {Text("통지 확정일부터 현재 소속과 구단 보유권리를 해제합니다. 원 계약·과거 경기 기록은 보존하며 날짜·피로·능력은 변경하지 않습니다.")}
+    }
 }

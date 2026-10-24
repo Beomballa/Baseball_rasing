@@ -2919,3 +2919,111 @@ extension CareerCalendarTests {
         XCTAssertEqual(row.payload,before)
     }
 }
+
+extension CareerCalendarTests {
+    private func overseasReleaseFixture(_ role:PlayerRole,route:OverseasRoute = .mlbDevelopment,released:Bool=true,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,CareerMembership) {
+        let (store,p,s,_)=try overseasRenewalFixture(role,route:route,legacyURL:legacyURL),c=store.mainContext
+        try OverseasContractStore.evaluateRenewal(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let member=try XCTUnwrap(s.registration(for:p)),state=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer)
+        let review=try XCTUnwrap(state.renewalReviews?.last)
+        if let offer=review.offer {try OverseasContractStore.decideRenewal(player:p,calendar:s,offerID:offer.id,accept:false,date:p.gameDate,revision:s.revision,in:c)}
+        p.gameDate=max(review.window.end.adding(days:1),try GameDate(member.economicEnd).adding(days:1)).description
+        try c.save()
+        if released {try OverseasContractStore.release(player:p,calendar:s,membershipID:member.offerID,date:p.gameDate,revision:s.revision,in:c)}
+        return (store,p,s,member)
+    }
+    func testOverseasReleaseIsExplicitAndKeepsAllRoutesHistoryAndRecords() throws {
+        for route in OverseasRoute.allCases {
+            let (store,p,s,member)=try overseasReleaseFixture(.pitcher,route:route,released:false),c=store.mainContext
+            let before=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),bytes=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),date=p.gameDate,fatigue=p.fatigue
+            XCTAssertNotNil(try s.registration(for:p));XCTAssertTrue(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer!.releases == nil)
+            try OverseasContractStore.release(player:p,calendar:s,membershipID:member.offerID,date:date,revision:s.revision,in:c)
+            let after=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertNil(try s.registration(for:p));XCTAssertEqual(after.overseasCareer?.transitions,before.overseasCareer?.transitions)
+            XCTAssertEqual(after.overseasCareer?.renewalReviews,before.overseasCareer?.renewalReviews);XCTAssertEqual(after.memberships,before.memberships)
+            XCTAssertEqual(after.membershipHistory().last?.releasedOn,date);XCTAssertEqual(after.retryReleases.last?.membershipOfferID,member.offerID)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),bytes);XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue)
+            try OverseasContractStore.release(player:p,calendar:s,membershipID:member.offerID,date:date,revision:-1,in:c,save:{_ in XCTFail("duplicate")})
+        }
+    }
+    func testOverseasReleaseRejectsEarlyAcceptedRenewalStaleAndSaveFailure() throws {
+        let (store,p,s,_)=try overseasRenewalFixture(.batter),c=store.mainContext
+        try OverseasContractStore.evaluateRenewal(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),member=try XCTUnwrap(s.registration(for:p)),offer=try XCTUnwrap(owner.overseasCareer?.renewalReviews?.last?.offer)
+        XCTAssertThrowsError(try OverseasContractStore.release(player:p,calendar:s,membershipID:member.offerID,date:p.gameDate,revision:s.revision,in:c))
+        try OverseasContractStore.decideRenewal(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        p.gameDate=try GameDate(member.economicEnd).adding(days:1).description;try c.save()
+        XCTAssertThrowsError(try OverseasContractStore.release(player:p,calendar:s,membershipID:member.offerID,date:p.gameDate,revision:s.revision,in:c))
+        let (other,q,t,source)=try overseasReleaseFixture(.pitcher,released:false),d=other.mainContext
+        let row=try XCTUnwrap(ContractRegistrationStore.row(player:q,in:d)),raw=row.payload,revision=t.revision
+        XCTAssertThrowsError(try OverseasContractStore.release(player:q,calendar:t,membershipID:source.offerID,date:q.gameDate,revision:revision-1,in:d))
+        XCTAssertThrowsError(try OverseasContractStore.release(player:q,calendar:t,membershipID:source.offerID,date:q.gameDate,revision:revision,in:d,save:{_ in throw MatchError.invalidRecord}))
+        XCTAssertEqual(row.payload,raw);XCTAssertEqual(t.revision,revision);XCTAssertEqual(try t.registration(for:q),source)
+        _ = try CareerTrainingStore.start(player:q,state:t,pitchCode:q.pitches[0].code,in:d)
+        XCTAssertThrowsError(try OverseasContractStore.release(player:q,calendar:t,membershipID:source.offerID,date:q.gameDate,revision:t.revision,in:d))
+    }
+    func testOverseasReleaseCertificationReentryAndNextMatchResumeBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,source)=try overseasReleaseFixture(role),c=store.mainContext
+            let original=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            let row=try CertificationStore.start(player:p,calendar:s,in:c)
+            try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)
+            XCTAssertEqual(try CertificationStore.start(player:p,calendar:s,in:c).payload,row.payload)
+            while !row.completed {try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)}
+            let result=try row.snapshot(),certificate=try XCTUnwrap(result.assessment),raw=row.payload
+            XCTAssertTrue(certificate.passed);XCTAssertEqual(result.releaseOfferID,source.offerID)
+            p.gameDate=result.window.start.description;try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+            let evaluation=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first {$0.key == CareerContractEvaluation.key(p.id,result.window.id)})
+            let snapshot=try evaluation.snapshot(player:p,calendar:s)
+            XCTAssertEqual(snapshot.retry?.certificate,certificate)
+            let packet=try XCTUnwrap(ContractOfferStore.records(player:p,calendar:s,in:c).first {$0.key == evaluation.key}).snapshot(evaluation:evaluation,player:p,calendar:s)
+            let offer=try XCTUnwrap(packet.offers.first)
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try s.registration(for:p)?.level,"domestic-development")
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),original);XCTAssertEqual(row.payload,raw)
+            let fixture=try XCTUnwrap(s.upcoming(for:p).first {$0.isAppearance(for:role)})
+            p.gameDate=fixture.date.description;s.actionDate=nil;try c.save()
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let match=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:match,revision:match.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? p.pitches[0].code:nil,in:c)
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,match.payload)
+            try CareerMatchStore.advance(player:p,state:s,record:match,revision:match.revision,input:.automatic,in:c)
+            let saved=match.payload,fatigue=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:match,revision:match.revision,input:.automatic,in:c))
+            XCTAssertEqual(match.payload,saved);XCTAssertEqual(p.fatigue,fatigue)
+        }
+    }
+    func testOverseasReleaseDiskReopenKeepsSourceAndUnfinishedCertification() throws {
+        var stage="fixture"
+        do {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store");var id:UUID!,bytes:Data!,source:CareerMembership!
+        do {
+            let (store,p,s,member)=try overseasReleaseFixture(.batter,legacyURL:url),c=store.mainContext
+            id=p.id;source=member
+            XCTAssertFalse(c.hasChanges,"foreign fixture must be saved")
+        }
+        // Legacy fixture is V12; open the product container to migrate to V13 before certification.
+        do {
+            stage="migration"
+            let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+            stage="migrated journal"
+            _ = try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            stage="certificate start"
+            let row=try CertificationStore.start(player:p,calendar:s,in:c)
+            stage="certificate advance"
+            try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c);bytes=row.payload
+        }
+        stage="reopen"
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        XCTAssertFalse(c.hasChanges,"reopened context")
+        let resumed=try CertificationStore.start(player:p,calendar:s,in:c)
+        XCTAssertNil(try s.registration(for:p));XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer?.releases?.last?.source,source)
+        XCTAssertEqual(resumed.payload,bytes)
+        XCTAssertFalse(c.hasChanges,"read-only journal must not leave changes")
+        XCTAssertEqual(try CertificationStore.start(player:p,calendar:s,in:c).payload,bytes)
+        } catch {XCTFail("\(stage): \(String(reflecting:error))")}
+    }
+}

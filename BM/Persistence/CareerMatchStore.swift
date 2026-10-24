@@ -264,7 +264,7 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
     static func start(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws -> CareerCertificationRecord {
         guard context.container.schema.entities.contains(where:{$0.name == "CertificationRecord"}),!context.hasChanges,calendar.playerID == player.id else {throw ContractRegistrationError.busy}
         let journal=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),date=try GameDate(player.gameDate)
-        guard try journal.current(on:date) == nil,let release=journal.releases?.last else {throw ContractRegistrationError.registered}
+        guard try journal.current(on:date) == nil,let release=journal.retryReleases.last else {throw ContractRegistrationError.registered}
         let window=try target(on:date),key=player.id.uuidString+":"+release.membershipOfferID+":"+window.id
         if let row=try records(playerID:player.id,in:context).first(where:{$0.key == key}) {return row}
         try CareerTrainingStore.requireNoPending(player:player,in:context)
@@ -291,7 +291,7 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
         guard !value.completed else {throw MatchError.finished}
         let journal=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
         guard value.date == player.gameDate,value.calendarRevision == calendar.revision,
-              journal.releases?.last?.membershipOfferID == value.releaseOfferID,try journal.current(on:GameDate(player.gameDate)) == nil,
+              journal.retryReleases.last?.membershipOfferID == value.releaseOfferID,try journal.current(on:GameDate(player.gameDate)) == nil,
               !calendar.hasAction(on:player.gameDate) else {throw MatchError.stale}
         try value.advance();value.calendarRevision += 1;try value.validate()
         do {

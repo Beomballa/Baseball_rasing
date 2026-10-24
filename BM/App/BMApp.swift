@@ -205,6 +205,17 @@ struct CareerPathVerification: View {
                     if args.contains("-overseas-renewal-verification"),args.contains("-college-pro-verification") {
                         try seedOverseasRenewal(player:p,calendar:calendar,in:c.mainContext)
                     }
+                    if args.contains("-overseas-release-verification"),args.contains("-overseas-renewal-verification") {
+                        try OverseasContractStore.evaluateRenewal(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                        let owner=try ContractRegistrationStore.journal(player:p,calendar:calendar,in:c.mainContext)
+                        if let offer=owner.overseasCareer?.renewalReviews?.last?.offer {
+                            try OverseasContractStore.decideRenewal(player:p,calendar:calendar,offerID:offer.id,accept:false,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                        }
+                        if let member=try calendar.registration(for:p),let review=owner.overseasCareer?.renewalReviews?.last {
+                            p.gameDate=max(review.window.end.adding(days:1),try GameDate(member.economicEnd).adding(days:1)).description
+                            try c.mainContext.save()
+                        }
+                    }
                     if args.contains("-renewal-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedRenewal(player:p,calendar:calendar,in:c.mainContext,empty:args.contains("-renewal-empty"),expired:args.contains("-renewal-expired"))
                     }
