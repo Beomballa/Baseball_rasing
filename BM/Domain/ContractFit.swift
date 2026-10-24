@@ -2018,3 +2018,20 @@ extension OverseasCareerJournal {
         return (renewals+external).sorted {$0.offer.issued == $1.offer.issued ? $0.id < $1.id:$0.offer.issued > $1.offer.issued}
     }
 }
+
+
+struct DomesticMarketEntry:Identifiable {
+    let id:String
+    let evaluationKey:String
+    let name:String
+    let roleID:String
+    let label:String
+    let economicLabel:String
+    let economicIndex:Int
+    let period:String
+    let issued:String
+    let expires:String
+    let status:String
+    let renewal:DomesticRenewalReview?
+    var visible:Bool {["검토 가능","수락 · 발효 대기"].contains(status)}
+}

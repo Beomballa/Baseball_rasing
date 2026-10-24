@@ -3206,3 +3206,23 @@ extension CareerCalendarTests {
         XCTAssertEqual(state.nextMarketWindow(after:try! GameDate("2026-11-14"),hasMembership:false).id,"2027-04")
     }
 }
+
+
+extension CareerCalendarTests {
+    func testUnifiedMarketDomesticBothRoutesAndDecisionWithoutMutation() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try selectionSeason(role),c=store.mainContext
+            try ContractEvaluationStore.registerCurrent(in:c)
+            let before=try ContractOfferStore.records(player:p,calendar:s,in:c).map(\.payload),date=p.gameDate,fatigue=p.fatigue
+            let entries=try ContractMarketStore.domestic(player:p,calendar:s,in:c)
+            XCTAssertEqual(entries.count,2);XCTAssertTrue(entries.allSatisfy {$0.status == "검토 가능"})
+            XCTAssertEqual(Set(entries.map(\.economicLabel)),Set(["연봉지수","선발 지원지수"]))
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:entries[0].id,accept:true,date:date,revision:s.revision,in:c)
+            let after=try ContractMarketStore.domestic(player:p,calendar:s,in:c)
+            XCTAssertEqual(after.filter {$0.status == "수락 · 발효 완료"}.count,1)
+            XCTAssertEqual(after.filter {$0.status == "다른 제의 수락 · 종료"}.count,1)
+            XCTAssertEqual(try ContractOfferStore.records(player:p,calendar:s,in:c).map(\.payload),before)
+            XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue)
+        }
+    }
+}

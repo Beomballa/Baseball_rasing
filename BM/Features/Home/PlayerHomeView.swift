@@ -1570,14 +1570,16 @@ struct ContractMarketView:View {
         let _=calendar.revision
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
-                switch Result(catching:{try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)}) {
+                switch Result(catching:{(try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),try ContractMarketStore.domestic(player:player,calendar:calendar,in:context))}) {
                 case .failure(let error):Text(error.localizedDescription).accessibilityIdentifier("marketError")
-                case .success(let owner):
+                case .success(let loaded):
+                    let owner=loaded.0
+                    let domestic=loaded.1
                     let state=owner.overseasCareer ?? OverseasCareerJournal()
                     let entries=state.marketEntries(on:player.gameDate)
                     GamePanel(title:"CONTRACT MARKET · 계약 시장",onBoard:true,contentSpacing:12) {
                         Text("기준일 "+player.gameDate).font(.caption.monospaced())
-                        Text("검토 가능 \(entries.filter {$0.status == "검토 가능"}.count)건 · 잔류 / 외부 조건 비교").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketSummary")
+                        Text("검토 가능 \(entries.filter {$0.status == "검토 가능"}.count + domestic.filter {$0.status == "검토 가능"}.count)건 · 잔류 / 외부 조건 비교").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketSummary")
                         Text("연봉지수는 게임 내 비교값입니다. 계약 기간·역할·발효일을 함께 확인하세요. 대학 지원금과 연봉을 같은 금액으로 비교하지 않습니다.").font(.caption).lineSpacing(5)
                         Text("수락 시 다른 열린 제의를 닫고 발효일까지 현재 소속을 유지합니다. 마감·거절·제의 없음은 자동 방출이나 FA가 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     }
@@ -1591,6 +1593,7 @@ struct ContractMarketView:View {
                             Text("출전·승격 보장 없음").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         }
                     }
+                    DomesticMarketCards(player:player,calendar:calendar,entries:domestic,showHistory:showHistory)
                     GamePanel(title:"심사 · 결정 창구",onBoard:true,contentSpacing:12) {
                         NavigationLink {OverseasRenewalView(player:player,calendar:calendar)} label: {Text("잔류 심사 · 수락 / 거절")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketRenewal")
                         NavigationLink {OverseasContractsView(player:player,calendar:calendar)} label: {Text("외부 심사 · 수락 / 거절")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketExternal")
@@ -1599,7 +1602,7 @@ struct ContractMarketView:View {
                         ContractEvaluationHomePanel(player:player,calendar:calendar)
                     }
                     GamePanel(title:"마감 · 제의 없음 · 재도전",onBoard:true,contentSpacing:12) {
-                        if !entries.contains(where:{$0.status == "검토 가능"}) {
+                        if !entries.contains(where:{$0.status == "검토 가능"}) && !domestic.contains(where:{$0.status == "검토 가능"}) {
                             Text("현재 검토할 제의 없음").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketEmpty")
                         }
                         Text("같은 평가 창에서는 재심사하거나 만료 제의를 재발행하지 않습니다. 현재 창의 보고서와 부족 조건을 확인하고 다음 유효 창에 새 자료로 도전하세요.").font(.caption).lineSpacing(5)
@@ -1617,5 +1620,29 @@ struct ContractMarketView:View {
                 }
             }.padding(12)
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("계약 시장").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
+    }
+}
+
+
+struct DomesticMarketCards:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    let entries:[DomesticMarketEntry]
+    let showHistory:Bool
+    @Environment(\.modelContext) private var context
+    var body:some View {
+        ForEach(entries.filter {showHistory || $0.visible}) {entry in
+            GamePanel(title:entry.name+" · "+entry.label,onBoard:true,contentSpacing:12) {
+                Text(entry.status).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("domesticMarketStatus")
+                Text(DomesticContractOffer.roleName(entry.roleID)).font(.subheadline)
+                Text(entry.economicLabel+" \(entry.economicIndex)").font(.headline).accessibilityIdentifier("domesticMarketEconomic")
+                Text(entry.period+"\n수락 마감 "+entry.expires).font(.caption.monospaced()).lineSpacing(5)
+                if let renewal=entry.renewal {
+                    NavigationLink {DomesticRenewalDetail(player:player,calendar:calendar,value:renewal,evaluatedDate:entry.issued)} label: {Text("잔류 조건 · 결정")}.buttonStyle(MatchPixelButtonStyle())
+                } else if let evaluation=try? ContractEvaluationStore.records(player:player,calendar:calendar,in:context).first(where:{$0.key == entry.evaluationKey}) {
+                    NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation,page:.detail(entry.id))} label: {Text("제의 상세 · 결정")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("domesticMarketDetail")
+                }
+            }
+        }
     }
 }

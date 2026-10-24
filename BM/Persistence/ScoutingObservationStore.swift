@@ -978,3 +978,30 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
 }
+
+
+@MainActor enum ContractMarketStore {
+    static func domestic(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> [DomesticMarketEntry] {
+        let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        let evaluations=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context)
+        var entries:[DomesticMarketEntry]=[]
+        for packet in try ContractOfferStore.records(player:player,calendar:calendar,in:context) {
+            guard let evaluation=evaluations.first(where:{$0.key == packet.key}) else {throw ContractOfferError.invalid}
+            for offer in try packet.snapshot(evaluation:evaluation,player:player,calendar:calendar).offers {
+                let decision=owner.decisions.first {$0.offerID == offer.id}
+                let member=owner.memberships.first {$0.offerID == offer.id}
+                let status=decision.map {$0.kind == .accepted ? ((member?.since ?? "") > player.gameDate ? "수락 · 발효 대기":"수락 · 발효 완료"):$0.kind == .rejected ? "거절":"다른 제의 수락 · 종료"} ?? (player.gameDate > offer.expiresDate ? "마감":"검토 가능")
+                entries.append(DomesticMarketEntry(id:offer.id,evaluationKey:packet.key,name:offer.name,roleID:offer.roleID,label:offer.kind,economicLabel:offer.economicLabel,economicIndex:offer.economicIndex,period:member.map {$0.since+" ~ "+($0.enrollmentEnd ?? $0.economicEnd)} ?? offer.period,issued:offer.issuedDate,expires:offer.expiresDate,status:status,renewal:nil))
+            }
+        }
+        for evaluation in evaluations {
+            guard let review=try evaluation.snapshot(player:player,calendar:calendar).renewal,let offer=review.offer else {continue}
+            let accepted=owner.renewals?.contains {$0.terms.id == offer.id} == true
+            let rejected=owner.renewalRejections?.contains {$0.offerID == offer.id} == true
+            let transferred=owner.overseasCareer?.transitions.contains {$0.sourceMembershipID == review.membership.offerID && $0.acceptedDate >= offer.issuedDate && $0.acceptedDate <= offer.expiresDate} == true
+            let status=accepted ? (player.gameDate < offer.effectiveDate ? "수락 · 발효 대기":"수락 · 발효 완료"):rejected ? "거절":transferred ? "다른 제의 수락 · 종료":player.gameDate > offer.expiresDate ? "마감":"검토 가능"
+            entries.append(DomesticMarketEntry(id:offer.id,evaluationKey:evaluation.key,name:review.membership.name,roleID:review.roleID,label:"국내 육성 · 잔류",economicLabel:"연봉지수",economicIndex:offer.economicIndex,period:offer.effectiveDate+" ~ "+offer.economicEnd,issued:offer.issuedDate,expires:offer.expiresDate,status:status,renewal:review))
+        }
+        return entries.sorted {$0.issued == $1.issued ? $0.id < $1.id:$0.issued > $1.issued}
+    }
+}
