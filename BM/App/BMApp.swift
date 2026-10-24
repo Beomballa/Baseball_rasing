@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-field-performance-autoplay") {
+            if ProcessInfo.processInfo.arguments.contains("-live-career-autoplay") {
+                LiveCareerPerformanceRun()
+            } else if ProcessInfo.processInfo.arguments.contains("-field-performance-autoplay") {
                 FieldPerformanceAutoplay()
             } else if ProcessInfo.processInfo.arguments.contains("-match-presentation-verification") {
                 NavigationStack {MatchReplayVerification()}
@@ -70,7 +72,15 @@ struct AppBootstrapView: View {
     @MainActor private func load() {
         do {
             let catalog = try SchoolCatalog.load()
-            let store = try CareerStore.makeContainer()
+            let store: ModelContainer
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-live-career-performance") {
+                let url=try LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier)
+                store=try CareerStore.makeContainer(url:url)
+            } else { store=try CareerStore.makeContainer() }
+            #else
+            store=try CareerStore.makeContainer()
+            #endif
             schools = catalog; container = store; errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
@@ -226,5 +236,51 @@ struct CareerPathVerification: View {
         if expired {p.gameDate="\(year)-11-08";try context.save()}
     }
 
+}
+#endif
+
+#if DEBUG
+enum LiveCareerQA {
+    static func storeURL(arguments:[String],bundleID:String?) throws -> URL {
+        guard bundleID == "dev.bm.career.performanceqa",let index=arguments.firstIndex(of:"-qa-session"),
+              index+1<arguments.count,let session=UUID(uuidString:arguments[index+1]) else {
+            throw NSError(domain:"BM.QA",code:1,userInfo:[NSLocalizedDescriptionKey:"실제 경기 QA는 별도 앱·세션이 필요합니다."])
+        }
+        return FileManager.default.temporaryDirectory.appendingPathComponent("live-career-\(session.uuidString).store")
+    }
+}
+
+// Uses real creation/calendar/store/view/input paths. Controlled QA inputs, never forced outcomes.
+private struct LiveCareerPerformanceRun:View {
+    @State private var container:ModelContainer?
+    @State private var player:CareerPlayer?
+    @State private var calendar:CareerCalendarState?
+    @State private var schools:[School]=[]
+    @State private var failure:String?
+    var body:some View {
+        NavigationStack {
+            if let container,let player,let calendar {
+                CareerGameView(player:player,calendar:calendar,schools:schools).modelContainer(container)
+            } else {Text(failure ?? "실제 경기 QA 준비 중")}
+        }.task {
+            guard container == nil,failure == nil else {return}
+            do {
+                let args=ProcessInfo.processInfo.arguments
+                let url=try LiveCareerQA.storeURL(arguments:args,bundleID:Bundle.main.bundleIdentifier)
+                let c=try CareerStore.makeContainer(url:url),catalog=try SchoolCatalog.load()
+                let p:CareerPlayer
+                if let saved=try c.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first {p=saved}
+                else {
+                    var draft=PlayerDraft();draft.name="ProfileQA";draft.schoolID=catalog[0].id
+                    draft.role=args.contains("-qa-pitcher") ? .pitcher:.batter
+                    if draft.role == .pitcher {draft.throwingHand = .left}
+                    p=try CareerStore.create(draft,schools:catalog,in:c.mainContext)
+                }
+                let state=try c.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID==p.id}!
+                if state.actionDate != p.gameDate {try CalendarProgression.rest(player:p,state:state,revision:state.revision,in:c.mainContext)}
+                schools=catalog;player=p;calendar=state;container=c
+            } catch {failure=error.localizedDescription}
+        }
+    }
 }
 #endif

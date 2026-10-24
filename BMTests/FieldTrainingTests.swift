@@ -2431,3 +2431,37 @@ import SpriteKit
         XCTAssertEqual(scene.displayedTime,0.28);XCTAssertFalse(scene.resultVisible)
     }
 }
+
+@MainActor final class MatchArenaLifecycleTests:XCTestCase {
+    func testDetachedArenaPausesWithoutDiscardingSceneOrActions() {
+        let view=MatchArenaSKView(frame:CGRect(x:0,y:0,width:320,height:340))
+        let scene=BallparkScene(size:CGSize(width:320,height:340))
+        scene.run(.wait(forDuration:10),withKey:"preserved")
+        view.presentScene(scene)
+        view.setCovered(false)
+        XCTAssertTrue(view.isPaused)
+        XCTAssertTrue(view.scene === scene)
+        XCTAssertNotNil(scene.action(forKey:"preserved"))
+        view.setCovered(true)
+        XCTAssertTrue(view.isPaused)
+        XCTAssertTrue(view.scene === scene)
+    }
+}
+
+@MainActor final class LiveCareerQAStoreBoundaryTests:XCTestCase {
+    func testRejectsExistingProductBundleEvenWithValidSession() {
+        XCTAssertThrowsError(try LiveCareerQA.storeURL(arguments:["-qa-session",UUID().uuidString],bundleID:"dev.bm.career"))
+    }
+    func testRejectsMissingOrPathLikeSession() {
+        for args in [[],["-qa-session"],["-qa-session","../../Career.store"]] {
+            XCTAssertThrowsError(try LiveCareerQA.storeURL(arguments:args,bundleID:"dev.bm.career.performanceqa"))
+        }
+    }
+    func testSameSessionResumesSameTemporaryStoreAndNewSessionIsIndependent() throws {
+        let id=UUID().uuidString,other=UUID().uuidString
+        let first=try LiveCareerQA.storeURL(arguments:["-qa-session",id],bundleID:"dev.bm.career.performanceqa")
+        XCTAssertEqual(first,try LiveCareerQA.storeURL(arguments:["-qa-session",id],bundleID:"dev.bm.career.performanceqa"))
+        XCTAssertNotEqual(first,try LiveCareerQA.storeURL(arguments:["-qa-session",other],bundleID:"dev.bm.career.performanceqa"))
+        XCTAssertEqual(first.deletingLastPathComponent().standardizedFileURL,FileManager.default.temporaryDirectory.standardizedFileURL)
+    }
+}

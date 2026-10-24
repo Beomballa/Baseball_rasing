@@ -1030,3 +1030,22 @@ Instruments Game Performance의 전체31.091초 시작 trace에서 초기 텍스
 최종 별도 QA 재측정은 타자·투수 각10상황×효과 일반/감소40개가 전부 foreground 완료했다. 네 그룹 callback 중앙값33.338ms·p95 최대33.407ms·전체 최대35.594ms, update CPU 단일 최대1.122ms, 추가 텍스처0, 표본 메모리 최대157.439MiB였다. 전부 rendererReady.settled 뒤 clock을 시작했다. 이는 app callback/CPU 측정이며 GPU 표시 FPS·누수/발열 검증이 아니다.
 
 첫 전체 실행04에는 타자/효과 감소/악송구에서 앱 비활성화1건과1862.78ms 공백이 있었다. 39개 foreground/1개 interrupted로 보존하고 정상 성능 통과로 합산하지 않았다. 별도05 재측정40개는 중단0이었다. attach 실패와 초기 window 제한도 별도00a/00b에 보존했다. 최종 근거는 ios/qa/versions/2026-10-24/native-inplay-startup-v1의 notes/comparison.json·runs/05-device-recheck/reports/physical-summary.json 및 원시 자료다.
+
+## 실제 경기 흐름·초기 표시 검증 (native-live-career-performance-v1 · 2026-10-24)
+
+실기기에서 테스트 러너의 Automation Running 화면과 게임 QA 앱을 구분했다. QA 러너만 제거한 뒤 실제 QA 앱을 직접 열어 사용자가 선수 홈을 확인했다. 자동 QA의 긴 async View 함수가 시작 당시 scenePhase를 캡처한 문제는 현재 UIKit 앱/윈도 상태 재조회로 고쳤다. 이후 사용자가 확인한 ‘투구 전 보더라인만 보이고 경기장은 회색, 투구 뒤 정상 표시’는 경기장 렌더 호스트를 실제 SKView 윈도 부착/UIScene 활성 알림으로 제어하도록 수정했다. 타자·투수 모두 입력 전부터 야구장과 선수가 보이는 것을 사용자 실기기에서 확인했다. 백그라운드/인플레이 가림 정지와 입력 취소 정책은 유지한다.
+
+별도 QA 번들·UUID 임시 store에서 실제 선수 생성/휴식/직접 입력·자연 발생 인플레이/중단 이어하기/잔여 자동 완료/결과 재열기를 검증한 UI2개가 통과했다(렌더 호스트 수정 전 자동 UI). 수정 후 양 역할의 초기 표시 사용자 확인과 실제 begin/resolve/advance 표준 입력 driver를 재검증했다. 현재 UUID audit의 active/completed/inplay/sameRecord/samePayload/sameFatigue는 모두 true, 경기 원장은 각각1개였다. 전 경기 수동 조작이나 고정 10상황 재현실과 구분한다.
+
+| 최종 실기기 표본 | 타자06 | 투수05 |
+|---|---:|---:|
+| 실제 움직임 관측 길이 | 5.27초 | 4.80초 |
+| 앱 update 간격 p95 / 최대 | 33.493 / 33.556ms | 33.427 / 35.187ms |
+| 실제 표시 연결 커버리지 | 99.4% | 99.6% |
+| 실제 표시 시작 간격 중앙값 / p95 / 최대 | 33.339 / 50.008 / 50.008ms | 33.339 / 33.339 / 50.008ms |
+| update CPU 최대 | 0.810ms | 1.043ms |
+| 가려진 경기장 이동 중 갱신 / 추가 텍스처 | 0 / 0 | 0 / 0 |
+
+앱 표식의 시각과 Instruments 표식 2개의 offset을 검증하고, 대상 프로세스가 기록한 Metal IOSurface ID/크기를 실제 Display 구간과 연결했다. opaque presented-handler timestamp를 변환해 FPS를 만들지 않았다. 타자04/투수02l의 불완전 표시 자료와 비활성/연결 실패·중단은 보존하고 최신 완전 표본과 섞지 않는다. 시스템 동작 줄이기ON/이동 감소OFF/효과 감소ON·저전력OFF에서 측정했다. 간헐적50ms 표시 간격과 계측 오버헤드는 남아 있으며 30Hz 목표의 완전 균일성·장기 발열/누수·다른 기종/iOS17 인수를 뜻하지 않는다.
+
+최종 단위/저장·모션/생명주기50개와 QA 저장 경계3개(중복 제외53개), Python22개, 공유 Simulator Release와 별도 실기기 최적화 QA 빌드가 통과했다. Release 바이너리에 QA/자동 입력/계측 실행 플래그가 없음을 확인했다. 새 PosterBoard 보고서는0개였다. Domain/Persistence·V12·타구/주루 시간표·판정/RNG·날짜/피로·기존 저장·이어하기·결과/XP1회 규칙과 개인 프로젝트 설정은 변경하지 않았다. QA 원문·캡처/trace·QA 선수 저장은 로컬 전용이며 공개 Git에 포함하지 않는다. 기존12~16주 기준안과 고교·20세 진로 추가 범위 재산정 조건은 유지한다. 외부 Pages 동기화는 이번 작업에 포함하지 않았다.

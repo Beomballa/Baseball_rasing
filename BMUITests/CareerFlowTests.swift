@@ -2685,4 +2685,74 @@ extension CareerFlowTests {
         next.tap();XCTAssertTrue(app.staticTexts["integratedScenario"].exists)
     }
 
+    @MainActor func testActualCareerPhysicalPerformanceAndOneTimeResults() throws {
+        guard Bundle.main.bundleIdentifier?.contains("performanceqa") == true else {
+            throw XCTSkip("별도 performanceqa 타깃에서만 실제 기기 QA를 실행합니다.")
+        }
+        let app=XCUIApplication()
+        for pitcher in [false,true] {
+            app.terminate()
+            app.launchArguments=["-live-career-performance","-match-render-performance","-qa-session",UUID().uuidString]
+            app.launch()
+            if pitcher {app.buttons["role-pitcher"].tap();app.buttons["hand-left"].tap()}
+            createDashboardSample(app,name:pitcher ? "LivePitch":"LiveBat",motionStyle:true)
+            reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            driveActualCareerToField(app,pitcher:pitcher)
+            let count=app.otherElements["careerGameCount"].label
+            app.terminate();app.launch()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
+            app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:15))
+            let result=app.staticTexts["careerGameFinished"].label
+            reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
+            reveal(app.staticTexts["homeFatigue"],in:app);let fatigue=app.staticTexts["homeFatigue"].label
+            app.terminate();app.launch()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:10))
+            XCTAssertEqual(app.staticTexts["careerGameFinished"].label,result)
+            reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
+            reveal(app.staticTexts["homeFatigue"],in:app);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+        }
+    }
+
+    @MainActor private func driveActualCareerToField(_ app:XCUIApplication,pitcher:Bool) {
+        let stage=app.descendants(matching:.any).matching(identifier:"inplayFieldStage").firstMatch
+        let homer=app.descendants(matching:.any).matching(identifier:"homeRunStage").firstMatch
+        var liveField=false
+        for index in 0..<24 {
+            let prepare=app.buttons[pitcher ? "gamePitch":"requestGamePitch"]
+            waitForEnabled(prepare,timeout:45)
+            if !pitcher {app.buttons[index%3 == 0 ? "gameInput-bunt":"gameInput-swing"].tap()}
+            prepare.tap();Thread.sleep(forTimeInterval:pitcher ? 0.8:0.9)
+            let release=app.buttons[pitcher ? "gameRelease":"gameHit"]
+            if release.exists {release.tap()}
+            if stage.waitForExistence(timeout:4) || homer.exists {
+                liveField=true
+                let shown=stage.exists ? stage:homer
+                let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "Actual pitcher live field":"Actual batter live field";shot.lifetime = .keepAlways;add(shot)
+                let ended=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:shown)
+                XCTAssertEqual(XCTWaiter.wait(for:[ended],timeout:45),.completed);break
+            }
+            if app.buttons["finishAfterPitcherChange"].exists {break}
+        }
+        XCTAssertTrue(liveField,"실제 경기 입력 뒤 인플레이가 발생해야 합니다.")
+    }
+
+    @MainActor func testActualCareerSingleProcessProfileBothRoles() throws {
+        guard Bundle.main.bundleIdentifier?.contains("performanceqa") == true else {throw XCTSkip("별도 performanceqa 타깃 전용")}
+        let app=XCUIApplication();app.activate()
+        for pitcher in [false,true] {
+            if pitcher {reveal(app.buttons["createOtherRole"],in:app);app.buttons["createOtherRole"].tap();app.buttons["hand-left"].tap()}
+            createDashboardSample(app,name:pitcher ? "ProfilePitch":"ProfileBat",motionStyle:true)
+            reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            driveActualCareerToField(app,pitcher:pitcher)
+            app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:15))
+            reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
+        }
+    }
+
 }

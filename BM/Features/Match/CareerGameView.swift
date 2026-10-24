@@ -52,6 +52,48 @@ struct CareerGameView: View {
     @State private var pulse: String?
     @State private var pulseAt = Date.distantPast
 
+    #if DEBUG
+    private var livePerformanceQA:Bool {ProcessInfo.processInfo.arguments.contains("-live-career-performance")}
+    @MainActor private var liveQAWindowActive:Bool {
+        UIApplication.shared.applicationState == .active && UIApplication.shared.connectedScenes.contains {$0.activationState == .foregroundActive}
+    }
+    @MainActor private func runLiveCareerQA() async {
+        guard ProcessInfo.processInfo.arguments.contains("-live-career-autoplay"),livePerformanceQA else {return}
+        do {
+            try await Task.sleep(for:.seconds(15))
+            for _ in 0..<180 where !liveQAWindowActive {try await Task.sleep(for:.milliseconds(250))}
+            let active=liveQAWindowActive
+            let phase=["active":active,"applicationActive":UIApplication.shared.applicationState == .active,
+                       "foregroundScene":UIApplication.shared.connectedScenes.contains {$0.activationState == .foregroundActive}]
+            try JSONEncoder().encode(phase).write(to:FileManager.default.temporaryDirectory.appendingPathComponent("actual-career-phase-"+player.role.rawValue+".json"),options:.atomic)
+            guard active else {return}
+            for _ in 0..<24 {
+                guard !Task.isCancelled,let record,!record.completed,error == nil else {break}
+                let match=try record.snapshot()
+                if player.role == .pitcher && !match.ownPitcherActive {break}
+                let delivery=match.delivery(pitchCode:pitchCode)
+                aimX=delivery.x;aimY=delivery.y;battingAction = .swing
+                begin()
+                let target=player.role == .pitcher ? ManualMatchRules.releaseCenter:MatchDelivery.contactPhase
+                while clock.running && clock.phase<target {try await Task.sleep(for:.milliseconds(10))}
+                if clock.running {resolve()}
+                while presenting {try await Task.sleep(for:.milliseconds(50))}
+                if MatchRenderMetrics.lifecycle.contains(where:{$0.name=="career.inplay.exit"}) {break}
+            }
+            guard !Task.isCancelled,let record,error == nil else {return}
+            if !record.completed {advance(.automatic)}
+            try await Task.sleep(for:.seconds(2))
+            let snapshot=try record.snapshot(),before=record.payload,beforeFatigue=player.fatigue
+            let reopened=try CareerMatchStore.start(player:player,state:calendar,in:context)
+            struct Audit:Encodable {let sessionStore:String;let active:Bool;let completed:Bool;let inplay:Bool;let sameRecord:Bool;let samePayload:Bool;let sameFatigue:Bool;let recordCount:Int}
+            let audit=Audit(sessionStore:try LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier).lastPathComponent,active:liveQAWindowActive,completed:snapshot.completed,inplay:MatchRenderMetrics.lifecycle.contains {$0.name=="career.inplay.exit"},sameRecord:reopened.id==record.id,samePayload:reopened.payload==before,sameFatigue:player.fatigue==beforeFatigue,recordCount:try context.fetch(FetchDescriptor<CareerMatchRecord>()).filter {$0.playerID==player.id}.count)
+            let data=try JSONEncoder().encode(audit)
+            try data.write(to:FileManager.default.temporaryDirectory.appendingPathComponent("actual-career-audit-"+player.role.rawValue+".json"),options:.atomic)
+            MatchRenderMetrics.mark("career.qa.completed")
+            MatchRenderMetrics.exportLive(role:player.role.rawValue+"-actual-session-\(Int(ProcessInfo.processInfo.systemUptime*1000))")
+        } catch {self.error=error.localizedDescription}
+    }
+    #endif
     private var preparesFieldMotion:Bool {
         #if DEBUG
         !ProcessInfo.processInfo.arguments.contains("-match-render-baseline")
@@ -75,6 +117,9 @@ struct CareerGameView: View {
         } catch { self.error = error.localizedDescription }
     }
     private func begin() {
+        #if DEBUG
+        if livePerformanceQA {MatchRenderMetrics.mark(player.role == .pitcher ? "career.input.pitch":"career.input."+battingAction.rawValue)}
+        #endif
         guard !presenting, attempt == nil, retrySave == nil, let record, let match = try? record.snapshot(), !match.completed, player.role != .pitcher || match.ownPitcherActive else { return }
         let input: MatchInput = player.role == .pitcher ? .pitch : battingAction
         attempt = Attempt(revision: record.revision, input: input, pitchCode: pitchCode)
@@ -98,12 +143,18 @@ struct CareerGameView: View {
         guard let record else { return }
         guard !record.completed, record.revision == pending.attempt.revision else { retrySave = nil; return }
         do {
+            #if DEBUG
+            if livePerformanceQA {MatchRenderMetrics.mark("career.commitBegin")}
+            #endif
             let previous = try record.snapshot()
             try CareerMatchStore.advance(player: player, state: calendar, record: record,
                                          revision: pending.attempt.revision, input: pending.attempt.input,
                                          pitchCode: pending.attempt.pitchCode, control: pending.control, in: context)
             retrySave = nil
             let updated=try displaySnapshot.refresh(record)
+            #if DEBUG
+            if livePerformanceQA {MatchRenderMetrics.mark("career.commitEnd")}
+            #endif
             let added=Array((updated.fieldPlays ?? []).dropFirst(previous.fieldPlays?.count ?? 0))
             let homeRun=Array((updated.homeRuns ?? []).dropFirst(previous.homeRuns?.count ?? 0)).first {
                 $0.half == previous.half && $0.order == (previous.half%2 == 1 ? previous.homeOrder:previous.awayOrder) && pending.attempt.input != .watch
@@ -112,6 +163,9 @@ struct CareerGameView: View {
             if let result = updated.lastManual {
                 visualSnapshot = previous; presenting = true; judgment = nil; arrivedSnapshot = nil
                 let showCall: @MainActor () -> Void = {
+                    #if DEBUG
+                    if livePerformanceQA {MatchRenderMetrics.mark("career.ballArrival")}
+                    #endif
                     if let homeRun {
                         var handoff=scene.fieldHandoff;handoff?.sourceFrame=arenaFrame;fieldHandoff=handoff
                         fieldResolved=false;homeRunReplay=homeRun
@@ -291,7 +345,7 @@ struct CareerGameView: View {
     private func arena(_ match: CareerMatch, field: CGSize) -> some View {
         VStack(spacing: 0) {
             ZStack {
-                SpriteView(scene: scene, isPaused: (fieldCoversArena && preparesFieldMotion) || scenePhase != .active, options: [.ignoresSiblingOrder])
+                MatchArenaSurface(scene:scene,covered:fieldCoversArena && preparesFieldMotion)
 
             }
                 .frame(width: field.width, height: field.height)
@@ -561,14 +615,25 @@ struct CareerGameView: View {
                 }
             }
         }
-        .onAppear { load(); configureScene() }
+        .onAppear {
+            #if DEBUG
+            if livePerformanceQA {MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true;MatchRenderMetrics.mark("career.enter")}
+            #endif
+            load(); configureScene()
+        }
         .onChange(of: record.map(MatchDisplaySnapshot.Token.init)) { _, _ in
             guard let record else { return }
             do { try displaySnapshot.refresh(record) } catch { self.error = error.localizedDescription }
         }
         #if DEBUG
+        .task {await runLiveCareerQA()}
         .onChange(of:fieldCoversArena) {_,covered in
             guard ProcessInfo.processInfo.arguments.contains("-match-render-performance") else {return}
+            if livePerformanceQA {
+                MatchRenderMetrics.mark(covered ? "career.inplay.enter":"career.inplay.exit")
+                if !covered {MatchRenderMetrics.exportLive(role:player.role.rawValue+"-actual-inplay-\(Int(ProcessInfo.processInfo.systemUptime*1000))")}
+                return
+            }
             if covered {MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true}
             else {MatchRenderMetrics.exportLive(role:player.role.rawValue+(preparesFieldMotion ? (ProcessInfo.processInfo.arguments.contains("-field-canvas-comparison") ? "-canvas":"-sprite"):"-baseline"));MatchRenderMetrics.enabled=false}
         }
@@ -579,11 +644,23 @@ struct CareerGameView: View {
             do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
             if !Task.isCancelled { pulse = nil }
         }
-        .onDisappear { cancelInput() }
+        .onDisappear {
+            #if DEBUG
+            if livePerformanceQA {MatchRenderMetrics.mark("career.exit");MatchRenderMetrics.exportLive(role:player.role.rawValue+"-actual-career-\(Int(ProcessInfo.processInfo.systemUptime*1000))");MatchRenderMetrics.enabled=false}
+            #endif
+            cancelInput()
+        }
         .onChange(of: clock.phase) { _, phase in
             if player.role == .pitcher && clock.running { scene.preparePitch(phase: phase, reduced: reduced) }
         }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { cancelInput() } }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                #if DEBUG
+                if livePerformanceQA {MatchRenderMetrics.mark("career.inactive");MatchRenderMetrics.exportLive(role:player.role.rawValue+"-actual-career-interrupted-\(Int(ProcessInfo.processInfo.systemUptime*1000))")}
+                #endif
+                cancelInput()
+            }
+        }
         .confirmationDialog("남은 경기를 자동으로 진행할까요?", isPresented: $confirmAutomatic, titleVisibility: .visible) {
             Button("진행하고 결과 저장") { advance(.automatic) }
         } message: { Text("현재 카운트·주자에서 이어서 진행합니다. 실제 출전 성적과 피로를 반영하며 취소할 수 없습니다.") }
@@ -694,5 +771,53 @@ enum FieldPlaybackMode: String, CaseIterable {
     }
     func reducesMovement(system: Bool) -> Bool {
         switch self {case .system,.continuous: false;case .stills: true}
+    }
+}
+
+/// Match the render lifecycle to the SKView's actual window, including its first attachment.
+private struct MatchArenaSurface:UIViewRepresentable {
+    let scene:BallparkScene
+    let covered:Bool
+    func makeUIView(context:Context)->MatchArenaSKView {
+        let view=MatchArenaSKView(frame:.zero)
+        view.ignoresSiblingOrder=true
+        view.presentScene(scene)
+        view.setCovered(covered)
+        return view
+    }
+    func updateUIView(_ view:MatchArenaSKView,context:Context) {
+        if view.scene !== scene {view.presentScene(scene)}
+        view.setCovered(covered)
+    }
+    static func dismantleUIView(_ view:MatchArenaSKView,coordinator:()) {
+        view.isPaused=true
+        view.presentScene(nil)
+    }
+}
+
+final class MatchArenaSKView:SKView {
+    private var covered=false
+    override init(frame:CGRect) {
+        super.init(frame:frame)
+        NotificationCenter.default.addObserver(self,selector:#selector(activated(_:)),name:UIScene.didActivateNotification,object:nil)
+        NotificationCenter.default.addObserver(self,selector:#selector(deactivated(_:)),name:UIScene.willDeactivateNotification,object:nil)
+    }
+    required init?(coder:NSCoder) {fatalError("Storyboard initialization is not used")}
+    deinit {NotificationCenter.default.removeObserver(self)}
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        refreshPause()
+    }
+    func setCovered(_ value:Bool) {covered=value;refreshPause()}
+    private func refreshPause() {
+        isPaused=covered || window?.windowScene?.activationState != .foregroundActive
+    }
+    @objc private func activated(_ notification:Notification) {
+        guard let ownScene=window?.windowScene,notification.object as? UIScene === ownScene else {return}
+        refreshPause()
+    }
+    @objc private func deactivated(_ notification:Notification) {
+        guard let ownScene=window?.windowScene,notification.object as? UIScene === ownScene else {return}
+        isPaused=true
     }
 }
