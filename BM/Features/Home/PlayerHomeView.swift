@@ -620,7 +620,7 @@ struct CareerPathHomePanel: View {
                 Button("다시 확인", action:load).buttonStyle(MatchPixelButtonStyle())
             } else if let history {
                 Text((try? calendar.registration(for:player))?.label ?? history.current.stage.label).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerPathStage")
-                Text((try? calendar.registration(for:player)).map {"현재 소속 · "+$0.name+" / 출신 · "+player.schoolName} ?? (history.current.stage == .school ? "현재 소속 · \(history.current.schoolName ?? player.schoolName)" : "현재 소속 · 무소속 아마추어 / 출신 · \(player.schoolName)"))
+                Text((try? calendar.registration(for:player)).map {"현재 소속 · "+$0.name+" / 출신 · "+player.schoolName} ?? (history.current.stage == .school ? "현재 소속 · \(history.current.schoolName ?? player.schoolName)" : "현재 소속 · 무소속 / 출신 · \(player.schoolName)"))
                     .font(.caption).accessibilityIdentifier("careerPathAffiliation")
                 Text("관심·선발·제의와 실제 등록을 구분합니다. 수락한 소속과 제의 결정은 별도 이력으로 보관합니다.")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -641,6 +641,9 @@ struct CareerPathHomePanel: View {
                             .font(.caption.monospaced()).accessibilityIdentifier("careerAffiliationHistory")
                     }
                     if let journal=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context) {
+                        ForEach(journal.releases ?? [],id:\.membershipOfferID) {release in
+                            Text(release.date+" · 방출 확정 / 보유권리 해제 · 무소속").font(.caption).accessibilityIdentifier("careerReleaseHistory")
+                        }
                         ForEach(journal.memberships,id:\.offerID) {member in
                             Text(member.since+" · "+member.label+" · "+member.name).font(.caption).accessibilityIdentifier("careerRegisteredHistory")
                             Text(member.route == .rookie ? "경제 기간 종료 "+member.economicEnd+" · 보유 권리 자동 해제 없음":"학적 종료 "+(member.enrollmentEnd ?? "—"))
@@ -690,6 +693,11 @@ struct ContractEvaluationHomePanel: View {
                     Text(value.routes.joined(separator:" / ")).font(.caption).accessibilityIdentifier("contractEvaluationRoutes")
                     if let renewal=value.renewal {
                         DomesticRenewalSummary(player:player,calendar:calendar,value:renewal,evaluatedDate:value.evaluatedDate)
+                    } else if let retry=value.retry {
+                        Text("무소속 국내 육성팀 재입단 · 성인 경쟁 심사").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("retryReviewStatus")
+                        ForEach(retry.results.filter {$0.selected || !$0.reasons.isEmpty}.prefix(4)) {row in
+                            Text(row.name+" · "+DomesticContractOffer.roleName(row.role)+" · "+(row.selected ? "재입단 제의 대상":row.reasons.joined(separator:" / "))).font(.caption)
+                        }
                     } else if let selection=value.selection {
                         DomesticSelectionHomeSummary(value:selection)
                     } else {
@@ -821,6 +829,7 @@ struct CareerContractStatusPanel: View {
                 Text(error.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractStatusError")
             }
         }
+        DomesticReleasePanel(player:player,calendar:calendar)
     }
     private var pendingRenewal:DomesticRenewalAcceptance? {
         guard let context=calendar.modelContext,
@@ -856,7 +865,7 @@ struct DomesticRenewalSummary: View {
 struct DomesticRenewalDetail: View {
     @Environment(\.modelContext) private var context
     @State private var error:String?
-    @State private var command:(date:String,revision:Int)?
+    @State private var command:(date:String,revision:Int,accept:Bool)?
     let player: CareerPlayer
     let calendar: CareerCalendarState
     let value: DomesticRenewalReview
@@ -881,9 +890,13 @@ struct DomesticRenewalDetail: View {
                                 Text(accepted.terms.effectiveDate > player.gameDate ? "수락 완료 · 갱신 예정":"수락 완료 · 경제 기간 적용")
                                     .font(.headline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("renewalAccepted")
                                 Text("수락일 · "+accepted.date+" / 소속과 보유권리 유지").font(.caption)
+                            } else if rejected {
+                                Text("재계약 거절 완료 · 소속/보유권리 유지").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("renewalRejected")
                             } else if player.gameDate <= offer.expiresDate {
-                                Button("재계약 수락") {command=(player.gameDate,calendar.revision)}
+                                Button("재계약 수락") {command=(player.gameDate,calendar.revision,true)}
                                     .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptRenewalOffer")
+                                Button("재계약 거절") {command=(player.gameDate,calendar.revision,false)}
+                                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("rejectRenewalOffer")
                                 Text("수락 후 시작일에 새 경제 조건이 적용됩니다. 날짜·피로·소속·보유권리는 유지됩니다.").font(.caption)
                             }
                         case .failure(let failure):Text(failure.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold)
@@ -911,11 +924,15 @@ struct DomesticRenewalDetail: View {
                 }
             }.padding(14).frame(maxWidth:540,alignment:.leading).frame(maxWidth:.infinity)
         }.background(GameTheme.navy).foregroundStyle(GameTheme.boardInk)
-            .confirmationDialog("재계약 수락을 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
-                Button("수락 확정") {
+            .confirmationDialog("재계약 결정을 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
+                Button(command?.accept == true ? "수락 확정":"거절 확정") {
                     guard let selected=command,let offer=value.offer else {return}
                     command=nil
-                    do {try ContractRegistrationStore.acceptRenewal(player:player,calendar:calendar,offerID:offer.id,date:selected.date,revision:selected.revision,in:context);error=nil}
+                    do {
+                        if selected.accept {try ContractRegistrationStore.acceptRenewal(player:player,calendar:calendar,offerID:offer.id,date:selected.date,revision:selected.revision,in:context)}
+                        else {try ContractRegistrationStore.rejectRenewal(player:player,calendar:calendar,offerID:offer.id,date:selected.date,revision:selected.revision,in:context)}
+                        error=nil
+                    }
                     catch {self.error=error.localizedDescription}
                 }.accessibilityIdentifier("confirmRenewalAcceptance")
                 Button("취소",role:.cancel) {command=nil}
@@ -923,6 +940,9 @@ struct DomesticRenewalDetail: View {
             .navigationTitle("재계약 제의 상세").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GameTheme.navy,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar)
             .toolbarColorScheme(.dark,for:.navigationBar).tint(GameTheme.gold)
+    }
+    private var rejected:Bool {
+        (try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).renewalRejections?.contains {$0.offerID == value.offer?.id}) == true
     }
     private var acceptance:Result<DomesticRenewalAcceptance?,Error> {
         let _=calendar.revision
@@ -934,5 +954,49 @@ struct DomesticRenewalDetail: View {
         let label=player.role == .pitcher ? "투수":position.flatMap {FieldPosition(rawValue:$0)?.label} ?? player.roleDetail
         let mode=ScoutingInputMode.allCases.first {id.hasSuffix("/"+$0.suffix)}?.label ?? "조작 분류 미기록"
         return "국내 육성 공식 경기 · "+label+" · "+mode
+    }
+}
+
+struct DomesticReleasePanel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var command:(key:String,date:String,revision:Int)?
+    @State private var error:String?
+    var body:some View {
+        let _=calendar.revision
+        Group {
+            switch Result(catching:{
+                let journal=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+                return (journal,try ContractRegistrationStore.releaseCandidate(player:player,calendar:calendar,in:context),try journal.current(on:GameDate(player.gameDate)) == nil)
+            }) {
+            case .failure(let failure):Text(failure.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold)
+            case .success(let state):
+                if let candidate=state.1 {
+                    GamePanel(title:"보유권리 · 방출 통지",onBoard:true) {
+                        Text("경제 기간 종료 + 11월 재계약 미체결 + 갱신 수락 없음").font(.subheadline)
+                        Text("11월 15일~다음 해 3월 31일에 별도 방출 확정이 필요합니다. 거절·만료만으로 자동 FA가 되지 않습니다.").font(.caption)
+                        if candidate.eligible {
+                            Button("방출 통지 확인 · 권리 해제") {command=(candidate.key,player.gameDate,calendar.revision)}
+                                .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("confirmClubRelease")
+                        } else {Text("아직 방출 확정 조건을 충족하지 않았습니다.").font(.caption).accessibilityIdentifier("releaseNotEligible")}
+                    }
+                } else if state.2,let released=state.0.releases?.last {
+                    GamePanel(title:"무소속 · 국내 육성팀 재도전",onBoard:true) {
+                        Text("방출 확정 · "+released.date+" / 보유권리 해제").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("releasedUnsignedStatus")
+                        Text("다음 4월·7월 평가 창에 재입단 심사 · 신인 지명과 별도").font(.subheadline)
+                        Text("현재 능력·동일 환경 육성 성적40타석/15이닝·구단 자리/예산·고정 후보 경쟁을 심사합니다. 인증 평가전은 후속입니다.").font(.caption)
+                    }
+                }
+            }
+            if let error {Text(error).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("releaseDecisionError")}
+        }.confirmationDialog("구단 방출 통지를 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
+            Button("방출 확정 · 무소속 전환",role:.destructive) {
+                guard let selected=command else {return};command=nil
+                do {try ContractRegistrationStore.release(player:player,calendar:calendar,evaluationKey:selected.key,date:selected.date,revision:selected.revision,in:context);error=nil}
+                catch {self.error=error.localizedDescription}
+            }.accessibilityIdentifier("commitClubRelease")
+            Button("취소",role:.cancel) {command=nil}
+        }
     }
 }

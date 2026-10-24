@@ -403,7 +403,7 @@ struct DomesticOfferHomePanel: View {
                 if value.offers.isEmpty {
                     Text(value.emptyReasons.first ?? "이번 창의 제의 없음").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 } else {
-                    Text(value.offers.map {$0.name+" · "+$0.route.label}.joined(separator:" / ")).font(.caption)
+                    Text(value.offers.map {$0.name+" · "+($0.reentry == true ? "재입단":$0.route.label)}.joined(separator:" / ")).font(.caption)
                 }
                 NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation)} label: {
                     Text(value.offers.isEmpty ? "제의 없음 · 부족 조건 확인":active > 0 ? "도착한 제의 · 상세/비교":"제의 결정 · 이력 보기")
@@ -499,13 +499,13 @@ struct DomesticOffersView: View {
             GamePanel(title:"이번 평가 · 제의 없음",onBoard:true) {
                 Text("다음 기회를 준비할 수 있습니다").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOffersEmpty")
                 ForEach(packet.emptyReasons,id:\.self) {Text($0).font(.subheadline).lineSpacing(4)}
-                Text(value.window.month == 4 ? "다음 국내 신인 창은7월 · 대학은 다음 해4월입니다.":"다음 국내 신인·대학 창은 다음 해4월입니다.")
+                Text(value.version == 4 ? "다음 국내 육성팀 재입단 평가는4월·7월입니다.":value.window.month == 4 ? "다음 국내 신인 창은7월 · 대학은 다음 해4월입니다.":"다음 국내 신인·대학 창은 다음 해4월입니다.")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted)
                 Text("훈련으로 보완해도 이번 창의 결과는 다시 뽑지 않습니다.").font(.caption)
             }
         }
         ForEach(packet.offers) {offer in
-            GamePanel(title:offer.route == .rookie ? "프로 진입 · 신인 지명":"학적 선택 · 대학 선발",onBoard:true,contentSpacing:12) {
+            GamePanel(title:offer.reentry == true ? "무소속 재도전 · 육성팀 재입단":offer.route == .rookie ? "프로 진입 · 신인 지명":"학적 선택 · 대학 선발",onBoard:true,contentSpacing:12) {
                 Text(offer.name).font(.title3.bold()).foregroundStyle(GameTheme.gold)
                 Text(offer.kind+" / "+DomesticContractOffer.roleName(offer.roleID)).font(.subheadline)
                 Text(status(offer)+" · "+offer.expiresDate+"까지(포함)").font(.caption).accessibilityIdentifier("liveOfferStatus-"+offer.route.rawValue)

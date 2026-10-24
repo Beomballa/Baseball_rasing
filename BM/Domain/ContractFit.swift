@@ -577,7 +577,8 @@ struct DomesticContractOffer: Codable, Equatable, Identifiable {
     let f: Double
     let availableBudget: Int
     let competition: Int
-    var kind: String {route == .rookie ? "국내 신인 육성 계약":"대학 입단안"}
+    var reentry:Bool? = nil
+    var kind: String {reentry == true ? "국내 육성팀 재입단 계약":route == .rookie ? "국내 신인 육성 계약":"대학 입단안"}
     var placement: String {route == .rookie ? "국내 육성 · 출전/승격 경쟁":"대학 야구부 · 학적/등록 심사"}
     var economicLabel: String {route == .rookie ? "연봉지수":"선발 지원지수"}
     var period: String {route == .rookie ? "1개 달력연도 · 발효일 수락 후 확정":"최초 입단 · 최대4개 달력 학년/24세 졸업 규칙"}
@@ -594,24 +595,25 @@ struct DomesticOfferPacket: Codable, Equatable {
     let offers: [DomesticContractOffer]
     let emptyReasons: [String]
     static func make(evaluation:ContractEvaluationSnapshot,key:String,on date:GameDate) throws -> Self {
-        guard evaluation.version == 2,let selection=evaluation.selection,
+        guard [2,4].contains(evaluation.version),
               key == evaluation.observation.playerID.uuidString+":"+evaluation.window.id,
               date >= (try GameDate(evaluation.evaluatedDate)),ContractEvaluationWindow.containing(date) == evaluation.window else {throw ContractOfferError.invalid}
         let expiry=min(date.adding(days:6),evaluation.window.end).description
-        let winners=selection.results.filter(\.selected)
+        let winners=(evaluation.retry?.results ?? evaluation.selection?.results ?? []).filter(\.selected)
         guard winners.count <= 2,Set(winners.map(\.route)).count == winners.count else {throw ContractOfferError.invalid}
         var offers:[DomesticContractOffer]=[]
         for row in winners {
             guard let h=row.h,let f=row.f,f >= 0,row.reasons.isEmpty,row.availableSeats == 1,row.cost <= row.availableBudget else {throw ContractOfferError.invalid}
-            offers.append(DomesticContractOffer(id:key+"/"+row.id,resultID:row.id,route:row.route,name:row.name,roleID:row.role,
+            var offer=DomesticContractOffer(id:key+"/"+row.id,resultID:row.id,route:row.route,name:row.name,roleID:row.role,
                 issuedDate:date.description,expiresDate:expiry,economicIndex:row.cost,years:1,h:h,c:row.c,p:row.p,f:f,
-                availableBudget:row.availableBudget,competition:row.competition))
+                availableBudget:row.availableBudget,competition:row.competition)
+            offer.reentry=evaluation.version == 4 ? true:nil;offers.append(offer)
         }
         offers.sort {a,b in a.route == b.route ? a.id < b.id:a.route == .rookie}
         var reasons:[String]=[]
         if offers.isEmpty {
             reasons=["이번 고정 평가에서 지명·대학 선발된 자리가 없습니다."]
-            for reason in selection.results.flatMap(\.reasons) where !reasons.contains(reason) {
+            for reason in (evaluation.retry?.results ?? evaluation.selection?.results ?? []).flatMap(\.reasons) where !reasons.contains(reason) {
                 reasons.append(reason)
                 if reasons.count == 4 {break}
             }
@@ -651,6 +653,7 @@ struct CareerMembership:Codable,Equatable {
     let economicEnd:String
     let enrollmentEnd:String?
     let economicIndex:Int
+    var releasedOn:String? = nil
     var economicStart:String? = nil
     func renewing(_ terms:DomesticRenewalOffer) -> Self {
         var value=Self(offerID:offerID,route:route,teamID:teamID,name:name,since:since,economicEnd:terms.economicEnd,enrollmentEnd:enrollmentEnd,economicIndex:terms.economicIndex)
@@ -659,7 +662,7 @@ struct CareerMembership:Codable,Equatable {
     var level:String {route == .rookie ? "domestic-development":"college"}
     var label:String {route == .rookie ? "국내 육성팀":"대학 소속"}
     func contains(_ date:GameDate) throws -> Bool {
-        try date >= GameDate(since) && (enrollmentEnd.map {try date <= GameDate($0)} ?? true)
+        try date >= GameDate(since) && (enrollmentEnd.map {try date <= GameDate($0)} ?? true) && (releasedOn.map {try date < GameDate($0)} ?? true)
     }
     static func make(offer:DomesticContractOffer,on date:GameDate,origin:GameDate,startAge:Int) throws -> Self {
         let parts=offer.resultID.components(separatedBy:"/")
@@ -689,6 +692,8 @@ struct DomesticRenewalAcceptance:Codable,Equatable {
     let date:String
     let terms:DomesticRenewalOffer
 }
+struct DomesticRenewalRejection:Codable,Equatable {let offerID:String;let date:String}
+struct DomesticRelease:Codable,Equatable {let membershipOfferID:String;let date:String;let evaluationKey:String}
 struct CareerContractJournal:Codable,Equatable {
     var version=1
     let playerID:UUID
@@ -696,14 +701,22 @@ struct CareerContractJournal:Codable,Equatable {
     var decisions:[DomesticOfferDecision]=[]
     var memberships:[CareerMembership]=[]
     var renewals:[DomesticRenewalAcceptance]? = nil
-    func current(on date:GameDate,excludingRenewal:String?=nil) throws -> CareerMembership? {
-        guard var member=try memberships.last(where:{try $0.contains(date)}) else {return nil}
+    var renewalRejections:[DomesticRenewalRejection]? = nil
+    var releases:[DomesticRelease]? = nil
+    func membershipHistory() -> [CareerMembership] {
+        memberships.map {member in
+            var value=member;value.releasedOn=releases?.first {$0.membershipOfferID == member.offerID}?.date;return value
+        }
+    }
+    func current(on date:GameDate,excludingRenewal:String?=nil,ignoringReleases:Bool=false,excludingMembership:String?=nil) throws -> CareerMembership? {
+        guard var member=try (ignoringReleases ? memberships:membershipHistory()).last(where:{try $0.offerID != excludingMembership && $0.contains(date)}) else {return nil}
+        member.releasedOn=nil
         for renewal in renewals ?? [] where renewal.membershipOfferID == member.offerID && renewal.terms.id != excludingRenewal {
             if try GameDate(renewal.date)<=date && GameDate(renewal.terms.effectiveDate)<=date {member=member.renewing(renewal.terms)}
         }
         return member
     }
-    func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer],reviews:[DomesticRenewalReview]=[]) throws {
+    func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer],reviews:[String:DomesticRenewalReview]=[:]) throws {
         let today=try GameDate(player.gameDate),origin=try GameDate(calendar.originDate)
         guard version == 1,playerID == player.id,revision >= 0,
               Set(decisions.map(\.offerID)).count == decisions.count,Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractRegistrationError.invalid}
@@ -711,7 +724,7 @@ struct CareerContractJournal:Codable,Equatable {
             guard let offer=offers.first(where:{$0.id == decision.offerID}) else {throw ContractRegistrationError.invalid}
             let date=try GameDate(decision.date)
             guard date <= today,date >= (try GameDate(offer.issuedDate)),!(try offer.isExpired(on:date)),
-                  (20...23).contains(origin.age(startingAt:player.startAge,on:date)) else {throw ContractRegistrationError.invalid}
+                  (offer.reentry == true ? origin.age(startingAt:player.startAge,on:date) >= 20:(20...23).contains(origin.age(startingAt:player.startAge,on:date))) else {throw ContractRegistrationError.invalid}
             if decision.kind == .accepted {
                 guard memberships.contains(try CareerMembership.make(offer:offer,on:date,origin:origin,startAge:player.startAge)) else {throw ContractRegistrationError.invalid}
             }
@@ -721,21 +734,47 @@ struct CareerContractJournal:Codable,Equatable {
         var lastDate:GameDate?
         for renewal in accepted {
             let date=try GameDate(renewal.date)
-            guard let review=reviews.first(where:{$0.offer?.id == renewal.terms.id}),review.offer == renewal.terms,
+            guard let review=reviews.values.first(where:{$0.offer?.id == renewal.terms.id}),review.offer == renewal.terms,
                   review.membership.offerID == renewal.membershipOfferID,review.membership.route == .rookie,
                   date >= (try GameDate(renewal.terms.issuedDate)),date <= (try GameDate(renewal.terms.expiresDate)),date <= today,
                   lastDate == nil || date >= lastDate!,
+                  !(renewalRejections ?? []).contains(where:{$0.offerID == renewal.terms.id}),
                   try current(on:GameDate(renewal.terms.issuedDate),excludingRenewal:renewal.terms.id) == review.membership else {throw ContractRegistrationError.invalid}
             lastDate=date
+        }
+        let rejected=renewalRejections ?? [],released=releases ?? []
+        guard Set(rejected.map(\.offerID)).count == rejected.count,
+              Set(released.map(\.membershipOfferID)).count == released.count else {throw ContractRegistrationError.invalid}
+        for item in rejected {
+            let date=try GameDate(item.date)
+            guard let terms=reviews.values.compactMap(\.offer).first(where:{$0.id == item.offerID}),
+                  date >= (try GameDate(terms.issuedDate)),date <= (try GameDate(terms.expiresDate)),date <= today else {throw ContractRegistrationError.invalid}
+        }
+        for item in released {
+            guard try GameDate(item.date) <= today,
+                  let review=reviews[item.evaluationKey],review.membership.offerID == item.membershipOfferID,
+                  try releaseEligible(review:review,key:item.evaluationKey,on:GameDate(item.date),reviews:reviews,ignoringReleases:true) else {throw ContractRegistrationError.invalid}
         }
         for (index,member) in memberships.enumerated() {
             guard decisions.contains(where:{$0.offerID == member.offerID && $0.kind == .accepted && $0.date == member.since}) else {throw ContractRegistrationError.invalid}
             if index > 0 {
                 let date=try GameDate(member.since),previous=try GameDate(memberships[index-1].since)
-                guard try !memberships[index-1].contains(date),previous < date else {throw ContractRegistrationError.invalid}
+                guard try !membershipHistory()[index-1].contains(date),previous < date else {throw ContractRegistrationError.invalid}
             }
         }
     }
+    func releaseEligible(review:DomesticRenewalReview,key:String,on date:GameDate,reviews:[String:DomesticRenewalReview],ignoringReleases:Bool=false) throws -> Bool {
+        let window=ContractEvaluationWindow(year:try GameDate(String(key.suffix(7))+"-01").year,month:11)
+        guard key == playerID.uuidString+":"+window.id,
+              window.year < 9998,date > window.end,date < (try GameDate(String(format:"%04d-04-01",window.year+1))),
+              let member=try current(on:date,ignoringReleases:ignoringReleases),member == review.membership,
+              date > (try GameDate(member.economicEnd)),
+              !(renewals ?? []).contains(where:{$0.membershipOfferID == member.offerID && $0.terms.effectiveDate >= member.economicEnd}),
+              !reviews.contains(where:{$0.value.membership.offerID == member.offerID && $0.key > key && String($0.key.suffix(7))+"-01" <= date.description}) else {return false}
+        if let offer=review.offer {return try (renewalRejections ?? []).contains {$0.offerID == offer.id} || date > (try GameDate(offer.expiresDate))}
+        return true
+    }
+
 }
 struct CareerCompetitionPlan {
     let teamID:String
@@ -834,5 +873,44 @@ struct DomesticRenewalReview: Codable, Equatable {
     }
     func validate(observation: ScoutingObservation,key: String,window: ContractEvaluationWindow) throws {
         guard self == (try Self.make(observation:observation,member:membership,roleID:roleID,key:key,window:window)) else {throw ContractEvaluationError.invalid}
+    }
+}
+
+// Released players compete for adult development places; adult Vref remains uncalibrated (P=0).
+struct DomesticRetryReview:Codable,Equatable {
+    let release:DomesticRelease
+    let results:[DomesticSelectionResult]
+    static func make(observation:ScoutingObservation,release:DomesticRelease,window:ContractEvaluationWindow) throws -> Self {
+        let date=try GameDate(observation.observedDate)
+        guard observation.age >= 20,[4,7].contains(window.month),window == ContractEvaluationWindow.containing(date),
+              try GameDate(release.date)<date else {throw ContractEvaluationError.invalid}
+        let groups=observation.groups.filter {$0.id.hasPrefix("domestic-development/") && $0.performance != nil}
+        let enough=groups.contains {observation.role == .batter ? $0.hasBatterMinimum:$0.hasPitcherMinimum}
+        let seed=observation.playerID.uuidString+"/reentry/"+window.id
+        let roles=observation.role == .batter ? ["slugger","onBase","field"]:["starter"]
+        var rows:[DomesticSelectionResult]=[]
+        for (index,team) in CareerTeamDirectory.domesticIDs.enumerated() {
+            for role in roles {
+                let bits=DomesticSelection.hash(seed+team+role)
+                let c=max(DomesticSelection.minimum(role,route:.rookie),Double(52+bits%19))
+                let h=observation.grades.first {$0.id == role}?.score,f=h.map {ScoutingContractFit.round($0-c)}
+                let cost=DomesticSelection.cost(f ?? 0),budget=220+Int((bits/19)%101)
+                var reasons:[String]=[]
+                if !enough {reasons.append("동일 환경 육성 성적40타석/15이닝 필요 · 인증 평가전은 후속")}
+                if h == nil {reasons.append("역할 기량 자료 부족")}
+                reasons += DomesticSelection.fieldCondition(role,route:.rookie,observation:observation)
+                if let f,f < 0 {reasons.append("성인 역할/고정 후보 경쟁 기준 미달 · F 0 필요")}
+                if cost>budget {reasons.append("재입단 예산 부족")}
+                rows.append(DomesticSelectionResult(id:"rookie/"+CareerTeamDirectory.domesticIDs[index].dropFirst(4)+"/"+role,
+                    name:CareerTeamDirectory.name(team),route:.rookie,role:role,h:h,c:c,p:0,f:f,cost:cost,
+                    availableBudget:budget,availableSeats:1,competition:1,selected:false,reasons:reasons))
+            }
+        }
+        let winner=rows.filter {$0.reasons.isEmpty}.sorted {a,b in a.f == b.f ? a.id<b.id:a.f!>b.f!}.first?.id
+        return Self(release:release,results:rows.map {row in
+            DomesticSelectionResult(id:row.id,name:row.name,route:row.route,role:row.role,h:row.h,c:row.c,p:0,f:row.f,
+                cost:row.cost,availableBudget:row.availableBudget,availableSeats:1,competition:1,selected:row.id == winner,
+                reasons:row.reasons.isEmpty && row.id != winner ? ["다른 재입단 자리 우선 배정"]:row.reasons)
+        })
     }
 }

@@ -37,8 +37,8 @@ enum CareerSchemaV2: VersionedSchema {
             if let context=modelContext {
                 let journal=try ContractRegistrationStore.journal(player:player,calendar:self,in:context)
                 let first=try GameDate(String(format:"%04d-04-01",year)),last=first.adding(days:174)
-                let members=try journal.memberships.filter {member in
-                    try GameDate(member.since) <= last && (member.enrollmentEnd.map {try GameDate($0) >= first} ?? true)
+                let members=try journal.membershipHistory().filter {member in
+                    try GameDate(member.since) <= last && (member.enrollmentEnd.map {try GameDate($0) >= first} ?? true) && (member.releasedOn.map {try GameDate($0) > first} ?? true)
                 }
                 guard members.count <= 1 else {throw ContractRegistrationError.invalid}
                 if let member=members.first {

@@ -234,6 +234,19 @@ struct CareerPathVerification: View {
         p.gameDate="\(year)-11-01";try context.save()
         _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:context);try context.save()
         if expired {p.gameDate="\(year)-11-08";try context.save()}
+        if ProcessInfo.processInfo.arguments.contains("-release-verification") {
+            p.gameDate="2035-11-01";try context.save()
+            _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:context);try context.save()
+            p.gameDate="2035-11-15"
+            for row in try ContractEvaluationStore.records(player:p,calendar:calendar,in:context) {row.acknowledged=true}
+            try context.save()
+            if ProcessInfo.processInfo.arguments.contains("-released-retry-verification") {
+                let candidate=try ContractRegistrationStore.releaseCandidate(player:p,calendar:calendar,in:context)!
+                try ContractRegistrationStore.release(player:p,calendar:calendar,evaluationKey:candidate.key,date:p.gameDate,revision:calendar.revision,in:context)
+                p.gameDate="2036-04-01";try context.save()
+                try ContractEvaluationStore.registerCurrent(in:context)
+            }
+        }
     }
 
 }

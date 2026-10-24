@@ -1910,3 +1910,136 @@ extension CareerCalendarTests {
         XCTAssertEqual(row.payload,bytes);XCTAssertNil(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).renewals)
     }
 }
+
+extension CareerCalendarTests {
+    private func releaseFixture(_ role:PlayerRole,games:Bool=true,url:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,String) {
+        let (store,p,s,packet)=try acceptance(role,legacyURL:url),c=store.mainContext
+        let offer=try XCTUnwrap(packet.offers.first {$0.route == .rookie})
+        try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        let member=try XCTUnwrap(s.registration(for:p)),year=2035
+        p.gameDate="2035-11-01";try c.save()
+        if games {
+            for (i,fixture) in try s.fixtures(for:p,year:year).filter({$0.isAppearance(for:role)}).enumerated() {
+                p.gameDate=fixture.date.description
+                var values=PlayerInitialValues(contact:80,power:80,discipline:80,speed:60,defense:80,arm:65)
+                values.velocity=80;values.control=80;values.stuff=80;values.stamina=80
+                var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",values:values,seed:UInt64(8100+i),home:fixture.homeID == member.teamID,tracked:true)
+                match.competition="domestic-development";try match.advance(.automatic)
+                let row=try CareerMatchRecord(player:p,fixture:fixture,match:match);row.completed=true;row.rulesVersion="native-match-v2";c.insert(row)
+            }
+        }
+        p.gameDate="2035-11-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+        return (store,p,s,CareerContractEvaluation.key(p.id,"2035-11"))
+    }
+    func testRenewalRejectionIsFinalIdempotentAndDoesNotReleaseRights() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try renewalFixture(role),c=store.mainContext
+            try ContractEvaluationStore.registerCurrent(in:c)
+            let row=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first),bytes=row.payload
+            let offer=try XCTUnwrap(row.snapshot(player:p,calendar:s).renewal?.offer),member=try s.registration(for:p)
+            let date=p.gameDate,fatigue=p.fatigue,revision=s.revision
+            XCTAssertThrowsError(try ContractRegistrationStore.rejectRenewal(player:p,calendar:s,offerID:offer.id,date:date,revision:revision,in:c,save:{_ in throw CalendarError.invalidGroup}))
+            XCTAssertNil(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).renewalRejections)
+            try ContractRegistrationStore.rejectRenewal(player:p,calendar:s,offerID:offer.id,date:date,revision:revision,in:c)
+            XCTAssertEqual(try s.registration(for:p),member);XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue)
+            XCTAssertEqual(row.payload,bytes);XCTAssertEqual(s.revision,revision+1)
+            try ContractRegistrationStore.rejectRenewal(player:p,calendar:s,offerID:offer.id,date:date,revision:revision,in:c,save:{_ in XCTFail("duplicate rejection")})
+            XCTAssertThrowsError(try ContractRegistrationStore.acceptRenewal(player:p,calendar:s,offerID:offer.id,date:date,revision:s.revision,in:c))
+        }
+    }
+    func testReleaseBothRolesPreservesHistoryRecordsAndAllowsAdultReentryExactlyOnce() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,key)=try releaseFixture(role),c=store.mainContext
+            let old=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            let matches=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            let evaluations=try ContractEvaluationStore.records(player:p,calendar:s,in:c).map(\.payload)
+            XCTAssertNotNil(try s.registration(for:p)) // Expired economics alone never releases.
+            XCTAssertThrowsError(try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:s.revision,in:c))
+            p.gameDate="2035-11-15";try c.save();let date=p.gameDate,fatigue=p.fatigue,action=s.actionDate,revision=s.revision
+            XCTAssertTrue(try XCTUnwrap(ContractRegistrationStore.releaseCandidate(player:p,calendar:s,in:c)).eligible)
+            try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:date,revision:revision,in:c)
+            XCTAssertNil(try s.registration(for:p));XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.actionDate,action)
+            let released=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertEqual(released.memberships,old.memberships);XCTAssertEqual(released.releases?.count,1)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matches)
+            XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).map(\.payload),evaluations)
+            XCTAssertEqual(try s.fixtures(for:p,year:2035).count,30);XCTAssertTrue(try s.fixtures(for:p,year:2036).isEmpty)
+            _ = try CareerSeasonStore.load(player:p,state:s,year:2035,in:c)
+            try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:date,revision:revision,in:c,save:{_ in XCTFail("duplicate release")})
+            p.gameDate="2036-04-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+            let evaluation=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+            let snapshot=try evaluation.snapshot(player:p,calendar:s)
+            XCTAssertEqual(snapshot.version,4);XCTAssertGreaterThan(snapshot.observation.age,23)
+            let packet=try XCTUnwrap(ContractOfferStore.records(player:p,calendar:s,in:c).first).snapshot(evaluation:evaluation,player:p,calendar:s)
+            let offer=try XCTUnwrap(packet.offers.first);XCTAssertEqual(offer.reentry,true)
+            let frozen=evaluation.payload
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).memberships.count,2)
+            XCTAssertEqual(evaluation.payload,frozen);XCTAssertNotNil(try s.registration(for:p))
+            XCTAssertEqual(try s.fixtures(for:p,year:2036).count,30)
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c,save:{_ in XCTFail("duplicate readmission")})
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let record=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c)
+            let final=record.payload,after=p.fatigue
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,final)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c))
+            XCTAssertEqual(record.payload,final);XCTAssertEqual(p.fatigue,after)
+        }
+    }
+    func testReleaseNoOfferRollbackPendingLockAndRetryNoSample() throws {
+        let (store,p,s,key)=try releaseFixture(.batter,games:false),c=store.mainContext
+        p.gameDate="2035-11-15";try c.save()
+        let original=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,revision=s.revision
+        XCTAssertThrowsError(try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:revision+1,in:c))
+        XCTAssertThrowsError(try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:revision,in:c,save:{_ in throw CalendarError.invalidGroup}))
+        XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,original);XCTAssertEqual(s.revision,revision)
+        let training=try CareerTrainingStore.start(player:p,state:s,kind:.contact,in:c)
+        XCTAssertThrowsError(try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:s.revision,in:c))
+        c.delete(training);try c.save()
+        try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:s.revision,in:c)
+        p.gameDate="2036-04-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+        let evaluation=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+        let packet=try XCTUnwrap(ContractOfferStore.records(player:p,calendar:s,in:c).first).snapshot(evaluation:evaluation,player:p,calendar:s)
+        XCTAssertTrue(packet.offers.isEmpty)
+        let bytes=evaluation.payload
+        try ContractEvaluationStore.registerCurrent(in:c,save:{_ in XCTFail("same-window reroll")})
+        XCTAssertEqual(evaluation.payload,bytes)
+    }
+    func testReleaseDiskReopenPreservesOriginalMembershipAndRejectsForgedReleaseDate() throws {
+        let url=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString+".sqlite")
+        defer {for suffix in ["","-wal","-shm"] {try? FileManager.default.removeItem(atPath:url.path+suffix)}}
+        var original=Data()
+        do {
+            let (store,p,s,key)=try releaseFixture(.pitcher,games:false,url:url),c=store.mainContext
+            p.gameDate="2035-11-15";try c.save()
+            try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:s.revision,in:c)
+            original=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+        let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        XCTAssertNil(try s.registration(for:p));XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,original)
+        let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c))
+        var json=try XCTUnwrap(JSONSerialization.jsonObject(with:row.payload) as? [String:Any]),releases=try XCTUnwrap(json["releases"] as? [[String:Any]])
+        releases[0]["date"]="2035-11-01";json["releases"]=releases
+        row.payload=try JSONSerialization.data(withJSONObject:json);try c.save()
+        XCTAssertThrowsError(try ContractRegistrationStore.journal(player:p,calendar:s,in:c))
+    }
+}
+
+extension CareerCalendarTests {
+    func testAcceptedRenewalCannotBeRejectedOrReleasedAndSummerReleaseIsBlocked() throws {
+        let (store,p,s)=try renewalFixture(.batter),c=store.mainContext
+        try ContractEvaluationStore.registerCurrent(in:c)
+        let row=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+        let offer=try XCTUnwrap(row.snapshot(player:p,calendar:s).renewal?.offer)
+        try ContractRegistrationStore.acceptRenewal(player:p,calendar:s,offerID:offer.id,date:p.gameDate,revision:s.revision,in:c)
+        XCTAssertThrowsError(try ContractRegistrationStore.rejectRenewal(player:p,calendar:s,offerID:offer.id,date:p.gameDate,revision:s.revision,in:c))
+        p.gameDate=try GameDate(String(format:"%04d-11-15",GameDate(p.gameDate).year)).description;try c.save()
+        XCTAssertThrowsError(try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:row.key,date:p.gameDate,revision:s.revision,in:c))
+        let (second,q,t,key)=try releaseFixture(.pitcher,games:false),ctx=second.mainContext
+        q.gameDate="2036-04-01";try ctx.save()
+        XCTAssertThrowsError(try ContractRegistrationStore.release(player:q,calendar:t,evaluationKey:key,date:q.gameDate,revision:t.revision,in:ctx))
+        XCTAssertNotNil(try t.registration(for:q))
+    }
+}

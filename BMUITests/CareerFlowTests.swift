@@ -2761,3 +2761,40 @@ extension CareerFlowTests {
     }
 
 }
+
+extension CareerFlowTests {
+    @MainActor func testRenewalRejectionKeepsRightsAndLocksOppositeChoiceBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let open=app.buttons["openRenewalOffer"];revealFit(open,in:app);open.tap()
+            let reject=app.buttons["rejectRenewalOffer"];revealFit(reject,in:app);reject.tap()
+            app.buttons["confirmRenewalAcceptance"].firstMatch.tap()
+            let rejected=app.staticTexts["renewalRejected"];revealFit(rejected,in:app);XCTAssertTrue(rejected.exists)
+            XCTAssertFalse(app.buttons["acceptRenewalOffer"].exists);XCTAssertFalse(app.buttons["rejectRenewalOffer"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let rights=app.staticTexts["contractRightsStatus"];revealFit(rights,in:app);XCTAssertTrue(rights.label.contains("보유권리 유지"))
+        }
+        app.terminate()
+    }
+    @MainActor func testClubReleaseBecomesUnsignedWithoutDateOrFatigueChangeBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification","-release-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+            let release=app.buttons["confirmClubRelease"];revealFit(release,in:app);release.tap()
+            app.buttons["commitClubRelease"].firstMatch.tap()
+            let status=app.staticTexts["releasedUnsignedStatus"];revealFit(status,in:app);XCTAssertTrue(status.label.contains("보유권리 해제"))
+            XCTAssertFalse(app.buttons["confirmClubRelease"].exists)
+            let calendar=app.staticTexts["calendarDate"];revealFit(calendar,in:app);XCTAssertEqual(calendar.label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+        }
+        app.terminate()
+    }
+    @MainActor func testReleasedRetryShowsAdultEvaluationAndNoOfferReason() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification","-release-verification","-released-retry-verification"];app.launch()
+        let status=app.staticTexts["retryReviewStatus"];revealFit(status,in:app);XCTAssertTrue(status.label.contains("재입단"))
+        let offers=app.buttons["openDomesticOffers"];revealFit(offers,in:app);offers.tap()
+        let empty=app.staticTexts["liveOffersEmpty"];XCTAssertTrue(empty.waitForExistence(timeout:3))
+        XCTAssertFalse(app.buttons["acceptLiveOffer"].exists);app.terminate()
+    }
+}
