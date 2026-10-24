@@ -647,6 +647,12 @@ struct CareerPathHomePanel: View {
                         ForEach(journal.collegeTransitions ?? [],id:\.offerID) {item in
                             Text(item.acceptedDate+" · 대학 재학생 프로 계약 수락 / "+item.source.effectiveDate+" 소속 전환 · 대학 학적 원본 보존").font(.caption).accessibilityIdentifier("collegeProHistory")
                         }
+                        ForEach(journal.overseasCareer?.transitions ?? [],id:\.offerID) {item in
+                            Text(item.acceptedDate+" · 해외 계약 수락 / "+item.destination.since+" · "+item.destination.name+" · "+item.destination.label).font(.caption).accessibilityIdentifier("overseasAffiliationHistory")
+                        }
+                        ForEach(journal.overseasCareer?.promotions ?? []) {item in
+                            Text(item.date+" · "+(item.toLevel == "domestic-first-team" ? "국내1군":"미국 조직 메이저")+" 승격 확정 / "+item.effective+" 발효").font(.caption).accessibilityIdentifier("careerPromotionHistory")
+                        }
                         ForEach(journal.memberships,id:\.offerID) {member in
                             Text(member.since+" · "+member.label+" · "+member.name).font(.caption).accessibilityIdentifier("careerRegisteredHistory")
                             Text(member.route == .rookie ? "경제 기간 종료 "+member.economicEnd+" · 보유 권리 자동 해제 없음":"학적 종료 "+(member.enrollmentEnd ?? "—"))
@@ -846,6 +852,7 @@ struct CareerContractStatusPanel: View {
         }
         CollegeProStatusPanel(player:player,calendar:calendar)
         OverseasEligibilityPanel(player:player,calendar:calendar)
+        ProCareerProgressPanel(player:player,calendar:calendar)
         DomesticReleasePanel(player:player,calendar:calendar)
     }
     private var pendingRenewal:DomesticRenewalAcceptance? {
@@ -1127,6 +1134,9 @@ struct OverseasEligibilityPanel:View {
                     Text(interests.isEmpty ? "최근 해외 보고서 · 관심 없음":"최근 해외 보고서 · 관심 역할 \(interests.count)건 / 정식 제의 별도")
                         .font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homeOverseasInterest")
                 }
+                if (try? OverseasContractStore.needsEvaluation(player:player,calendar:calendar,in:context)) == true {
+                    Text("해외 평가 창 도착 · 해외 제의 화면에서 이번 창 심사를 확인한 뒤 날짜를 진행하세요.").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasEvaluationDue")
+                }
                 NavigationLink {OverseasContractsView(player:player,calendar:calendar)} label: {Text("해외 실제 제의 · 상세/비교")}
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openOverseasContracts")
                 HomeDetailButton(title:"경력 근거 · 부족 조건",expanded:$details,identifier:"overseasEligibilityDetails")
@@ -1254,7 +1264,7 @@ struct OverseasContractsView:View {
         let _=calendar.revision;let _=refreshed
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
-                GamePanel(title:"MLB 조직 육성 · 실제 제의",onBoard:true,contentSpacing:12) {
+                GamePanel(title:"해외 계약 · 실제 제의",onBoard:true,contentSpacing:12) {
                     Text("가상 선수의 게임 내 국제계약 지원·심사입니다. 실제 리그 등록/법적 자격 인증이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasContractError")}
                     switch Result(catching:{try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)}) {
@@ -1309,6 +1319,53 @@ struct OverseasContractsView:View {
                 }.accessibilityIdentifier("confirmOverseasDecision")}
                 Button("취소",role:.cancel) {command=nil}
             } message: {Text("수락은 다음 해4월1일 소속 전환을 예약하고 다른 열린 제의를 닫습니다. 날짜·피로·능력은 유지하며,경제 기간 종료가 자동 FA는 아닙니다.")}
+    }
+    private func run(_ action:() throws -> Void) {do {try action();failure=nil;refreshed += 1}catch{failure=error.localizedDescription}}
+}
+
+struct ProCareerProgressPanel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var failure:String?
+    @State private var refreshed=0
+    var body:some View {
+        let _=calendar.revision;let _=refreshed
+        GamePanel(title:"1군 경력 · 해외 이적 승인",onBoard:true,contentSpacing:12) {
+            if let owner=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),let member=try? owner.current(on:GameDate(player.gameDate)) {
+                let state=owner.overseasCareer ?? OverseasCareerJournal()
+                Text(member.name+" · "+member.label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                if member.level == "domestic-development" {
+                    Text("11월 · 역할H65/동일 환경 육성40타석·15이닝 / 다음4월1일 승격 심사").font(.caption)
+                    if let promotion=state.promotions?.last(where:{$0.sourceOfferID == member.offerID}) {
+                        Text("1군 승격 확정 · "+promotion.effective).font(.subheadline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("domesticPromotionPending")
+                    } else {
+                        Button("국내1군 승격 심사") {run {try OverseasContractStore.promoteDomestic(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("requestDomesticPromotion")
+                    }
+                }
+                if member.level == "mlb-development" {
+                    Text("11월 · 조직 내 메이저 역할 기량/같은 환경100타석·25이닝을 심사하며 새 국제계약을 만들지 않습니다.").font(.caption)
+                    if let promotion=state.promotions?.last(where:{$0.sourceOfferID == member.offerID}) {
+                        Text("메이저 배치 예정 · "+promotion.effective).font(.subheadline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("americanPromotionPending")
+                    } else {
+                        Button("미국 조직 메이저 승격 심사") {run {try OverseasContractStore.promoteAmerican(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("requestAmericanPromotion")
+                    }
+                    Text("승격 발효부터1년 표준 연봉지수100 · 같은 조직/보유권리/원래 입단 이력 유지").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }
+                Text("현재 주기의 해외 보고서를 먼저 기록하세요. 승격·이적 승인은 실제 출전/계약 발효와 구분합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Button("완료 연도의 경력 근거 확인") {run {try OverseasContractStore.collectService(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("collectProfessionalService")
+                Text("게임 인정1군 경력 · \(state.service?.count ?? 0)년 \(state.service == nil ? "(미확인)":"(공식 개인 경기 근거 확인)")").font(.caption).accessibilityIdentifier("professionalServiceYears")
+                Text("한 해1월1일~12월31일 같은1군등록과 실제100타석/25이닝이 모두 있는 연도만 기록합니다. 단축시즌 번호·육성/대학·나이만으로 추가하지 않으며 실제MLB의 경력 인증이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                if ["domestic-first-team","npb-first-team"].contains(member.level) {
+                    Button("11월 구단 해외 이적 승인 요청") {run {try OverseasContractStore.requestConsent(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("requestInternationalConsent")
+                    if let consent=state.consents?.last {
+                        Text(consent.approved ? "게임 구단 이적 승인 · "+consent.expires+"까지":"이적 승인 보류 · "+consent.reasons.joined(separator:" / ")).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("internationalConsentStatus")
+                    }
+                    Text("게임 정책:1군100타석/25이닝·역할H75를 검토합니다. 승인만으로 소속/권리가 해제되지 않으며 실제포스팅/FA의 법적 절차를 재현하지 않습니다.").font(.caption)
+                }
+            } else {Text("소속 등록 후 경력/승격 경로를 확인할 수 있습니다.").font(.caption)}
+            if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("proCareerError")}
+        }
     }
     private func run(_ action:() throws -> Void) {do {try action();failure=nil;refreshed += 1}catch{failure=error.localizedDescription}}
 }

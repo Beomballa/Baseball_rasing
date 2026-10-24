@@ -2912,3 +2912,37 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testProCareerBothRolesShowsFirstTeamServiceAndConsentWithoutReleasingRights() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification","-pro-career-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let collect=app.buttons["collectProfessionalService"];revealFit(collect,in:app);collect.tap()
+            let service=app.staticTexts["professionalServiceYears"];revealFit(service,in:app);XCTAssertTrue(service.label.contains("공식 개인 경기"))
+            let consent=app.buttons["requestInternationalConsent"];revealFit(consent,in:app);consent.tap()
+            let result=app.staticTexts["internationalConsentStatus"];revealFit(result,in:app);XCTAssertTrue(result.label.contains("이적 승인"))
+            XCTAssertFalse(app.staticTexts["proCareerError"].exists)
+            let rights=app.staticTexts["contractRightsStatus"];revealFit(rights,in:app);XCTAssertTrue(rights.label.contains("보유권리 유지"))
+        }
+        app.terminate()
+    }
+}
+
+extension CareerFlowTests {
+    @MainActor func testNPBProfessionalActualOffersAfterConsentAcceptBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification","-pro-career-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let collect=app.buttons["collectProfessionalService"];revealFit(collect,in:app);collect.tap()
+            let consent=app.buttons["requestInternationalConsent"];revealFit(consent,in:app);consent.tap()
+            let open=app.buttons["openOverseasContracts"];revealFit(open,in:app);open.tap()
+            app.buttons["registerOverseasApplicant"].tap();app.buttons["evaluateOverseasOffers"].tap()
+            let accept=app.buttons["acceptOverseasOffer"].firstMatch;revealFit(accept,in:app);XCTAssertTrue(accept.exists);accept.tap();app.buttons["confirmOverseasDecision"].firstMatch.tap()
+            let status=app.staticTexts["overseasOfferDecision"].firstMatch;revealFit(status,in:app);XCTAssertTrue(status.label.contains("수락 완료"))
+            XCTAssertFalse(app.staticTexts["overseasContractError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

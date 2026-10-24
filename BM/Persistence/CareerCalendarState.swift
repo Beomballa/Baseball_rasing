@@ -41,7 +41,8 @@ enum CareerSchemaV2: VersionedSchema {
                     try GameDate(member.since) <= last && (member.enrollmentEnd.map {try GameDate($0) >= first} ?? true) && (member.releasedOn.map {try GameDate($0) > first} ?? true)
                 }
                 guard members.count <= 1 else {throw ContractRegistrationError.invalid}
-                if let member=members.first {
+                if let original=members.first {
+                    let member=try journal.projected(original,on:first)
                     let ids=CareerTeamDirectory.teams(level:member.level)
                     return CareerCompetitionPlan(teamID:member.teamID,teamIDs:ids,fixtures:try SeasonSchedule.fixtures(year:year,schoolIDs:ids),membership:member)
                 }
