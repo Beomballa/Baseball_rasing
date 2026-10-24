@@ -2946,3 +2946,23 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testOverseasRenewalBothRolesShowsConditionsAndAcceptsWithoutChangingAffiliation() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-overseas-renewal-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let open=app.buttons["openOverseasRenewal"];revealFit(open,in:app);XCTAssertTrue(open.exists);open.tap()
+            let evaluate=app.buttons["evaluateOverseasRenewal"];revealFit(evaluate,in:app);evaluate.tap()
+            let accept=app.buttons["acceptOverseasRenewal"];revealFit(accept,in:app);XCTAssertTrue(accept.exists)
+            let before=XCTAttachment(screenshot:app.screenshot());before.name="overseas-renewal-"+role+"-terms";before.lifetime = .keepAlways;add(before)
+            accept.tap();app.buttons["confirmOverseasRenewal"].firstMatch.tap()
+            let decision=app.staticTexts["overseasRenewalDecision"];revealFit(decision,in:app)
+            XCTAssertTrue(decision.label.contains("수락 완료"));XCTAssertFalse(app.staticTexts["overseasRenewalError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let pending=app.staticTexts["overseasPendingRenewal"];revealFit(pending,in:app);XCTAssertTrue(pending.label.contains("갱신 예정"))
+            let after=XCTAttachment(screenshot:app.screenshot());after.name="overseas-renewal-"+role+"-home";after.lifetime = .keepAlways;add(after)
+        }
+        app.terminate()
+    }
+}

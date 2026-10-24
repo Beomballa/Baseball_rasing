@@ -823,7 +823,7 @@ struct CareerContractStatusPanel: View {
             case .success(let value):
                 if let value {
                     Text("현재 소속 · "+value.membership.name).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractCurrentTeam")
-                    Text(value.economicLabel).font(.subheadline.bold()).accessibilityIdentifier("contractEconomicStatus")
+                    Text(value.economicExpired && pendingOverseasRenewal != nil ? "기존 경제 기간 종료 · 갱신 발효 대기":value.economicLabel).font(.subheadline.bold()).accessibilityIdentifier("contractEconomicStatus")
                     Text((value.membership.economicStart ?? value.membership.since)+" ~ "+value.membership.economicEnd+" · \(value.membership.economicIndex)\(value.membership.route == .rookie ? " 연봉지수":" 지원지수")")
                         .font(.caption.monospaced()).accessibilityIdentifier("contractEconomicPeriod")
                     if let pending=pendingRenewal {
@@ -852,8 +852,17 @@ struct CareerContractStatusPanel: View {
         }
         CollegeProStatusPanel(player:player,calendar:calendar)
         OverseasEligibilityPanel(player:player,calendar:calendar)
+        OverseasRenewalPanel(player:player,calendar:calendar)
         ProCareerProgressPanel(player:player,calendar:calendar)
         DomesticReleasePanel(player:player,calendar:calendar)
+    }
+    private var pendingOverseasRenewal:OverseasOffer? {
+        guard let context=calendar.modelContext,let owner=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),
+              let member=try? owner.current(on:GameDate(player.gameDate)),let state=owner.overseasCareer else {return nil}
+        return (state.renewalReviews ?? []).last {review in
+            guard review.source.offerID == member.offerID,let offer=review.offer,offer.effective > player.gameDate else {return false}
+            return (state.renewalDecisions ?? []).contains {$0.offerID == offer.id && $0.kind == .accepted}
+        }?.offer
     }
     private var pendingRenewal:DomesticRenewalAcceptance? {
         guard let context=calendar.modelContext,
@@ -1366,6 +1375,91 @@ struct ProCareerProgressPanel:View {
             } else {Text("소속 등록 후 경력/승격 경로를 확인할 수 있습니다.").font(.caption)}
             if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("proCareerError")}
         }
+    }
+    private func run(_ action:() throws -> Void) {do {try action();failure=nil;refreshed += 1}catch{failure=error.localizedDescription}}
+}
+
+
+struct OverseasRenewalPanel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    var body:some View {
+        if let owner=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),
+           let member=try? owner.current(on:GameDate(player.gameDate)),OverseasRenewalReview.route(member) != nil {
+            let pending=(owner.overseasCareer?.renewalReviews ?? []).last {review in
+                guard review.source.offerID == member.offerID,let offer=review.offer,offer.effective > player.gameDate else {return false}
+                return (owner.overseasCareer?.renewalDecisions ?? []).contains {$0.offerID == offer.id && $0.kind == .accepted}
+            }?.offer
+            GamePanel(title:"해외 잔류 · 재계약",onBoard:true,contentSpacing:12) {
+                Text(member.name+" · "+member.label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                Text("등록 소속 · 입단 "+member.since+" / 구단 보유권리 유지").font(.caption)
+                Text("경제 계약 · "+(member.economicStart ?? member.since)+" ~ "+member.economicEnd).font(.caption.monospaced())
+                Text(member.economicEnd < player.gameDate ? "경제 기간 종료 · 소속/권리는 유지됩니다":"현재 연봉지수 \(member.economicIndex)").font(.subheadline).accessibilityIdentifier("overseasEconomicState")
+                if let offer=pending {
+                    Text("갱신 예정 · "+offer.effective+" ~ "+offer.economicEnd+" / 지수 \(offer.economicIndex)").font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("overseasPendingRenewal")
+                }
+                Text("다음 심사 · "+((try? OverseasRenewalReview.nextReview(member,on:GameDate(player.gameDate),economicEnd:pending?.economicEnd)) ?? "확인 필요")+" ~ 14일 / 계약 마지막 해").font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("overseasNextRenewal")
+                NavigationLink {OverseasRenewalView(player:player,calendar:calendar)} label: {Text("재계약 보고서 · 조건 확인")}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openOverseasRenewal")
+            }
+        }
+    }
+}
+struct OverseasRenewalView:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var failure:String?
+    @State private var refreshed=0
+    @State private var command:(id:String,accept:Bool,date:String,revision:Int)?
+    var body:some View {
+        let _=calendar.revision;let _=refreshed
+        ScrollView {
+            VStack(alignment:.leading,spacing:16) {
+                GamePanel(title:"구단 사무실 · 해외 재계약",onBoard:true,contentSpacing:12) {
+                    Text("같은 구단 잔류 심사").font(.title3.bold()).foregroundStyle(GameTheme.gold)
+                    Text("현재 역할·동일 환경 성적·구단 자리/경쟁·총액 예산을 고정합니다. 거절·만료로 자동 방출되거나 FA가 되지 않습니다. 미국 육성팀은 같은 창의 메이저 승격과 재계약을 중복 예약할 수 없습니다.").font(.subheadline).lineSpacing(5)
+                    NavigationLink {OverseasScoutingReportView(player:player,calendar:calendar)} label: {Text("28일 평가 자료 · 보고서 기록")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("renewalOpenScoutingReport")
+                }
+                if let failure {Text(failure).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasRenewalError")}
+                switch Result(catching:{try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)}) {
+                case .failure(let error):Text(error.localizedDescription)
+                case .success(let owner):
+                    let state=owner.overseasCareer ?? OverseasCareerJournal()
+                    if let member=try? owner.current(on:GameDate(player.gameDate)),OverseasRenewalReview.route(member) != nil {
+                        if let window=try? ContractEvaluationWindow.containing(GameDate(player.gameDate)),window.month == 11,
+                           (try? OverseasRenewalReview.eligible(member,on:GameDate(player.gameDate))) == true,
+                           !(state.renewalReviews ?? []).contains(where:{$0.window == window}) {
+                            Button("11월 재계약 심사 · 자료 고정") {run {try OverseasContractStore.evaluateRenewal(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("evaluateOverseasRenewal")
+                        } else {Text("계약 마지막 해 11월에 심사합니다. 같은 창은 재평가하지 않습니다.").font(.caption)}
+                    }
+                    ForEach((state.renewalReviews ?? []).reversed()) {review in
+                        GamePanel(title:review.source.name+" · "+review.date,onBoard:true,contentSpacing:12) {
+                            Text(DomesticContractOffer.roleName(review.roleID)+" · 표본 \(review.sampleCount)"+(player.role == .batter ? "타석":"아웃")).font(.headline).foregroundStyle(GameTheme.gold)
+                            Text("H "+(review.h.map {String(format:"%.1f",$0)} ?? "—")+" / C "+(review.criterion.map {String(format:"%.1f",$0)} ?? "—")+String(format:" / P %+.1f",review.p)+" · 예산 "+(review.budget.map(String.init) ?? "미확인")).font(.caption.monospaced())
+                            if let offer=review.offer {
+                                Text("잔류 제의 · \(offer.years)년 / 연봉지수 \(offer.economicIndex)").font(.headline)
+                                Text(offer.effective+" ~ "+offer.economicEnd+"\n수락 마감 "+offer.expires).font(.caption.monospaced()).lineSpacing(5)
+                                if let decision=(state.renewalDecisions ?? []).first(where:{$0.offerID == offer.id}) {
+                                    Text(decision.kind == .accepted ? "수락 완료 · "+(offer.effective > player.gameDate ? "갱신 발효 대기":"갱신 발효"):"거절 완료 · 소속/보유권리 유지").font(.subheadline.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("overseasRenewalDecision")
+                                } else if offer.expires >= player.gameDate {
+                                    Button("재계약 수락") {command=(offer.id,true,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptOverseasRenewal")
+                                    Button("재계약 거절") {command=(offer.id,false,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("rejectOverseasRenewal")
+                                } else {Text("제의 만료 · 소속/보유권리 유지").font(.caption)}
+                            } else {Text("제의 없음 · "+review.reasons.joined(separator:" / ")).font(.subheadline).lineSpacing(5).accessibilityIdentifier("overseasRenewalEmpty")}
+                        }
+                    }
+                }
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("해외 재계약").navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar)
+            .toolbarColorScheme(.dark,for:.navigationBar).tint(GameTheme.gold)
+            .confirmationDialog("재계약 결정을 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
+                if let item=command {
+                    Button(item.accept ? "수락 확정":"거절 확정",role:item.accept ? nil:.destructive) {run {try OverseasContractStore.decideRenewal(player:player,calendar:calendar,offerID:item.id,accept:item.accept,date:item.date,revision:item.revision,in:context)};command=nil}.accessibilityIdentifier("confirmOverseasRenewal")
+                }
+                Button("취소",role:.cancel) {command=nil}
+            } message: {Text("수락하면 다음4월1일부터 경제 조건만 갱신합니다. 입단 이력·소속·보유권리·기록은 유지하고 다른 열린 해외 제의를 닫습니다.")}
     }
     private func run(_ action:() throws -> Void) {do {try action();failure=nil;refreshed += 1}catch{failure=error.localizedDescription}}
 }

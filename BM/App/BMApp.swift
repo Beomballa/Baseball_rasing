@@ -202,6 +202,9 @@ struct CareerPathVerification: View {
                     if args.contains("-college-pro-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedCollegePro(player:p,calendar:calendar,in:c.mainContext)
                     }
+                    if args.contains("-overseas-renewal-verification"),args.contains("-college-pro-verification") {
+                        try seedOverseasRenewal(player:p,calendar:calendar,in:c.mainContext)
+                    }
                     if args.contains("-renewal-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedRenewal(player:p,calendar:calendar,in:c.mainContext,empty:args.contains("-renewal-empty"),expired:args.contains("-renewal-expired"))
                     }
@@ -212,6 +215,34 @@ struct CareerPathVerification: View {
                 self.schools = schools;self.container = c
             } catch { failure = error.localizedDescription }
         }
+    }
+    @MainActor private func seedOverseasRenewal(player p:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws {
+        try OverseasContractStore.register(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
+        try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
+        try OverseasContractStore.evaluate(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
+        guard let entry=try ContractRegistrationStore.journal(player:p,calendar:calendar,in:context).overseasCareer?.evaluations.last?.offers.first else {throw OverseasProgressError.requirements}
+        try OverseasContractStore.decide(player:p,calendar:calendar,offerID:entry.id,accept:true,date:p.gameDate,revision:calendar.revision,in:context)
+        let firstYear=try GameDate(entry.effective).year,club=entry.teamID.components(separatedBy:"-").last!
+        var chosen=firstYear
+        for year in firstYear..<(firstYear+40) {
+            let period=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate("\(year)-11-01")).index
+            let seed=p.id.uuidString+"/overseas-market-v1/"+String(period)
+            if DomesticSelection.hash(seed+entry.route.id+"/"+club+"/"+entry.roleID)%5 != 0 {chosen=year;break}
+        }
+        for (index,fixture) in try calendar.fixtures(for:p,year:chosen).filter({$0.isAppearance(for:p.role)}).enumerated() {
+            p.gameDate=fixture.date.description
+            var values=PlayerInitialValues(contact:88,power:88,discipline:88,speed:75,defense:80,arm:80)
+            values.velocity=88;values.control=88;values.stuff=88;values.stamina=88
+            var match=ScoutingReferenceSimulation.fixture(role:p.role,position:p.role == .batter ? p.positionRaw:"P",values:values,seed:UInt64(chosen*100+index),home:fixture.homeID == entry.teamID,tracked:true)
+            match.competition="mlb-development";try match.advance(.automatic)
+            let row=try CareerMatchRecord(player:p,fixture:fixture,match:match);row.completed=true;row.rulesVersion="native-match-v2";context.insert(row)
+        }
+        p.gameDate="\(chosen)-11-01";p.contact=99;p.power=99;p.discipline=99;p.defense=99;p.arm=99;p.speed=99
+        let profile=try PlayerAbilityStore.profile(playerID:p.id,in:context)!
+        try profile.grow(.mental,to:99)
+        if p.role == .pitcher {for kind in [TrainingKind.velocity,.control,.stuff,.stamina] {try profile.grow(kind,to:99)};for pitch in p.pitches {pitch.mastery=99}}
+        try context.save()
+        try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
     }
     @MainActor private func seedProCareer(player p:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws {
         try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)

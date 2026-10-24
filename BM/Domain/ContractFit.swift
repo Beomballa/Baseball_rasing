@@ -739,13 +739,13 @@ struct CareerContractJournal:Codable,Equatable {
             return value
         }
     }
-    func current(on date:GameDate,excludingRenewal:String?=nil,ignoringReleases:Bool=false,excludingMembership:String?=nil) throws -> CareerMembership? {
+    func current(on date:GameDate,excludingRenewal:String?=nil,ignoringReleases:Bool=false,excludingMembership:String?=nil,excludingOverseasRenewal:String?=nil) throws -> CareerMembership? {
         guard var member=try (ignoringReleases ? memberships:membershipHistory()).last(where:{try $0.offerID != excludingMembership && $0.contains(date)}) else {return nil}
         member.releasedOn=nil
         for renewal in renewals ?? [] where renewal.membershipOfferID == member.offerID && renewal.terms.id != excludingRenewal {
             if try GameDate(renewal.date)<=date && GameDate(renewal.terms.effectiveDate)<=date {member=member.renewing(renewal.terms)}
         }
-        return try projected(member,on:date)
+        return try projected(member,on:date,excludingRenewal:excludingOverseasRenewal)
     }
     func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer],reviews:[String:DomesticRenewalReview]=[:]) throws {
         let today=try GameDate(player.gameDate),origin=try GameDate(calendar.originDate)
@@ -1472,11 +1472,14 @@ struct OverseasCareerJournal:Codable,Equatable {
     var promotions:[CareerLevelPromotion]? = nil
     var consents:[ClubTransferConsent]? = nil
     var service:[GameProSeasonEvidence]? = nil
+    var renewalReviews:[OverseasRenewalReview]? = nil
+    var renewalDecisions:[OverseasRenewalDecision]? = nil
     func hasPending(on date:String) -> Bool {transitions.contains {$0.destination.since > date}}
     func validate(owner:CareerContractJournal,today:GameDate) throws {
         guard version == 1,Set(evaluations.map(\.id)).count == evaluations.count,Set(decisions.map(\.offerID)).count == decisions.count,
               Set(transitions.map(\.offerID)).count == transitions.count else {throw ContractRegistrationError.invalid}
         if let registrationDate {guard try GameDate(registrationDate) <= today else {throw ContractRegistrationError.invalid}}
+        try validateRenewals(owner:owner,today:today)
         let promotions=promotions ?? []
         guard Set(promotions.map(\.id)).count == promotions.count else {throw ContractRegistrationError.invalid}
         for item in promotions {
@@ -1582,14 +1585,25 @@ struct GameProSeasonEvidence:Codable,Equatable {
 }
 
 extension CareerContractJournal {
-    func projected(_ member:CareerMembership,on date:GameDate) throws -> CareerMembership {
-        guard let promotion=overseasCareer?.promotions?.filter({$0.sourceOfferID == member.offerID && $0.effective <= date.description}).sorted(by:{$0.effective<$1.effective}).last else {return member}
-        var value=CareerMembership(offerID:member.offerID,route:member.route,teamID:promotion.teamID,name:CareerTeamDirectory.name(promotion.teamID),since:member.since,economicEnd:member.economicEnd,enrollmentEnd:member.enrollmentEnd,economicIndex:member.economicIndex)
-        value.competitionLevel=promotion.toLevel;value.releasedOn=member.releasedOn;value.economicStart=member.economicStart
-        if promotion.fromLevel == "mlb-development" {
-            let start=try GameDate(promotion.effective)
-            var promoted=CareerMembership(offerID:value.offerID,route:value.route,teamID:value.teamID,name:value.name,since:value.since,economicEnd:start.anniversary(in:start.year+1).adding(days:-1).description,enrollmentEnd:nil,economicIndex:100)
-            promoted.competitionLevel=promotion.toLevel;promoted.economicStart=promotion.effective;promoted.releasedOn=value.releasedOn;return promoted
+    func projected(_ member:CareerMembership,on date:GameDate,excludingRenewal:String?=nil) throws -> CareerMembership {
+        var value=member
+        if let promotion=overseasCareer?.promotions?.filter({$0.sourceOfferID == member.offerID && $0.effective <= date.description}).sorted(by:{$0.effective<$1.effective}).last {
+            value=CareerMembership(offerID:member.offerID,route:member.route,teamID:promotion.teamID,name:CareerTeamDirectory.name(promotion.teamID),since:member.since,economicEnd:member.economicEnd,enrollmentEnd:member.enrollmentEnd,economicIndex:member.economicIndex)
+            value.competitionLevel=promotion.toLevel;value.releasedOn=member.releasedOn;value.economicStart=member.economicStart
+            if promotion.fromLevel == "mlb-development" {
+                let start=try GameDate(promotion.effective)
+                value=CareerMembership(offerID:value.offerID,route:value.route,teamID:value.teamID,name:value.name,since:value.since,economicEnd:start.anniversary(in:start.year+1).adding(days:-1).description,enrollmentEnd:nil,economicIndex:100)
+                value.competitionLevel=promotion.toLevel;value.economicStart=promotion.effective;value.releasedOn=member.releasedOn
+            }
+        }
+        // Apply signed renewals after placement; promotion must not restore initial pay/term.
+        let state=overseasCareer ?? OverseasCareerJournal()
+        for review in (state.renewalReviews ?? []).sorted(by:{$0.date<$1.date}) where review.source.offerID == member.offerID {
+            guard let offer=review.offer,offer.id != excludingRenewal,offer.effective <= date.description,
+                  !(state.promotions ?? []).contains(where:{$0.sourceOfferID == member.offerID && $0.fromLevel == "mlb-development" && $0.effective <= date.description && $0.effective > offer.effective}),
+                  (state.renewalDecisions ?? []).contains(where:{$0.offerID == offer.id && $0.kind == .accepted && $0.date <= date.description}) else {continue}
+            var updated=CareerMembership(offerID:value.offerID,route:value.route,teamID:value.teamID,name:value.name,since:value.since,economicEnd:offer.economicEnd,enrollmentEnd:value.enrollmentEnd,economicIndex:offer.economicIndex)
+            updated.competitionLevel=value.competitionLevel;updated.releasedOn=value.releasedOn;updated.economicStart=offer.effective;value=updated
         }
         return value
     }
@@ -1659,6 +1673,109 @@ enum OverseasProgressError:LocalizedError {
         case .report:"현재 주기의 해외 보고서를 먼저 기록해 주세요. 기존 자료와 소속은 유지됩니다."
         case .requirements:"승격 조건이 부족합니다. 현재 소속 수준의 보고서·역할 기량·공식 경기 표본을 확인해 주세요."
         case .window:"현재는 해당 심사 창이 아닙니다. 해외 제의는4·7·11월,승격/구단 승인은11월1~14일에 신청해 주세요."
+        }
+    }
+}
+
+struct OverseasRenewalDecision:Codable,Equatable {
+    let offerID:String
+    let kind:DomesticOfferDecisionKind
+    let date:String
+}
+struct OverseasRenewalReview:Codable,Equatable,Identifiable {
+    let version:Int
+    let id:String
+    let window:ContractEvaluationWindow
+    let date:String
+    let reportID:String
+    let source:CareerMembership
+    let reserved:Bool
+    let roleID:String
+    let sampleCount:Int
+    let criterion:Double?
+    let h:Double?
+    let p:Double
+    let budget:Int?
+    let reasons:[String]
+    let offer:OverseasOffer?
+    static func route(_ member:CareerMembership) -> OverseasRoute? {
+        switch member.level {
+        case "mlb-development":.mlbDevelopment
+        case "npb-first-team":.npbFirstTeam
+        case "mlb-first-team":.mlbFirstTeam
+        default:nil
+        }
+    }
+    static func eligible(_ member:CareerMembership,on date:GameDate) throws -> Bool {
+        guard route(member) != nil,date.year < 9995 else {return false}
+        return try GameDate(member.economicEnd) < CollegeProReview.effective(after:date)
+    }
+    static func nextReview(_ member:CareerMembership,on date:GameDate,economicEnd:String?=nil) throws -> String {
+        let year=max(date.year,try GameDate(economicEnd ?? member.economicEnd).year-1)
+        let window=ContractEvaluationWindow(year:year,month:11)
+        return ContractEvaluationWindow(year:date > window.end ? year+1:year,month:11).start.description
+    }
+    static func make(report:OverseasScoutingReport,member:CareerMembership,roleID:String,window:ContractEvaluationWindow,on date:GameDate,reserved:Bool) throws -> Self {
+        guard window.month == 11,window == ContractEvaluationWindow.containing(date),try eligible(member,on:date),
+              let route=route(member),report.observation.observedDate <= date.description,
+              report.observation.grades.contains(where:{$0.id == roleID}) else {throw OverseasProgressError.requirements}
+        let id=report.observation.playerID.uuidString+":overseas-renewal-v1:"+window.id
+        let club=member.teamID.components(separatedBy:"-").last ?? ""
+        let row=report.market?.clubs.first {$0.id == route.id+"/"+club+"/"+roleID}
+        let sample=report.selected,count=sample.map {report.observation.role == .batter ? $0.totals.line.plateAppearances:$0.totals.line.pitchingOuts} ?? 0
+        let minimum=report.observation.role == .batter ? (route == .mlbDevelopment ? 40:100):(route == .mlbDevelopment ? 45:75)
+        let h=report.observation.grades.first {$0.id == roleID}?.score,p=sample?.correction ?? 0
+        var reasons:[String]=[]
+        if reserved {reasons.append("수락한 소속 전환·승격 또는 갱신 예약이 있음")}
+        if report.eligibility.evidence.current?.offerID != member.offerID || report.eligibility.evidence.current?.level != member.level {reasons.append("현재 소속·수준의 새 보고서 필요")}
+        if count < minimum {reasons.append(report.observation.role == .batter ? "동일 환경 현재 리그\(minimum)타석 필요":"동일 환경 현재 리그\(minimum/3)이닝 필요")}
+        if row == nil || h == nil {reasons.append("현재 구단·역할 평가 자료 부족")}
+        if row?.seats == 0 {reasons.append("현재 구단의 해당 역할 모집 자리 없음")}
+        // Renewal uses the incumbent club's frozen competition, not external transfer eligibility.
+        if let row {reasons += row.blockers.filter {$0.contains("수비70") || $0.contains("공격 기량") || $0.contains("포수 전용")}}
+        let f=h.flatMap {h in row.map {ScoutingContractFit.round(h-$0.criterion+p)}}
+        if let f,f < 0 {reasons.append("현재 구단 역할·경쟁 기준 미달 · F 0 이상 필요")}
+        let age=report.observation.age
+        var years=route == .mlbDevelopment ? 1:((f ?? 0)<5 ? 1:(f ?? 0)<10 ? 2:3)
+        if age >= 30 {years=min(years,2)};if age >= 35 {years=1}
+        let price=100+Int((6*max(0,f ?? 0)).rounded())
+        if let row,price*years > row.budget {reasons.append("재계약 총액 예산 부족 · 필요\(price*years)/예산\(row.budget)지수")}
+        let start=try CollegeProReview.effective(after:date)
+        let offer:OverseasOffer
+        if reasons.isEmpty,let row,let h,let f {
+            offer=OverseasOffer(id:id+"/offer",clubID:row.id,teamID:member.teamID,name:member.name,route:route,roleID:roleID,issued:date.description,expires:min(date.adding(days:6),window.end).description,effective:start.description,economicEnd:start.anniversary(in:start.year+years).adding(days:-1).description,economicIndex:price,years:years,h:h,c:row.criterion,p:p,margin:f)
+        } else {
+            return Self(version:1,id:id,window:window,date:date.description,reportID:report.id,source:member,reserved:reserved,roleID:roleID,sampleCount:count,criterion:row?.criterion,h:h,p:p,budget:row?.budget,reasons:reasons,offer:nil)
+        }
+        return Self(version:1,id:id,window:window,date:date.description,reportID:report.id,source:member,reserved:reserved,roleID:roleID,sampleCount:count,criterion:row?.criterion,h:h,p:p,budget:row?.budget,reasons:reasons,offer:offer)
+    }
+}
+extension OverseasCareerJournal {
+    func hasPendingRenewal(on date:String) -> Bool {
+        (renewalReviews ?? []).contains {review in
+            guard let offer=review.offer,offer.effective > date else {return false}
+            return (renewalDecisions ?? []).contains {$0.offerID == offer.id && $0.kind == .accepted && $0.date <= date}
+        }
+    }
+    func validateRenewals(owner:CareerContractJournal,today:GameDate) throws {
+        let reviews=renewalReviews ?? [],decisions=renewalDecisions ?? []
+        guard Set(reviews.map(\.id)).count == reviews.count,Set(reviews.map { $0.window.id }).count == reviews.count,
+              Set(decisions.map(\.offerID)).count == decisions.count else {throw ContractRegistrationError.invalid}
+        for review in reviews {
+            guard review.version == 1,review.date <= today.description,
+                  let initial=evaluations.flatMap(\.offers).first(where:{$0.id == review.source.offerID}),
+                  review.roleID == ((promotions ?? []).last(where:{$0.sourceOfferID == review.source.offerID && $0.effective <= review.date})?.roleID ?? initial.roleID),
+                  let report=owner.overseasReports?.first(where:{$0.id == review.reportID}),
+                  review == (try OverseasRenewalReview.make(report:report,member:review.source,roleID:review.roleID,window:review.window,on:GameDate(review.date),reserved:review.reserved)),
+                  try owner.current(on:GameDate(review.date),excludingOverseasRenewal:review.offer?.id) == review.source else {throw ContractRegistrationError.invalid}
+        }
+        for decision in decisions {
+            guard let review=reviews.first(where:{$0.offer?.id == decision.offerID}),let offer=review.offer,
+                  decision.kind != .closed,decision.date >= offer.issued,decision.date <= offer.expires,decision.date <= today.description else {throw ContractRegistrationError.invalid}
+            if decision.kind == .accepted {
+                guard !transitions.contains(where:{$0.sourceMembershipID == review.source.offerID && $0.acceptedDate <= decision.date && $0.destination.since > decision.date}),
+                      !(promotions ?? []).contains(where:{$0.sourceOfferID == review.source.offerID && $0.date <= decision.date && $0.effective > decision.date}) else {throw ContractRegistrationError.invalid}
+            }
         }
     }
 }
