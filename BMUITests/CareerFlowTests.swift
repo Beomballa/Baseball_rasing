@@ -2844,3 +2844,19 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testOverseasEligibilityBothRolesShowEvidenceAndCaptureOnce() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let status=app.staticTexts["overseasEligibility-mlbDevelopment"];revealFit(status,in:app);XCTAssertTrue(status.label.contains("검토 가능"))
+            let detail=app.buttons["overseasEligibilityDetails"];revealFit(detail,in:app);detail.tap()
+            let evidence=app.staticTexts["overseasServiceEvidence"];revealFit(evidence,in:app);XCTAssertTrue(evidence.label.contains("자료 미확인"))
+            let capture=app.buttons["captureOverseasEligibility"];revealFit(capture,in:app);capture.tap()
+            let saved=app.staticTexts["overseasEligibilitySaved"];revealFit(saved,in:app);XCTAssertTrue(saved.label.contains("1건"))
+            revealFit(capture,in:app);capture.tap();XCTAssertTrue(saved.label.contains("1건"))
+        }
+        app.terminate()
+    }
+}

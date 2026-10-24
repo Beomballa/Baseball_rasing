@@ -668,3 +668,43 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         } catch {context.rollback();throw error}
     }
 }
+
+@MainActor enum OverseasEligibilityStore {
+    static func current(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> OverseasEligibilitySnapshot {
+        let journal=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        guard let history=try CareerPathStore.record(player:player,calendar:calendar,in:context)?.snapshot(player:player,calendar:calendar) else {throw CareerPathError.invalid}
+        let id=player.id,today=try GameDate(player.gameDate)
+        let rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
+        let completed=try rows.filter {try $0.completed && $0.appearance && GameDate($0.gameDate) <= today}
+        for year in Set(try completed.map {try GameDate($0.gameDate).year}) {
+            _ = try AnnualLeagueStore.snapshot(player:player,state:calendar,year:year,records:rows)
+        }
+        let evidence=try completed.map {record in OverseasMatchEvidence(key:record.key,date:record.gameDate,level:try record.snapshot().competition ?? "highschool")}.sorted {$0.key<$1.key}
+        let current=try journal.current(on:today)
+        let value=OverseasCareerEvidence(version:1,playerID:player.id,date:player.gameDate,age:try calendar.age(of:player),calendarRevision:calendar.revision,registrationRevision:journal.revision,historySource:history.source,origin:calendar.originDate,startAge:player.startAge,memberships:journal.membershipHistory(),current:current,pendingCollegeEntry:journal.collegeTransitions?.contains {$0.source.effectiveDate > player.gameDate} == true,release:journal.releases?.last,matches:evidence)
+        return try OverseasEligibilitySnapshot.make(value)
+    }
+    static func capture(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,
+                        save:CalendarProgression.Save = {try $0.save()}) throws {
+        guard !context.hasChanges else {throw ContractRegistrationError.busy}
+        guard date == player.gameDate,revision == calendar.revision else {throw ContractRegistrationError.stale}
+        try CareerTrainingStore.requireNoPending(player:player,in:context)
+        let id=player.id
+        for row in try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id})) {
+            guard try row.snapshot().completed else {throw ContractRegistrationError.busy}
+        }
+        let snapshot=try current(player:player,calendar:calendar,in:context)
+        var journal=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        // Read-only assessment capture does not increment game/calendar/registration revisions.
+        if let old=journal.overseasEligibility?.first(where:{$0.id == snapshot.id}) {
+            guard old == snapshot else {throw ContractEvaluationError.invalid};return
+        }
+        journal.overseasEligibility=(journal.overseasEligibility ?? [])+[snapshot]
+        try snapshot.validate(playerID:player.id,today:GameDate(player.gameDate))
+        do {
+            if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(journal)}
+            else {context.insert(try CareerContractRegistration(journal))}
+            try save(context)
+        } catch {context.rollback();throw error}
+    }
+}

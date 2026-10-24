@@ -843,6 +843,7 @@ struct CareerContractStatusPanel: View {
             }
         }
         CollegeProStatusPanel(player:player,calendar:calendar)
+        OverseasEligibilityPanel(player:player,calendar:calendar)
         DomesticReleasePanel(player:player,calendar:calendar)
     }
     private var pendingRenewal:DomesticRenewalAcceptance? {
@@ -1094,6 +1095,47 @@ struct CollegeProStatusPanel:View {
                 }
             case .failure(let error):Text(error.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold)
             }
+        }
+    }
+}
+
+struct OverseasEligibilityPanel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var failure:String?
+    @State private var refreshed=0
+    @State private var details=false
+    var body:some View {
+        let _=calendar.revision;let _=refreshed
+        GamePanel(title:"해외 진출 · 자격과 경력",onBoard:true,contentSpacing:12) {
+            switch Result(catching:{try OverseasEligibilityStore.current(player:player,calendar:calendar,in:context)}) {
+            case .success(let value):
+                Text("현재 자격 · "+value.evidence.date+" / 관찰과 정식 제의는 별도").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                ForEach(value.routes) {row in
+                    VStack(alignment:.leading,spacing:7) {
+                        Text(row.route.label+" · "+row.status.label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasEligibility-"+row.id)
+                        Text(row.reasons.first ?? "선발 심사를 준비하세요").font(.caption)
+                    }.padding(.vertical,4)
+                }
+                HomeDetailButton(title:"경력 근거 · 부족 조건",expanded:$details,identifier:"overseasEligibilityDetails")
+                if details {
+                    ForEach(value.routes) {row in
+                        Text(row.route.label+"\n"+row.reasons.joined(separator:"\n")).font(.caption).lineSpacing(4)
+                    }
+                    Text("공식 개인 경기 근거 \(value.evidence.matches.count)건 · 대학/육성/프로1군 경력을 구분합니다. MLB 인정 해외 프로시즌은 자료 미확인이며0시즌으로 확정하지 않습니다.").font(.caption).accessibilityIdentifier("overseasServiceEvidence")
+                    Text("2026 공식 규정 참고 · 게임 경로 판정. 국적/거주·실제 인정 경력/등록·이적 승인은 확인 자료 없이 통과시키지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    Button("현재 자격 자료 기록") {
+                        do {try OverseasEligibilityStore.capture(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context);failure=nil;refreshed += 1}
+                        catch {failure=error.localizedDescription}
+                    }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("captureOverseasEligibility")
+                    if let journal=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),let last=journal.overseasEligibility?.last {
+                        Text("최근 고정 자료 · "+last.evidence.date+" / \(journal.overseasEligibility?.count ?? 0)건 보존").font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("overseasEligibilitySaved")
+                    }
+                }
+            case .failure(let error):Text(error.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold)
+            }
+            if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold)}
         }
     }
 }

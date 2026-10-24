@@ -709,6 +709,7 @@ struct CareerContractJournal:Codable,Equatable {
     var renewalRejections:[DomesticRenewalRejection]? = nil
     var releases:[DomesticRelease]? = nil
     var collegeTransitions:[CollegeProTransition]? = nil
+    var overseasEligibility:[OverseasEligibilitySnapshot]? = nil
     func membershipHistory() -> [CareerMembership] {
         memberships.map {member in
             var value=member
@@ -728,6 +729,12 @@ struct CareerContractJournal:Codable,Equatable {
         let today=try GameDate(player.gameDate),origin=try GameDate(calendar.originDate)
         guard version == 1,playerID == player.id,revision >= 0,
               Set(decisions.map(\.offerID)).count == decisions.count,Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractRegistrationError.invalid}
+        let overseas=overseasEligibility ?? []
+        guard Set(overseas.map(\.id)).count == overseas.count else {throw ContractRegistrationError.invalid}
+        for value in overseas {
+            guard value.evidence.origin == calendar.originDate,value.evidence.startAge == player.startAge else {throw ContractRegistrationError.invalid}
+            try value.validate(playerID:player.id,today:today)
+        }
         for decision in decisions {
             guard let offer=offers.first(where:{$0.id == decision.offerID}) else {throw ContractRegistrationError.invalid}
             let date=try GameDate(decision.date)
@@ -1057,5 +1064,91 @@ struct CollegeProReview:Codable,Equatable {
         return Self(membership:member,effectiveDate:try effective(after:date).description,results:rows.map { row in
             DomesticSelectionResult(id:row.id,name:row.name,route:row.route,role:row.role,h:row.h,c:row.c,p:0,f:row.f,cost:row.cost,availableBudget:row.availableBudget,availableSeats:1,competition:1,selected:row.id == winner,reasons:row.reasons.isEmpty && row.id != winner ? ["다른 프로 진출 자리 우선 배정"]:row.reasons)
         })
+    }
+}
+
+// Eligibility evidence is separate from selection, economic expiry and recognized pro service.
+enum OverseasRoute:String,Codable,CaseIterable,Identifiable {
+    case mlbDevelopment,npbFirstTeam,mlbFirstTeam
+    var id:String {rawValue}
+    var label:String {switch self {case .mlbDevelopment:"MLB 조직 육성";case .npbFirstTeam:"NPB 전력";case .mlbFirstTeam:"MLB 메이저 전력"}}
+}
+enum OverseasEligibilityStatus:String,Codable {case reviewable,blocked,unverified
+    var label:String {switch self {case .reviewable:"기량·선발 검토 가능";case .blocked:"조건 부족";case .unverified:"자료 미확인"}}
+}
+struct OverseasMatchEvidence:Codable,Equatable {
+    let key:String
+    let date:String
+    let level:String
+}
+struct OverseasCareerEvidence:Codable,Equatable {
+    let version:Int
+    let playerID:UUID
+    let date:String
+    let age:Int
+    let calendarRevision:Int
+    let registrationRevision:Int
+    let historySource:String
+    let origin:String
+    let startAge:Int
+    let memberships:[CareerMembership]
+    let current:CareerMembership?
+    let pendingCollegeEntry:Bool
+    let release:DomesticRelease?
+    let matches:[OverseasMatchEvidence]
+    var observedProYears:[Int] {Array(Set(matches.filter {$0.level == "domestic-first-team" || $0.level == "npb-first-team"}.compactMap {try? GameDate($0.date).year})).sorted()}
+    // Existing saves do not contain MLB-recognized service or nationality/residency evidence.
+    var recognizedForeignProSeasons:Int? {nil}
+    func validate() throws {
+        let today=try GameDate(date)
+        guard version == 1,age == (try GameDate(origin).age(startingAt:startAge,on:today)),startAge == 16,age >= 16,calendarRevision >= 0,registrationRevision >= 0,
+              ["initial-v1","legacy-v1"].contains(historySource),Set(matches.map(\.key)).count == matches.count,
+              matches == matches.sorted(by:{$0.key<$1.key}),Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractEvaluationError.invalid}
+        for row in matches {
+            guard try GameDate(row.date) <= today,["highschool","college","domestic-development"].contains(row.level),row.key.hasPrefix(playerID.uuidString+":") else {throw ContractEvaluationError.invalid}
+        }
+        if let current {guard memberships.contains(where:{$0.offerID == current.offerID}),try current.contains(today) else {throw ContractEvaluationError.invalid}}
+        if let release {guard try GameDate(release.date) <= today,memberships.contains(where:{$0.offerID == release.membershipOfferID && $0.route == .rookie}) else {throw ContractEvaluationError.invalid}}
+    }
+}
+struct OverseasRouteEligibility:Codable,Equatable,Identifiable {
+    let route:OverseasRoute
+    let status:OverseasEligibilityStatus
+    let reasons:[String]
+    var id:String {route.id}
+}
+struct OverseasEligibilitySnapshot:Codable,Equatable {
+    let version:Int
+    let policy:String
+    let evidence:OverseasCareerEvidence
+    let routes:[OverseasRouteEligibility]
+    var id:String {evidence.playerID.uuidString+":"+evidence.date+":overseas-eligibility-v1:"+String(evidence.calendarRevision)+":"+String(evidence.registrationRevision)}
+    static func make(_ evidence:OverseasCareerEvidence) throws -> Self {
+        try evidence.validate()
+        let routes=OverseasRoute.allCases.map {route -> OverseasRouteEligibility in
+            var reasons:[String]=[]
+            var status:OverseasEligibilityStatus = .reviewable
+            if evidence.age < 20 {status = .blocked;reasons.append("게임 성인 진로는20세부터 · 현재는 관심 관찰만 가능")}
+            if evidence.current?.route == .rookie {status = .blocked;reasons.append("현재 구단 보유권리 유지 · 경제 기간 종료와 해외 이적 승인은 별개")}
+            if evidence.pendingCollegeEntry {status = .blocked;reasons.append("이미 수락한 국내 프로 전환 예약이 있음")}
+            if route != .mlbDevelopment {
+                status = status == .blocked ? .blocked:.unverified
+                reasons.append("국내 육성팀/대학 성적을 프로1군 성적으로 인정하지 않음 · 전력 경력/표본 필요")
+                if evidence.current?.route == .college {status = .blocked;reasons.append("대학에서 NPB/MLB 전력 직행은 현재 지원 경로가 아님")}
+            }
+            if route == .mlbFirstTeam {
+                reasons.append("MLB 인정 해외 프로시즌·기존 미국계약 이력 미확인 · 나이25세만으로 제한 면제하지 않음")
+            }
+            if route == .mlbDevelopment {
+                reasons.append("국제계약 분류/서명기간·등록·선발/예산 확인 필요 · 검토 가능은 정식 제의 자격 확정이 아님")
+            }
+            if evidence.historySource == "legacy-v1" {reasons.append("기존 저장의 등록 이전 경력은 미확인 · 나이/달력으로 추정하지 않음")}
+            return OverseasRouteEligibility(route:route,status:status,reasons:reasons)
+        }
+        return Self(version:1,policy:"overseas-eligibility-v1/2026-reference",evidence:evidence,routes:routes)
+    }
+    func validate(playerID:UUID,today:GameDate) throws {
+        guard version == 1,policy == "overseas-eligibility-v1/2026-reference",evidence.playerID == playerID,
+              try GameDate(evidence.date) <= today,self == (try Self.make(evidence)) else {throw ContractEvaluationError.invalid}
     }
 }

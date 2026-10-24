@@ -2294,3 +2294,64 @@ extension CareerCalendarTests {
         XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c));XCTAssertEqual(row.payload,bytes)
     }
 }
+
+extension CareerCalendarTests {
+    func testOverseasEligibilitySeparatesCollegeDevelopmentRightsAndRecognizedService() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try collegeProFixture(role),c=store.mainContext
+            let value=try OverseasEligibilityStore.current(player:p,calendar:s,in:c)
+            XCTAssertEqual(value.routes.first?.status,.reviewable)
+            XCTAssertEqual(value.routes.first {$0.route == .npbFirstTeam}?.status,.blocked)
+            XCTAssertNil(value.evidence.recognizedForeignProSeasons)
+            XCTAssertTrue(value.evidence.observedProYears.isEmpty)
+            XCTAssertTrue(value.evidence.matches.contains {$0.level == "college"})
+            XCTAssertFalse(value.evidence.matches.contains {$0.level == "domestic-first-team"})
+        }
+        let (store,p,s)=try renewalFixture(.batter),c=store.mainContext
+        p.gameDate="2040-11-01";try c.save()
+        let value=try OverseasEligibilityStore.current(player:p,calendar:s,in:c)
+        XCTAssertTrue(value.routes.allSatisfy {$0.status == .blocked})
+        XCTAssertNil(value.evidence.recognizedForeignProSeasons)
+        XCTAssertTrue(value.evidence.observedProYears.isEmpty)
+    }
+    func testOverseasEligibilityCaptureIsIdempotentReadOnlyAndRollbackPreservesJournal() throws {
+        let (store,p,s)=try collegeProFixture(.pitcher),c=store.mainContext
+        let member=try s.registration(for:p),date=p.gameDate,revision=s.revision,fatigue=p.fatigue
+        let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),before=row.payload
+        XCTAssertThrowsError(try OverseasEligibilityStore.capture(player:p,calendar:s,date:date,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+        XCTAssertEqual(row.payload,before)
+        try OverseasEligibilityStore.capture(player:p,calendar:s,date:date,revision:revision,in:c)
+        let bytes=row.payload
+        try OverseasEligibilityStore.capture(player:p,calendar:s,date:date,revision:revision,in:c,save:{_ in XCTFail("duplicate")})
+        XCTAssertEqual(row.payload,bytes)
+        XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasEligibility?.count,1)
+        XCTAssertEqual(try s.registration(for:p),member);XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+        XCTAssertThrowsError(try OverseasEligibilityStore.capture(player:p,calendar:s,date:date,revision:revision-1,in:c))
+    }
+    func testOverseasEligibilityPendingDomesticEntryAndUnderageAreBlocked() throws {
+        let (store,p,s)=try collegeProFixture(.batter),c=store.mainContext,offer=try collegeProOffer(p,s,c)
+        try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        let value=try OverseasEligibilityStore.current(player:p,calendar:s,in:c)
+        XCTAssertTrue(value.evidence.pendingCollegeEntry);XCTAssertTrue(value.routes.allSatisfy {$0.status == .blocked})
+        let (other,young,state)=try fixture(date:"2026-04-01",role:.batter)
+        XCTAssertTrue(try OverseasEligibilityStore.current(player:young,calendar:state,in:other.mainContext).routes.allSatisfy {$0.status == .blocked})
+    }
+    func testOverseasEligibilityDiskReopenPreservesOldAcademicAndMatches() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store")
+        var id:UUID!,snapshot:OverseasEligibilitySnapshot!,academic:CareerMembership!,matches:[Data]=[]
+        do {
+            let (store,p,s)=try collegeProFixture(.batter,legacyURL:url),c=store.mainContext
+            id=p.id;academic=try s.registration(for:p);matches=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            snapshot=try OverseasEligibilityStore.current(player:p,calendar:s,in:c)
+            try OverseasEligibilityStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+        let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasEligibility?.last,snapshot)
+        XCTAssertEqual(try s.registration(for:p),academic)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matches)
+    }
+}
