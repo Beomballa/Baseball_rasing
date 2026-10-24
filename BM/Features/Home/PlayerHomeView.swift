@@ -854,6 +854,7 @@ struct CareerContractStatusPanel: View {
         OverseasEligibilityPanel(player:player,calendar:calendar)
         OverseasRenewalPanel(player:player,calendar:calendar)
         ProCareerProgressPanel(player:player,calendar:calendar)
+        FAManagementPanel(player:player,calendar:calendar)
         OverseasReleasePanel(player:player,calendar:calendar)
         DomesticReleasePanel(player:player,calendar:calendar)
     }
@@ -1015,7 +1016,7 @@ struct DomesticReleasePanel:View {
                                 .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("confirmClubRelease")
                         } else {Text("아직 방출 확정 조건을 충족하지 않았습니다.").font(.caption).accessibilityIdentifier("releaseNotEligible")}
                     }
-                } else if state.2,let released=state.0.retryReleases.last {
+                } else if state.2,let released=state.0.activeRetryRelease {
                     GamePanel(title:"무소속 · 국내 육성팀 재도전",onBoard:true) {
                         Text("방출 확정 · "+released.date+" / 보유권리 해제").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("releasedUnsignedStatus")
                         Text("다음 4월·7월 평가 창에 재입단 심사 · 신인 지명과 별도").font(.subheadline)
@@ -1297,6 +1298,7 @@ struct OverseasContractsView:View {
                         } else {Text("다음4·7·11월1~14일에 실제 심사를 신청할 수 있습니다.").font(.caption)}
                         ForEach(value.evaluations.reversed()) {evaluation in
                             Text(evaluation.date+" 고정 · "+evaluation.window.label).font(.headline).foregroundStyle(GameTheme.gold)
+                            if let mobility=evaluation.mobility {Text(mobility.label+" · "+mobility.source.name+" / "+mobility.source.label).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasMobilityBasis")}
                             if evaluation.offers.isEmpty {
                                 Text("제의 없음 · "+evaluation.reasons.joined(separator:" / ")).font(.caption).accessibilityIdentifier("overseasOffersEmpty")
                             }
@@ -1491,7 +1493,7 @@ struct OverseasReleasePanel:View {
                             Button("구단 방출 통지 확인 · 권리 해제") {command=(member.offerID,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("confirmOverseasRelease")
                         } else {Text("방출 확정 대기 · 재계약 심사/만료 날짜와 예약 상태를 확인하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("overseasReleasePending")}
                     }
-                } else if state.1 == nil,let released=state.0.overseasCareer?.releases?.last {
+                } else if state.1 == nil,let released=state.0.overseasCareer?.releases?.last,state.0.activeRetryRelease?.membershipOfferID == released.source.offerID {
                     GamePanel(title:"해외 방출 · 무소속 재도전",onBoard:true,contentSpacing:12) {
                         Text(released.source.name+" · "+released.date+" 권리 해제").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasReleasedUnsigned")
                         Text("원 입단·경제 계약·경기 이력 보존 / 정식 FA 자격 취득과 구분").font(.caption)
@@ -1509,4 +1511,47 @@ struct OverseasReleasePanel:View {
             Button("취소",role:.cancel) {command=nil}
         } message: {Text("통지 확정일부터 현재 소속과 구단 보유권리를 해제합니다. 원 계약·과거 경기 기록은 보존하며 날짜·피로·능력은 변경하지 않습니다.")}
     }
+}
+
+
+struct FAManagementPanel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var failure:String?
+    @State private var command:(date:String,revision:Int)?
+    var body:some View {
+        let _=calendar.revision
+        if let owner=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),
+           owner.membershipHistory().contains(where:{OverseasRenewalReview.route($0) != nil}) {
+            let state=owner.overseasCareer ?? OverseasCareerJournal()
+            GamePanel(title:"FA 사무국 · 해외1군 경력",onBoard:true,contentSpacing:12) {
+                Text("단축 시즌 보정 · MLB6 / NPB 해외9").font(.headline).foregroundStyle(GameTheme.gold)
+                Text("1군 개막~마지막 경기 등록 + 공식 개인100타석/25이닝. 리그별로 따로 누적하며 대학·육성·국내 경력은 제외합니다.").font(.caption).lineSpacing(5)
+                if let service=state.faService {
+                    Text("MLB \(Set(service.filter {$0.level == "mlb-first-team"}.map(\.year)).count) / 6시즌 · NPB \(Set(service.filter {$0.level == "npb-first-team"}.map(\.year)).count) / 9시즌").font(.subheadline.monospaced()).accessibilityIdentifier("faServiceProgress")
+                    ForEach(Array(service.enumerated()),id:\.offset) {_,row in
+                        Text("\(row.year) · "+(row.level == "mlb-first-team" ? "MLB":"NPB")+" · 근거 \(row.matchKeys.count)경기").font(.caption)
+                    }
+                } else {Text("FA 경력 미확인 · 실제 저장 경기로 확인하세요.").font(.caption)}
+                Button("FA 경력 근거 확인") {run {try OverseasContractStore.collectFAService(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("collectFAService")
+                if let member=try? owner.current(on:GameDate(player.gameDate)),["npb-first-team","mlb-first-team"].contains(member.level),!(state.faDeclarations ?? []).contains(where:{$0.source.offerID == member.offerID}) {
+                    Text("11월1~14일 자격 충족·마지막 계약 해에 별도 선언합니다. 선언만으로 오늘 소속이 바뀌지 않고 다음 개막일부터 권리를 해제합니다.").font(.caption)
+                    Button("정식 FA 선언 · 조건 확인") {command=(player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("declareFA")
+                }
+                ForEach(state.faDeclarations ?? []) {fa in
+                    Text(fa.source.name+" · FA 선언 "+fa.date+" / "+fa.effective+(fa.effective > player.gameDate ? " 권리 해제 예정":" 권리 해제 발효")).font(.subheadline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("faDeclarationStatus")
+                }
+                if let mobility=try? state.mobility(owner:owner,on:GameDate(player.gameDate)) {
+                    Text(mobility.label+" 전력 재취업 심사 · 기존 해외 제의 화면에서 신청").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("faMobilityStatus")
+                }
+                Text("방출은 별도 권리 해제 사유이며 FA 경력을 채우지 않습니다. 전력 제의는 최근 동일 환경 표본·기량/역할·자리·예산 심사를 통과해야 합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("faManagementError")}
+            }.confirmationDialog("정식 FA를 선언할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
+                Button("FA 선언 확정") {guard let item=command else {return};command=nil;run {try OverseasContractStore.declareFA(player:player,calendar:calendar,date:item.date,revision:item.revision,in:context)}}.accessibilityIdentifier("confirmFADeclaration")
+                Button("취소",role:.cancel) {command=nil}
+            } message: {Text("자격과 계약 종료를 확인해 다음4월1일 권리 해제를 예약합니다. 방출 원장과 구분하며 원 계약·기록을 보존합니다.")}
+        }
+    }
+    private func run(_ action:() throws -> Void) {do {try action();failure=nil}catch{failure=error.localizedDescription}}
 }

@@ -2989,3 +2989,25 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testFAManagementShowsSeparateCareerAndDeclaresQualifiedPitcherOnly() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification","-pro-career-verification","-fa-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:180))
+        let batter=app.buttons["homeRole-batter"];revealFit(batter,in:app);batter.tap()
+        let progress=app.staticTexts["faServiceProgress"];revealFit(progress,in:app);XCTAssertTrue(progress.label.contains("NPB 1 / 9"))
+        let attempt=app.buttons["declareFA"];revealFit(attempt,in:app);attempt.tap();app.buttons["confirmFADeclaration"].firstMatch.tap()
+        let error=app.staticTexts["faManagementError"];revealFit(error,in:app);XCTAssertTrue(error.label.contains("정식 FA"));XCTAssertFalse(app.staticTexts["faDeclarationStatus"].exists)
+        let before=XCTAttachment(screenshot:app.screenshot());before.name="fa-batter-not-qualified";before.lifetime = .keepAlways;add(before)
+        let pitcher=app.buttons["homeRole-pitcher"];revealFit(pitcher,in:app);pitcher.tap()
+        let qualified=app.staticTexts["faServiceProgress"];revealFit(qualified,in:app);XCTAssertTrue(qualified.label.contains("NPB 9 / 9"))
+        let declare=app.buttons["declareFA"];revealFit(declare,in:app);declare.tap();app.buttons["confirmFADeclaration"].firstMatch.tap()
+        let status=app.staticTexts["faDeclarationStatus"];revealFit(status,in:app);XCTAssertTrue(status.label.contains("권리 해제 예정"));XCTAssertFalse(app.staticTexts["faManagementError"].exists)
+        let after=XCTAttachment(screenshot:app.screenshot());after.name="fa-pitcher-declaration-pending";after.lifetime = .keepAlways;add(after)
+        let report=app.buttons["openOverseasReport"];revealFit(report,in:app);report.tap();app.buttons["captureOverseasReport"].tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        let offers=app.buttons["openOverseasContracts"];revealFit(offers,in:app);offers.tap();app.buttons["evaluateOverseasOffers"].tap()
+        let basis=app.staticTexts["overseasMobilityBasis"].firstMatch;revealFit(basis,in:app);XCTAssertTrue(basis.label.contains("정식 FA"));XCTAssertFalse(app.staticTexts["overseasContractError"].exists)
+        let final=XCTAttachment(screenshot:app.screenshot());final.name="fa-professional-offer-basis";final.lifetime = .keepAlways;add(final)
+        app.terminate()
+    }
+}

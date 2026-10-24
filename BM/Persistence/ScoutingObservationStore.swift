@@ -372,7 +372,7 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         }
         guard let history = try CareerPathStore.record(player:player,calendar:calendar,in:context)?.snapshot(player:player,calendar:calendar) else {throw ContractEvaluationError.invalid}
         let journal=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
-        if let release=journal.retryReleases.last,[4,7].contains(window.month),try calendar.age(of:player) >= 20 {
+        if let release=journal.activeRetryRelease,[4,7].contains(window.month),try calendar.age(of:player) >= 20 {
             // A same-day release is not a pre-existing unsigned sample for today's review.
             guard release.date < player.gameDate else {return false}
             let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
@@ -545,6 +545,11 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             let earned=try GameProSeasonEvidence.collect(owner:value,role:player.role,today:GameDate(player.gameDate),rows:rows)
             guard Set(service.map(\.year)).count == service.count,service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
         }
+        if let service=value.overseasCareer?.faService {
+            let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
+            let earned=try FASeasonEvidence.collect(owner:value,role:player.role,on:GameDate(player.gameDate),rows:rows)
+            guard service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
+        }
         return value
     }
     static func releaseCandidate(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> (key:String,review:DomesticRenewalReview,eligible:Bool)? {
@@ -691,11 +696,15 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         }
         let evidence=try completed.map {record in OverseasMatchEvidence(key:record.key,date:record.gameDate,level:try record.snapshot().competition ?? "highschool")}.sorted {$0.key<$1.key}
         let current=try journal.current(on:today)
-        var value=OverseasCareerEvidence(version:2,playerID:player.id,date:player.gameDate,age:try calendar.age(of:player),calendarRevision:calendar.revision,registrationRevision:journal.revision,historySource:history.source,origin:calendar.originDate,startAge:player.startAge,memberships:journal.membershipHistory(),current:current,pendingCollegeEntry:journal.collegeTransitions?.contains {$0.source.effectiveDate > player.gameDate} == true,release:journal.retryReleases.last,matches:evidence)
+        var value=OverseasCareerEvidence(version:2,playerID:player.id,date:player.gameDate,age:try calendar.age(of:player),calendarRevision:calendar.revision,registrationRevision:journal.revision,historySource:history.source,origin:calendar.originDate,startAge:player.startAge,memberships:try journal.membershipHistory().map {try journal.projected($0,on:today)},current:current,pendingCollegeEntry:journal.collegeTransitions?.contains {$0.source.effectiveDate > player.gameDate} == true,release:journal.retryReleases.last,matches:evidence)
         let state=journal.overseasCareer
         value.approvedRoutes=state?.consents?.contains(where:{$0.approved && $0.sourceOfferID == current?.offerID && $0.date <= player.gameDate && $0.expires >= player.gameDate}) == true ? OverseasRoute.allCases:[]
         value.gameProYears=state?.service.map {Array(Set($0.map(\.year))).sorted()}
         value.pendingForeignEntry=state?.hasPending(on:player.gameDate) == true
+        if let proof=try state?.mobility(owner:journal,on:today) {
+            let major=proof.source.level == "mlb-first-team" || (value.age>=25 && Set((proof.internationalService ?? []).map(\.year)).count>=6)
+            value.approvedRoutes=major ? [.npbFirstTeam,.mlbFirstTeam]:[.npbFirstTeam]
+        }
         return try OverseasEligibilitySnapshot.make(value)
     }
     static func capture(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,
@@ -783,7 +792,9 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         guard let report=try OverseasReportStore.current(player:player,calendar:calendar,in:context) else {throw OverseasProgressError.report}
         let member=try owner.current(on:GameDate(date)),reserved=value.hasPending(on:date) || value.hasPendingRenewal(on:date) || owner.collegeTransitions?.contains {$0.source.effectiveDate > date} == true
         let evaluation:OverseasOfferEvaluation
-        if let member,["domestic-first-team","npb-first-team"].contains(member.level),let consent=value.consents?.last(where:{$0.sourceOfferID == member.offerID && $0.date <= date && $0.expires >= date}) {
+        if let proof=try value.mobility(owner:owner,on:GameDate(date)) {
+            evaluation=try OverseasOfferEvaluation.makeMobility(report:report,window:window,on:GameDate(date),registrationDate:value.registrationDate,member:member,context:proof,reserved:reserved)
+        } else if let member,["domestic-first-team","npb-first-team"].contains(member.level),let consent=value.consents?.last(where:{$0.sourceOfferID == member.offerID && $0.date <= date && $0.expires >= date}) {
             let proof=OverseasProContext(consent:consent,service:value.service ?? [])
             evaluation=try OverseasOfferEvaluation.makeProfessional(report:report,window:window,on:GameDate(date),registrationDate:value.registrationDate,member:member,context:proof,reserved:reserved || owner.renewals?.contains {$0.membershipOfferID == member.offerID && $0.terms.effectiveDate > date} == true)
         } else {evaluation=try OverseasOfferEvaluation.make(report:report,window:window,on:GameDate(date),registrationDate:value.registrationDate,member:member,reserved:reserved)}
@@ -863,14 +874,14 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
     static func needsEvaluation(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> Bool {
         guard let window=ContractEvaluationWindow.containing(try GameDate(player.gameDate)),try calendar.age(of:player) >= 20 else {return false}
         let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
-        if let member=try owner.current(on:GameDate(player.gameDate)),try OverseasRenewalReview.eligible(member,on:GameDate(player.gameDate)),window.month == 11 {
+        if let member=try owner.current(on:GameDate(player.gameDate)),try OverseasRenewalReview.eligible(member,on:GameDate(player.gameDate)),window.month == 11,owner.overseasCareer?.hasPendingFA(on:player.gameDate) != true,owner.overseasCareer?.hasPending(on:player.gameDate) != true {
             return !(owner.overseasCareer?.renewalReviews ?? []).contains {$0.window == window}
         }
         guard let value=owner.overseasCareer,value.registrationDate != nil,!value.hasPending(on:player.gameDate),
               !value.evaluations.contains(where:{$0.window == window}),owner.collegeTransitions?.contains(where:{$0.source.effectiveDate > player.gameDate}) != true else {return false}
         let member=try owner.current(on:GameDate(player.gameDate))
         if member == nil || member?.route == .college {return [4,7,11].contains(window.month)}
-        return window.month == 11 && ["domestic-first-team","npb-first-team"].contains(member?.level ?? "")
+        return window.month == 11 && (["domestic-first-team","npb-first-team"].contains(member?.level ?? "") || value.hasPendingFA(on:player.gameDate))
     }
 }
 
@@ -902,7 +913,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         guard let report=try OverseasReportStore.current(player:player,calendar:calendar,in:context) else {throw OverseasProgressError.report}
         guard let initial=value.evaluations.flatMap(\.offers).first(where:{$0.id == member.offerID}) else {throw ContractRegistrationError.invalid}
         let role=value.promotions?.last(where:{$0.sourceOfferID == member.offerID && $0.effective <= date})?.roleID ?? initial.roleID
-        let reserved=value.hasPending(on:date) || value.hasPendingRenewal(on:date) || (value.promotions ?? []).contains {$0.sourceOfferID == member.offerID && $0.effective > date}
+        let reserved=value.hasPending(on:date) || value.hasPendingRenewal(on:date) || value.hasPendingFA(on:date) || (value.promotions ?? []).contains {$0.sourceOfferID == member.offerID && $0.effective > date}
         let review=try OverseasRenewalReview.make(report:report,member:member,roleID:role,window:window,on:GameDate(date),reserved:reserved)
         value.renewalReviews=(value.renewalReviews ?? [])+[review];owner.overseasCareer=value;owner.revision += 1
         try write(owner,player:player,calendar:calendar,in:context,save:save)
@@ -916,7 +927,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         guard date >= offer.issued,date <= offer.expires else {throw ContractRegistrationError.expired}
         guard let member=try owner.current(on:GameDate(date)),member == review.source else {throw ContractRegistrationError.stale}
         if accept {
-            guard !value.hasPending(on:date),!value.hasPendingRenewal(on:date),!(value.promotions ?? []).contains(where:{$0.sourceOfferID == member.offerID && $0.effective > date}) else {throw ContractRegistrationError.registered}
+            guard !value.hasPending(on:date),!value.hasPendingRenewal(on:date),!value.hasPendingFA(on:date),!(value.promotions ?? []).contains(where:{$0.sourceOfferID == member.offerID && $0.effective > date}) else {throw ContractRegistrationError.registered}
             for other in value.evaluations.flatMap(\.offers) where other.issued <= date && other.expires >= date && !value.decisions.contains(where:{$0.offerID == other.id}) {
                 value.decisions.append(OverseasDecision(offerID:other.id,kind:.closed,date:date))
             }
@@ -939,6 +950,30 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             value.decisions.append(OverseasDecision(offerID:offer.id,kind:.closed,date:date))
         }
         owner.overseasCareer=value;owner.revision += 1
+        try write(owner,player:player,calendar:calendar,in:context,save:save)
+    }
+}
+
+
+@MainActor extension OverseasContractStore {
+    static func collectFAService(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),value=owner.overseasCareer ?? OverseasCareerJournal()
+        try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
+        let service=try FASeasonEvidence.collect(owner:owner,role:player.role,on:GameDate(date),rows:rows)
+        let international=try GameProSeasonEvidence.collect(owner:owner,role:player.role,today:GameDate(date),rows:rows)
+        if value.faService == service && value.service == international {return}
+        value.faService=service;value.service=international;owner.overseasCareer=value;owner.revision += 1
+        try write(owner,player:player,calendar:calendar,in:context,save:save)
+    }
+    static func declareFA(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),value=owner.overseasCareer ?? OverseasCareerJournal()
+        guard let member=try owner.current(on:GameDate(date)) else {throw OverseasProgressError.freeAgency}
+        if (value.faDeclarations ?? []).contains(where:{$0.source.offerID == member.offerID}) {return}
+        try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        guard !value.hasPending(on:date),!value.hasPendingRenewal(on:date),!(value.promotions ?? []).contains(where:{$0.sourceOfferID == member.offerID && $0.effective > date}) else {throw ContractRegistrationError.registered}
+        let fa=try FADeclaration.make(member:member,on:GameDate(date),service:value.faService ?? [])
+        value.faDeclarations=(value.faDeclarations ?? [])+[fa];owner.overseasCareer=value;owner.revision += 1
         try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
 }

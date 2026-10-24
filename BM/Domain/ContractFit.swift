@@ -729,7 +729,7 @@ struct CareerContractJournal:Codable,Equatable {
     var overseasEligibility:[OverseasEligibilitySnapshot]? = nil
     var overseasReports:[OverseasScoutingReport]? = nil
     var overseasCareer:OverseasCareerJournal? = nil
-    func membershipHistory(excludingOverseasRelease:String?=nil) -> [CareerMembership] {
+    func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
             value.releasedOn=releases?.first {$0.membershipOfferID == member.offerID}?.date ?? collegeTransitions?.first {$0.source.membershipOfferID == member.offerID}?.source.effectiveDate
@@ -739,14 +739,21 @@ struct CareerContractJournal:Codable,Equatable {
             if let released=overseasCareer?.releases?.first(where:{$0.source.offerID == member.offerID && $0.source.offerID != excludingOverseasRelease}) {
                 value.releasedOn=value.releasedOn.map {min($0,released.date)} ?? released.date
             }
+            if let fa=overseasCareer?.faDeclarations?.first(where:{$0.source.offerID == member.offerID && $0.id != excludingFA}) {
+                value.releasedOn=value.releasedOn.map {min($0,fa.effective)} ?? fa.effective
+            }
             return value
         }
     }
     var retryReleases:[DomesticRelease] {
         ((releases ?? [])+(overseasCareer?.releases ?? []).map {DomesticRelease(membershipOfferID:$0.source.offerID,date:$0.date,evaluationKey:$0.reviewID)}).sorted {$0.date<$1.date}
     }
-    func current(on date:GameDate,excludingRenewal:String?=nil,ignoringReleases:Bool=false,excludingMembership:String?=nil,excludingOverseasRenewal:String?=nil,excludingOverseasRelease:String?=nil) throws -> CareerMembership? {
-        guard var member=try (ignoringReleases ? memberships:membershipHistory(excludingOverseasRelease:excludingOverseasRelease)).last(where:{try $0.offerID != excludingMembership && $0.contains(date)}) else {return nil}
+    var activeRetryRelease:DomesticRelease? {
+        guard let last=membershipHistory().last,let release=retryReleases.last,last.offerID == release.membershipOfferID else {return nil}
+        return release
+    }
+    func current(on date:GameDate,excludingRenewal:String?=nil,ignoringReleases:Bool=false,excludingMembership:String?=nil,excludingOverseasRenewal:String?=nil,excludingOverseasRelease:String?=nil,excludingFA:String?=nil) throws -> CareerMembership? {
+        guard var member=try (ignoringReleases ? memberships:membershipHistory(excludingOverseasRelease:excludingOverseasRelease,excludingFA:excludingFA)).last(where:{try $0.offerID != excludingMembership && $0.contains(date)}) else {return nil}
         member.releasedOn=nil
         for renewal in renewals ?? [] where renewal.membershipOfferID == member.offerID && renewal.terms.id != excludingRenewal {
             if try GameDate(renewal.date)<=date && GameDate(renewal.terms.effectiveDate)<=date {member=member.renewing(renewal.terms)}
@@ -1197,6 +1204,11 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
                 reasons.append("게임 승인/경력은 실제MLB/NPB의 법적 자격 인증이 아님 · 기량/모집·등록 심사 별도")
                 return OverseasRouteEligibility(route:route,status:status,reasons:reasons)
             }
+        } else if extended,(evidence.current == nil || evidence.current?.level == "mlb-first-team"),!(evidence.approvedRoutes ?? []).isEmpty {
+            routes=OverseasRoute.allCases.map {route in
+                let allowed=evidence.approvedRoutes?.contains(route) == true && evidence.pendingForeignEntry != true
+                return OverseasRouteEligibility(route:route,status:allowed ? .reviewable:.blocked,reasons:allowed ? ["권리 해제/FA 경로 · 역할·표본/자리·예산 선발은 별도"]:["현재 경로의 지원 자격 또는 전환 예약 확인 필요"])
+            }
         } else if evidence.pendingForeignEntry == true {
             routes=routes.map {OverseasRouteEligibility(route:$0.route,status:.blocked,reasons:["이미 수락한 해외 전환 예약이 있음"]+$0.reasons)}
         }
@@ -1429,6 +1441,7 @@ struct OverseasOfferEvaluation:Codable,Equatable,Identifiable {
     let offers:[OverseasOffer]
     let reasons:[String]
     var professional:OverseasProContext? = nil
+    var mobility:OverseasMobilityContext? = nil
     static func make(report:OverseasScoutingReport,window:ContractEvaluationWindow,on date:GameDate,registrationDate:String?,member:CareerMembership?,reserved:Bool) throws -> Self {
         guard window == ContractEvaluationWindow.containing(date),date.year < 9995,
               report.observation.observedDate <= date.description else {throw ContractEvaluationError.invalid}
@@ -1481,6 +1494,8 @@ struct OverseasCareerJournal:Codable,Equatable {
     var renewalReviews:[OverseasRenewalReview]? = nil
     var renewalDecisions:[OverseasRenewalDecision]? = nil
     var releases:[OverseasRelease]? = nil
+    var faService:[FASeasonEvidence]? = nil
+    var faDeclarations:[FADeclaration]? = nil
     func hasPending(on date:String) -> Bool {transitions.contains {$0.destination.since > date}}
     func validate(owner:CareerContractJournal,today:GameDate) throws {
         guard version == 1,Set(evaluations.map(\.id)).count == evaluations.count,Set(decisions.map(\.offerID)).count == decisions.count,
@@ -1488,6 +1503,7 @@ struct OverseasCareerJournal:Codable,Equatable {
         if let registrationDate {guard try GameDate(registrationDate) <= today else {throw ContractRegistrationError.invalid}}
         try validateRenewals(owner:owner,today:today)
         try validateReleases(owner:owner,today:today)
+        try validateFA(owner:owner,today:today)
         let promotions=promotions ?? []
         guard Set(promotions.map(\.id)).count == promotions.count else {throw ContractRegistrationError.invalid}
         for item in promotions {
@@ -1513,12 +1529,18 @@ struct OverseasCareerJournal:Codable,Equatable {
         }
         for evaluation in evaluations {
             guard let report=owner.overseasReports?.first(where:{$0.id == evaluation.reportID}),try GameDate(evaluation.date)<=today,
-                  [1,2].contains(evaluation.version) else {throw ContractRegistrationError.invalid}
+                  [1,2,3].contains(evaluation.version) else {throw ContractRegistrationError.invalid}
             if evaluation.version == 1 {
-                guard evaluation.professional == nil,evaluation == (try OverseasOfferEvaluation.make(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:evaluation.source,reserved:evaluation.reservedAtEvaluation)) else {throw ContractRegistrationError.invalid}
-            } else {
-                guard let proof=evaluation.professional,let member=evaluation.source,consents.contains(proof.consent),proof.service.allSatisfy({(service ?? []).contains($0)}),
+                guard evaluation.professional == nil,evaluation.mobility == nil,evaluation == (try OverseasOfferEvaluation.make(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:evaluation.source,reserved:evaluation.reservedAtEvaluation)) else {throw ContractRegistrationError.invalid}
+            } else if evaluation.version == 2 {
+                guard evaluation.mobility == nil,let proof=evaluation.professional,let member=evaluation.source,consents.contains(proof.consent),proof.service.allSatisfy({(service ?? []).contains($0)}),
                       evaluation == (try OverseasOfferEvaluation.makeProfessional(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:member,context:proof,reserved:evaluation.reservedAtEvaluation)) else {throw ContractRegistrationError.invalid}
+            } else {
+                guard evaluation.professional == nil,let proof=evaluation.mobility,
+                      (proof.historicalReportID == nil && proof.historicalDate == nil && proof.historicalSample == nil) || owner.overseasReports?.contains(where:{$0.id == proof.historicalReportID && $0.observation.observedDate == proof.historicalDate && $0.selected == proof.historicalSample && $0.eligibility.evidence.current?.offerID == proof.source.offerID && $0.eligibility.evidence.current?.level == proof.source.level}) == true,
+                      proof.service.allSatisfy({(faService ?? []).contains($0)}),(proof.internationalService ?? []).allSatisfy({(service ?? []).contains($0)}),
+                      (proof.fa.map {(faDeclarations ?? []).contains($0)} ?? false) != (proof.release.map {(releases ?? []).contains($0)} ?? false),
+                      evaluation == (try OverseasOfferEvaluation.makeMobility(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:evaluation.source,context:proof,reserved:evaluation.reservedAtEvaluation)) else {throw ContractRegistrationError.invalid}
             }
         }
         for evaluation in evaluations {
@@ -1675,10 +1697,11 @@ extension CareerLevelPromotion {
 }
 
 enum OverseasProgressError:LocalizedError {
-    case report,requirements,window
+    case report,requirements,window,freeAgency
     var errorDescription:String? {
         switch self {
         case .report:"현재 주기의 해외 보고서를 먼저 기록해 주세요. 기존 자료와 소속은 유지됩니다."
+        case .freeAgency:"정식 FA는 MLB6/NPB9개 검증 시즌, 계약 마지막 해, 11월1~14일의 별도 선언이 필요합니다. 기존 소속/권리는 유지됩니다."
         case .requirements:"승격 조건이 부족합니다. 현재 소속 수준의 보고서·역할 기량·공식 경기 표본을 확인해 주세요."
         case .window:"현재는 해당 심사 창이 아닙니다. 해외 제의는4·7·11월,승격/구단 승인은11월1~14일에 신청해 주세요."
         }
@@ -1800,6 +1823,7 @@ extension OverseasCareerJournal {
               let review=(renewalReviews ?? []).last(where:{$0.source.offerID == member.offerID && $0.date <= date.description}),
               date > review.window.end,date <= (try CollegeProReview.effective(after:review.window.start)),
               date > (try GameDate(member.economicEnd)),member == review.source,
+              !hasPendingFA(on:date.description),
               !transitions.contains(where:{$0.sourceMembershipID == member.offerID && $0.acceptedDate <= date.description && $0.destination.since > date.description}),
               !(promotions ?? []).contains(where:{$0.sourceOfferID == member.offerID && $0.date <= date.description && $0.effective > date.description}) else {return nil}
         if let offer=review.offer {
@@ -1817,5 +1841,145 @@ extension OverseasCareerJournal {
             guard date <= today,let review=try releaseReview(owner:owner,on:date,excludingRelease:row.source.offerID),
                   review.id == row.reviewID,review.source == row.source else {throw ContractRegistrationError.invalid}
         }
+    }
+}
+
+struct FASeasonEvidence:Codable,Equatable {
+    let year:Int
+    let sourceID:String
+    let level:String
+    let matchKeys:[String]
+    static func collect(owner:CareerContractJournal,role:PlayerRole,on date:GameDate,rows:[CareerMatchRecord]) throws -> [Self] {
+        var result:[Self]=[]
+        for year in Set(try rows.map {try GameDate($0.gameDate).year}).sorted() {
+            let first=try GameDate("\(year)-04-01"),last=first.adding(days:174)
+            guard last < date,let start=try owner.current(on:first),let end=try owner.current(on:last),
+                  start.offerID == end.offerID,start.level == end.level,["npb-first-team","mlb-first-team"].contains(start.level) else {continue}
+            let fixtures=try SeasonSchedule.fixtures(year:year,schoolIDs:CareerTeamDirectory.teams(level:start.level)).filter {$0.includes(start.teamID)}
+            var keys:[String]=[],totals=PersonalSeasonTotals()
+            for row in rows where row.completed && row.appearance && row.gameDate >= first.description && row.gameDate <= last.description {
+                guard row.playerID == owner.playerID,let fixture=fixtures.first(where:{$0.id == row.fixtureID}),fixture.date.description == row.gameDate,
+                      row.key == CareerMatchRecord.key(owner.playerID,fixture.id),row.opponentID == fixture.opponent(of:start.teamID) else {continue}
+                let match=try row.snapshot(),day=try GameDate(row.gameDate)
+                guard let member=try owner.current(on:day),member.offerID == start.offerID,member.level == start.level,
+                      match.competition == start.level,match.role == role.rawValue,match.isHome == (fixture.homeID == start.teamID) else {continue}
+                try totals.add(match.line);keys.append(row.key)
+            }
+            if role == .batter ? totals.line.plateAppearances >= 100:totals.line.pitchingOuts >= 75 {
+                result.append(Self(year:year,sourceID:start.offerID,level:start.level,matchKeys:keys.sorted()))
+            }
+        }
+        return result
+    }
+}
+struct FADeclaration:Codable,Equatable,Identifiable {
+    let id:String
+    let source:CareerMembership
+    let date:String
+    let effective:String
+    let service:[FASeasonEvidence]
+    static func minimum(_ level:String) -> Int {level == "mlb-first-team" ? 6:9}
+    static func make(member:CareerMembership,on date:GameDate,service:[FASeasonEvidence]) throws -> Self {
+        guard let window=ContractEvaluationWindow.containing(date),window.month == 11,
+              ["mlb-first-team","npb-first-team"].contains(member.level),date.year < 9995,
+              try GameDate(member.economicEnd) < CollegeProReview.effective(after:date),
+              Set(service.filter {$0.level == member.level && $0.year <= date.year}.map(\.year)).count >= minimum(member.level) else {throw OverseasProgressError.freeAgency}
+        return Self(id:member.offerID+":fa-v1:"+window.id,source:member,date:date.description,effective:try CollegeProReview.effective(after:date).description,service:service)
+    }
+}
+struct OverseasMobilityContext:Codable,Equatable {
+    let source:CareerMembership
+    let fa:FADeclaration?
+    let release:OverseasRelease?
+    let service:[FASeasonEvidence]
+    var internationalService:[GameProSeasonEvidence]? = nil
+    var historicalReportID:String? = nil
+    var historicalDate:String? = nil
+    var historicalSample:ScoutingPerformanceComparison? = nil
+    var label:String {fa != nil ? "정식 FA":"방출 후 재취업"}
+}
+extension OverseasCareerJournal {
+    func hasPendingFA(on date:String) -> Bool {(faDeclarations ?? []).contains {$0.date <= date && $0.effective > date}}
+    func mobility(owner:CareerContractJournal,on date:GameDate) throws -> OverseasMobilityContext? {
+        let member=try owner.current(on:date),service=faService ?? []
+        if let member {
+            guard let fa=(faDeclarations ?? []).last(where:{$0.source.offerID == member.offerID && $0.date <= date.description}) else {return nil}
+            return try mobilitySample(OverseasMobilityContext(source:fa.source,fa:fa,release:nil,service:service),owner:owner,on:date)
+        }
+        let lastID=owner.membershipHistory().last?.offerID
+        let fa=(faDeclarations ?? []).filter {$0.effective <= date.description && $0.source.offerID == lastID}.max {$0.effective<$1.effective}
+        let release=(releases ?? []).filter {$0.date <= date.description && $0.source.offerID == lastID && ["npb-first-team","mlb-first-team"].contains($0.source.level)}.max {$0.date<$1.date}
+        if let release,release.date > (fa?.effective ?? "") {return try mobilitySample(OverseasMobilityContext(source:release.source,fa:nil,release:release,service:service),owner:owner,on:date)}
+        return try fa.map {try mobilitySample(OverseasMobilityContext(source:$0.source,fa:$0,release:nil,service:service),owner:owner,on:date)}
+    }
+    func mobilitySample(_ context:OverseasMobilityContext,owner:CareerContractJournal,on date:GameDate) throws -> OverseasMobilityContext {
+        var value=context
+        value.internationalService=service
+        if let report=(owner.overseasReports ?? []).filter({report in
+            report.observation.observedDate <= date.description && report.observation.observedDate >= date.adding(days:-730).description &&
+            report.eligibility.evidence.current?.offerID == context.source.offerID && report.eligibility.evidence.current?.level == context.source.level &&
+            (report.observation.role == .batter ? (report.selected?.totals.line.plateAppearances ?? 0)>=100:(report.selected?.totals.line.pitchingOuts ?? 0)>=75)
+        }).max(by:{$0.observation.observedDate<$1.observation.observedDate}) {
+            value.historicalReportID=report.id;value.historicalDate=report.observation.observedDate;value.historicalSample=report.selected
+        }
+        return value
+    }
+    func validateFA(owner:CareerContractJournal,today:GameDate) throws {
+        let entries=faDeclarations ?? [],service=faService ?? []
+        guard Set(entries.map(\.id)).count == entries.count,Set(entries.map {$0.source.offerID}).count == entries.count,
+              Set(service.map {"\($0.level)/\($0.year)"}).count == service.count else {throw ContractRegistrationError.invalid}
+        for row in entries {
+            guard row.date <= today.description,row.service.allSatisfy({service.contains($0)}),
+                  row == (try FADeclaration.make(member:row.source,on:GameDate(row.date),service:row.service)),
+                  try owner.current(on:GameDate(row.date),excludingFA:row.id) == row.source,
+                  !(renewalDecisions ?? []).contains(where:{decision in decision.kind == .accepted && decision.date <= row.date && (renewalReviews ?? []).contains {$0.source.offerID == row.source.offerID && $0.offer?.id == decision.offerID && ($0.offer?.effective ?? "") > row.date}}) else {throw ContractRegistrationError.invalid}
+        }
+    }
+}
+extension OverseasOfferEvaluation {
+    static func makeMobility(report:OverseasScoutingReport,window:ContractEvaluationWindow,on date:GameDate,registrationDate:String?,member:CareerMembership?,context:OverseasMobilityContext,reserved:Bool) throws -> Self {
+        guard window == ContractEvaluationWindow.containing(date),date.year < 9995 else {throw OverseasProgressError.window}
+        guard (context.fa != nil) != (context.release != nil),context.source == (context.fa?.source ?? context.release?.source) else {throw ContractRegistrationError.invalid}
+        let id=report.observation.playerID.uuidString+":overseas-offer-v3:"+window.id
+        var reasons:[String]=[],offers:[OverseasOffer]=[]
+        if registrationDate == nil || registrationDate! > date.description {reasons.append("게임 국제계약 지원자 등록 필요")}
+        if reserved {reasons.append("이미 수락한 소속/갱신 예약이 있음")}
+        if report.eligibility.evidence.current?.offerID != member?.offerID {reasons.append("현재 소속 상태의 새28일 보고서 필요")}
+        let nextOpening=try CollegeProReview.effective(after:date).description
+        if let fa=context.fa {
+            if fa.date > date.description || fa.effective > nextOpening || (member != nil && member?.offerID != fa.source.offerID) {reasons.append("유효한 FA 선언/발효 조건 필요")}
+        } else if let release=context.release {
+            if member != nil || release.date > date.description {reasons.append("실제 방출/권리 해제 확인 필요")}
+        } else {reasons.append("방출 또는 FA 선언 근거 없음")}
+        let sample=report.selected
+        let enough=sample?.id.hasPrefix(context.source.level+"/") == true && (report.observation.role == .batter ? (sample?.totals.line.plateAppearances ?? 0)>=100:(sample?.totals.line.pitchingOuts ?? 0)>=75)
+        let previous=context.historicalSample
+        let fallback=context.historicalDate.map {$0 <= date.description && $0 >= date.adding(days:-730).description} == true && previous?.id.hasPrefix(context.source.level+"/") == true && (report.observation.role == .batter ? (previous?.totals.line.plateAppearances ?? 0)>=100:(previous?.totals.line.pitchingOuts ?? 0)>=75)
+        if !enough && !fallback {reasons.append("최근365일 또는730일 이내 고정 해외1군 보고서100타석/25이닝 필요")}
+        if !["npb-first-team","mlb-first-team"].contains(context.source.level) {reasons.append("해외1군 전력 경력 필요")}
+        if reasons.isEmpty {
+            let allowMajor=context.source.level == "mlb-first-team" || (report.observation.age>=25 && Set((context.internationalService ?? []).map(\.year)).count>=6)
+            let age=report.observation.age
+            let rows=(report.market?.clubs ?? []).filter {row in
+                guard row.route != .mlbDevelopment,(row.route != .mlbFirstTeam || allowMajor),row.seats == 1,let f=row.f,f>=0,row.h != nil else {return false}
+                if row.blockers.contains(where:{$0.contains("수비70") || $0.contains("공격 기량") || $0.contains("포수 전용")}) {return false}
+                let years=min(f<5 ? 1:f<10 ? 2:3,age>=35 ? 1:age>=30 ? 2:3)
+                return (100+Int((6*f).rounded()))*years<=row.budget
+            }.sorted {a,b in a.f == b.f ? a.id<b.id:(a.f ?? 0)>(b.f ?? 0)}
+            var ordered:[OverseasClubEvaluation]=[]
+            for route in [OverseasRoute.npbFirstTeam,.mlbFirstTeam] {if let best=rows.first(where:{$0.route == route}) {ordered.append(best)}}
+            ordered += rows.filter {row in !ordered.contains {$0.id == row.id}}
+            var teams=Set<String>()
+            for row in ordered {
+                let team=(row.route == .npbFirstTeam ? "jp-pro-":"us-pro-")+row.id.components(separatedBy:"/")[1]
+                guard teams.insert(team).inserted else {continue}
+                let start=try CollegeProReview.effective(after:date),f=row.f!,years=min(f<5 ? 1:f<10 ? 2:3,age>=35 ? 1:age>=30 ? 2:3)
+                offers.append(OverseasOffer(id:id+"/"+row.id,clubID:row.id,teamID:team,name:row.name,route:row.route,roleID:row.roleID,issued:date.description,expires:min(date.adding(days:6),window.end).description,effective:start.description,economicEnd:start.anniversary(in:start.year+years).adding(days:-1).description,economicIndex:100+Int((6*f).rounded()),years:years,h:row.h!,c:row.criterion,p:row.p,margin:f))
+                if offers.count == 2 {break}
+            }
+            if offers.isEmpty {reasons.append("해외 전력 역할/기량·자리·예산/경쟁 조건 미달")}
+        }
+        var result=Self(version:3,id:id,window:window,date:date.description,reportID:report.id,source:member,registeredAt:registrationDate,reservedAtEvaluation:reserved,offers:offers,reasons:reasons)
+        result.mobility=context;return result
     }
 }

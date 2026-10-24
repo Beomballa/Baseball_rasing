@@ -3027,3 +3027,145 @@ extension CareerCalendarTests {
         } catch {XCTFail("\(stage): \(String(reflecting:error))")}
     }
 }
+
+extension CareerCalendarTests {
+    private func faFixture(_ role:PlayerRole,route:OverseasRoute = .npbFirstTeam,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+        let (store,p,s,_)=try overseasRenewalFixture(role,route:route,legacyURL:legacyURL),c=store.mainContext
+        let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),member=try XCTUnwrap(s.registration(for:p)),start=try GameDate(p.gameDate).year+1
+        let existing=try FASeasonEvidence.collect(owner:owner,role:role,on:GameDate(p.gameDate),rows:c.fetch(FetchDescriptor<CareerMatchRecord>())).filter {$0.level == member.level}.count
+        let missing=FADeclaration.minimum(member.level)-existing
+        for year in start..<(start+missing) {
+            var totals=PersonalSeasonTotals()
+            for (index,fixture) in try SeasonSchedule.fixtures(year:year,schoolIDs:CareerTeamDirectory.teams(level:member.level)).filter({$0.includes(member.teamID) && $0.isAppearance(for:role)}).enumerated() {
+                p.gameDate=fixture.date.description
+                var values=PlayerInitialValues(contact:88,power:88,discipline:88,speed:75,defense:80,arm:80)
+                values.velocity=88;values.control=88;values.stuff=88;values.stamina=88
+                var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",values:values,seed:UInt64(year*100+index),home:fixture.homeID == member.teamID,tracked:true)
+                match.competition=member.level;try match.advance(.automatic)
+                let row=try CareerMatchRecord(verificationPlayerID:p.id,teamID:member.teamID,fixture:fixture,match:match,fatigue:p.fatigue);c.insert(row)
+                try totals.add(match.line)
+                if role == .batter ? totals.line.plateAppearances >= 100:totals.line.pitchingOuts >= 75 {break}
+            }
+        }
+        p.gameDate="\(start+missing-1)-11-01";try c.save()
+        try OverseasContractStore.collectFAService(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        return (store,p,s)
+    }
+    func testFAServiceSeparatesLeaguesRequiresRegistrationSampleAndExactThreshold() throws {
+        let (store,p,s)=try faFixture(.pitcher,route:.mlbFirstTeam),c=store.mainContext
+        let journal=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),member=try XCTUnwrap(s.registration(for:p)),service=try XCTUnwrap(journal.overseasCareer?.faService)
+        XCTAssertEqual(service.filter {$0.level == "mlb-first-team"}.count,6);XCTAssertEqual(service.filter {$0.level == "npb-first-team"}.count,0)
+        XCTAssertThrowsError(try FADeclaration.make(member:member,on:GameDate(p.gameDate),service:Array(service.dropLast())))
+        let all=try c.fetch(FetchDescriptor<CareerMatchRecord>())
+        let withoutLast=all.filter {!$0.gameDate.hasPrefix(String(service.last!.year))}
+        XCTAssertEqual(try FASeasonEvidence.collect(owner:journal,role:p.role,on:GameDate(p.gameDate),rows:withoutLast).count,5)
+        XCTAssertThrowsError(try FADeclaration.make(member:member,on:GameDate("\(GameDate(p.gameDate).year)-04-01"),service:service))
+
+        let raw=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),fatigue=p.fatigue,date=p.gameDate
+        try OverseasContractStore.declareFA(player:p,calendar:s,date:date,revision:s.revision,in:c)
+        XCTAssertEqual(try s.registration(for:p),member)
+        let state=try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer!,fa=try XCTUnwrap(state.faDeclarations?.last)
+        XCTAssertNil(state.releases);XCTAssertEqual(fa.service,service)
+        try OverseasContractStore.declareFA(player:p,calendar:s,date:date,revision:-1,in:c,save:{_ in XCTFail("repeat declaration")})
+        XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),raw)
+        p.gameDate=fa.effective;try c.save();XCTAssertNil(try s.registration(for:p))
+        XCTAssertTrue(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).retryReleases.isEmpty)
+        XCTAssertNil(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).activeRetryRelease)
+        XCTAssertThrowsError(try CertificationStore.start(player:p,calendar:s,in:c))
+
+    }
+    func testNPBFABothRolesCreatesFrozenProfessionalOffersAndPreservesNextMatchOnce() throws {
+        for role in PlayerRole.allCases {
+            var stage="fixture"
+            do {
+            let (store,p,s)=try faFixture(role),c=store.mainContext
+            stage="journal"
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertEqual(owner.overseasCareer?.faService?.filter {$0.level == "npb-first-team"}.count,9)
+            let registration=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),before=registration.payload,revision=s.revision
+            XCTAssertThrowsError(try OverseasContractStore.declareFA(player:p,calendar:s,date:p.gameDate,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(registration.payload,before);XCTAssertEqual(s.revision,revision)
+            stage="declare"
+            try OverseasContractStore.declareFA(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertTrue(try OverseasContractStore.needsEvaluation(player:p,calendar:s,in:c))
+            stage="report"
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            stage="evaluation"
+            try OverseasContractStore.evaluate(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let evaluation=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer?.evaluations.last)
+            XCTAssertFalse(try OverseasContractStore.needsEvaluation(player:p,calendar:s,in:c))
+            XCTAssertEqual(evaluation.version,3);XCTAssertNotNil(evaluation.mobility?.fa);XCTAssertNil(evaluation.mobility?.release)
+            let offer=try XCTUnwrap(evaluation.offers.first,evaluation.reasons.joined(separator:" / "))
+            try OverseasContractStore.evaluate(player:p,calendar:s,date:p.gameDate,revision:-1,in:c,save:{_ in XCTFail("same window")})
+            stage="accept"
+            try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            stage="effective"
+            p.gameDate=offer.effective;try c.save()
+            XCTAssertEqual(try s.registration(for:p)?.teamID,offer.teamID)
+            XCTAssertEqual(try s.fixtures(for:p,year:GameDate(p.gameDate).year).count,30)
+            stage="match"
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let row=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? p.pitches[0].code:nil,in:c)
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,row.payload)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            let raw=row.payload,fatigue=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+            XCTAssertEqual(row.payload,raw);XCTAssertEqual(p.fatigue,fatigue)
+            } catch {XCTFail("\(role) \(stage): \(String(reflecting:error))")}
+        }
+    }
+    func testReleasedProfessionalCanReenterWithoutReceivingFAQualification() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,source)=try overseasReleaseFixture(role,route:.npbFirstTeam),c=store.mainContext
+            let date=try GameDate(p.gameDate)
+            p.gameDate=try CertificationStore.target(on:date).start.description;try c.save()
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            try OverseasContractStore.collectFAService(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            try OverseasContractStore.evaluate(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let state=try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer!,evaluation=try XCTUnwrap(state.evaluations.last)
+            XCTAssertEqual(evaluation.version,3);XCTAssertNil(state.faDeclarations);XCTAssertEqual(evaluation.mobility?.release?.source,source)
+            XCTAssertTrue(evaluation.offers.allSatisfy {$0.route == .npbFirstTeam})
+            let offer=try XCTUnwrap(evaluation.offers.first,evaluation.reasons.joined(separator:" / "))
+            let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),before=row.payload,revision=s.revision
+            XCTAssertThrowsError(try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(row.payload,before);XCTAssertEqual(s.revision,revision)
+            try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:revision,in:c)
+            p.gameDate=offer.effective;try c.save();XCTAssertEqual(try s.registration(for:p)?.level,"npb-first-team")
+        }
+    }
+}
+
+extension CareerCalendarTests {
+    func testFADiskReopenPreservesDeclarationAndFrozenMobilityOffer() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store");var id:UUID!,offer:OverseasOffer!,declaration:FADeclaration!,records:[Data]=[]
+        do {
+            let (store,p,s)=try faFixture(.pitcher,legacyURL:url),c=store.mainContext
+            id=p.id;records=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            try OverseasContractStore.declareFA(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            try OverseasContractStore.evaluate(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let state=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer)
+            declaration=try XCTUnwrap(state.faDeclarations?.last);offer=try XCTUnwrap(state.evaluations.last?.offers.first)
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        let state=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer)
+        XCTAssertEqual(state.faDeclarations?.last,declaration);XCTAssertEqual(state.evaluations.last?.offers.first,offer)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),records)
+        try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        p.gameDate=offer.effective;try c.save();XCTAssertEqual(try s.registration(for:p)?.teamID,offer.teamID)
+    }
+    func testReleasedMajorLeaguerCanReceiveMajorOfferBeforeSixFASeasons() throws {
+        let (store,p,s,_)=try overseasReleaseFixture(.pitcher,route:.mlbFirstTeam),c=store.mainContext
+        p.gameDate=try CertificationStore.target(on:GameDate(p.gameDate)).start.description;try c.save()
+        try OverseasContractStore.collectFAService(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        try OverseasContractStore.evaluate(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let state=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer)
+        XCTAssertLessThan(state.faService?.filter {$0.level == "mlb-first-team"}.count ?? 0,6)
+        XCTAssertNil(state.faDeclarations);XCTAssertNotNil(state.evaluations.last?.mobility?.release)
+        XCTAssertTrue(state.evaluations.last?.offers.contains {$0.route == .mlbFirstTeam} == true)
+    }
+}
