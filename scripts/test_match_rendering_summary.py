@@ -41,6 +41,17 @@ class RenderingSummaryTests(unittest.TestCase):
         self.assertEqual(result["cpuCommandsOver33Ms"], 1)
         self.assertEqual(result["coveredSpriteUpdatesAfterReady"], 1)
 
+    def test_sprite_update_is_labeled_separately_from_canvas_recording(self):
+        report = {"role": "batter-sprite", "preparations": [], "frames": [
+            {"kind": "groundSprite", "at": 1, "milliseconds": .4},
+            {"kind": "groundSprite", "at": 1.033, "milliseconds": .6}],
+            "preparedHits": 0, "preparedMisses": 0, "spriteTextureCount": 25, "spriteTextureSwaps": 42, "spriteFallbacks": 0,
+            "memory": [{"at": 1, "bytes": 2**20}, {"at": 2, "bytes": 2**20}]}
+        result = summarize_live(report)
+        self.assertEqual(result["rendererCallbacks"], {"field": 0, "homeRun": 0, "groundSprite": 2})
+        self.assertEqual(result["spriteTextures"], {"count": 25, "swaps": 42, "fallbacks": 0})
+        self.assertEqual(result["cpuCommandMs"]["max"], .6)
+
 
 if __name__ == "__main__":
     unittest.main()

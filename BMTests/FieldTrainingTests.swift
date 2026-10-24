@@ -2271,3 +2271,73 @@ import SpriteKit
         XCTAssertEqual(shifted.sourcePoint,handoff.sourcePoint);XCTAssertEqual(shifted.sourceFrame,handoff.sourceFrame)
     }
 }
+
+@MainActor final class GroundFieldSceneTests:XCTestCase {
+    func testOnlyOrdinaryGroundUsesSpriteKit() throws {
+        for scenario in FieldVerificationScenario.allCases {
+            let play=try scenario.make()
+            XCTAssertEqual(GroundFieldScene.supports(play),[FieldVerificationScenario.single,.groundOut].contains(scenario),scenario.rawValue)
+        }
+        var legacy=try FieldVerificationScenario.groundOut.make();legacy.battedBall=nil
+        XCTAssertTrue(GroundFieldScene.supports(legacy))
+        var line=legacy;line.battedBall=MatchBattedBall(kind:.line,quality:0.75,contact:60,power:60,speed:110/3.6,angle:15,direction:0,distance:hypot(legacy.landing.x,legacy.landing.y),flight:legacy.flight)
+        XCTAssertFalse(GroundFieldScene.supports(line))
+    }
+    func testRetainedActorsBallAndFramesMatchCanvasGeometryAndDoNotMutatePlay() async throws {
+        let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+        for pitcher in [false,true] {
+            for scenario in [FieldVerificationScenario.single,.groundOut] {
+                let play=try scenario.make(ownBatter:!pitcher),before=try encoder.encode(play)
+                let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:pitcher ? "left":"right",ownTeamFielding:pitcher)
+                let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false)})
+                let requests=try XCTUnwrap(planned),generated=await FieldRasterArt.prepare(requests)
+                let prepared=try XCTUnwrap(generated)
+                let scene=GroundFieldScene(play:play,sprites:sprites,prepared:prepared,scoreText:"H 0 : 0 A")
+                await scene.preload()
+                let ids=scene.actorIDs
+                let times=[0,0.28,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration]+stride(from:0.013,through:play.duration,by:1.0/60).map {$0}
+                for reduced in [false,true] {
+                scene.setReduced(reduced)
+                for time in times {
+                    scene.display(time:time,finished:time>=play.duration)
+                    let expected=sprites.actors(play,time:time,reduced:reduced,finished:time>=play.duration)
+                    XCTAssertEqual(scene.actorIDs,ids)
+                    XCTAssertEqual(scene.actorPositions.count,expected.count)
+                    for (position,actor) in zip(scene.actorPositions,expected) {
+                        let point=InplayFieldProjection.point(actor.point,size:scene.size)
+                        XCTAssertEqual(position.x,point.x,accuracy:0.0001);XCTAssertEqual(position.y,scene.size.height-point.y,accuracy:0.0001)
+                    }
+                    let ball=FieldBallPresentation.point(play,time:time,size:scene.size,leftIndex:pitcher ? 0:nil)
+                    XCTAssertEqual(scene.ballPosition.x,ball.x,accuracy:0.0001);XCTAssertEqual(scene.ballPosition.y,scene.size.height-ball.y,accuracy:0.0001)
+                    XCTAssertEqual(scene.resultVisible,time>=play.duration)
+                }
+                }
+                scene.setReduced(false)
+                XCTAssertGreaterThan(scene.textureChanges,0);XCTAssertEqual(scene.fallbackTextures,0)
+                XCTAssertEqual(try encoder.encode(play),before)
+                let view=SKView(frame:CGRect(x:0,y:0,width:400,height:600));view.presentScene(scene)
+                scene.display(time:play.releaseAt,finished:false)
+                let image=try XCTUnwrap(view.texture(from:scene)?.cgImage())
+                let shot=XCTAttachment(image:UIImage(cgImage:image));shot.name="SpriteKit \(pitcher ? "pitcher-left":"batter-right") \(scenario.rawValue)";shot.lifetime = .keepAlways;add(shot)
+                view.presentScene(nil)
+            }
+        }
+    }
+    func testGroundCompletionAndCancellationRemainPresentationOnly() async throws {
+        let play=try FieldVerificationScenario.groundOut.make(ownBatter:true)
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:windowScene)
+        window.frame=CGRect(x:0,y:0,width:390,height:700)
+        var resolved=0,completed=0
+        let now=ProcessInfo.processInfo.systemUptime
+        window.rootViewController=UIHostingController(rootView:DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),handoff:FieldContactHandoff(startedAt:now-play.duration+0.9,cutAt:now,sourcePoint:.zero),preparesMotion:true,onResolved:{resolved+=1}) {completed+=1})
+        window.makeKeyAndVisible();defer {window.isHidden=true;window.rootViewController=nil;previous?.makeKey()}
+        try await Task.sleep(for:.seconds(0.1));XCTAssertEqual(resolved,0);XCTAssertEqual(completed,0)
+        let deadline=ProcessInfo.processInfo.systemUptime+8
+        while completed == 0 && ProcessInfo.processInfo.systemUptime<deadline {try await Task.sleep(for:.seconds(0.1))}
+        XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+        window.rootViewController=UIHostingController(rootView:DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),preparesMotion:true,onResolved:{resolved+=1}) {completed+=1})
+        try await Task.sleep(for:.seconds(0.1));window.rootViewController=nil
+        try await Task.sleep(for:.seconds(0.2));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+    }
+}

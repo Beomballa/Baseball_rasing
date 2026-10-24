@@ -924,3 +924,21 @@ iOS 실제 타자·투수 인플레이와 결과 다시 보기에 포수 전용 
 실제 화면 성능: iPhone17e/iOS27 QA 시뮬레이터의 -O+DEBUG 진단에서 같은 저장 플레이를 프로세스 재시작 후 각각 재생했다. 투수의 CPU Canvas 명령 준비 p95 24.786→1.180ms/최대181.438→1.369ms, 33ms 초과 명령3→0회, 가려진 SpriteView update447→0회였다. 해당 화면 콜백 간격 p95 49.787→34.130ms/최대186.402→66.458ms이며 GPU 프레임률이 아니다. 준비 후 이미지 조회1890회/누락0, 준비0.357초·37장/16.949MiB였다. 타자 실제 화면 재생은 p95 1.086ms/최대1.446ms, 준비 후 조회1908회/누락0·가려진 update0, 준비0.196초·15장/7.046MiB였다. 타자 변경 전 동일 장면 성능은 별도 계측하지 않았다.
 
 투수 프로세스의3초 간격 메모리 표본 최대는 기존129.909/준비 적용131.690MiB였다. 메모리 감소나 순간 최대/누수 없음을 주장하지 않는다. 캡처로 양 역할의 불투명 선수·공/구장/전광판과 큰 글자 배치를 확인했다. 근거: 로컬 ios/qa/motion-preparation-regression.json·motion-preparation-final-focused.json·motion-live-ui.json·motion-live-performance-summary.json·motion-preparation-verification.md. 사용자 저장/보호 기기·개인 project.pbxproj는 보존했고 캡처·세이브·원시 계측은 Git에 포함하지 않는다. 실기기/GPU FPS·iOS17·장시간 발열/메모리 검증은 별도다.
+
+## 일반 땅볼 SpriteKit 표시·Canvas 비교 (native-ground-spritekit-v1 · 2026-10-24)
+
+실제 타자/투수 경기의 전면 인플레이와 경기 중 다시 보기에서 일반 땅볼만 SpriteKit으로 표시한다. 대상은 fly/secondThrow/relay/misplay가 없고 battedBall.kind가 ground 또는 과거 nil인 저장 플레이다. 병살·중계·실책·뜬공·라인드라이브·번트·홈런과 정지 미리보기/결과 화면 내부의 기존 재생은 Canvas 등 기존 경로를 유지한다. 2루 슬라이딩 고정 샘플에 중계가 포함된 경우는 이번 대상이 아니다.
+
+GroundFieldScene은 고정 구장·전광판과 선수별 노드/그림자/선택 표시·공/잔상을 유지한다. 동일 FieldReplaySprites/FieldSpriteAnimation·InplayFieldProjection·FieldBallPresentation에서 위치/자세·글러브/손 접촉점·주루 가속/도착 모션을 읽는다. 텍스처가 달라질 때만 자세를 교체하고 프레임마다 선수 노드를 다시 생성하지 않는다. 개인 외형·유니폼/등번호·좌투 반전과 nearest 필터를 유지하고 앞뒤 깊이 순서를 명시한다. 소스 이미지/공·배경 텍스처를 준비한 뒤 재생을 시작하며 준비 시간을 기존 표시 handoff 두 시각에 함께 보정한다. 완료 배너는 기존 소유 View의 판정 공개 시점에 표시한다. SpriteKit 물리/새 난수로 판정하지 않는다.
+
+V12 저장/경기 판정·NPC/능력·원장/이어하기·XP/결과1회·날짜/피로는 수정하지 않는다. 표시 취소는 재생 task와 새 장면의 갱신을 중단하며 추가 저장/보상을 호출하지 않는다. 화면 비율은2:3, 갱신 목표는 양쪽30Hz로 같게 두며60Hz 전환/Unreal 도입은 이번 작업에 포함하지 않는다. 동작 줄이기는 기존 단계별 정지 장면을 따른다. SpriteKit의 float 좌표와 Canvas Double 좌표 비교 오차는0.0001pt 이내를 허용하며 저장 좌표 정밀도는 바꾸지 않는다.
+
+비교는 DEBUG -match-render-performance와 -field-canvas-comparison을 사용한다. 실제 저장 원장에서 가장 최근의 대상 땅볼을 읽기 전용으로 선택하고 같은 플레이를 각 새 프로세스에서 Canvas/SpriteKit으로 재생한다. 다른 플레이를 섞어 엔진 차이로 주장하지 않는다. groundSprite는 SKScene.update의 CPU 작업, field는 Canvas 그리기 명령 기록이며 서로 다른 단계다. GPU 표시 시간/FPS·실기기 성능은 별도 계측 없이는 주장하지 않는다.
+
+검증: 관련 단위/회귀245개와 최종 집중10개(중복 포함), 실제 타자·좌투의 동일 저장 땅볼 Canvas/SpriteKit 비교·경기 복귀·재실행 이어하기·큰 글자 UI1개, Python21개가 통과했다(최종 실패/건너뜀0·runtimeWarnings=[]). 일반 공유 Simulator Release도 개인 설정 제외로 빌드했다. 최초 큰 글자 UI에서 진단 배지 확대가 필드 폭을 줄인 문제를 확인하고 진단 배지만 고정10pt/한 줄로 보완해 재검증했다. 일반 제품 폰트/사용자 설정을 축소하지 않았다. 양 역할/좌투·동작 줄이기, 노드 객체 유지·주요 포구/릴리스/도착 및1/60초 간격 시각의 공/선수 좌표·원자료 불변·완료1회/취소를 확인했다.
+
+실제 화면 비교는 iPhone17e/iOS27 별도 QA의 -O+DEBUG 진단이며 두 경로30Hz다. 각 역할에서 같은 저장 땅볼을 프로세스 재시작 후 재생했다. 타자 CPU p95는 Canvas 명령 기록1.097ms/SpriteKit update0.345ms, 최대1.326/0.456ms였다. 투수는 p95 1.021/0.353ms, 최대1.205/0.407ms였다. 측정 단계가 다르고 SKScene.update는 SpriteKit 렌더러 순회/GPU를 포함하지 않으므로 이를 전체 프레임 비용 절감률이나 GPU FPS로 확대하지 않는다. 타자 콜백 간격 p95 49.186/34.526ms·최대79.695/50.018ms, 투수는34.007/33.935ms·최대216.190/51.890ms였다. 단일 실행 최대 지연은 기기 일반 보장이 아니다.
+
+타자는 준비0.333/0.350초·이미지36장/16.560MiB, 투수는0.347/0.358초·41장/18.377MiB였다. SpriteKit은 정적 배경/공을 포함한 텍스처38/43장을 준비하고 실제 자세 교체179/210회·런타임 추가 텍스처0을 확인했다. 가려진 기존 투구/타격 장면 update는 양쪽 모두0이었다. 프로세스 메모리3초 표본 최대는 타자 Canvas130.628/SpriteKit138.300MiB, 투수127.643/137.034MiB로 증가했다. 감소/누수 없음·물리 기기 GPU/발열 통과를 주장하지 않는다.
+
+근거: 로컬 ios/qa/ground-sprite-regression.json·ground-sprite-final-focused.json·ground-sprite-live-ui.json·ground-sprite-comparison-summary.json·ground-sprite-verification.md 및 native-ground-*.png. 기존 사용자 저장/보호 기기·개인 project.pbxproj를 보존했고 원자료/캡처/개인 설정은 Git에 포함하지 않는다. 실기기/iOS17·GPU/장기 메모리/발열과 다른 플레이의 SpriteKit 이관은 후속이다.

@@ -1347,6 +1347,13 @@ struct DetailedFieldReplayBoard: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     private var reduced:Bool {reduceMotionOverride ?? systemReduced}
     @State private var start:Double?
+    @State private var groundScene:GroundFieldScene?
+    private var usesGroundScene:Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-field-canvas-comparison") {return false}
+        #endif
+        return preparesMotion && animated && previewTime == nil && !showsContactPoints && GroundFieldScene.supports(play)
+    }
     @State private var prepared:FieldRasterArt.Prepared?
     @State private var preparationDelay=0.0
     private var sprites:FieldReplaySprites {FieldReplaySprites(appearance:appearance,jerseyNumber:jerseyNumber,ownPosition:ownPosition,throwingHand:throwingHand,ownTeamFielding:ownTeamFielding)}
@@ -1368,7 +1375,16 @@ struct DetailedFieldReplayBoard: View {
             VStack(spacing:4) {
                 Text(finished ? "플레이 완료":phase).font(.system(.headline,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
                     .lineLimit(typeSize.isAccessibilitySize ? nil:2).accessibilityIdentifier("fieldReplayPhase")
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-match-render-performance") {
+                    Text((GroundFieldScene.supports(play) ? "일반 땅볼":"기타 플레이")+" · "+(usesGroundScene ? "SpriteKit":"Canvas"))
+                        .font(.system(size:10,design:.monospaced)).lineLimit(1).foregroundStyle(GameTheme.paper).accessibilityIdentifier("fieldRendererName")
+                }
+                #endif
                 GeometryReader { geometry in
+                if usesGroundScene,let groundScene {
+                    GroundFieldSurface(scene:groundScene,scoreText:scoreText,finished:finished,reduced:reduced)
+                } else {
                 Canvas { context,size in
                     #if DEBUG
                     let measuredAt=MatchRenderMetrics.begin()
@@ -1451,6 +1467,7 @@ struct DetailedFieldReplayBoard: View {
                         }
                     }
                 }
+                }
                 }.aspectRatio(2.0/3,contentMode:.fit).accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
                     .accessibilityValue(finished ? FieldReplayPresentation.errorDetail(play,ownTeamFielding:ownTeamFielding ?? !play.ownBatter) ?? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
                     .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
@@ -1463,12 +1480,19 @@ struct DetailedFieldReplayBoard: View {
                 let began=ProcessInfo.processInfo.systemUptime
                 guard let requests=await sprites.requests(duration:play.duration,reduced:reduced,actorsAt:{sprites.actors(play,time:$0,reduced:reduced,finished:false)}),
                       let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+                if usesGroundScene {
+                    let scene=GroundFieldScene(play:play,sprites:sprites,prepared:images,scoreText:scoreText)
+                    await scene.preload()
+                    guard !Task.isCancelled else {return}
+                    groundScene=scene
+                }
                 prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
                 #if DEBUG
                 MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
                 #endif
             }
             start=ProcessInfo.processInfo.systemUptime;resolved=false
+            groundScene?.setClock(start:start!,handoff:playbackHandoff,reduced:reduced)
             guard animated else {return}
             let elapsed=playbackHandoff?.elapsed(at:ProcessInfo.processInfo.systemUptime) ?? 0
             do {try await Task.sleep(for:.seconds(max(0,seconds-elapsed)))} catch {return}
@@ -1816,6 +1840,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     }
     static var preparations:[Preparation]=[]
     static var preparedHits=0,preparedMisses=0
+    static var spriteTextureCount=0,spriteTextureSwaps=0,spriteFallbacks=0
     static var enabled=false
     static func prepared(seconds:Double,images:FieldRasterArt.Prepared) {
         guard enabled else {return}
@@ -1824,9 +1849,9 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     private static var exportIndex=0
     static func exportLive(role:String) {
         guard enabled else {return}
-        struct Report:Encodable {let role:String;let preparations:[Preparation];let frames:[Frame];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int}
+        struct Report:Encodable {let role:String;let preparations:[Preparation];let frames:[Frame];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int}
         sampleMemory(force:true)
-        let report=Report(role:role,preparations:preparations,frames:frames,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses)
+        let report=Report(role:role,preparations:preparations,frames:frames,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks)
         exportIndex+=1
         if let data=try? JSONEncoder().encode(report) {
             try? data.write(to:FileManager.default.temporaryDirectory.appending(path:"match-live-\(role)-\(exportIndex).json"),options:.atomic)
@@ -1839,6 +1864,160 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000))
         sampleMemory()
     }
-    static func reset() {frames=[];preparations=[];preparedHits=0;preparedMisses=0;memory=[];sampleMemory(force:true)}
+    static func reset() {frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
 }
 #endif
+
+// Presentation only: all movement, contact anchors and decisions come from the saved play.
+@MainActor final class GroundFieldScene:SKScene {
+    static let fieldSize=CGSize(width:400,height:600)
+    static func supports(_ play:MatchDetailedPlay) -> Bool {
+        play.fly == nil && play.secondThrow == nil && play.relay == nil && play.misplay == nil
+        && (play.battedBall == nil || play.battedBall?.kind == .ground)
+    }
+    @MainActor private final class ActorNode {
+        let root=SKNode(),body=SKSpriteNode(),shadow=SKShapeNode(ellipseOf:CGSize(width:14,height:3)),selection=SKShapeNode(ellipseOf:CGSize(width:16,height:4))
+        let dust=(0..<3).map {_ in SKSpriteNode(color:UIColor(red:0.76,green:0.60,blue:0.38,alpha:1),size:CGSize(width:2,height:1))}
+        var textureKey:String?
+        init() {
+            shadow.fillColor=UIColor.black.withAlphaComponent(0.25);shadow.strokeColor = .clear;shadow.position.y = -0.5
+            selection.fillColor = .clear;selection.strokeColor=UIColor(GameTheme.gold);selection.lineWidth=1
+            shadow.zPosition = -3;selection.zPosition = -2
+            root.addChild(shadow);root.addChild(selection)
+            for node in dust {node.zPosition = -1;node.anchorPoint=CGPoint(x:0,y:1);root.addChild(node)}
+            root.addChild(body)
+        }
+    }
+    let play:MatchDetailedPlay
+    let sprites:FieldReplaySprites
+    let prepared:FieldRasterArt.Prepared
+    private let content=SKNode(),score=SKLabelNode(fontNamed:"Menlo-Bold")
+    private let ball=SKSpriteNode(texture:PixelBaseball.texture),ballShadow=SKShapeNode(ellipseOf:CGSize(width:6,height:2))
+    private let target=SKShapeNode(ellipseOf:CGSize(width:20,height:10))
+    private let trail=(0..<3).map {_ in SKSpriteNode(color:UIColor(GameTheme.paper).withAlphaComponent(0.4),size:CGSize(width:2,height:2))}
+    private let result=SKNode()
+    private var actors:[ActorNode]=[]
+    private var textures:[String:SKTexture]=[:]
+    private var started=0.0,handoff:FieldContactHandoff?
+    private var reduced=false,finished=false
+    var canvasFrame:CGRect = .zero
+    private(set) var displayedTime=0.0
+    private(set) var textureChanges=0
+    private(set) var fallbackTextures=0
+    init(play:MatchDetailedPlay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String) {
+        self.play=play;self.sprites=sprites;self.prepared=prepared
+        super.init(size:Self.fieldSize)
+        scaleMode = .aspectFit;backgroundColor=UIColor(GameTheme.board)
+        addChild(content)
+        if let image=InplayStadiumArt.image {
+            let backdrop=SKSpriteNode(texture:SKTexture(image:image));backdrop.texture?.filteringMode = .nearest
+            let frame=InplayFieldProjection.viewport(size)
+            backdrop.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));backdrop.size=frame.size;backdrop.zPosition = -1000;content.addChild(backdrop)
+        }
+        let viewport=InplayFieldProjection.viewport(size)
+        let scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.123,width:viewport.width*0.22,height:viewport.height*0.039)
+        let board=SKShapeNode(rectOf:scoreFrame.size);board.position=convertPoint(CGPoint(x:scoreFrame.midX,y:scoreFrame.midY));board.fillColor=UIColor(red:11/255,green:32/255,blue:48/255,alpha:1);board.strokeColor=UIColor(GameTheme.gold);board.lineWidth=2
+        content.addChild(board);score.fontSize=max(12,size.width*0.028);score.fontColor=UIColor(GameTheme.paper);score.verticalAlignmentMode = .center;score.position=board.position;score.zPosition=1;content.addChild(score);setScore(scoreText)
+        target.strokeColor=UIColor(GameTheme.gold).withAlphaComponent(0.8);target.lineWidth=1;target.zPosition=2;content.addChild(target)
+        for _ in 0..<(play.fielders.count+play.runners.count) {let node=ActorNode();actors.append(node);content.addChild(node.root)}
+        ballShadow.fillColor=UIColor.black.withAlphaComponent(0.4);ballShadow.strokeColor = .clear;ballShadow.zPosition=1900;content.addChild(ballShadow)
+        for node in trail {node.zPosition=1999;content.addChild(node)}
+        ball.zPosition=2000;content.addChild(ball)
+        let panel=SKShapeNode(rectOf:CGSize(width:size.width*0.64,height:32));panel.position=convertPoint(CGPoint(x:size.width*0.5,y:size.height*0.27+16));panel.fillColor=UIColor(GameTheme.board).withAlphaComponent(0.96);panel.strokeColor=UIColor(GameTheme.gold);panel.lineWidth=2
+        result.addChild(panel)
+        let label=SKLabelNode(fontNamed:"Menlo-Bold");label.text=FieldReplayPresentation.resultTitle(play);label.fontSize=18;label.fontColor=UIColor(GameTheme.paper);label.verticalAlignmentMode = .center;label.position=panel.position;label.zPosition=1;result.addChild(label);result.zPosition=3000;result.isHidden=true;content.addChild(result)
+    }
+    required init?(coder:NSCoder) {fatalError("init(coder:) has not been implemented")}
+    func preload() async {
+        for (key,image) in prepared.images {let texture=SKTexture(image:image);texture.filteringMode = .nearest;textures[key]=texture}
+        let values=Array(textures.values)+content.children.compactMap {($0 as? SKSpriteNode)?.texture}
+        #if DEBUG
+        if MatchRenderMetrics.enabled {MatchRenderMetrics.spriteTextureCount=values.count}
+        #endif
+        await withCheckedContinuation {continuation in SKTexture.preload(values) {continuation.resume()}}
+    }
+    func setClock(start:Double,handoff:FieldContactHandoff?,reduced:Bool) {started=start;self.handoff=handoff;self.reduced=reduced}
+    func setReduced(_ value:Bool) {reduced=value}
+    func setScore(_ text:String) {score.text=text}
+    func setFinished(_ value:Bool) {finished=value;if value {display(time:play.duration,finished:true)}}
+    private func convertPoint(_ point:CGPoint) -> CGPoint {CGPoint(x:point.x,y:size.height-point.y)}
+    override func update(_ currentTime:TimeInterval) {
+        guard started>0,!finished else {return}
+        #if DEBUG
+        let measured=MatchRenderMetrics.begin();defer {MatchRenderMetrics.end("groundSprite",started:measured)}
+        #endif
+        let now=ProcessInfo.processInfo.systemUptime
+        let elapsed=FieldReplayPresentation.elapsed(start:started,handoff:handoff,now:now)
+        display(time:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:true),finished:false)
+        if let handoff,canvasFrame.width>0,canvasFrame.height>0 {
+            let cut=handoff.cutAt-handoff.startedAt
+            let point=FieldBallPresentation.point(play,time:cut,size:canvasFrame.size,leftIndex:leftIndex)
+            let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:point,canvas:canvasFrame,now:now,reduced:reduced)
+            content.position=CGPoint(x:offset.x*size.width/canvasFrame.width,y:-offset.y*size.height/canvasFrame.height)
+        }
+    }
+    private var leftIndex:Int? {
+        guard sprites.throwingHand == "left",sprites.ownTeamFielding ?? !play.ownBatter else {return nil}
+        return play.fielders.indices.first {index in sprites.ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index == play.fielder)}
+    }
+    func display(time:Double,finished:Bool) {
+        displayedTime=time
+        let samples=sprites.actors(play,time:time,reduced:reduced,finished:finished)
+        let ownKit=PlayerAppearance.kitColors[sprites.appearance.kit]
+        for (index,actor) in samples.enumerated() {
+            let node=actors[index],scale=InplayFieldProjection.actorScale(actor.point,size:size)
+            let motion=InplayFieldProjection.motion(actor.motion,at:actor.point,size:size)
+            node.root.position=convertPoint(InplayFieldProjection.point(actor.point,size:size));node.root.zPosition=1000-actor.point.y+Double(index)*0.0001;node.root.alpha=actor.out ? 0.38:1
+            node.shadow.setScale(scale);node.selection.setScale(scale);node.selection.isHidden = !actor.own
+            let left=actor.own && sprites.throwingHand == "left"
+            if let sample=FieldRasterArt.samples(motion,kind:actor.kind,left:left).first {
+                let request=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:FieldReplayPresentation.opponentKit(ownKit),skin:actor.own ? PlayerAppearance.skinColors[sprites.appearance.skin]:0xefbe91,hair:actor.own ? PlayerAppearance.hairColors[sprites.appearance.hair]:0x263b48,number:actor.number,back:motion.facing.back && actor.kind != "catcher")
+                if node.textureKey != request.key {
+                    if textures[request.key] == nil,let image=FieldRasterArt.image(sample,kit:request.kit,skin:request.skin,hair:request.hair,number:request.number,back:request.back) {let texture=SKTexture(image:image);texture.filteringMode = .nearest;textures[request.key]=texture;fallbackTextures+=1}
+                    node.body.texture=textures[request.key];node.textureKey=request.key;textureChanges+=1
+                    #if DEBUG
+                    if MatchRenderMetrics.enabled {MatchRenderMetrics.spriteTextureSwaps+=1;MatchRenderMetrics.spriteFallbacks=fallbackTextures}
+                    #endif
+                }
+                let f=sample.frame,u=sample.unit*scale
+                node.body.anchorPoint=CGPoint(x:f.pivot[0]/f.rect[2],y:1-f.pivot[1]/f.rect[3]);node.body.size=CGSize(width:f.rect[2]*u,height:f.rect[3]*u)
+                node.body.position=CGPoint(x:motion.bodyOffset.x*scale,y:-motion.bodyOffset.y*scale);node.body.xScale=sample.mirrored ? -1:1;node.body.yScale=actor.kind == "runner" && motion.runnerPose == .tagUp ? 0.9:1
+            }
+            for (i,dust) in node.dust.enumerated() {
+                dust.isHidden = actor.kind != "runner" || ![.slide,.decelerate].contains(motion.runnerPose)
+                dust.position=CGPoint(x:-motion.facing.vector.x*Double(i+1)*3*scale,y:-Double(i%2)*scale);dust.setScale(scale);dust.alpha=(1-motion.arrivalProgress)*0.55
+            }
+        }
+        target.isHidden=time<play.pickupAt;target.position=convertPoint(InplayFieldProjection.point(DetailedFieldRules.bases[play.targetBase],size:size))
+        let ground=InplayFieldProjection.point(FieldNode.sample(play.ball,at:time),size:size)
+        ballShadow.position=convertPoint(ground)
+        let point=FieldBallPresentation.point(play,time:time,size:size,leftIndex:leftIndex);ball.position=convertPoint(point)
+        let diameter=max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size));ball.size=CGSize(width:diameter,height:diameter)
+        for (index,node) in trail.enumerated() {node.isHidden=reduced || time>=(play.ball.last?.at ?? 0);let p=FieldBallPresentation.point(play,time:max(0,time-Double(index+1)*0.04),size:size,leftIndex:leftIndex);node.position=convertPoint(CGPoint(x:p.x+1,y:p.y+1))}
+        result.isHidden = !finished
+    }
+    #if DEBUG
+    var actorIDs:[ObjectIdentifier] {actors.map {ObjectIdentifier($0.root)}}
+    var actorPositions:[CGPoint] {actors.map { $0.root.position }}
+    var ballPosition:CGPoint {ball.position}
+    var resultVisible:Bool {!result.isHidden}
+    #endif
+}
+
+private struct GroundFieldSurface:View {
+    let scene:GroundFieldScene
+    let scoreText:String
+    let finished:Bool
+    let reduced:Bool
+    var body:some View {
+        GeometryReader {geometry in
+            SpriteView(scene:scene,preferredFramesPerSecond:30,options:[.ignoresSiblingOrder])
+                .onAppear {scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText);scene.setReduced(reduced);scene.setFinished(finished)}
+                .onChange(of:geometry.frame(in:.global)) {_,frame in scene.canvasFrame=frame}
+                .onChange(of:scoreText) {_,text in scene.setScore(text)}
+                .onChange(of:finished) {_,value in scene.setFinished(value)}
+                .onChange(of:reduced) {_,value in scene.setReduced(value)}
+                .onDisappear {scene.isPaused=true}
+        }
+    }
+}

@@ -1075,7 +1075,11 @@ extension CareerFlowTests {
             app.buttons["gamePitch"].tap()
             Thread.sleep(forTimeInterval:0.7)
             app.buttons["gameRelease"].tap()
-            if stage.waitForExistence(timeout:5) {found=true;break}
+            if stage.waitForExistence(timeout:5) {
+                if app.staticTexts["fieldRendererName"].label.hasPrefix("일반 땅볼") {found=true;break}
+                let ended=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
+                XCTAssertEqual(XCTWaiter.wait(for:[ended],timeout:30),.completed)
+            }
         }
         XCTAssertTrue(found,"A live fair ball must enter the dedicated field stage")
         let field=app.descendants(matching:.any).matching(identifier:"fieldReplayCanvas").firstMatch
@@ -1092,11 +1096,12 @@ extension CareerFlowTests {
         reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
         XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
         // Same saved play in the real screen, cold process for each mode; neither replay rewards.
-        for baseline in [true,false] {
-            app.terminate();app.launchArguments=["-match-render-performance"]+(baseline ? ["-match-render-baseline"]:[]);app.launch()
+        for canvas in [true,false] {
+            app.terminate();app.launchArguments=["-match-render-performance"]+(canvas ? ["-field-canvas-comparison"]:[]);app.launch()
             reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
-            reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
+            reveal(app.buttons["replayGroundComparison"],in:app);app.buttons["replayGroundComparison"].tap()
             XCTAssertTrue(stage.waitForExistence(timeout:5))
+            XCTAssertEqual(app.staticTexts["fieldRendererName"].label,"일반 땅볼 · \(canvas ? "Canvas":"SpriteKit")")
             let replayEnded=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
             XCTAssertEqual(XCTWaiter.wait(for:[replayEnded],timeout:35),.completed)
             XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
@@ -1117,21 +1122,34 @@ extension CareerFlowTests {
         XCTAssertEqual(app.otherElements["careerGameCount"].label,countBeforeAim)
         let batterScreen=XCTAttachment(screenshot:app.screenshot());batterScreen.name="Arcade batter gameplay and aim";batterScreen.lifetime = .keepAlways;add(batterScreen)
         for _ in 0..<12 {
-            if app.buttons["replayLastFieldPlay"].exists {break}
+            if app.buttons["replayGroundComparison"].exists {break}
             app.buttons["gameInput-watch"].tap();app.buttons["requestGamePitch"].tap()
             waitForEnabled(app.buttons["requestGamePitch"],timeout:15)
         }
         let before=app.otherElements["careerGameCount"].label
-        reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
+        reveal(app.buttons["replayGroundComparison"],in:app);app.buttons["replayGroundComparison"].tap()
         XCTAssertTrue(stage.waitForExistence(timeout:3))
         verifyImmersiveField(app,name:"Immersive batter field replay")
         let replayEnded=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
         XCTAssertEqual(XCTWaiter.wait(for:[replayEnded],timeout:30),.completed)
         XCTAssertEqual(app.otherElements["careerGameCount"].label,before)
-        app.terminate();app.launchArguments=["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        for canvas in [true,false] {
+            app.terminate();app.launchArguments=["-match-render-performance"]+(canvas ? ["-field-canvas-comparison"]:[]);app.launch()
+            let role=app.buttons["homeRole-batter"];reveal(role,in:app);role.tap()
+            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["replayGroundComparison"],in:app);app.buttons["replayGroundComparison"].tap()
+            XCTAssertTrue(stage.waitForExistence(timeout:5))
+            XCTAssertEqual(app.staticTexts["fieldRendererName"].label,"일반 땅볼 · \(canvas ? "Canvas":"SpriteKit")")
+            verifyImmersiveField(app,name:canvas ? "Batter ground Canvas comparison":"Batter ground SpriteKit comparison")
+            let ended=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
+            XCTAssertEqual(XCTWaiter.wait(for:[ended],timeout:35),.completed)
+            XCTAssertEqual(app.otherElements["careerGameCount"].label,before)
+            waitForEnabled(app.buttons["requestGamePitch"],timeout:5)
+        }
+        app.terminate();app.launchArguments=["-match-render-performance","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
         let role=app.buttons["homeRole-batter"];reveal(role,in:app);role.tap()
         reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
-        reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
+        reveal(app.buttons["replayGroundComparison"],in:app);app.buttons["replayGroundComparison"].tap()
         XCTAssertTrue(stage.waitForExistence(timeout:3))
         XCTAssertTrue(app.buttons["inplayJumpField"].exists)
         app.buttons["inplayJumpField"].tap()

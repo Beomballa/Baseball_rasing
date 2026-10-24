@@ -504,6 +504,13 @@ struct CareerGameView: View {
                                             visualSnapshot=savedMatch;presenting=true;fieldResolved=false;fieldHandoff=nil;homeRunReplay=last
                                         }.buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked).accessibilityIdentifier("replayLastHomeRun")
                                     }
+                                    #if DEBUG
+                                    if ProcessInfo.processInfo.arguments.contains("-match-render-performance"),let ground=savedMatch.fieldPlays?.last(where:GroundFieldScene.supports) {
+                                        Button("일반 땅볼 비교 재생") {
+                                            visualSnapshot=savedMatch;presenting=true;fieldResolved=false;fieldHandoff=nil;replay=ground
+                                        }.buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked).accessibilityIdentifier("replayGroundComparison")
+                                    }
+                                    #endif
                                     if let last=savedMatch.fieldPlays?.last {
                                         Button("직전 수비·주루 다시 보기") {
                                             visualSnapshot=savedMatch;presenting=true;fieldResolved=false;fieldHandoff=nil;replay=last
@@ -545,7 +552,7 @@ struct CareerGameView: View {
         .onChange(of:fieldCoversArena) {_,covered in
             guard ProcessInfo.processInfo.arguments.contains("-match-render-performance") else {return}
             if covered {MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true}
-            else {MatchRenderMetrics.exportLive(role:player.role.rawValue+(preparesFieldMotion ? "-prepared":"-baseline"));MatchRenderMetrics.enabled=false}
+            else {MatchRenderMetrics.exportLive(role:player.role.rawValue+(preparesFieldMotion ? (ProcessInfo.processInfo.arguments.contains("-field-canvas-comparison") ? "-canvas":"-sprite"):"-baseline"));MatchRenderMetrics.enabled=false}
         }
         #endif
         .onChange(of: opponentSide) { _, _ in configureScene() }
