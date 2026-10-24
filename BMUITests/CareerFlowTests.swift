@@ -30,7 +30,7 @@ final class CareerFlowTests: XCTestCase {
             XCTAssertEqual(app.staticTexts["calendarDate"].label,date); XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
             XCTAssertEqual(app.staticTexts["calendarAction"].label,action)
             reveal(app.buttons["restToday"],in:app); app.buttons["restToday"].tap()
-            reveal(app.buttons["openCareerGame"],in:app); app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app); openCareerGame(in:app)
             XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:5)); app.buttons["gameAutomatic"].tap()
             app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
@@ -128,7 +128,7 @@ final class CareerFlowTests: XCTestCase {
         let app = XCUIApplication(); app.launch()
         app.buttons["role-pitcher"].tap(); app.buttons["hand-left"].tap(); createDashboardSample(app, name: "CatchPitch", motionStyle: true)
         reveal(app.buttons["restToday"], in: app); app.buttons["restToday"].tap()
-        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
         assertArenaFits(app, button: "gamePitch", ratio: 1219.0 / 1290)
         let initialPitchCount = app.staticTexts["boardPitchCount"].label
@@ -153,7 +153,7 @@ final class CareerFlowTests: XCTestCase {
         let savedLocation = location.value as? String
         app.terminate(); app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
-        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.otherElements["careerGameCount"].label, savedCount)
         XCTAssertEqual(app.staticTexts["boardPitchCount"].label, savedPitchCount)
@@ -790,7 +790,7 @@ final class CareerFlowTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         reveal(app.staticTexts["homePlayerName"], in: app)
         reveal(app.buttons["openCareerGame"], in: app)
-        app.buttons["openCareerGame"].tap()
+        openCareerGame(in:app)
         XCTAssertTrue(app.buttons["gameInput-watch"].waitForExistence(timeout: 5))
         assertArenaFits(app, button: "requestGamePitch", ratio: 1)
         let gameShot = XCTAttachment(screenshot: app.screenshot()); gameShot.name = "Native batter game"; gameShot.lifetime = .keepAlways; add(gameShot)
@@ -813,7 +813,7 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         reveal(app.buttons["openCareerGame"], in: app)
         XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 이어하기")
-        app.buttons["openCareerGame"].tap()
+        openCareerGame(in:app)
         reveal(app.buttons["gameAutomatic"], in: app)
         app.buttons["gameAutomatic"].tap()
         app.buttons["진행하고 결과 저장"].tap()
@@ -859,7 +859,7 @@ final class CareerFlowTests: XCTestCase {
         checkAbilities(app,pitcher:true)
         reveal(app.staticTexts["homePlayerName"], in: app)
         train(app, pitcher: true)
-        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
         assertArenaFits(app, button: "gamePitch", ratio: 1219.0 / 1290)
         XCTAssertTrue(app.otherElements["pitchingTargetZone"].exists)
@@ -907,7 +907,7 @@ extension CareerFlowTests {
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
         if role.exists { reveal(role, in: app); role.tap() }
-        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
         XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
         for (index, id) in metricIDs.enumerated() {
             let metric = app.descendants(matching: .any).matching(identifier: "gameResult-" + id).firstMatch
@@ -923,7 +923,7 @@ extension CareerFlowTests {
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         let restoredRole = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
         if restoredRole.exists { reveal(restoredRole, in: app); restoredRole.tap() }
-        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
         XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5))
         reveal(app.staticTexts["gameResultFatigue"], in: app); XCTAssertEqual(app.staticTexts["gameResultFatigue"].label, fatigue)
     }
@@ -937,7 +937,7 @@ extension CareerFlowTests {
             }
             createDashboardSample(app,name:pitcher ? "RosterPitch":"RosterBat")
             reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             let count=app.otherElements["careerGameCount"].label
             let panel=app.descendants(matching:.any).matching(identifier:"gameNPCFielders").firstMatch
             reveal(panel,in:app);panel.tap()
@@ -952,7 +952,7 @@ extension CareerFlowTests {
             app.terminate();app.launch()
             let roleButton=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"]
             if roleButton.exists {reveal(roleButton,in:app);roleButton.tap()}
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
             let resumed=app.descendants(matching:.any).matching(identifier:"gameNPCFielders").firstMatch
             reveal(resumed,in:app);resumed.tap()
@@ -961,7 +961,7 @@ extension CareerFlowTests {
         }
         app.terminate();app.launchArguments=["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
         reveal(app.buttons["homeRole-pitcher"],in:app);app.buttons["homeRole-pitcher"].tap()
-        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
         let panel=app.buttons["gameNPCFielders"];reveal(panel,in:app);panel.tap()
         let row=app.staticTexts["gameNPC-home-P"];reveal(row,in:app)
         XCTAssertLessThanOrEqual(row.frame.maxX,app.windows.firstMatch.frame.maxX)
@@ -1064,7 +1064,7 @@ extension CareerFlowTests {
         app.buttons["role-pitcher"].tap();app.buttons["hand-left"].tap()
         createDashboardSample(app,name:"FieldPitcher",motionStyle:true)
         reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
-        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
         assertArenaFits(app,button:"gamePitch",ratio:1219.0/1290)
         XCTAssertTrue(app.otherElements["releaseGauge"].exists)
         app.buttons["gamePlaybackMenu"].tap();app.buttons["기본 재생"].tap()
@@ -1099,13 +1099,13 @@ extension CareerFlowTests {
         XCTAssertEqual(XCTWaiter.wait(for:[ended],timeout:30),.completed)
         let count=app.otherElements["careerGameCount"].label
         app.terminate();app.launch()
-        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
         XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
         XCTAssertEqual(app.buttons["gamePlaybackMenu"].value as? String,"기본 재생")
         // Same saved field play in the real screen; neither rendering path rewards a replay.
         for canvas in [true,false] {
             app.terminate();app.launchArguments=["-match-render-performance"]+(canvas ? ["-field-canvas-comparison"]:[]);app.launch()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
             XCTAssertTrue(stage.waitForExistence(timeout:5))
             XCTAssertTrue(app.staticTexts["fieldRendererName"].label.hasSuffix(canvas ? "Canvas":"SpriteKit"))
@@ -1118,7 +1118,7 @@ extension CareerFlowTests {
         reveal(app.buttons["createOtherRole"],in:app);app.buttons["createOtherRole"].tap()
         createDashboardSample(app,name:"FieldBatter",motionStyle:true)
         reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
-        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
         assertArenaFits(app,button:"requestGamePitch",ratio:1)
         XCTAssertTrue(app.otherElements["battingTimingGauge"].exists)
         let aim=app.otherElements["battingAimZone"],aimBefore=aim.value as? String
@@ -1143,7 +1143,7 @@ extension CareerFlowTests {
         for canvas in [true,false] {
             app.terminate();app.launchArguments=["-match-render-performance"]+(canvas ? ["-field-canvas-comparison"]:[]);app.launch()
             let role=app.buttons["homeRole-batter"];reveal(role,in:app);role.tap()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
             XCTAssertTrue(stage.waitForExistence(timeout:5))
             XCTAssertTrue(app.staticTexts["fieldRendererName"].label.hasSuffix(canvas ? "Canvas":"SpriteKit"))
@@ -1155,7 +1155,7 @@ extension CareerFlowTests {
         }
         app.terminate();app.launchArguments=["-match-render-performance","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
         let role=app.buttons["homeRole-batter"];reveal(role,in:app);role.tap()
-        reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
         reveal(app.buttons["replayLastFieldPlay"],in:app);app.buttons["replayLastFieldPlay"].tap()
         XCTAssertTrue(stage.waitForExistence(timeout:3))
         XCTAssertTrue(app.buttons["inplayJumpField"].exists)
@@ -1193,7 +1193,7 @@ extension CareerFlowTests {
             let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", pitcher ? "BoardPitcher" : "BoardBatter"), object: app.staticTexts["homePlayerName"])
             XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
             reveal(app.buttons["restToday"], in: app); app.buttons["restToday"].tap()
-            reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
             let primary = pitcher ? "gamePitch" : "requestGamePitch"
             XCTAssertTrue(app.buttons[primary].waitForExistence(timeout: 5))
             assertArenaFits(app, button: primary, ratio: pitcher ? 1219.0 / 1290 : 1)
@@ -1213,7 +1213,7 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
             let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
             if role.exists { reveal(role, in: app); role.tap() }
-            reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 이어하기"); app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 이어하기"); openCareerGame(in:app)
             XCTAssertTrue(app.buttons["gameJumpControls"].waitForExistence(timeout: 5))
             XCTAssertEqual(app.otherElements["careerGameCount"].label, count)
             app.buttons["gameJumpControls"].tap()
@@ -1223,7 +1223,7 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
             let restoredRole = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
             if restoredRole.exists { reveal(restoredRole, in: app); restoredRole.tap() }
-            reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
             XCTAssertTrue(app.buttons[primary].waitForExistence(timeout: 5))
             if pitcher {
                 app.buttons["gamePitch"].tap(); app.buttons["gameRelease"].tap()
@@ -1322,7 +1322,7 @@ extension CareerFlowTests {
                 let xpHome = XCTAttachment(screenshot: app.screenshot()); xpHome.name = "Home actual game position XP"; xpHome.lifetime = .keepAlways; add(xpHome)
             }
             reveal(app.staticTexts["homeFatigue"], in: app); let fatigue = app.staticTexts["homeFatigue"].label
-            reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 결과"); app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"], in: app); XCTAssertEqual(app.buttons["openCareerGame"].label, "오늘 경기 결과"); openCareerGame(in:app)
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons[primary].exists)
             let savedDP=app.descendants(matching:.any).matching(identifier:"gameResult-doublePlays").firstMatch
             reveal(savedDP,in:app);XCTAssertEqual(savedDP.label,dpValue)
@@ -1482,7 +1482,7 @@ extension CareerFlowTests {
         app.terminate(); app.launchArguments = []; app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["homeFatigue"].label, "피로 \(min(100, fatigue + 6)) / 100")
-        reveal(app.buttons["openCareerGame"], in: app); app.buttons["openCareerGame"].tap()
+        reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
         let automatic = app.buttons["gameAutomatic"]; reveal(automatic, in: app); automatic.tap(); app.buttons["진행하고 결과 저장"].tap()
         XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 6))
         reveal(app.buttons["gameReturnHome"], in: app); app.buttons["gameReturnHome"].tap()
@@ -1956,7 +1956,7 @@ extension CareerFlowTests {
             XCTAssertTrue(own.label.contains("0경기"));XCTAssertTrue(app.staticTexts["leagueEmpty"].exists)
             app.navigationBars.buttons.element(boundBy:0).tap()
             reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:5));app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
             reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
@@ -2146,7 +2146,7 @@ extension CareerFlowTests {
             createDashboardSample(app,name:pitcher ? "GrowthPitch" : "GrowthBat")
             let date = app.staticTexts["calendarDate"].label
             reveal(app.buttons["restToday"],in:app); app.buttons["restToday"].tap()
-            reveal(app.buttons["openCareerGame"],in:app); app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app); openCareerGame(in:app)
             let primary = app.buttons[pitcher ? "gamePitch" : "requestGamePitch"]
             XCTAssertTrue(primary.waitForExistence(timeout:5)); primary.tap()
             if pitcher { app.buttons["gameRelease"].tap() }
@@ -2157,7 +2157,7 @@ extension CareerFlowTests {
             let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
             if role.exists { reveal(role,in:app); role.tap() }
             reveal(app.buttons["openCareerGame"],in:app)
-            XCTAssertTrue(app.buttons["openCareerGame"].label.contains("이어하기")); app.buttons["openCareerGame"].tap()
+            XCTAssertTrue(app.buttons["openCareerGame"].label.contains("이어하기")); openCareerGame(in:app)
             app.buttons["gameAutomatic"].tap(); app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
             let xp = app.staticTexts["gameAbilityXP"]; reveal(xp,in:app)
@@ -2185,7 +2185,7 @@ extension CareerFlowTests {
             if restoredRole.exists { reveal(restoredRole,in:app); restoredRole.tap() }
             reveal(app.staticTexts["homeAbilityXP"],in:app); XCTAssertEqual(app.staticTexts["homeAbilityXP"].label,awarded)
             XCTAssertEqual(app.staticTexts["homeAnnualAbilityBudget"].label,budget)
-            reveal(app.buttons["openCareerGame"],in:app); app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app); openCareerGame(in:app)
             let reopened = app.descendants(matching:.any).matching(identifier:"gameAbilityGrowth-" + rowID).firstMatch
             reveal(reopened,in:app); XCTAssertEqual(reopened.label,rowLabel)
             let large = XCTAttachment(screenshot:app.screenshot()); large.name = pitcher ? "Pitcher growth accessibility XXXL" : "Batter growth accessibility XXXL"; large.lifetime = .keepAlways; add(large)
@@ -2216,14 +2216,14 @@ extension CareerFlowTests {
             reveal(app.staticTexts["scoutFrozenSample"],in:app);XCTAssertTrue(app.staticTexts["scoutFrozenSample"].label.contains("경기 0건"))
             app.navigationBars.buttons.element(boundBy:0).tap()
             reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             let start=app.buttons[pitcher ? "gamePitch":"requestGamePitch"];XCTAssertTrue(start.waitForExistence(timeout:5));start.tap()
             if pitcher {app.buttons["gameRelease"].tap()} else {XCTAssertTrue(app.buttons["gameHit"].waitForExistence(timeout:2));app.buttons["gameHit"].tap()}
             waitForEnabled(app.buttons["gameAutomatic"],timeout:15)
             app.terminate();app.launch()
             let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"]
             if role.exists {reveal(role,in:app);role.tap()}
-            reveal(app.buttons["openCareerGame"],in:app);XCTAssertTrue(app.buttons["openCareerGame"].label.contains("이어하기"));app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);XCTAssertTrue(app.buttons["openCareerGame"].label.contains("이어하기"));openCareerGame(in:app)
             app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:8))
             reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
@@ -2564,7 +2564,7 @@ extension CareerFlowTests {
             let school=app.staticTexts["homeSchool"];revealFit(school,in:app);XCTAssertTrue(school.label.contains(role == "batter" ? "육성":"대"))
             let stage=app.staticTexts["careerPathStage"];revealFit(stage,in:app);XCTAssertTrue(stage.label.contains(role == "batter" ? "국내 육성팀":"대학 소속"))
             let rest=app.buttons["restToday"];revealFit(rest,in:app);rest.tap()
-            let game=app.buttons["openCareerGame"];revealFit(game,in:app);XCTAssertTrue(game.isEnabled);game.tap()
+            let game=app.buttons["openCareerGame"];revealFit(game,in:app);XCTAssertTrue(game.isEnabled);game.tap();confirmPregameIfNeeded(in:app)
             XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:8));app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:12))
             let home=app.buttons["gameReturnHome"];revealFit(home,in:app);home.tap()
@@ -2702,11 +2702,11 @@ extension CareerFlowTests {
             if pitcher {app.buttons["role-pitcher"].tap();app.buttons["hand-left"].tap()}
             createDashboardSample(app,name:pitcher ? "LivePitch":"LiveBat",motionStyle:true)
             reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             driveActualCareerToField(app,pitcher:pitcher)
             let count=app.otherElements["careerGameCount"].label
             app.terminate();app.launch()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
             app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:15))
@@ -2714,7 +2714,7 @@ extension CareerFlowTests {
             reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
             reveal(app.staticTexts["homeFatigue"],in:app);let fatigue=app.staticTexts["homeFatigue"].label
             app.terminate();app.launch()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:10))
             XCTAssertEqual(app.staticTexts["careerGameFinished"].label,result)
             reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
@@ -2752,7 +2752,7 @@ extension CareerFlowTests {
             if pitcher {reveal(app.buttons["createOtherRole"],in:app);app.buttons["createOtherRole"].tap();app.buttons["hand-left"].tap()}
             createDashboardSample(app,name:pitcher ? "ProfilePitch":"ProfileBat",motionStyle:true)
             reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
-            reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
+            reveal(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
             driveActualCareerToField(app,pitcher:pitcher)
             app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:15))
@@ -3062,6 +3062,42 @@ extension CareerFlowTests {
             app.navigationBars.buttons.element(boundBy:0).tap()
             let again=app.buttons["openCareerObjectives"];revealFit(again,in:app);again.tap()
             let retained=app.staticTexts["projectStatus"];revealFit(retained,in:app);XCTAssertEqual(retained.label,"진행 중")
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}
+
+
+extension CareerFlowTests {
+    @MainActor private func confirmPregameIfNeeded(in app:XCUIApplication) {
+        let confirm=app.buttons["confirmGamePlan"]
+        if confirm.waitForExistence(timeout:3) {revealFit(confirm,in:app);confirm.tap()}
+    }
+    @MainActor private func openCareerGame(in app:XCUIApplication) {
+        app.buttons["openCareerGame"].tap();confirmPregameIfNeeded(in:app)
+    }
+    @MainActor func testPregameAnalysisChoiceResumeAndResultsBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:90))
+        for role in ["batter","pitcher"] {
+            let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
+            let rest=app.buttons["restToday"];revealFit(rest,in:app);rest.tap()
+            let game=app.buttons["openCareerGame"];revealFit(game,in:app);game.tap()
+            XCTAssertTrue(app.staticTexts["oppositionTeam"].waitForExistence(timeout:10))
+            let chosen=role == "batter" ? "power":"innings"
+            let choice=app.buttons["planChoice-"+chosen];revealFit(choice,in:app);choice.tap()
+            let pre=XCTAttachment(screenshot:app.screenshot());pre.name="pregame-"+role;pre.lifetime = .keepAlways;add(pre)
+            let confirm=app.buttons["confirmGamePlan"];revealFit(confirm,in:app);confirm.tap()
+            let active=app.staticTexts["activeGamePlan"];XCTAssertTrue(active.waitForExistence(timeout:15))
+            let expected=role == "batter" ? "장타 공략":"이닝 소화"
+            XCTAssertTrue(active.label.contains(expected))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let resume=app.buttons["openCareerGame"];revealFit(resume,in:app);resume.tap()
+            XCTAssertTrue(app.staticTexts["activeGamePlan"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons["confirmGamePlan"].exists)
+            let auto=app.buttons["gameAutomatic"];XCTAssertTrue(auto.waitForExistence(timeout:10));auto.tap();app.buttons["진행하고 결과 저장"].tap()
+            let result=app.staticTexts["gamePlanOutcome"];XCTAssertTrue(result.waitForExistence(timeout:90));revealFit(result,in:app);XCTAssertTrue(result.label.contains(expected))
+            let after=XCTAttachment(screenshot:app.screenshot());after.name="game-plan-result-"+role;after.lifetime = .keepAlways;add(after)
             app.navigationBars.buttons.element(boundBy:0).tap()
         }
         app.terminate()

@@ -55,6 +55,12 @@ enum CareerSchemaV3: VersionedSchema {
                 guard let role = PlayerRole(rawValue:match.role) else {throw MatchError.invalidRecord}
                 try performance.validate(line:match.line,role:role)
             }
+            if let preparation=match.preparation {
+                guard preparation.version == 1,preparation.fixtureID == fixtureID,match.appearance,
+                      MatchPlanChoice.choices(match.role).contains(preparation.choice),let roster=match.npcFielders else {throw MatchError.invalidRecord}
+                try roster.validate()
+                guard preparation.analysis == MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome) else {throw MatchError.invalidRecord}
+            }
             try match.validatePitching()
             try match.validateDetailedField()
             if let roster=match.npcFielders {
@@ -87,7 +93,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
               let fixture = try state.fixtures(for: player, year: date.year).first(where: { $0.date == date }) else { throw MatchError.noFixture }
         return fixture
     }
-    static func start(player: CareerPlayer, state: CareerCalendarState, in context: ModelContext,
+    static func start(player: CareerPlayer, state: CareerCalendarState, planChoice:MatchPlanChoice? = nil, in context: ModelContext,
                       save: CalendarProgression.Save = { try $0.save() }) throws -> CareerMatchRecord {
         let fixture = try today(player: player, state: state)
         if let saved = try record(player: player, fixture: fixture, in: context) { _ = try saved.snapshot(); return saved }
@@ -133,6 +139,10 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         match.detailedFieldVersion=5;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.battedBallVersion=1
         match.npcFielders=MatchNPCFielders.make(year:fixture.date.year,competition:match.competition ?? "highschool",homeID:fixture.homeID,awayID:fixture.awayID)
+        if let planChoice {
+            guard match.appearance,MatchPlanChoice.choices(match.role).contains(planChoice),let roster=match.npcFielders else {throw MatchError.invalidInput}
+            match.preparation=MatchPreparation(version:1,fixtureID:fixture.id,choice:planChoice,analysis:MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome))
+        }
         if match.appearance, match.abilityStats != nil {
             let values = try Dictionary(uniqueKeysWithValues: MatchAbilityExperience.kinds(role: player.roleRaw).map {
                 ($0.rawValue, try CareerTrainingStore.value(player: player, code: nil, kind: $0, in: context))
@@ -312,5 +322,23 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
     }
     static func assessment(player:CareerPlayer,releaseID:String,window:ContractEvaluationWindow,in context:ModelContext) throws -> CertifiedAssessment? {
         try records(playerID:player.id,in:context).first(where:{$0.key == player.id.uuidString+":"+releaseID+":"+window.id && $0.completed})?.snapshot().assessment
+    }
+}
+
+
+@MainActor extension CareerMatchStore {
+    static func startPrepared(player:CareerPlayer,state:CareerCalendarState,choice:MatchPlanChoice,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws -> CareerMatchRecord {
+        let fixture=try today(player:player,state:state)
+        if let saved=try record(player:player,fixture:fixture,in:context) {
+            guard try saved.snapshot().preparation?.choice == choice else {throw MatchError.stale}
+            return saved
+        }
+        guard !context.hasChanges,player.gameDate == date,state.revision == revision else {throw MatchError.stale}
+        return try start(player:player,state:state,planChoice:choice,in:context,save:save)
+    }
+    static func opposition(player:CareerPlayer,state:CareerCalendarState) throws -> MatchOppositionAnalysis {
+        let fixture=try today(player:player,state:state),competition=try state.competition(for:player,year:fixture.date.year)
+        let roster=MatchNPCFielders.make(year:fixture.date.year,competition:competition.membership?.level ?? "highschool",homeID:fixture.homeID,awayID:fixture.awayID)
+        return MatchOppositionAnalysis.make(roster:roster,isHome:fixture.homeID == competition.teamID)
     }
 }

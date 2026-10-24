@@ -732,6 +732,7 @@ struct CareerContractJournal:Codable,Equatable {
     var developmentTarget:CareerDevelopmentTarget? = nil
     var developmentProjects:[CareerDevelopmentProject]? = nil
     var developmentReviews:[CareerProjectReview]? = nil
+    var gamePlanReports:[MatchPlanObservation]? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -2145,6 +2146,41 @@ extension CareerContractJournal {
                   review.progress.sample >= 0,review.progress.qualitySessions >= 0,review.progress.qualitySessions <= review.progress.trainingKeys.count,
                   review.progress.growth.isFinite,review.progress.growth >= 0,review.progress.requiredSample == project.requiredSample,
                   Set(review.progress.matchKeys).count == review.progress.matchKeys.count,Set(review.progress.trainingKeys).count == review.progress.trainingKeys.count else {throw ContractRegistrationError.invalid}
+        }
+    }
+}
+
+
+struct MatchPlanReportItem:Codable,Equatable,Identifiable {
+    let matchKey:String
+    let date:String
+    let role:String
+    let preparation:MatchPreparation
+    let outcome:MatchPlanOutcome
+    let mode:ScoutingInputMode?
+    var id:String {matchKey}
+}
+struct MatchPlanObservation:Codable,Equatable,Identifiable {
+    let reportID:String
+    let period:Int
+    let date:String
+    let results:[MatchPlanReportItem]
+    var id:String {reportID}
+}
+extension CareerContractJournal {
+    func validateGamePlanReports(origin:String,today:GameDate,reports:[String:(Int,String)]) throws {
+        let rows=gamePlanReports ?? [],keys=rows.flatMap {$0.results.map(\.matchKey)}
+        guard Set(rows.map(\.period)).count == rows.count,Set(keys).count == keys.count else {throw ContractRegistrationError.invalid}
+        for row in rows {
+            guard let source=reports[row.reportID],source.0 == row.period,source.1 == row.date,row.date <= today.description,!row.results.isEmpty else {throw ContractRegistrationError.invalid}
+            for item in row.results {
+                guard item.matchKey == playerID.uuidString+":"+item.preparation.fixtureID,
+                      item.preparation.version == 1,MatchPlanChoice.choices(item.role).contains(item.preparation.choice),
+                      ["batter","pitcher"].contains(item.role),item.date <= row.date,
+                      item.preparation.analysis.year == (try GameDate(item.date)).year,
+                      (try ScoutingPeriod(origin:GameDate(origin),today:GameDate(item.date))).index < row.period,
+                      item.outcome.checks.count == 2,item.outcome.checks.allSatisfy({$0.value >= 0 && $0.target >= 0}) else {throw ContractRegistrationError.invalid}
+            }
         }
     }
 }

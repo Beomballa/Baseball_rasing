@@ -553,10 +553,11 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             guard service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
         }
         try value.validateDevelopment(today:GameDate(player.gameDate))
-        if value.developmentProjects != nil || value.developmentReviews != nil {
+        if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil {
             var sources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
             for row in try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context) {let observation=try row.snapshot();sources[row.key]=(observation.period,observation.observedDate)}
             try value.validateProjects(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
+            try value.validateGamePlanReports(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
         }
         return value
     }
@@ -761,6 +762,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         try report.validate(playerID:player.id,today:GameDate(date))
         journal.overseasReports=(journal.overseasReports ?? [])+[report]
         try CareerProjectStore.appendReview(owner:&journal,player:player,observation:observation,reportID:report.id,in:context)
+        try MatchPlanReportStore.append(owner:&journal,player:player,calendar:calendar,observation:observation,reportID:report.id,in:context)
         do {
             if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(journal)}
             else {context.insert(try CareerContractRegistration(journal))}
@@ -1059,11 +1061,14 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
     }
     // The enclosing report/day command owns saving and rollback.
     static func observe(player:CareerPlayer,calendar:CareerCalendarState,observation:ScoutingObservation,reportID:String,in context:ModelContext) throws {
-        guard let row=try ContractRegistrationStore.row(player:player,in:context) else {return}
-        var owner=try JSONDecoder().decode(CareerContractJournal.self,from:row.payload)
-        guard owner.developmentProjects?.isEmpty == false else {return}
+        guard context.container.schema.entities.contains(where:{$0.name == "ContractRegistration"}) else {return}
+        let row=try ContractRegistrationStore.row(player:player,in:context)
+        var owner=try row.map {try JSONDecoder().decode(CareerContractJournal.self,from:$0.payload)} ?? CareerContractJournal(playerID:player.id)
+        let before=owner
         try appendReview(owner:&owner,player:player,observation:observation,reportID:reportID,in:context)
-        row.payload=try JSONEncoder().encode(owner)
+        try MatchPlanReportStore.append(owner:&owner,player:player,calendar:calendar,observation:observation,reportID:reportID,in:context)
+        guard owner != before else {return}
+        if let row {row.payload=try JSONEncoder().encode(owner)} else {context.insert(try CareerContractRegistration(owner))}
     }
 }
 @MainActor extension OverseasContractStore {
@@ -1095,4 +1100,22 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
 enum CareerProjectError:LocalizedError {
     case affiliation
     var errorDescription:String? {"공식 출전 소속이 필요합니다. 무소속은 계약 시장의 인증 평가전·재입단 경로를 먼저 확인하세요."}
+}
+
+
+@MainActor enum MatchPlanReportStore {
+    static func append(owner:inout CareerContractJournal,player:CareerPlayer,calendar:CareerCalendarState,observation:ScoutingObservation,reportID:String,in context:ModelContext) throws {
+        guard !(owner.gamePlanReports ?? []).contains(where:{$0.period == observation.period}) else {return}
+        let included=Set((owner.gamePlanReports ?? []).flatMap {$0.results.map(\.matchKey)}),id=player.id
+        var results:[MatchPlanReportItem]=[]
+        for row in try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.completed && $0.appearance})) where row.gameDate <= observation.observedDate && !included.contains(row.key) {
+            guard try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(row.gameDate)).index < observation.period else {continue}
+            let match=try row.snapshot()
+            guard match.role == player.roleRaw,let preparation=match.preparation,let outcome=MatchPlanOutcome.make(match:match) else {continue}
+            results.append(MatchPlanReportItem(matchKey:row.key,date:row.gameDate,role:match.role,preparation:preparation,outcome:outcome,mode:match.scoutingPerformance?.inputs?.mode))
+        }
+        guard !results.isEmpty else {return}
+        results.sort {$0.date == $1.date ? $0.matchKey < $1.matchKey:$0.date < $1.date}
+        owner.gamePlanReports=(owner.gamePlanReports ?? [])+[MatchPlanObservation(reportID:reportID,period:observation.period,date:observation.observedDate,results:results)]
+    }
 }

@@ -471,6 +471,7 @@ struct CareerGameView: View {
                 Text("결과 저장 완료").font(.caption.bold()).foregroundStyle(GameTheme.growth)
                     .accessibilityIdentifier("gameResultSaved")
             }
+            if let preparation=match.preparation,let outcome=MatchPlanOutcome.make(match:match) {MatchPlanOutcomePanel(preparation:preparation,outcome:outcome)}
             GamePanel(title: player.role == .batter ? "타자 경기 기록" : "투수 경기 기록", onBoard: true) {
                 if let change=match.ownPitcherChange {PitcherChangePanel(change:change,finalRuns:match.line.runsAllowed,appearance:player.appearance)}
                 if !record.appearance {
@@ -600,6 +601,7 @@ struct CareerGameView: View {
                             let match = visualSnapshot ?? savedMatch
                             VStack(spacing: 6) {
                                 scoreHeader(arrivedSnapshot ?? match, record: record)
+                                if let plan=match.preparation {Text("경기 계획 · "+plan.choice.label).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("activeGamePlan")}
                                 if typeSize.isAccessibilitySize && !match.completed {
                                     Button("경기 조작부로 이동") { proxy.scrollTo("gameControls", anchor: .bottom) }
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("gameJumpControls")
@@ -942,3 +944,91 @@ final class MatchArenaSKView:SKView {
     func close() {try? stream.close()}
 }
 #endif
+
+
+struct CareerGameEntryView:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    let schools:[School]
+    @Environment(\.modelContext) private var context
+    @State private var analysis:MatchOppositionAnalysis?
+    @State private var choice:MatchPlanChoice?
+    @State private var date=""
+    @State private var revision=0
+    @State private var enterGame=false
+    @State private var failure:String?
+    var body:some View {
+        Group {
+            if enterGame {CareerGameView(player:player,calendar:calendar,schools:schools)}
+            else {
+                ScrollView {
+                    VStack(alignment:.leading,spacing:14) {
+                        if let analysis {
+                            GamePanel(title:"OPPOSITION FILE · 상대 분석",onBoard:true,contentSpacing:12) {
+                                Text(CareerTeamDirectory.name(analysis.teamID,schools:schools)).font(.title3.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("oppositionTeam")
+                                Text(date+" · 시즌 고정 NPC 로스터 기준").font(.caption)
+                                HStack {
+                                    metric("주력",analysis.speed);metric("수비",analysis.defense);metric("송구",analysis.arm)
+                                }
+                                ForEach(analysis.tendencies,id:\.self) {Text($0).font(.subheadline)}
+                                Text("상대 수비 내 최저 수비 포지션 · "+analysis.weakestPosition).font(.caption)
+                                Text("실제 경기의 가상 선수 능력값입니다. 구종·타격 성향은 자료가 없어 추정하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                            }
+                            GamePanel(title:"GAME PLAN · 오늘의 계획",onBoard:true,contentSpacing:12) {
+                                Text("추천 · "+analysis.recommended(role:player.roleRaw).label).font(.headline).foregroundStyle(GameTheme.gold)
+                                ForEach(MatchPlanChoice.choices(player.roleRaw)) {plan in
+                                    Button {choice=plan} label: {
+                                        VStack(alignment:.leading,spacing:6) {
+                                            HStack(spacing:8) {
+                                                Rectangle().fill(choice == plan ? GameTheme.gold:GameTheme.boardLine).frame(width:8,height:8)
+                                                Text(plan.label).font(.headline)
+                                            }
+                                            Text(plan.criteria).font(.caption).multilineTextAlignment(.leading)
+                                        }.padding(12).frame(maxWidth:.infinity,alignment:.leading)
+                                    }.buttonStyle(MatchPixelButtonStyle(selected:choice == plan)).accessibilityIdentifier("planChoice-"+plan.rawValue).accessibilityValue(choice == plan ? "선택됨":"선택 안 됨")
+                                }
+                                Text("계획은 경기 시작과 함께 저장·잠금됩니다. 조작은 기존 방식으로 진행하며,선택만으로 능력치나 판정 보너스가 붙지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                                Button("계획 확정 · 경기 시작") {start()}.buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(choice == nil).accessibilityIdentifier("confirmGamePlan")
+                            }
+                        } else if failure == nil {ProgressView("오늘 상대 자료 확인 중")}
+                        if let failure {
+                            Text(failure).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gamePlanError")
+                            Button("자료 다시 확인") {load()}.buttonStyle(MatchPixelButtonStyle())
+                        }
+                    }.padding(12)
+                }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("상대 분석 · 경기 준비").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
+            }
+        }.task {load()}
+    }
+    private func metric(_ label:String,_ value:Double) -> some View {
+        VStack(alignment:.leading,spacing:6) {Text(label).font(.caption);Text(String(format:"%.1f",value)).font(.headline.monospaced()).foregroundStyle(GameTheme.gold)}.frame(maxWidth:.infinity,alignment:.leading)
+    }
+    private func load() {
+        do {
+            let fixture=try CareerMatchStore.today(player:player,state:calendar)
+            if let _=try CareerMatchStore.record(player:player,fixture:fixture,in:context) {enterGame=true;return}
+            if !fixture.isAppearance(for:player.role) {enterGame=true;return}
+            analysis=try CareerMatchStore.opposition(player:player,state:calendar);date=player.gameDate;revision=calendar.revision
+            choice=analysis?.recommended(role:player.roleRaw);failure=nil
+        } catch {failure=error.localizedDescription}
+    }
+    private func start() {
+        guard let choice else {return}
+        do {_ = try CareerMatchStore.startPrepared(player:player,state:calendar,choice:choice,date:date,revision:revision,in:context);enterGame=true;failure=nil}
+        catch {failure=error.localizedDescription}
+    }
+}
+struct MatchPlanOutcomePanel:View {
+    let preparation:MatchPreparation
+    let outcome:MatchPlanOutcome
+    var body:some View {
+        GamePanel(title:"GAME PLAN · 수행 결과",onBoard:true,contentSpacing:12) {
+            Text(preparation.choice.label+" · "+outcome.label).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gamePlanOutcome")
+            Text(preparation.choice.criteria).font(.caption)
+            ForEach(Array(outcome.checks.enumerated()),id:\.offset) {_,check in
+                Text(check.detail+" · "+(check.met ? "충족":"미달")).font(.subheadline)
+            }
+            Text("다음28일 보고서에 실제 경기 근거로 기록합니다. 추가 XP나 계약 적합도 보너스는 없습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+        }
+    }
+}

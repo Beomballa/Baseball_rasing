@@ -194,7 +194,7 @@ struct PlayerHomeView: View {
             }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openTraining")
                 .disabled(status.schedule == nil || calendar.hasAction(on: player.gameDate) && todayTraining == nil)
             if status.schedule?.today != nil {
-                NavigationLink { CareerGameView(player: player, calendar: calendar, schools: schools) } label: {
+                NavigationLink { CareerGameEntryView(player: player, calendar: calendar, schools: schools) } label: {
                     Text(saved?.completed == true ? "오늘 경기 결과" : (saved == nil ? "오늘 경기 시작" : "오늘 경기 이어하기"))
                 }.buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("openCareerGame")
                     .disabled(!calendar.hasAction(on: player.gameDate) && saved == nil)
@@ -1795,6 +1795,7 @@ struct CareerProjectReportEvidence:View {
     let period:Int
     @Environment(\.modelContext) private var context
     @State private var reviews:[CareerProjectReview]=[]
+    @State private var plans:[MatchPlanObservation]=[]
     @State private var failure:String?
     var body:some View {
         Group {
@@ -1807,13 +1808,25 @@ struct CareerProjectReportEvidence:View {
                     Text("같은 주기 최초 보고서의 관찰 결과입니다. 계약 보너스 없이 실제 훈련/공식 출전 근거만 보존합니다.").font(.caption)
                 }
             }
+            ForEach(plans) {observation in
+                GamePanel(title:"경기 전 계획 · 확정 수행 기록",onBoard:true,contentSpacing:12) {
+                    ForEach(observation.results) {item in
+                        Text(item.date+" · "+item.preparation.choice.label+" / "+item.outcome.label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reportGamePlanEvidence")
+                        Text("조작 환경 · "+(item.mode?.label ?? "미확인")).font(.caption)
+                        ForEach(Array(item.outcome.checks.enumerated()),id:\.offset) {_,check in Text(check.detail).font(.caption)}
+                    }
+                    Text("완료한 개인 경기의 수행 기록입니다. 기존 H/P/F나 계약 심사에 별도 가산하지 않으며,같은 경기 근거는 한 번만 보고합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }
+            }
             if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold)}
         }.task(id:"\(playerID)-\(period)") {
             do {
                 let id=playerID
                 guard let player=try context.fetch(FetchDescriptor<CareerPlayer>(predicate:#Predicate {$0.id == id})).first,
                       let calendar=try context.fetch(FetchDescriptor<CareerCalendarState>(predicate:#Predicate {$0.playerID == id})).first else {throw ContractRegistrationError.invalid}
-                reviews=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).developmentReviews?.filter {$0.period == period} ?? [];failure=nil
+                let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+                reviews=owner.developmentReviews?.filter {$0.period == period} ?? []
+                plans=owner.gamePlanReports?.filter {$0.period == period} ?? [];failure=nil
             } catch {failure=error.localizedDescription}
         }
     }

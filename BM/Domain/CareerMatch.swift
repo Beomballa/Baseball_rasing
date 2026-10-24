@@ -25,6 +25,7 @@ struct CareerMatch: Codable, Equatable {
     let contact: Double, power: Double, discipline: Double, mastery: [String: Double]
     var line = MatchLine()
     var scoutingPerformance: MatchScoutingPerformance?
+    var preparation:MatchPreparation? = nil
     var competition:String?
     var fatigueCost = 0.0
     var appliedFatigueCost: Int { Int(((fatigueCost * 10_000).rounded() / 10_000).rounded(.up)) }
@@ -603,4 +604,77 @@ extension CareerMatch {
             guard event.half<=half,event.order < (event.half%2 == 1 ? homeOrder:awayOrder) else {throw MatchError.invalidRecord}
         }
     }
+}
+
+
+enum MatchPlanChoice:String,Codable,CaseIterable,Identifiable {
+    case onBase,contact,power,control,strikeout,innings
+    var id:String {rawValue}
+    var label:String {switch self {case .onBase:"출루 우선";case .contact:"컨택 집중";case .power:"장타 공략";case .control:"제구 우선";case .strikeout:"탈삼진 승부";case .innings:"이닝 소화"}}
+    static func choices(_ role:String) -> [Self] {role == "batter" ? [.onBase,.contact,.power]:[.control,.strikeout,.innings]}
+    var criteria:String {switch self {
+    case .onBase:"3타석 이상 · 안타+볼넷1개 이상 / 삼진1개 이하"
+    case .contact:"3타석 이상 · 안타1개 이상 / 삼진0개"
+    case .power:"3타석 이상 · 2루타+홈런1개 이상 / 삼진1개 이하"
+    case .control:"3이닝 이상 · 볼넷1개 이하 / 피안타4개 이하"
+    case .strikeout:"3이닝 이상 · 탈삼진3개 이상 / 볼넷1개 이하"
+    case .innings:"3이닝 이상 · 6이닝 도달 / 실점3개 이하"
+    }}
+}
+struct MatchOppositionAnalysis:Codable,Equatable {
+    let year:Int
+    let teamID:String
+    let speed:Double
+    let defense:Double
+    let arm:Double
+    let weakestPosition:String
+    static func make(roster:MatchNPCFielders,isHome:Bool) -> Self {
+        let team=roster.team(home:!isHome),players=team.players
+        func average(_ key:KeyPath<MatchNPCPlayer,Double>) -> Double {(players.reduce(0){$0+$1[keyPath:key]}/Double(players.count)*10).rounded()/10}
+        let weak=players.filter {$0.position != "P"}.min {$0.defense == $1.defense ? $0.position < $1.position:$0.defense < $1.defense}!
+        return Self(year:roster.year,teamID:team.teamID,speed:average(\.speed),defense:average(\.defense),arm:average(\.arm),weakestPosition:weak.position)
+    }
+    var tendencies:[String] {[
+        speed >= 70 ? "기동력 경계 · 빠른 주자 다수":"주력은 평균 범위 · 출루 억제 우선",
+        defense >= 70 ? "안정적인 수비 · 범타 처리 능력 높음":"수비 경합 여지 · 타구 정확도 활용",
+        arm >= 70 ? "강한 송구 · 무리한 추가 진루 주의":"송구 경합에서 주력 활용 가능"
+    ]}
+    func recommended(role:String) -> MatchPlanChoice {role == "batter" ? (arm >= 70 ? .power:defense >= 70 ? .onBase:.contact):(speed >= 70 ? .strikeout:.control)}
+}
+struct MatchPreparation:Codable,Equatable {
+    let version:Int
+    let fixtureID:String
+    let choice:MatchPlanChoice
+    let analysis:MatchOppositionAnalysis
+}
+struct MatchPlanCheck:Codable,Equatable {
+    let label:String
+    let value:Int
+    let target:Int
+    let atLeast:Bool
+    var met:Bool {atLeast ? value >= target:value <= target}
+    var detail:String {label+" \(value) / \(target)"+(atLeast ? " 이상":" 이하")}
+}
+struct MatchPlanOutcome:Codable,Equatable {
+    let enough:Bool
+    let checks:[MatchPlanCheck]
+    var achieved:Int {checks.filter(\.met).count}
+    var label:String {!enough ? "개인 표본 부족":achieved == checks.count ? "계획 달성":achieved > 0 ? "부분 달성":"보완 필요"}
+    static func make(match:CareerMatch) -> Self? {
+        guard match.completed,match.appearance,let preparation=match.preparation else {return nil}
+        let line=match.line
+        func above(_ label:String,_ value:Int,_ target:Int) -> MatchPlanCheck {Self.check(label,value,target,true)}
+        func below(_ label:String,_ value:Int,_ target:Int) -> MatchPlanCheck {Self.check(label,value,target,false)}
+        let checks:[MatchPlanCheck]
+        switch preparation.choice {
+        case .onBase:checks=[above("안타+볼넷",line.hits+line.walks,1),below("삼진",line.strikeouts,1)]
+        case .contact:checks=[above("안타",line.hits,1),below("삼진",line.strikeouts,0)]
+        case .power:checks=[above("2루타+홈런",(match.scoutingPerformance?.doubles ?? 0)+line.homeRuns,1),below("삼진",line.strikeouts,1)]
+        case .control:checks=[below("볼넷",line.pitchingWalks,1),below("피안타",line.hitsAllowed,4)]
+        case .strikeout:checks=[above("탈삼진",line.pitchingStrikeouts,3),below("볼넷",line.pitchingWalks,1)]
+        case .innings:checks=[above("투구 아웃",line.pitchingOuts,18),below("실점",line.runsAllowed,3)]
+        }
+        return Self(enough:match.role == "batter" ? line.plateAppearances >= 3:line.pitchingOuts >= 9,checks:checks)
+    }
+    private static func check(_ label:String,_ value:Int,_ target:Int,_ atLeast:Bool) -> MatchPlanCheck {MatchPlanCheck(label:label,value:value,target:target,atLeast:atLeast)}
 }

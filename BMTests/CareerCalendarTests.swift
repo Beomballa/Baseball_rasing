@@ -3340,3 +3340,100 @@ extension CareerCalendarTests {
         XCTAssertEqual(restored.activeProject(on:p.gameDate),project)
     }
 }
+
+extension CareerCalendarTests {
+    func testMatchPreparationPreservesRNGResumeAndOneTimeResultsBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,packet)=try acceptance(role),c=store.mainContext
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:packet.offers[0].id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let analysis=try CareerMatchStore.opposition(player:p,state:s),date=p.gameDate,rev=s.revision,fatigue=p.fatigue
+            XCTAssertEqual(analysis,try CareerMatchStore.opposition(player:p,state:s))
+            let choice:MatchPlanChoice=role == .batter ? .onBase:.control
+            XCTAssertThrowsError(try CareerMatchStore.startPrepared(player:p,state:s,choice:choice,date:date,revision:-1,in:c))
+            XCTAssertThrowsError(try CareerMatchStore.startPrepared(player:p,state:s,choice:choice,date:date,revision:rev,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(s.revision,rev);XCTAssertEqual(p.fatigue,fatigue)
+            XCTAssertNil(try CareerMatchStore.record(player:p,fixture:CareerMatchStore.today(player:p,state:s),in:c))
+            let row=try CareerMatchStore.startPrepared(player:p,state:s,choice:choice,date:date,revision:rev,in:c)
+            let initial=try row.snapshot();XCTAssertEqual(initial.preparation?.analysis,analysis)
+            var plain=initial,planned=initial;plain.preparation=nil
+            try plain.advance(.automatic);try planned.advance(.automatic);planned.preparation=nil
+            XCTAssertEqual(plain,planned,"planning is a goal, not a hidden probability/RNG bonus")
+            let alternative:MatchPlanChoice=role == .batter ? .power:.innings
+            XCTAssertThrowsError(try CareerMatchStore.startPrepared(player:p,state:s,choice:alternative,date:date,revision:s.revision,in:c))
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? p.pitches[0].code:nil,in:c)
+            let bytes=row.payload
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,bytes)
+            XCTAssertEqual(try CareerMatchStore.startPrepared(player:p,state:s,choice:choice,date:date,revision:-1,in:c).payload,bytes)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(row.payload,bytes)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            let result=try row.snapshot(),raw=row.payload,after=p.fatigue
+            XCTAssertNotNil(MatchPlanOutcome.make(match:result));XCTAssertEqual(result.preparation?.choice,choice)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+            XCTAssertEqual(row.payload,raw);XCTAssertEqual(p.fatigue,after)
+        }
+    }
+    func testGamePlanReportEvidenceFreezesOnceAndRollsBackWithReportBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,packet)=try acceptance(role),c=store.mainContext
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:packet.offers[0].id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let row=try CareerMatchStore.startPrepared(player:p,state:s,choice:role == .batter ? .contact:.strikeout,date:p.gameDate,revision:s.revision,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            let raw=row.payload
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertNil(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).gamePlanReports,"same-period reports stay frozen")
+            p.gameDate=try ScoutingPeriod(origin:GameDate(s.originDate),today:GameDate(p.gameDate)).next.description;try c.save()
+            let before=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,rev=s.revision,fatigue=p.fatigue
+            XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,before)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),proof=try XCTUnwrap(owner.gamePlanReports?.first)
+            XCTAssertEqual(proof.results.map(\.matchKey),[row.key])
+            XCTAssertEqual(proof.results.first?.outcome,MatchPlanOutcome.make(match:try row.snapshot()))
+            XCTAssertEqual(proof.results.first?.mode,.automatic)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).gamePlanReports,[proof])
+            p.gameDate=try ScoutingPeriod(origin:GameDate(s.originDate),today:GameDate(p.gameDate)).next.description;try c.save()
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).gamePlanReports,[proof])
+            XCTAssertEqual(row.payload,raw);XCTAssertEqual(s.revision,rev);XCTAssertEqual(p.fatigue,fatigue)
+        }
+    }
+    func testGamePlanOutcomeMinimumSamplesAndAllPlanThresholds() throws {
+        for role in PlayerRole.allCases {
+            var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "SS":"P",values:PlayerArchetype.initial(for:role).values,seed:101,home:true,tracked:true)
+            let roster=MatchNPCFielders.make(year:2030,competition:"highschool",homeID:"home",awayID:"away")
+            for choice in MatchPlanChoice.choices(role.rawValue) {
+                match.preparation=MatchPreparation(version:1,fixtureID:"test",choice:choice,analysis:MatchOppositionAnalysis.make(roster:roster,isHome:true))
+                match.completed=false;XCTAssertNil(MatchPlanOutcome.make(match:match))
+                match.completed=true;match.line=MatchLine()
+                XCTAssertEqual(MatchPlanOutcome.make(match:match)?.label,"개인 표본 부족")
+                match.line.plateAppearances=3;match.line.hits=1;match.line.homeRuns=1
+                match.line.pitchingOuts=18;match.line.pitchingStrikeouts=3
+                XCTAssertEqual(MatchPlanOutcome.make(match:match)?.label,"계획 달성")
+                match.line.strikeouts=2;match.line.pitchingWalks=2;match.line.runsAllowed=4
+                XCTAssertNotEqual(MatchPlanOutcome.make(match:match)?.label,"계획 달성")
+            }
+        }
+    }
+    func testPlannedMatchV12DiskReopenKeepsSnapshotAndLegacyMigration() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store");var id:UUID!,raw:Data!,preparation:MatchPreparation!
+        do {
+            let (store,p,s,packet)=try acceptance(.pitcher,legacyURL:url),c=store.mainContext
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:packet.offers[0].id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let row=try CareerMatchStore.startPrepared(player:p,state:s,choice:.innings,date:p.gameDate,revision:s.revision,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.pitch,pitchCode:p.pitches[0].code,in:c)
+            id=p.id;raw=row.payload;preparation=try row.snapshot().preparation
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        let row=try CareerMatchStore.start(player:p,state:s,in:c)
+        XCTAssertEqual(row.payload,raw);XCTAssertEqual(try row.snapshot().preparation,preparation)
+        try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+        XCTAssertNotNil(MatchPlanOutcome.make(match:try row.snapshot()))
+    }
+}
