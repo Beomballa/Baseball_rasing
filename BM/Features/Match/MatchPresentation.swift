@@ -2277,11 +2277,13 @@ struct InplayStartupReadiness {
 }
 
 private struct InplayFieldSurface:View {
+    @State private var lowPower=ProcessInfo.processInfo.isLowPowerModeEnabled
     private var frameRate:Int {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-inplay-30hz-comparison") {return 30}
         if ProcessInfo.processInfo.arguments.contains("-ground-60hz-comparison") {return 60}
         #endif
-        return 30
+        return lowPower || finished || previewTime != nil || reduced ? 30:60
     }
     let scene:InplayFieldScene
     let scoreText:String
@@ -2298,11 +2300,15 @@ private struct InplayFieldSurface:View {
                     #if DEBUG
                     MatchRenderMetrics.mark("surfaceAppeared")
                     #endif
+                    lowPower=ProcessInfo.processInfo.isLowPowerModeEnabled
                     scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText)
                     scene.setReduced(reduced);scene.setEffectsReduced(effectsReduced);scene.setPreviewTime(previewTime);scene.setFinished(finished)
                     #if DEBUG
                     scene.setContactPoints(showsContactPoints)
                     #endif
+                }
+                .onReceive(NotificationCenter.default.publisher(for:.NSProcessInfoPowerStateDidChange).receive(on:RunLoop.main)) {_ in
+                    lowPower=ProcessInfo.processInfo.isLowPowerModeEnabled
                 }
                 .onChange(of:geometry.frame(in:.global)) {_,frame in scene.canvasFrame=frame}
                 .onChange(of:scoreText) {_,value in scene.setScore(value)}

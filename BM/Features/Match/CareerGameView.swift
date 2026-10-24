@@ -67,26 +67,42 @@ struct CareerGameView: View {
                        "foregroundScene":UIApplication.shared.connectedScenes.contains {$0.activationState == .foregroundActive}]
             try JSONEncoder().encode(phase).write(to:FileManager.default.temporaryDirectory.appendingPathComponent("actual-career-phase-"+player.role.rawValue+".json"),options:.atomic)
             guard active else {return}
-            for _ in 0..<24 {
-                guard !Task.isCancelled,let record,!record.completed,error == nil else {break}
-                let match=try record.snapshot()
-                if player.role == .pitcher && !match.ownPitcherActive {break}
-                let delivery=match.delivery(pitchCode:pitchCode)
-                aimX=delivery.x;aimY=delivery.y;battingAction = .swing
-                begin()
-                let target=player.role == .pitcher ? ManualMatchRules.releaseCenter:MatchDelivery.contactPhase
-                while clock.running && clock.phase<target {try await Task.sleep(for:.milliseconds(10))}
-                if clock.running {resolve()}
+            var replayedEventID:String?
+            if ProcessInfo.processInfo.arguments.contains("-qa-replay-saved-play") {
+                guard let record,record.completed else {throw NSError(domain:"BM.QA",code:4,userInfo:[NSLocalizedDescriptionKey:"완료된 별도 QA 경기가 필요합니다."])}
+                let saved=try record.snapshot()
+                let savedPayload=record.payload,savedRevision=record.revision,savedFatigue=player.fatigue,savedDate=player.gameDate
+                guard let play=saved.fieldPlays?.first(where:{$0.ownBatter || $0.ownParticipation || player.role == .pitcher}) else {
+                    throw NSError(domain:"BM.QA",code:5,userInfo:[NSLocalizedDescriptionKey:"저장된 QA 타구가 없습니다."])
+                }
+                replayedEventID=play.eventID
+                visualSnapshot=saved;presenting=true;fieldResolved=false;replay=play
                 while presenting {try await Task.sleep(for:.milliseconds(50))}
-                if MatchRenderMetrics.lifecycle.contains(where:{$0.name=="career.inplay.exit"}) {break}
+                guard record.payload==savedPayload,record.revision==savedRevision,player.fatigue==savedFatigue,player.gameDate==savedDate else {
+                    throw NSError(domain:"BM.QA",code:6,userInfo:[NSLocalizedDescriptionKey:"읽기 전용 QA 저장 불일치"])
+                }
+            } else {
+                for _ in 0..<24 {
+                    guard !Task.isCancelled,let record,!record.completed,error == nil else {break}
+                    let match=try record.snapshot()
+                    if player.role == .pitcher && !match.ownPitcherActive {break}
+                    let delivery=match.delivery(pitchCode:pitchCode)
+                    aimX=delivery.x;aimY=delivery.y;battingAction = .swing
+                    begin()
+                    let target=player.role == .pitcher ? ManualMatchRules.releaseCenter:MatchDelivery.contactPhase
+                    while clock.running && clock.phase<target {try await Task.sleep(for:.milliseconds(10))}
+                    if clock.running {resolve()}
+                    while presenting {try await Task.sleep(for:.milliseconds(50))}
+                    if MatchRenderMetrics.lifecycle.contains(where:{$0.name=="career.inplay.exit"}) {break}
+                }
             }
             guard !Task.isCancelled,let record,error == nil else {return}
             if !record.completed {advance(.automatic)}
             try await Task.sleep(for:.seconds(2))
             let snapshot=try record.snapshot(),before=record.payload,beforeFatigue=player.fatigue
             let reopened=try CareerMatchStore.start(player:player,state:calendar,in:context)
-            struct Audit:Encodable {let sessionStore:String;let active:Bool;let completed:Bool;let inplay:Bool;let sameRecord:Bool;let samePayload:Bool;let sameFatigue:Bool;let recordCount:Int}
-            let audit=Audit(sessionStore:try LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier).lastPathComponent,active:liveQAWindowActive,completed:snapshot.completed,inplay:MatchRenderMetrics.lifecycle.contains {$0.name=="career.inplay.exit"},sameRecord:reopened.id==record.id,samePayload:reopened.payload==before,sameFatigue:player.fatigue==beforeFatigue,recordCount:try context.fetch(FetchDescriptor<CareerMatchRecord>()).filter {$0.playerID==player.id}.count)
+            struct Audit:Encodable {let replayedEventID:String?;let sessionStore:String;let active:Bool;let completed:Bool;let inplay:Bool;let sameRecord:Bool;let samePayload:Bool;let sameFatigue:Bool;let recordCount:Int}
+            let audit=Audit(replayedEventID:replayedEventID,sessionStore:try LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier).lastPathComponent,active:liveQAWindowActive,completed:snapshot.completed,inplay:MatchRenderMetrics.lifecycle.contains {$0.name=="career.inplay.exit"},sameRecord:reopened.id==record.id,samePayload:reopened.payload==before,sameFatigue:player.fatigue==beforeFatigue,recordCount:try context.fetch(FetchDescriptor<CareerMatchRecord>()).filter {$0.playerID==player.id}.count)
             let data=try JSONEncoder().encode(audit)
             try data.write(to:FileManager.default.temporaryDirectory.appendingPathComponent("actual-career-audit-"+player.role.rawValue+".json"),options:.atomic)
             MatchRenderMetrics.mark("career.qa.completed")

@@ -2465,3 +2465,15 @@ import SpriteKit
         XCTAssertEqual(first.deletingLastPathComponent().standardizedFileURL,FileManager.default.temporaryDirectory.standardizedFileURL)
     }
 }
+
+@MainActor final class InplayCadenceReadinessTests:XCTestCase {
+    func testFirstFrameGateAcceptsStableThirtyAndSixtyWithoutChangingTimeBasis() {
+        for rate in [30.0,60.0] {
+            var gate=InplayStartupReadiness()
+            gate.observe(at:100);XCTAssertFalse(gate.isReady)
+            gate.observe(at:100+1/rate);XCTAssertFalse(gate.isReady)
+            gate.observe(at:100+2/rate);XCTAssertTrue(gate.isReady)
+            XCTAssertEqual(gate.frameCount,3)
+        }
+    }
+}
