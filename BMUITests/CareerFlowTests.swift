@@ -2824,3 +2824,23 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testCollegeProOffersAcceptanceAndAcademicPendingBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let eligibility=app.staticTexts["collegeProEligibility"];revealFit(eligibility,in:app);XCTAssertTrue(eligibility.label.contains("자격 충족"))
+            let review=app.staticTexts["collegeProReview"];revealFit(review,in:app);XCTAssertTrue(review.exists)
+            let open=app.buttons["openDomesticOffers"];revealFit(open,in:app);open.tap()
+            let detail=app.buttons["liveOfferDetail-rookie"];revealFit(detail,in:app);detail.tap()
+            let guide=app.staticTexts["liveOfferDecisionGuide"];revealFit(guide,in:app);XCTAssertTrue(guide.label.contains("2033-04-01"))
+            let accept=app.buttons["acceptLiveOffer"];revealFit(accept,in:app);accept.tap();app.buttons["confirmOfferDecision"].firstMatch.tap()
+            let receipt=app.staticTexts["liveOfferDecisionReceipt"];revealFit(receipt,in:app);XCTAssertTrue(receipt.label.contains("예약"))
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+            let pending=app.staticTexts["collegeProTransitionStatus"];revealFit(pending,in:app);XCTAssertTrue(pending.label.contains("전환 예정"))
+            let rights=app.staticTexts["contractRightsStatus"];revealFit(rights,in:app);XCTAssertTrue(rights.label.contains("대학 학적"))
+        }
+        app.terminate()
+    }
+}

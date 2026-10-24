@@ -403,7 +403,7 @@ struct DomesticOfferHomePanel: View {
                 if value.offers.isEmpty {
                     Text(value.emptyReasons.first ?? "이번 창의 제의 없음").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 } else {
-                    Text(value.offers.map {$0.name+" · "+($0.reentry == true ? "재입단":$0.route.label)}.joined(separator:" / ")).font(.caption)
+                    Text(value.offers.map {$0.name+" · "+($0.collegeEntry != nil ? "대학→프로":$0.reentry == true ? "재입단":$0.route.label)}.joined(separator:" / ")).font(.caption)
                 }
                 NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation)} label: {
                     Text(value.offers.isEmpty ? "제의 없음 · 부족 조건 확인":active > 0 ? "도착한 제의 · 상세/비교":"제의 결정 · 이력 보기")
@@ -469,11 +469,11 @@ struct DomesticOffersView: View {
             .toolbarColorScheme(.dark,for:.navigationBar).tint(GameTheme.gold)
             .confirmationDialog("제의 결정을 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
                 if let selected=command {
-                    Button(selected.accept ? "수락하고 소속 발효":"거절 확정",role:selected.accept ? nil:.destructive) {complete(selected)}.accessibilityIdentifier("confirmOfferDecision")
+                    Button(selected.accept ? "수락 확정":"거절 확정",role:selected.accept ? nil:.destructive) {complete(selected)}.accessibilityIdentifier("confirmOfferDecision")
                 }
                 Button("취소",role:.cancel) {command=nil}
             } message: {
-                if let selected=command {Text(selected.accept ? "\(selected.offer.name) 소속으로 오늘 등록합니다. 다른 열린 제의는 모두 닫히며 날짜·피로·능력치는 그대로 유지합니다.":"이 제의를 거절합니다. 같은 창에서 다시 발행하지 않으며 다른 열린 제의는 유지합니다.")}
+                if let selected=command {Text(selected.accept ? "\(selected.offer.name) 계약을 수락합니다. \(selected.offer.collegeEntry.map { $0.effectiveDate+"부터 프로 소속으로 전환하며 그 전까지 대학 소속을 유지합니다." } ?? "오늘 소속을 등록합니다.") 다른 열린 제의는 닫히며 날짜·피로·능력치는 유지합니다.":"이 제의를 거절합니다. 같은 창에서 다시 발행하지 않으며 다른 열린 제의는 유지합니다.")}
             }
             .alert("제의 결정을 완료하지 못했습니다",isPresented:Binding(get:{failure != nil},set:{if !$0 {failure=nil}})) {
                 Button("확인") {failure=nil}
@@ -482,14 +482,14 @@ struct DomesticOffersView: View {
     private func complete(_ selected:Command) {
         do {
             try ContractRegistrationStore.decide(player:player,calendar:calendar,offerID:selected.offer.id,accept:selected.accept,date:selected.date,revision:selected.revision,in:context)
-            receipt=selected.accept ? selected.offer.name+" · 수락/소속 발효 완료":"제의 거절 완료 · 다른 열린 제의는 유지합니다."
+            receipt=selected.accept ? selected.offer.name+(selected.offer.collegeEntry != nil ? " · 수락/소속 전환 예약 완료":" · 수락/소속 발효 완료"):"제의 거절 완료 · 다른 열린 제의는 유지합니다."
         } catch {failure=error.localizedDescription}
         command=nil
     }
     private var title:String {switch page {case .list:"도착한 제의";case .detail:"제의 상세";case .compare:"제의 비교"}}
     private func status(_ offer:DomesticContractOffer) -> String {
         if let decision=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).decisions.first(where:{$0.offerID == offer.id}) {
-            switch decision.kind {case .accepted:return "수락 · 소속 발효";case .rejected:return "거절 완료";case .closed:return "다른 제의 수락으로 종료"}
+            switch decision.kind {case .accepted:return offer.collegeEntry.map {$0.effectiveDate > player.gameDate ? "수락 · 전환 예약":"수락 · 소속 발효"} ?? "수락 · 소속 발효";case .rejected:return "거절 완료";case .closed:return "다른 제의 수락으로 종료"}
         }
         guard let date=try? GameDate(player.gameDate),let expired=try? offer.isExpired(on:date) else {return "날짜 확인 필요"}
         return expired ? "기간 만료":"검토 가능"
@@ -505,7 +505,7 @@ struct DomesticOffersView: View {
             }
         }
         ForEach(packet.offers) {offer in
-            GamePanel(title:offer.reentry == true ? "무소속 재도전 · 육성팀 재입단":offer.route == .rookie ? "프로 진입 · 신인 지명":"학적 선택 · 대학 선발",onBoard:true,contentSpacing:12) {
+            GamePanel(title:offer.collegeEntry != nil ? "대학 재학생 · 프로 진출":offer.reentry == true ? "무소속 재도전 · 육성팀 재입단":offer.route == .rookie ? "프로 진입 · 신인 지명":"학적 선택 · 대학 선발",onBoard:true,contentSpacing:12) {
                 Text(offer.name).font(.title3.bold()).foregroundStyle(GameTheme.gold)
                 Text(offer.kind+" / "+DomesticContractOffer.roleName(offer.roleID)).font(.subheadline)
                 Text(status(offer)+" · "+offer.expiresDate+"까지(포함)").font(.caption).accessibilityIdentifier("liveOfferStatus-"+offer.route.rawValue)
@@ -534,7 +534,7 @@ struct DomesticOffersView: View {
                 detailRow("계약금/옵션/성과급","0 · 실제 통화 금액 아님")
                 detailRow("연간 예산","잔여\(offer.availableBudget) / 필요\(offer.economicIndex)지수")
                 detailRow("경쟁/선발","적격 경쟁\(offer.competition)명 · 고정F/ID 순으로 선발")
-                detailRow("필요 확인","성인 무소속 신규 지원 · 수락/등록은 별도")
+                detailRow("필요 확인",offer.collegeEntry != nil ? "대학 재학생 자격 검증 · 발효 전 대학 소속/학적 유지":"성인 무소속 신규 지원 · 수락/등록은 별도")
                 detailRow("출전 보장","없음 · 입단 후 역할/선발 경쟁")
             }
             GamePanel(title:"선발 근거 · 고정 평가 자료",onBoard:true,contentSpacing:12) {
@@ -548,7 +548,7 @@ struct DomesticOffersView: View {
                     .font(.caption).foregroundStyle(GameTheme.boardMuted)
             }
             if status(offer) == "검토 가능" {
-                Text("수락하면 오늘 소속이 발효되고 다른 열린 제의는 닫힙니다. 진행 중인 경기·훈련을 먼저 마쳐 주세요.").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferDecisionGuide")
+                Text(offer.collegeEntry.map {"수락 시 "+$0.effectiveDate+" 소속 전환을 예약하며 그 전까지 대학 소속을 유지합니다. 다른 열린 제의는 닫힙니다."} ?? "수락하면 오늘 소속이 발효되고 다른 열린 제의는 닫힙니다. 진행 중인 경기·훈련을 먼저 마쳐 주세요.").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferDecisionGuide")
                 Button("수락 · 소속 등록") {command=Command(offer:offer,accept:true,date:player.gameDate,revision:calendar.revision)}
                     .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptLiveOffer")
                 Button("이 제의 거절") {command=Command(offer:offer,accept:false,date:player.gameDate,revision:calendar.revision)}
@@ -561,6 +561,7 @@ struct DomesticOffersView: View {
         if let member=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).memberships.first(where:{$0.offerID == offer.id}) {
             return member.since+" 발효 · 경제 기간 "+member.economicEnd+(member.route == .rookie ? " / 보유 권리는 별도":" / 학적 종료 "+(member.enrollmentEnd ?? "—"))
         }
+        if let entry=offer.collegeEntry {return entry.effectiveDate+" 발효 · 1년 경제 기간 / 대학 학적 원본 보존"}
         return "수락일 발효 · 1년 경제 기간 / 현재 소속 유지"
     }
     private func detailRow(_ label:String,_ value:String) -> some View {

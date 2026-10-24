@@ -199,6 +199,9 @@ struct CareerPathVerification: View {
                     _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:c.mainContext)
                     if args.contains("-offer-expired"),age == 20 {p.gameDate="2030-04-08"}
                     try c.mainContext.save()
+                    if args.contains("-college-pro-verification"),age == 20,args.contains("-selection-qualified") {
+                        try seedCollegePro(player:p,calendar:calendar,in:c.mainContext)
+                    }
                     if args.contains("-renewal-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedRenewal(player:p,calendar:calendar,in:c.mainContext,empty:args.contains("-renewal-empty"),expired:args.contains("-renewal-expired"))
                     }
@@ -206,6 +209,23 @@ struct CareerPathVerification: View {
                 self.schools = schools;self.container = c
             } catch { failure = error.localizedDescription }
         }
+    }
+    @MainActor private func seedCollegePro(player p:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws {
+        let evaluation=try ContractEvaluationStore.records(player:p,calendar:calendar,in:context).first!
+        let packet=try ContractOfferStore.records(player:p,calendar:calendar,in:context).first!.snapshot(evaluation:evaluation,player:p,calendar:calendar)
+        let offer=packet.offers.first {$0.route == .college}!
+        try ContractRegistrationStore.decide(player:p,calendar:calendar,offerID:offer.id,accept:true,date:p.gameDate,revision:calendar.revision,in:context)
+        let member=try calendar.registration(for:p)!
+        for (index,fixture) in try calendar.fixtures(for:p,year:2032).filter({$0.isAppearance(for:p.role)}).enumerated() {
+            p.gameDate=fixture.date.description
+            var values=PlayerInitialValues(contact:80,power:80,discipline:80,speed:60,defense:80,arm:65)
+            values.velocity=80;values.control=80;values.stuff=80;values.stamina=80
+            var match=ScoutingReferenceSimulation.fixture(role:p.role,position:p.role == .batter ? p.positionRaw:"P",values:values,seed:UInt64(8200+index),home:fixture.homeID == member.teamID,tracked:true)
+            match.competition="college";try match.advance(.automatic)
+            let row=try CareerMatchRecord(player:p,fixture:fixture,match:match);row.completed=true;row.rulesVersion="native-match-v2";context.insert(row)
+        }
+        p.gameDate="2032-11-01";try context.save()
+        _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:context);try context.save()
     }
     @MainActor private func seedRenewal(player p:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext,empty:Bool,expired:Bool) throws {
         let evaluation=try ContractEvaluationStore.records(player:p,calendar:calendar,in:context).first!

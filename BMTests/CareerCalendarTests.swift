@@ -2150,3 +2150,147 @@ extension CareerCalendarTests {
         XCTAssertTrue(try DomesticRetryReview.make(observation:observation,release:release,window:window,certificate:failed,certificationEnabled:true).results.allSatisfy {!$0.selected})
     }
 }
+
+extension CareerCalendarTests {
+    private func collegeProFixture(_ role:PlayerRole,games:Bool=true,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+        let (store,p,s,packet)=try acceptance(role,legacyURL:legacyURL),c=store.mainContext
+        let offer=try XCTUnwrap(packet.offers.first {$0.route == .college})
+        try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        let member=try XCTUnwrap(s.registration(for:p))
+        if games {
+            for (index,fixture) in try s.fixtures(for:p,year:2032).filter({$0.isAppearance(for:role)}).enumerated() {
+                p.gameDate=fixture.date.description
+                var values=PlayerInitialValues(contact:80,power:80,discipline:80,speed:60,defense:80,arm:65)
+                values.velocity=80;values.control=80;values.stuff=80;values.stamina=80
+                var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",values:values,seed:UInt64(8200+index),home:fixture.homeID == member.teamID,tracked:true)
+                match.competition="college";try match.advance(.automatic)
+                let row=try CareerMatchRecord(player:p,fixture:fixture,match:match);row.completed=true;row.rulesVersion="native-match-v2";c.insert(row)
+            }
+        }
+        p.gameDate="2032-11-01";try c.save();return (store,p,s)
+    }
+    private func collegeProOffer(_ p:CareerPlayer,_ s:CareerCalendarState,_ c:ModelContext) throws -> DomesticContractOffer {
+        try ContractEvaluationStore.registerCurrent(in:c)
+        let evaluation=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+        let packet=try XCTUnwrap(ContractOfferStore.records(player:p,calendar:s,in:c).first).snapshot(evaluation:evaluation,player:p,calendar:s)
+        return try XCTUnwrap(packet.offers.first)
+    }
+    func testCollegeProEligibilityRejectsYoungShortEnrollmentAndWrongWindow() throws {
+        let (store,p,s)=try collegeProFixture(.batter,games:false),c=store.mainContext,member=try XCTUnwrap(s.registration(for:p))
+        XCTAssertFalse(try CollegeProReview.eligible(member:member,age:21,on:GameDate("2031-11-01")))
+        XCTAssertFalse(try CollegeProReview.eligible(member:member,age:22,on:GameDate("2031-11-01")))
+        XCTAssertFalse(try CollegeProReview.eligible(member:member,age:24,on:GameDate("2034-11-01")))
+        XCTAssertTrue(try CollegeProReview.eligible(member:member,age:22,on:GameDate("2032-11-01")))
+        p.gameDate="2032-07-01";try c.save();XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
+        p.gameDate="2032-11-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+        let value=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first).snapshot(player:p,calendar:s)
+        XCTAssertEqual(value.version,6);XCTAssertTrue(try XCTUnwrap(value.college).results.allSatisfy {!$0.selected})
+        XCTAssertTrue(value.college!.results.allSatisfy {$0.reasons.contains { $0.contains("대학 공식 성적") }})
+    }
+    func testCollegeProFrozenSelectionAndAcceptancePreserveAcademicRecordsBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try collegeProFixture(role),c=store.mainContext,original=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            let offer=try collegeProOffer(p,s,c),date=p.gameDate,fatigue=p.fatigue
+            let frozen=try ContractEvaluationStore.records(player:p,calendar:s,in:c).map(\.payload)
+            let matches=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            XCTAssertNotNil(offer.collegeEntry);XCTAssertNil(offer.reentry);XCTAssertEqual(offer.p,0)
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:date,revision:s.revision,in:c)
+            let journal=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertEqual(journal.memberships.first,original.memberships.first);XCTAssertEqual(journal.collegeTransitions?.count,1)
+            XCTAssertEqual(try s.registration(for:p)?.route,.college)
+            XCTAssertEqual(try journal.current(on:GameDate("2033-03-31"))?.route,.college)
+            XCTAssertEqual(try journal.current(on:GameDate("2033-04-01"))?.route,.rookie)
+            XCTAssertEqual(journal.memberships.last?.economicEnd,"2034-03-31")
+            XCTAssertEqual(journal.memberships.first?.enrollmentEnd,"2034-03-31")
+            XCTAssertEqual(try s.competition(for:p,year:2032).membership?.route,.college)
+            XCTAssertEqual(try s.competition(for:p,year:2033).membership?.route,.rookie)
+            XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).map(\.payload),frozen)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matches)
+            XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue)
+            let bytes=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:date,revision:-1,in:c,save:{_ in XCTFail("duplicate")})
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,bytes)
+            XCTAssertThrowsError(try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:false,date:date,revision:s.revision,in:c))
+            XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
+        }
+    }
+    func testCollegeProAcceptanceFailureAndRejectionLeaveEnrollmentIntact() throws {
+        let (store,p,s)=try collegeProFixture(.pitcher),c=store.mainContext,offer=try collegeProOffer(p,s,c)
+        let bytes=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,revision=s.revision
+        XCTAssertThrowsError(try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+        XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,bytes);XCTAssertEqual(s.revision,revision)
+        try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:false,date:p.gameDate,revision:revision,in:c)
+        XCTAssertEqual(try s.registration(for:p)?.route,.college)
+        XCTAssertNil(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).collegeTransitions)
+    }
+    func testCollegeProTransitionNextSeasonMatchResumeAndOneTimeResultBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try collegeProFixture(role),c=store.mainContext,offer=try collegeProOffer(p,s,c)
+            let college=try CareerSeasonStore.load(player:p,state:s,year:2032,in:c)
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            p.gameDate="2033-04-01";try c.save()
+            XCTAssertEqual(try s.registration(for:p)?.route,.rookie)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let record=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? p.pitches[0].code:nil,in:c)
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,record.payload)
+            try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c)
+            let completed=record.payload,fatigue=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c))
+            XCTAssertEqual(record.payload,completed);XCTAssertEqual(p.fatigue,fatigue)
+            XCTAssertEqual(try CareerSeasonStore.load(player:p,state:s,year:2033,in:c).totals.games,1)
+            XCTAssertEqual(try CareerSeasonStore.load(player:p,state:s,year:2032,in:c).totals.games,college.totals.games)
+            p.gameDate="2033-11-01";try c.save()
+            try ContractEvaluationStore.registerCurrent(in:c)
+            XCTAssertNotNil(try ContractEvaluationStore.records(player:p,calendar:s,in:c).first?.snapshot(player:p,calendar:s).renewal)
+        }
+    }
+    func testCollegeProLegacyDiskReopenPreservesOriginalsAndPendingTransition() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store")
+        var id:UUID!,academic:CareerMembership!,frozen:[Data]=[],records:[Data]=[]
+        do {
+            let (store,p,s)=try collegeProFixture(.batter,legacyURL:url),c=store.mainContext
+            id=p.id;academic=try s.registration(for:p)
+            let offer=try collegeProOffer(p,s,c)
+            frozen=try ContractEvaluationStore.records(player:p,calendar:s,in:c).map(\.payload)
+            records=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+        let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id})
+        let s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        XCTAssertEqual(try s.registration(for:p),academic)
+        XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).map(\.payload),frozen)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),records)
+        XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).collegeTransitions?.count,1)
+        let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),data=row.payload
+        var json=try XCTUnwrap(JSONSerialization.jsonObject(with:data) as? [String:Any])
+        json.removeValue(forKey:"collegeTransitions");row.payload=try JSONSerialization.data(withJSONObject:json)
+        XCTAssertThrowsError(try ContractRegistrationStore.journal(player:p,calendar:s,in:c))
+        c.rollback()
+    }
+}
+
+
+extension CareerCalendarTests {
+    func testCollegeProBulkStopsAtNovemberAndRollbackCanRetry() async throws {
+        let (store,p,s)=try collegeProFixture(.batter),c=store.mainContext
+        p.gameDate="2032-10-31";try c.save()
+        let before=s.revision
+        do {
+            _ = try await CalendarProgression.advanceOffDays(player:p,state:s,in:c,save:{_ in throw MatchError.invalidRecord})
+            XCTFail("expected save failure")
+        } catch is CalendarAdvanceFailure {}
+        XCTAssertEqual(p.gameDate,"2032-10-31");XCTAssertEqual(s.revision,before)
+        XCTAssertFalse(try ContractEvaluationStore.records(player:p,calendar:s,in:c).contains {$0.key.hasSuffix("2032-11")})
+        let summary=try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
+        XCTAssertEqual(summary.stop,.evaluation);XCTAssertEqual(summary.days,1);XCTAssertEqual(p.gameDate,"2032-11-01")
+        let row=try XCTUnwrap(ContractEvaluationStore.unread(player:p,calendar:s,in:c)),bytes=row.payload
+        try ContractEvaluationStore.acknowledge(player:p,calendar:s,key:row.key,date:p.gameDate,revision:s.revision,in:c)
+        p.power += 1;try c.save()
+        XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c));XCTAssertEqual(row.payload,bytes)
+    }
+}
