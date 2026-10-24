@@ -148,13 +148,13 @@ struct ScoutingReference: Codable, Equatable {
     var inputMode: ScoutingInputMode?
     var value: Double? { performance.contribution(totals.line,role:role) }
     func validate() throws {
-        guard [1,2].contains(version), profiles.count == 3, gamesPerProfile == (role == .batter ? 20:6),
+        guard [1,2,3].contains(version), profiles.count == 3, gamesPerProfile == (role == .batter ? 20:6),
               totals.games == profiles.count*gamesPerProfile, value?.isFinite == true else { throw ScoutingObservationError.invalid }
         if version == 1 {
             guard performance.version == 1, !performance.manual, inputPolicy == nil, inputMode == nil,
                   environment.hasSuffix("/\(position)/auto-v1") else {throw ScoutingObservationError.invalid}
         } else {
-            guard inputPolicy == "standard-controls-v1", let inputMode, performance.version == 2,
+            guard inputPolicy == (version == 3 ? "adult-standard-controls-v1":"standard-controls-v1"), let inputMode, performance.version == 2,
                   performance.inputs?.mode == inputMode,
                   environment.hasSuffix("/\(position)/"+inputMode.suffix) else {throw ScoutingObservationError.invalid}
         }
@@ -700,6 +700,11 @@ struct DomesticRelease:Codable,Equatable {let membershipOfferID:String;let date:
 struct CollegeProEntry:Codable,Equatable {let membershipOfferID:String;let effectiveDate:String}
 struct CollegeProTransition:Codable,Equatable {let offerID:String;let source:CollegeProEntry;let acceptedDate:String}
 struct CareerContractJournal:Codable,Equatable {
+    static func == (lhs:Self,rhs:Self) -> Bool {
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        guard let a=try? encoder.encode(lhs),let b=try? encoder.encode(rhs) else {return false}
+        return a == b
+    }
     var version=1
     let playerID:UUID
     var revision=0
@@ -710,6 +715,7 @@ struct CareerContractJournal:Codable,Equatable {
     var releases:[DomesticRelease]? = nil
     var collegeTransitions:[CollegeProTransition]? = nil
     var overseasEligibility:[OverseasEligibilitySnapshot]? = nil
+    var overseasReports:[OverseasScoutingReport]? = nil
     func membershipHistory() -> [CareerMembership] {
         memberships.map {member in
             var value=member
@@ -734,6 +740,12 @@ struct CareerContractJournal:Codable,Equatable {
         for value in overseas {
             guard value.evidence.origin == calendar.originDate,value.evidence.startAge == player.startAge else {throw ContractRegistrationError.invalid}
             try value.validate(playerID:player.id,today:today)
+        }
+        let reports=overseasReports ?? []
+        guard Set(reports.map(\.id)).count == reports.count else {throw ContractRegistrationError.invalid}
+        for report in reports {
+            guard report.observation.origin == calendar.originDate else {throw ContractRegistrationError.invalid}
+            try report.validate(playerID:player.id,today:today)
         }
         for decision in decisions {
             guard let offer=offers.first(where:{$0.id == decision.offerID}) else {throw ContractRegistrationError.invalid}
@@ -1150,5 +1162,124 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
     func validate(playerID:UUID,today:GameDate) throws {
         guard version == 1,policy == "overseas-eligibility-v1/2026-reference",evidence.playerID == playerID,
               try GameDate(evidence.date) <= today,self == (try Self.make(evidence)) else {throw ContractEvaluationError.invalid}
+    }
+}
+
+// New adult reference pool; old high-school/reference versions and frozen reports stay unchanged.
+@MainActor extension ScoutingReferenceSimulation {
+    static func adultProfiles(level:String,role:PlayerRole) -> [PlayerInitialValues] {
+        let extra=level == "college" ? 6.0:12.0
+        return PlayerArchetype.choices(for:role).map {type in
+            let v=type.values
+            func up(_ n:Double) -> Double {min(100,n+extra)}
+            var value=PlayerInitialValues(contact:up(v.contact),power:up(v.power),discipline:up(v.discipline),speed:up(v.speed),defense:up(v.defense),arm:up(v.arm))
+            value.mental=up(v.mental);value.velocity=v.velocity.map(up);value.control=v.control.map(up)
+            value.stuff=v.stuff.map(up);value.stamina=v.stamina.map(up);value.pitches=v.pitches.mapValues(up)
+            return value
+        }
+    }
+    static func adult(environment:String,role:PlayerRole,position:String) throws -> ScoutingReference? {
+        guard let level=environment.components(separatedBy:"/").first,["college","domestic-development"].contains(level),
+              let mode=ScoutingInputMode.allCases.first(where:{environment.hasSuffix("/"+$0.suffix)}),
+              role == .pitcher ? position == "P":FieldPosition(rawValue:position) != nil else {return nil}
+        let key="adult-reference-v1/"+environment
+        if let found=cache[key] {return found}
+        let profiles=adultProfiles(level:level,role:role),count=role == .batter ? 20:6
+        var totals=PersonalSeasonTotals(),performance=MatchScoutingPerformance.tracked
+        for (index,profile) in profiles.enumerated() {
+            for game in 0..<count {
+                let seed=UInt64(1_211_001+index*1_000+game),home=game%2 == 0
+                var match=fixture(role:role,position:position,values:profile,seed:seed,home:home,tracked:true,
+                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil)
+                match.competition=level
+                if match.npcFielders != nil {
+                    let ids=level == "college" ? CareerTeamDirectory.collegeIDs:CareerTeamDirectory.domesticIDs
+                    match.npcFielders=MatchNPCFielders.make(year:2026,competition:level,homeID:home ? ids[0]:ids[1+Int(seed%5)],awayID:home ? ids[1+Int(seed%5)]:ids[0])
+                }
+                guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
+                try run(&match,mode:mode)
+                let perf=match.scoutingPerformance!;try perf.validate(line:match.line,role:role)
+                try totals.add(match.line);try performance.add(perf)
+            }
+        }
+        var result=ScoutingReference(environment:environment,role:role,position:position,profiles:profiles,gamesPerProfile:count,totals:totals,performance:performance)
+        result.version=3;result.inputPolicy="adult-standard-controls-v1";result.inputMode=mode
+        try result.validate();cache[key]=result;return result
+    }
+}
+
+struct OverseasGrowthProjection:Codable,Equatable,Identifiable {
+    let roleID:String
+    let current:Double?
+    let conservative:Double?
+    let baseline:Double?
+    let optimistic:Double?
+    var id:String {roleID}
+    static func make(observation:ScoutingObservation) throws -> [Self] {
+        let date=try GameDate(observation.observedDate),origin=try GameDate(observation.origin)
+        guard date.year < 9996 else {throw ContractEvaluationError.invalid}
+        let end=date.anniversary(in:date.year+2),days=date.days(to:end)
+        func projected(roleID:String,score:Double,fatigue:Int) throws -> Double? {
+            var values=Dictionary(uniqueKeysWithValues:observation.abilities.originals.map {($0.id,$0.current)})
+            var pitches=Dictionary(uniqueKeysWithValues:observation.abilities.pitches.map {($0.id,$0.current)})
+            let selected=roleID == "field" ? ["homeContact","homePower","homeDiscipline","homeSpeed","homeDefense","homeArm","homeMental"]:roleID == "starter" ? ["homeVelocity","homeControl","homeStuff","homeStamina","homeMental"]:["homeContact","homePower","homeDiscipline","homeMental"]
+            let keys=(selected.filter {values[$0] != nil}+(roleID == "starter" ? pitches.keys.map {"pitch/"+$0}:[])).sorted()
+            guard !keys.isEmpty else {return nil}
+            for step in 0..<360 {
+                let target=date.adding(days:(step+1)*days/360),age=origin.age(startingAt:16,on:target),key=keys[step%keys.count]
+                if key.hasPrefix("pitch/") {
+                    let pitch=String(key.dropFirst(6)),before=pitches[pitch]!
+                    pitches[pitch]=TrainingRules.growth(before:before,score:score,fatigue:fatigue,age:age,pitch:true)
+                } else {values[key]=TrainingRules.growth(before:values[key]!,score:score,fatigue:fatigue,age:age,pitch:false)}
+            }
+            let originals=observation.abilities.originals.map {HomeAbilityValue(id:$0.id,label:$0.label,current:values[$0.id]!,initial:$0.initial)}
+            let pitchValues=observation.abilities.pitches.map {HomeAbilityValue(id:$0.id,label:$0.label,current:pitches[$0.id]!,initial:$0.initial)}
+            let summary=HomeAbilitySummary(axes:observation.abilities.axes,originals:originals,pitches:pitchValues,hasInitialValues:observation.abilities.hasInitialValues)
+            return try ScoutingRoleEvaluation.grades(role:observation.role,abilities:summary,positionMastery:observation.positionMastery).first {$0.id == roleID}?.score
+        }
+        return try observation.grades.map {grade in
+            Self(roleID:grade.id,current:grade.score,conservative:try projected(roleID:grade.id,score:50,fatigue:60),baseline:try projected(roleID:grade.id,score:75,fatigue:40),optimistic:try projected(roleID:grade.id,score:100,fatigue:0))
+        }
+    }
+}
+struct OverseasScoutingReport:Codable {
+    let version:Int
+    let period:Int
+    let eligibility:OverseasEligibilitySnapshot
+    let observation:ScoutingObservation
+    let comparisons:[ScoutingPerformanceComparison]
+    let projections:[OverseasGrowthProjection]
+    var id:String {observation.playerID.uuidString+":overseas-report-v1:"+String(period)}
+    var selected:ScoutingPerformanceComparison? {ScoutingContractFit.selected(comparisons,role:observation.role)}
+    @MainActor static func make(observation:ScoutingObservation,eligibility:OverseasEligibilitySnapshot) throws -> Self {
+        let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
+        let groups=observation.groups.filter {$0.id.hasPrefix(level+"/")}
+        let comparisons=try groups.map {group -> ScoutingPerformanceComparison in
+            let ref=try ScoutingReferenceSimulation.adult(environment:group.id,role:observation.role,position:observation.role == .pitcher ? "P":observation.position)
+            let value=group.performance?.contribution(group.totals.line,role:observation.role)
+            let modern=group.performance?.version == 2,verified=modern && value != nil && ref?.value != nil
+            let p=verified ? ScoutingContractFit.correction(value:value!,reference:ref!.value!,n:group.performance!.sample(group.totals.line,role:observation.role)):0
+            return ScoutingPerformanceComparison(id:group.id,totals:group.totals,performance:group.performance,reference:ref,value:value,correction:p,verified:verified,reason:verified ? "성인 표준 NPC 기준 · 원소속 수준/입력 환경 분리":"지원 환경/성적 비교 미검증 · P=0")
+        }
+        return Self(version:1,period:observation.period,eligibility:eligibility,observation:observation,comparisons:comparisons,projections:try OverseasGrowthProjection.make(observation:observation))
+    }
+    func validate(playerID:UUID,today:GameDate) throws {
+        try eligibility.validate(playerID:playerID,today:today);try observation.validate()
+        guard version == 1,observation.playerID == playerID,period == observation.period,eligibility.evidence.date == observation.observedDate,
+              comparisons.count <= observation.groups.count,Set(comparisons.map(\.id)).count == comparisons.count,
+              projections == (try OverseasGrowthProjection.make(observation:observation)) else {throw ContractEvaluationError.invalid}
+        let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
+        guard comparisons.map(\.id) == observation.groups.filter({$0.id.hasPrefix(level+"/")}).map(\.id) else {throw ContractEvaluationError.invalid}
+        for row in comparisons {
+            guard let group=observation.groups.first(where:{$0.id == row.id}),group.totals == row.totals,group.performance == row.performance else {throw ContractEvaluationError.invalid}
+            if let ref=row.reference {
+                try ref.validate()
+                guard ref.version == 3,ref.environment == row.id,ref.role == observation.role,ref.position == (observation.role == .pitcher ? "P":observation.position) else {throw ContractEvaluationError.invalid}
+            }
+            let value=row.performance?.contribution(row.totals.line,role:observation.role)
+            let verified=row.performance?.version == 2 && value != nil && row.reference?.value != nil
+            let p=verified ? ScoutingContractFit.correction(value:value!,reference:row.reference!.value!,n:row.performance!.sample(row.totals.line,role:observation.role)):0
+            guard row.value == value,row.verified == verified,row.correction == p else {throw ContractEvaluationError.invalid}
+        }
     }
 }

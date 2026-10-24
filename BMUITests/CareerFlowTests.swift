@@ -2860,3 +2860,21 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testOverseasReportBothRolesShowsFrozenAdultComparisonAndGrowth() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let open=app.buttons["openOverseasReport"];revealFit(open,in:app);open.tap()
+            let capture=app.buttons["captureOverseasReport"];capture.tap()
+            let date=app.staticTexts["overseasReportDate"];XCTAssertTrue(date.waitForExistence(timeout:5));let frozen=date.label
+            let comparison=app.staticTexts["overseasComparison"].firstMatch;revealFit(comparison,in:app);XCTAssertTrue(comparison.exists)
+            let projection=app.staticTexts["overseasProjection-"+(role == "batter" ? "slugger":"starter")];revealFit(projection,in:app);XCTAssertTrue(projection.label.contains("기준"))
+            revealFit(capture,in:app);capture.tap();XCTAssertEqual(date.label,frozen)
+            XCTAssertFalse(app.staticTexts["overseasReportError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

@@ -2355,3 +2355,66 @@ extension CareerCalendarTests {
         XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matches)
     }
 }
+
+extension CareerCalendarTests {
+    func testAdultReferenceAllInputModesBothRolesStayInTheirLevelAndValidate() throws {
+        for role in PlayerRole.allCases {for level in ["college","domestic-development"] {for mode in ScoutingInputMode.allCases {
+            var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "SS":"P",values:PlayerArchetype.initial(for:role).values,seed:321,home:true,tracked:true,battedBallVersion:1,npcFieldersVersion:1)
+            match.competition=level
+            match.npcFielders=MatchNPCFielders.make(year:2026,competition:level,homeID:"ref-a",awayID:"ref-b")
+            let prefix=try XCTUnwrap(match.scoutingEnvironment).components(separatedBy:"/").dropLast().joined(separator:"/")
+            let environment=prefix+"/"+mode.suffix
+            let ref=try XCTUnwrap(ScoutingReferenceSimulation.adult(environment:environment,role:role,position:role == .batter ? "SS":"P"))
+            try ref.validate();XCTAssertEqual(ref.version,3);XCTAssertEqual(ref.inputMode,mode);XCTAssertTrue(ref.environment.hasPrefix(level+"/"))
+            XCTAssertEqual(ref.profiles,ScoutingReferenceSimulation.adultProfiles(level:level,role:role))
+            XCTAssertEqual(ref.totals.games,role == .batter ? 60:18)
+            XCTAssertEqual(try ScoutingReferenceSimulation.adult(environment:environment,role:role,position:role == .batter ? "SS":"P")?.value,ref.value)
+        }}}
+    }
+    func testOverseasProjectionsAreOrderedBoundedAndDoNotGrowActualPlayers() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try collegeProFixture(role),c=store.mainContext
+            let source=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+            let contact=p.contact,power=p.power,pitches=p.pitches.map(\.mastery),revision=s.revision,fatigue=p.fatigue
+            let projections=try OverseasGrowthProjection.make(observation:source)
+            XCTAssertEqual(projections.map(\.roleID),source.grades.map(\.id))
+            for row in projections {if let h=row.current,let low=row.conservative,let mid=row.baseline,let high=row.optimistic {
+                XCTAssertGreaterThanOrEqual(low,h);XCTAssertGreaterThanOrEqual(mid,low);XCTAssertGreaterThanOrEqual(high,mid);XCTAssertLessThanOrEqual(high,100)
+            } else {XCTFail("missing projection")}}
+            XCTAssertEqual(p.contact,contact);XCTAssertEqual(p.power,power);XCTAssertEqual(p.pitches.map(\.mastery),pitches);XCTAssertEqual(s.revision,revision);XCTAssertEqual(p.fatigue,fatigue)
+        }
+    }
+    func testOverseasReportFreezesOnePeriodAndRollbackDoesNotChangeOldEvaluations() throws {
+        let (store,p,s)=try collegeProFixture(.batter),c=store.mainContext
+        try ContractEvaluationStore.registerCurrent(in:c)
+        let original=try ContractRegistrationStore.row(player:p,in:c)?.payload
+        let evaluations=try ContractEvaluationStore.records(player:p,calendar:s,in:c).map(\.payload)
+        XCTAssertThrowsError(try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+        XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,original)
+        try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let before=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c))
+        XCTAssertFalse(before.comparisons.isEmpty);XCTAssertTrue(before.comparisons.allSatisfy {$0.verified})
+        let bytes=try JSONEncoder().encode(before)
+        p.power += 1;try c.save()
+        try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c,save:{_ in XCTFail("same period")})
+        XCTAssertEqual(try OverseasReportStore.current(player:p,calendar:s,in:c)?.projections,before.projections)
+        XCTAssertFalse(bytes.isEmpty);XCTAssertEqual(try ContractEvaluationStore.records(player:p,calendar:s,in:c).map(\.payload),evaluations)
+        p.gameDate="2032-12-01";try c.save();try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasReports?.count,2)
+    }
+    func testOverseasReportLegacyDiskReopenKeepsFrozenComparisonAndOriginalMatches() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store");var id:UUID!,forecasts:[OverseasGrowthProjection]=[],matches:[Data]=[]
+        do {
+            let (store,p,s)=try collegeProFixture(.pitcher,legacyURL:url),c=store.mainContext
+            id=p.id;matches=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            forecasts=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c)).projections
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        let report=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c));XCTAssertEqual(report.projections,forecasts)
+        XCTAssertTrue(report.comparisons.allSatisfy {$0.verified});XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matches)
+    }
+}

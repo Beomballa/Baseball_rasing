@@ -1118,6 +1118,8 @@ struct OverseasEligibilityPanel:View {
                         Text(row.reasons.first ?? "선발 심사를 준비하세요").font(.caption)
                     }.padding(.vertical,4)
                 }
+                NavigationLink {OverseasScoutingReportView(player:player,calendar:calendar)} label: {Text("해외 성적 비교 · 성장 전망")}
+                    .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openOverseasReport")
                 HomeDetailButton(title:"경력 근거 · 부족 조건",expanded:$details,identifier:"overseasEligibilityDetails")
                 if details {
                     ForEach(value.routes) {row in
@@ -1137,5 +1139,62 @@ struct OverseasEligibilityPanel:View {
             }
             if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold)}
         }
+    }
+}
+
+struct OverseasScoutingReportView:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var report:OverseasScoutingReport?
+    @State private var failure:String?
+    @State private var working=false
+    var body:some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:16) {
+                GamePanel(title:"해외 스카우트 · 고정 자료",onBoard:true,contentSpacing:12) {
+                    Text(player.name+" · "+player.role.label).font(.title3.bold()).foregroundStyle(GameTheme.gold)
+                    if let report {
+                        Text(report.observation.observedDate+" 기준 · 28일 주기 \(report.period) 자료 고정").font(.caption).accessibilityIdentifier("overseasReportDate")
+                        Text("현재 능력과 평가일의 자료는 다를 수 있습니다. 같은 주기에서는 재평가하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    } else {Text("현재 주기의 고정 보고서가 없습니다.").font(.caption)}
+                    Button(working ? "자료 준비 중":"이번 주기 보고서 기록/확인") {capture()}
+                        .buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(working).accessibilityIdentifier("captureOverseasReport")
+                    if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasReportError")}
+                }
+                if let report {
+                    GamePanel(title:"동일 환경 · 성적 비교",onBoard:true,contentSpacing:12) {
+                        ForEach(report.comparisons) {row in
+                            VStack(alignment:.leading,spacing:7) {
+                                Text(row.id.hasPrefix("college/") ? "대학 공식 표본":"국내 육성 공식 표본").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                                Text("\(row.totals.games)경기 · \(report.observation.role == .batter ? String(row.totals.line.plateAppearances)+"타석":row.totals.innings+"이닝") · "+(row.performance?.inputs?.mode.label ?? "환경 미확인")).font(.caption)
+                                Text("P "+String(format:"%+.2f",row.correction)+" · "+row.reason).font(.caption).accessibilityIdentifier("overseasComparison")
+                            }
+                        }
+                        if report.comparisons.isEmpty {Text("현재 수준의 성적 표본 없음 · 과거 다른 수준 성적을 합치지 않습니다.").font(.caption)}
+                        Text("NPC 기준은 게임 엔진의 표준 비교 자료이며 실제 선수 평균/실사용자 분포가 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
+                    GamePanel(title:"2년 성장 전망 · 역할 기량",onBoard:true,contentSpacing:12) {
+                        ForEach(report.projections) {row in
+                            Text(DomesticContractOffer.roleName(row.roleID)).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                            Text("현재 \(number(row.current)) → 기준 \(number(row.baseline))\n보수 \(number(row.conservative)) / 낙관 \(number(row.optimistic))")
+                                .font(.subheadline.monospaced()).lineSpacing(6).accessibilityIdentifier("overseasProjection-"+row.roleID)
+                        }
+                        Text("2개 달력연도 · 연180회 훈련 예산 · 실제 나이/능력 감쇠식. 점수/피로 조건은 보수50/60·기준75/40·낙관100/0입니다. 부상/일정·노화까지 예측한 확정 성장값이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Text("전망 계산과 보고서 기록은 실제 능력·날짜·피로·훈련 보상에 반영되지 않습니다.").font(.caption)
+                    }
+                }
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+            .navigationTitle("해외 스카우트 보고서").navigationBarTitleDisplayMode(.inline)
+            .task {load()}
+    }
+    private func number(_ value:Double?) -> String {value.map {String(format:"%.1f",$0)} ?? "자료 부족"}
+    private func load() {do {report=try OverseasReportStore.current(player:player,calendar:calendar,in:context);failure=nil}catch{failure=error.localizedDescription}}
+    private func capture() {
+        working=true
+        do {try OverseasReportStore.capture(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context);load()}
+        catch {failure=error.localizedDescription}
+        working=false
     }
 }

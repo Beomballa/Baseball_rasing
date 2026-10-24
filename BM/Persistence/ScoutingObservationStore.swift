@@ -708,3 +708,31 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         } catch {context.rollback();throw error}
     }
 }
+
+@MainActor enum OverseasReportStore {
+    static func current(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> OverseasScoutingReport? {
+        let period=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(player.gameDate)).index
+        return try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).overseasReports?.first {$0.period == period}
+    }
+    static func capture(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,
+                        save:CalendarProgression.Save = {try $0.save()}) throws {
+        guard !context.hasChanges else {throw ContractRegistrationError.busy}
+        guard date == player.gameDate,revision == calendar.revision else {throw ContractRegistrationError.stale}
+        try CareerTrainingStore.requireNoPending(player:player,in:context)
+        let id=player.id
+        for row in try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id})) {guard try row.snapshot().completed else {throw ContractRegistrationError.busy}}
+        let period=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(player.gameDate)).index
+        var journal=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        if journal.overseasReports?.contains(where:{$0.period == period}) == true {return}
+        let eligibility=try OverseasEligibilityStore.current(player:player,calendar:calendar,in:context)
+        let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
+        let report=try OverseasScoutingReport.make(observation:observation,eligibility:eligibility)
+        try report.validate(playerID:player.id,today:GameDate(date))
+        journal.overseasReports=(journal.overseasReports ?? [])+[report]
+        do {
+            if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(journal)}
+            else {context.insert(try CareerContractRegistration(journal))}
+            try save(context)
+        } catch {context.rollback();throw error}
+    }
+}
