@@ -3556,3 +3556,110 @@ extension CareerCalendarTests {
         XCTAssertEqual(p.fatigue,min(100,fatigue+8));XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),original)
     }
 }
+
+extension CareerCalendarTests {
+    func testObservationReviewFrozenComparisonReadOnlyAndRecommendationsBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try goalSpecialFixture(role),c=store.mainContext
+            let first=try XCTUnwrap(ObservationReviewStore.load(player:p,calendar:s,in:c))
+            let source=try XCTUnwrap(first.overseas),initial=source.observation.abilities.originals
+            let training=try GoalSpecialStore.startTraining(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            try finishSpecialTraining(training,p,s,c)
+            p.gameDate=try ScoutingPeriod(origin:GameDate(s.originDate),today:GameDate(p.gameDate)).next.description;s.actionDate=nil;try c.save()
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),raw=row.payload,fatigue=p.fatigue,revision=s.revision
+            let games=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),trainings=try c.fetch(FetchDescriptor<CareerTrainingRecord>()).map(\.payload)
+            let value=try XCTUnwrap(ObservationReviewStore.load(player:p,calendar:s,in:c))
+            XCTAssertEqual(value.previous?.observedDate,source.observation.observedDate);XCTAssertFalse(value.stale)
+            XCTAssertNotNil(value.club);XCTAssertNotNil(value.readiness);XCTAssertFalse(value.missing.isEmpty);XCTAssertTrue(value.actions.contains(.market))
+            if role == .batter {XCTAssertTrue(value.fieldDefenseMissing);XCTAssertTrue(value.actions.contains(.special))}
+            for change in value.abilities {XCTAssertEqual(change.before,initial.first {$0.id == change.id}?.current)}
+            XCTAssertTrue(value.abilities.contains {$0.difference>0});XCTAssertEqual(value.target?.clubID,first.target?.clubID)
+            p.power=min(100,p.power+1);try c.save()
+            let repeated=try XCTUnwrap(ObservationReviewStore.load(player:p,calendar:s,in:c))
+            XCTAssertEqual(repeated.abilities.map(\.after),value.abilities.map(\.after));XCTAssertEqual(row.payload,raw)
+            XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision);XCTAssertFalse(s.hasAction(on:p.gameDate));XCTAssertFalse(c.hasChanges)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),games)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerTrainingRecord>()).map(\.payload),trainings)
+        }
+    }
+    func testObservationReviewFirstStaleMissingTargetAndEnvironmentBoundaries() throws {
+        let (store,p,s)=try goalSpecialFixture(.batter),c=store.mainContext
+        let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),report=try XCTUnwrap(owner.overseasReports?.last),now=report.observation
+        var empty=CareerContractJournal(playerID:p.id)
+        XCTAssertNil(ObservationPeriodReview.make(observations:[],owner:empty,period:now.period))
+        let first=try XCTUnwrap(ObservationPeriodReview.make(observations:[now],owner:empty,period:now.period))
+        XCTAssertNil(first.previous);XCTAssertTrue(first.abilities.isEmpty);XCTAssertTrue(first.samples.isEmpty);XCTAssertEqual(first.actions,[.target,.report]);XCTAssertFalse(first.canRecommendOfficialSchedule)
+        let stale=try XCTUnwrap(ObservationPeriodReview.make(observations:[now],owner:empty,period:now.period+2))
+        XCTAssertTrue(stale.stale);XCTAssertEqual(stale.actions,[.report,.target])
+        // A copied snapshot is only a boundary fixture; the store always validates real persisted reports.
+        func copy(_ value:ScoutingObservation,_ edit:(inout [String:Any])->Void) throws -> ScoutingObservation {
+            var object=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(value)) as? [String:Any]);edit(&object)
+            return try JSONDecoder().decode(ScoutingObservation.self,from:JSONSerialization.data(withJSONObject:object))
+        }
+        let old=try copy(now){$0["period"]=now.period-2}
+        let shared=try XCTUnwrap(ObservationPeriodReview.make(observations:[old,now],owner:empty,period:now.period))
+        XCTAssertTrue(shared.comparable)
+        let changed=try copy(now){$0["position"]="C";$0["evaluationVersion"]="future-policy"}
+        let incompatible=try XCTUnwrap(ObservationPeriodReview.make(observations:[old,changed],owner:empty,period:now.period))
+        XCTAssertFalse(incompatible.comparable);XCTAssertTrue(incompatible.samples.isEmpty);XCTAssertTrue(incompatible.performance.isEmpty)
+        let different=try copy(now){object in
+            var groups=object["groups"] as? [[String:Any]] ?? []
+            for index in groups.indices {groups[index]["id"]="different/"+String(index)}
+            object["groups"]=groups
+        }
+        let separated=try XCTUnwrap(ObservationPeriodReview.make(observations:[old,different],owner:empty,period:now.period))
+        XCTAssertTrue(separated.samples.isEmpty)
+        empty.developmentTarget=CareerDevelopmentTarget(reportID:report.id,clubID:"missing/club/role",date:p.gameDate)
+        let missing=try XCTUnwrap(ObservationPeriodReview.make(observations:[now],owner:empty,period:now.period))
+        XCTAssertNil(missing.club);XCTAssertEqual(missing.actions,[.target,.report])
+    }
+    func testObservationReviewV12DiskReopenPreservesFrozenReportsAndMatchPayloads() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store");var id:UUID!,raw:Data!,games:[Data]=[]
+        do {
+            let (store,p,s)=try goalSpecialFixture(.pitcher,legacyURL:url),c=store.mainContext
+            id=p.id;raw=try ContractRegistrationStore.row(player:p,in:c)?.payload;games=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            XCTAssertNotNil(try ObservationReviewStore.load(player:p,calendar:s,in:c));XCTAssertFalse(c.hasChanges)
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+        let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        XCTAssertNotNil(try ObservationReviewStore.load(player:p,calendar:s,in:c));XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,raw)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),games);XCTAssertFalse(c.hasChanges)
+    }
+}
+
+extension CareerCalendarTests {
+    func testObservationReviewDomesticInterestUsesClubAndRoleAndUnknownInputsAreNotComparable() throws {
+        let (store,p,s)=try goalSpecialFixture(.batter),c=store.mainContext
+        let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),source=try XCTUnwrap(owner.overseasReports?.last)
+        let target=try XCTUnwrap(owner.developmentTarget),parts=target.clubID.components(separatedBy:"/")
+        XCTAssertEqual(parts.count,3)
+        var current=source.observation
+        current.interests=ScoutingInterests(entries:[ScoutingClubInterest(id:parts[1],name:"구단",roleID:parts[2],roleLabel:"수비 역할",level:.focused,fit:-2,reasons:[])],pendingReasons:[])
+        func review(_ observation:ScoutingObservation) -> ObservationPeriodReview {
+            ObservationPeriodReview(current:observation,previous:source.observation,overseas:nil,previousOverseas:nil,target:target,stale:false)
+        }
+        XCTAssertEqual(review(current).interestNow,ScoutingInterestLevel.focused.label)
+        current.interests=ScoutingInterests(entries:[ScoutingClubInterest(id:parts[1],name:"구단",roleID:"slugger",roleLabel:"장타 역할",level:.priority,fit:1,reasons:[])],pendingReasons:[])
+        XCTAssertEqual(review(current).interestNow,"다른 역할 관심 · 장타 역할")
+        current.interests=nil;XCTAssertEqual(review(current).interestNow,"관심 자료 미확인")
+        var object=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(source.observation)) as? [String:Any])
+        var groups=object["groups"] as? [[String:Any]] ?? []
+        for index in groups.indices {
+            var performance=groups[index]["performance"] as? [String:Any] ?? [:];performance.removeValue(forKey:"inputs");groups[index]["performance"]=performance
+        }
+        object["groups"]=groups
+        let unknown=try JSONDecoder().decode(ScoutingObservation.self,from:JSONSerialization.data(withJSONObject:object))
+        XCTAssertTrue(review(unknown).samples.isEmpty);XCTAssertTrue(review(unknown).performance.isEmpty)
+        p.contact=10;p.power=10;p.discipline=10;try c.save()
+        let low=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        let fresh=try OverseasScoutingReport.make(observation:low,eligibility:source.eligibility)
+        let foreign=try XCTUnwrap(CareerTargetClub.catalog(fresh).first {$0.route == .npbFirstTeam && $0.roleID == "field"})
+        var changed=owner;changed.overseasReports=[fresh];changed.developmentTarget=CareerDevelopmentTarget(reportID:fresh.id,clubID:foreign.id,date:p.gameDate)
+        let preparation=try XCTUnwrap(ObservationPeriodReview.make(observations:[],owner:changed,period:fresh.period))
+        XCTAssertTrue(preparation.fieldAttackMissing);XCTAssertTrue(preparation.actions.contains(.training))
+        XCTAssertTrue(preparation.fieldDefenseMissing);XCTAssertTrue(preparation.actions.contains(.special))
+    }
+}

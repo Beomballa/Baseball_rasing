@@ -2319,3 +2319,140 @@ extension CareerTargetClub {
         return (route == .npbFirstTeam ? CareerTeamDirectory.japaneseFirstIDs:route == .mlbFirstTeam ? CareerTeamDirectory.americanFirstIDs:CareerTeamDirectory.americanDevelopmentIDs)[index]
     }
 }
+
+// Read-only review of frozen reports; never rebuild historical evaluations from live values.
+struct ObservationReviewChange:Identifiable {
+    let id:String
+    let label:String
+    let before:Double
+    let after:Double
+    var difference:Double {after-before}
+}
+enum ObservationReviewAction:String,Identifiable {
+    case report,target,special,training,schedule,position,market
+    var id:String {rawValue}
+    var reason:String {switch self {
+    case .report:"이번 주기의 고정 관찰 자료를 확인합니다."
+    case .target:"목표 역할의 자료와 지원 경로·권리 조건을 확인합니다."
+    case .special:"목표 역할의 부족한 기량을 관련 훈련으로 보완합니다."
+    case .training:"수비 역할의 별도 공격 기량 조건을 컨택·파워·선구안 훈련으로 준비합니다."
+    case .schedule:"필요한 공식 출전 표본을 쌓을 일정을 확인합니다."
+    case .position:"목표 수비 역할의 포지션 숙련을 준비합니다."
+    case .market:"실제로 도착한 제의와 마감을 확인합니다. 조건 충족이 제의 보장은 아닙니다."
+    }}
+    var label:String {switch self {
+    case .report:"관찰 보고서 기록/확인";case .target:"목표 구단·자격 확인";case .special:"부족 능력 특별 훈련 / 평가전";case .training:"공격 능력 훈련 선택";case .schedule:"공식 경기 일정·출전 확인";case .position:"포지션 숙련 훈련";case .market:"실제 제의·계약 시장 확인"
+    }}
+}
+struct ObservationPeriodReview {
+    let current:ScoutingObservation
+    let previous:ScoutingObservation?
+    let overseas:OverseasScoutingReport?
+    let previousOverseas:OverseasScoutingReport?
+    let target:CareerDevelopmentTarget?
+    let stale:Bool
+    var comparable:Bool {previous.map {$0.playerID == current.playerID && $0.role == current.role && $0.position == current.position && $0.evaluationVersion == current.evaluationVersion} ?? false}
+    var abilities:[ObservationReviewChange] {
+        guard let previous,previous.role == current.role else {return []}
+        return current.abilities.originals.compactMap {row in
+            previous.abilities.originals.first {$0.id == row.id}.map {ObservationReviewChange(id:row.id,label:row.label,before:$0.current,after:row.current)}
+        }
+    }
+    var pitches:[ObservationReviewChange] {
+        guard let previous,previous.role == current.role else {return []}
+        return current.abilities.pitches.compactMap {row in previous.abilities.pitches.first {$0.id == row.id}.map {ObservationReviewChange(id:row.id,label:row.label,before:$0.current,after:row.current)}}
+    }
+    var samples:[ObservationReviewChange] {
+        guard comparable,let previous else {return []}
+        return current.groups.compactMap {group in
+            guard let old=previous.groups.first(where:{$0.id == group.id}),group.performance?.version == old.performance?.version,
+                  group.performance?.version == 2,let usage=group.performance?.inputs,let oldUsage=old.performance?.inputs,
+                  usage.direct+usage.automatic>0,oldUsage.direct+oldUsage.automatic>0,usage.mode == oldUsage.mode else {return nil}
+            let count=current.role == .batter ? group.totals.line.plateAppearances:group.totals.line.pitchingOuts
+            let before=current.role == .batter ? old.totals.line.plateAppearances:old.totals.line.pitchingOuts
+            guard count>0,before>0 else {return nil}
+            let level=group.id.components(separatedBy:"/").first ?? ""
+            let league=["highschool":"고교","college":"대학","domestic-development":"국내 육성","domestic-first-team":"국내1군","mlb-development":"미국 육성","npb-first-team":"NPB","mlb-first-team":"MLB"][level] ?? "리그 미확인"
+            return ObservationReviewChange(id:group.id,label:league+" · "+usage.mode.label,before:Double(before),after:Double(count))
+        }
+    }
+    var performance:[ObservationReviewChange] {
+        guard let previous else {return []}
+        return samples.compactMap {sample in
+            guard let now=current.groups.first(where:{$0.id == sample.id}),let old=previous.groups.first(where:{$0.id == sample.id}),
+                  let after=now.performance?.contribution(now.totals.line,role:current.role),let before=old.performance?.contribution(old.totals.line,role:current.role) else {return nil}
+            return ObservationReviewChange(id:sample.id,label:current.role == .batter ? "타격 기여 지표":"투구 기여 지표",before:before,after:after)
+        }
+    }
+    private func club(observation:ScoutingObservation,foreign:OverseasScoutingReport?) -> CareerTargetClub? {
+        guard let target else {return nil}
+        if let foreign {return CareerTargetClub.catalog(foreign).first {$0.id == target.clubID}}
+        return observation.contractFit?.clubs.first {"domestic/"+$0.id == target.clubID}.map {row in
+            CareerTargetClub(id:"domestic/"+row.id,name:row.recruitment.name,roleID:row.recruitment.roleID,route:nil,criterion:row.c,blockers:row.blockers,fit:row.f,demand:row.recruitment.demand.label)
+        }
+    }
+    var club:CareerTargetClub? {club(observation:current,foreign:overseas)}
+    var previousClub:CareerTargetClub? {previous.flatMap {club(observation:$0,foreign:previousOverseas)}}
+    var readiness:CareerTargetReadiness? {
+        guard let club else {return nil}
+        let level=overseas?.eligibility.evidence.current?.level ?? current.contractFit?.selectedEnvironment?.components(separatedBy:"/").first ?? (current.age <= 18 ? "highschool":"unsigned")
+        return CareerTargetReadiness.make(club:club,live:current,level:level)
+    }
+    private func interest(_ observation:ScoutingObservation,_ foreign:OverseasScoutingReport?) -> String {
+        guard let target else {return "목표 미선택"}
+        if target.clubID.hasPrefix("domestic/") {
+            guard let interests=observation.interests else {return "관심 자료 미확인"}
+            if let entry=interests.entries.first(where:{"domestic/"+$0.id+"/"+$0.roleID == target.clubID}) {return entry.level.label}
+            if let entry=interests.entries.first(where:{target.clubID.hasPrefix("domestic/"+$0.id+"/")}) {return "다른 역할 관심 · "+entry.roleLabel}
+            return interests.pendingReasons.isEmpty ? "관심 없음":"관심 없음 / 판단 보류"
+        }
+        guard let row=foreign?.market?.clubs.first(where:{$0.id == target.clubID}) else {return "관찰 자료 없음"}
+        return row.interest?.label ?? "관심 없음 / 심사 보류"
+    }
+    var roleChange:ObservationReviewChange? {
+        guard comparable,let club,let previous,let before=previous.grades.first(where:{$0.id == club.roleID})?.score,let after=current.grades.first(where:{$0.id == club.roleID})?.score else {return nil}
+        return ObservationReviewChange(id:club.roleID,label:"역할 기량",before:before,after:after)
+    }
+    var interestNow:String {interest(current,overseas)}
+    var interestBefore:String {previous.map {interest($0,previousOverseas)} ?? "이전 자료 없음"}
+    var fieldDefenseMissing:Bool {club?.roleID == "field" && (current.abilities.originals.first {$0.id == "homeDefense"}?.current ?? 0)<70}
+    var fieldAttackMissing:Bool {
+        guard club?.roleID == "field",let route=club?.route,route != .mlbDevelopment else {return false}
+        let values=Dictionary(uniqueKeysWithValues:current.abilities.originals.map {($0.id,$0.current)})
+        let attack=(values["homeContact"] ?? 0)*0.5+(values["homePower"] ?? 0)*0.15+(values["homeDiscipline"] ?? 0)*0.35
+        return attack < (route == .npbFirstTeam ? 60:68)
+    }
+    var missing:[String] {
+        guard let club,let readiness else {return [target == nil ? "목표 구단과 모집 역할을 먼저 선택해 주세요.":"이번 보고서에 같은 구단·역할 자료가 없습니다. 이전 기준으로 대체하지 않습니다."]}
+        var result:[String]=[]
+        if let gap=readiness.missingH {if gap>0 {result.append(String(format:"역할 기량 %.1f 보완 필요",gap))}} else {result.append("역할 기량/기준 자료 부족")}
+        if readiness.sample<readiness.requiredSample {result.append("동일 수준·단일 환경 공식 표본 \(readiness.sample)/\(readiness.requiredSample)"+(current.role == .batter ? "타석":"아웃"))}
+        if club.roleID == "field",(current.positionMastery ?? 0)<70 {result.append("관찰일 포지션 숙련70 필요 · "+(current.positionMastery.map {String(format:"%.1f",$0)} ?? "자료 없음"))}
+        if fieldDefenseMissing {result.append("관찰일 원본 수비70 필요")}
+        result += club.blockers.filter {!(club.roleID == "field" && ["주 포지션 숙련70 필요","주 포지션/원본 수비70 필요"].contains($0))}
+        if let route=club.route,let gate=overseas?.eligibility.routes.first(where:{$0.route == route}) {result += gate.reasons}
+        var seen:Set<String>=[];return result.filter {seen.insert($0).inserted}
+    }
+    var canRecommendOfficialSchedule:Bool {current.age <= 18 || overseas?.eligibility.evidence.current != nil}
+    var actions:[ObservationReviewAction] {
+        if stale {return [.report,.target]}
+        guard let club,let readiness else {return [.target,.report]}
+        var values:[ObservationReviewAction]=[]
+        if let route=club.route,overseas?.eligibility.routes.first(where:{$0.route == route})?.status != .reviewable {values.append(.target)}
+        if readiness.missingH == nil {if !values.contains(.target) {values.append(.target)}} else if (readiness.missingH ?? 0)>0 {values.append(.special)}
+        if fieldDefenseMissing && !values.contains(.special) {values.append(.special)}
+        if fieldAttackMissing {values.append(.training)}
+        if club.roleID == "field",(current.positionMastery ?? 0)<70 {values.append(.position)}
+        if readiness.sample<readiness.requiredSample {
+            if canRecommendOfficialSchedule {values.append(.schedule)} else if !values.contains(.target) {values.append(.target)}
+        }
+        values.append(.market);return values
+    }
+    static func make(observations:[ScoutingObservation],owner:CareerContractJournal,period:Int) -> Self? {
+        var sources=Dictionary(uniqueKeysWithValues:observations.map {($0.period,$0)})
+        for report in owner.overseasReports ?? [] {sources[report.period]=report.observation}
+        guard let current=sources.values.max(by:{$0.period<$1.period}) else {return nil}
+        let previous=sources.values.filter {$0.period<current.period}.max {$0.period<$1.period}
+        return Self(current:current,previous:previous,overseas:owner.overseasReports?.first {$0.period == current.period},previousOverseas:previous.flatMap {old in owner.overseasReports?.first {$0.period == old.period}},target:owner.developmentTarget,stale:current.period != period)
+    }
+}

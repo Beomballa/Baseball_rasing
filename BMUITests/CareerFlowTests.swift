@@ -3152,3 +3152,25 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testObservationReviewBothRolesFrozenChangesTargetAndMarketNavigation() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification","-observation-review-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:120))
+        for role in ["batter","pitcher"] {
+            let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
+            let open=app.buttons["openObservationReview"];revealFit(open,in:app);open.tap()
+            XCTAssertTrue(app.staticTexts["reviewCurrentDate"].waitForExistence(timeout:20));XCTAssertTrue(app.staticTexts["reviewPreviousDate"].exists)
+            let ability=app.staticTexts["reviewAbility-homeSpeed"];revealFit(ability,in:app);XCTAssertTrue(ability.label.contains("+1.0"))
+            let growth=XCTAttachment(screenshot:app.screenshot());growth.name="observation-review-"+role+"-growth";growth.lifetime = .keepAlways;add(growth)
+            let target=app.staticTexts["reviewTarget"];revealFit(target,in:app);XCTAssertTrue(target.exists)
+            let market=app.buttons["reviewAction-market"];revealFit(market,in:app);XCTAssertTrue(market.exists)
+            XCTAssertFalse(app.staticTexts["reviewError"].exists)
+            let next=XCTAttachment(screenshot:app.screenshot());next.name="observation-review-"+role+"-target-next";next.lifetime = .keepAlways;add(next)
+            market.tap();XCTAssertTrue(app.navigationBars["계약 시장"].waitForExistence(timeout:15))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

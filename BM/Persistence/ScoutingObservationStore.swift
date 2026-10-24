@@ -1217,3 +1217,12 @@ enum GoalSpecialError:LocalizedError {
     case pending,target
     var errorDescription:String? {switch self {case .pending:"진행 중인 목표 구단 평가전을 먼저 마쳐 주세요. 특별 훈련·평가전 화면에서 이어갈 수 있습니다.";case .target:"먼저 관찰 보고서에서 목표 구단과 역할을 선택해 주세요."}}
 }
+
+@MainActor enum ObservationReviewStore {
+    static func load(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> ObservationPeriodReview? {
+        let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        let reports=try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context).map {try $0.snapshot()}
+        let period=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(player.gameDate)).index
+        return ObservationPeriodReview.make(observations:reports,owner:owner,period:period)
+    }
+}
