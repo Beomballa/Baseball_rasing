@@ -550,6 +550,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             let earned=try FASeasonEvidence.collect(owner:value,role:player.role,on:GameDate(player.gameDate),rows:rows)
             guard service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
         }
+        try value.validateDevelopment(today:GameDate(player.gameDate))
         return value
     }
     static func releaseCandidate(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> (key:String,review:DomesticRenewalReview,eligible:Bool)? {
@@ -1003,5 +1004,18 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             entries.append(DomesticMarketEntry(id:offer.id,evaluationKey:evaluation.key,name:review.membership.name,roleID:review.roleID,label:"국내 육성 · 잔류",economicLabel:"연봉지수",economicIndex:offer.economicIndex,period:offer.effectiveDate+" ~ "+offer.economicEnd,issued:offer.issuedDate,expires:offer.expiresDate,status:status,renewal:review))
         }
         return entries.sorted {$0.issued == $1.issued ? $0.id < $1.id:$0.issued > $1.issued}
+    }
+}
+
+
+@MainActor extension OverseasContractStore {
+    static func selectTarget(player:CareerPlayer,calendar:CareerCalendarState,reportID:String,clubID:String,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        if owner.developmentTarget?.reportID == reportID && owner.developmentTarget?.clubID == clubID {return}
+        try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        guard let report=owner.overseasReports?.first(where:{$0.id == reportID}),report.period == (try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(date))).index,
+              CareerTargetClub.catalog(report).contains(where:{$0.id == clubID}) else {throw ContractRegistrationError.invalid}
+        owner.developmentTarget=CareerDevelopmentTarget(reportID:reportID,clubID:clubID,date:date);owner.revision += 1
+        try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
 }

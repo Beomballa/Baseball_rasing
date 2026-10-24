@@ -66,6 +66,7 @@ struct PlayerHomeView: View {
                     playActions(calendar)
                     NavigationLink {ContractMarketView(player:player,calendar:calendar)} label: {Text("계약 시장 · 잔류 / 외부 비교")}
                         .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openContractMarket")
+                    NavigationLink {CareerObjectivesView(player:player,calendar:calendar)} label: {Text("커리어 목표 · 준비 현황")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openCareerObjectives")
                     CareerContractStatusPanel(player:player,calendar:calendar).id(player.id)
                     ContractEvaluationHomePanel(player:player,calendar:calendar).id(player.id)
                     CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
@@ -1645,4 +1646,70 @@ struct DomesticMarketCards:View {
             }
         }
     }
+}
+
+
+struct CareerObjectivesView:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var owner:CareerContractJournal?
+    @State private var live:ScoutingObservation?
+    @State private var eligibility:OverseasEligibilitySnapshot?
+    @State private var failure:String?
+    @State private var path="국내 프로 관찰"
+    @State private var clubID=""
+    private var latest:OverseasScoutingReport? {owner?.overseasReports?.max {$0.period < $1.period}}
+    var body:some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:16) {
+                GamePanel(title:"CAREER FILE · 목표 구단",onBoard:true,contentSpacing:12) {
+                    if let latest {
+                        Text(latest.observation.observedDate+" 고정 관찰 기준 · 현재 기량은 별도 표시").font(.caption)
+                        Picker("목표 경로",selection:$path) {
+                            ForEach(["국내 프로 관찰"]+OverseasRoute.allCases.map(\.label),id:\.self) {Text($0).tag($0)}
+                        }.tint(GameTheme.gold).accessibilityIdentifier("targetPath")
+                        Picker("구단 · 모집 역할",selection:$clubID) {
+                            Text("목표 선택").tag("")
+                            ForEach(CareerTargetClub.catalog(latest).filter {$0.path == path}) {club in Text(club.name+" · "+DomesticContractOffer.roleName(club.roleID)).tag(club.id)}
+                        }.tint(GameTheme.gold).accessibilityIdentifier("targetClub")
+                        Button("이 구단을 목표로 저장") {run {try OverseasContractStore.selectTarget(player:player,calendar:calendar,reportID:latest.id,clubID:clubID,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(clubID.isEmpty).accessibilityIdentifier("saveCareerTarget")
+                        Text("목표 지정은 지원·계약 예약이 아닙니다. 현재28일 주기의 보고서에서 선택하며 지난 자료는 다음 보고서로 갱신하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    } else {Text("먼저 이번28일 보고서를 기록하면 실제 관찰 기준으로 목표를 선택할 수 있습니다.").font(.subheadline)}
+                    NavigationLink {OverseasScoutingReportView(player:player,calendar:calendar)} label: {Text("28일 관찰 보고서 기록/확인")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("objectivesReport")
+                    if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("objectivesError")}
+                }
+                if let owner,let target=owner.developmentTarget,let report=owner.overseasReports?.first(where:{$0.id == target.reportID}),let club=CareerTargetClub.catalog(report).first(where:{$0.id == target.clubID}),let live {
+                    readiness(owner:owner,report:report,club:club,live:live)
+                }
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("커리어 목표").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
+            .task(id:calendar.revision) {load()}
+            .onChange(of:path) {_,_ in clubID=""}
+    }
+    @ViewBuilder private func readiness(owner:CareerContractJournal,report:OverseasScoutingReport,club:CareerTargetClub,live:ScoutingObservation) -> some View {
+        let member=try? owner.current(on:GameDate(player.gameDate))
+        let level=member?.level ?? "highschool"
+        let progress=CareerTargetReadiness.make(club:club,live:live,level:level)
+        GamePanel(title:club.name+" · "+DomesticContractOffer.roleName(club.roleID),onBoard:true,contentSpacing:12) {
+            Text(club.path+" / "+club.demand).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerTargetSummary")
+            Text("현재 역할 H "+number(progress.currentH)+" / 고정 관찰 기준 "+number(club.criterion)).font(.subheadline)
+            Text("기량 차이 · "+(progress.missingH.map {String(format:"%.1f 보완",$0)} ?? "기준 자료 부족")).font(.subheadline).accessibilityIdentifier("targetAbilityGap")
+            ProgressView(value:Double(min(progress.sample,progress.requiredSample)),total:Double(progress.requiredSample)).tint(GameTheme.growth)
+            Text("현재 수준의 단일 환경 표본 \(progress.sample) / \(progress.requiredSample)"+(player.role == .batter ? "타석":"아웃")).font(.caption).accessibilityIdentifier("targetSample")
+            Text("환경별 최대 표본을 표시하며 서로 다른 리그·조작 환경을 합산하지 않습니다. 실제 지원 경로가 허용하는 수준/표본은 정식 심사에서 다시 확인합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Text("고정 보고서 F "+number(club.fit)+" · 기준일 "+report.observation.observedDate).font(.caption)
+            ForEach(club.blockers,id:\.self) {Text("관찰일 부족 조건 · "+$0).font(.caption)}
+            if let route=club.route,let gate=eligibility?.routes.first(where:{$0.route == route}) {
+                Text("현재 경로 자격 · "+gate.status.label).font(.subheadline.bold())
+                ForEach(gate.reasons,id:\.self) {Text($0).font(.caption)}
+            } else {Text("국내 진로 자격·모집 자리·예산·경쟁은 평가 창에서 별도 심사합니다. 관찰 기준을 신인 지명 확정 기준으로 취급하지 않습니다.").font(.caption)}
+            Text("다음 경로 심사 창 · "+(owner.overseasCareer ?? OverseasCareerJournal()).nextMarketWindow(after:try! GameDate(player.gameDate),hasMembership:member != nil).start.description).font(.subheadline).foregroundStyle(GameTheme.gold)
+            Text("추천 준비 · "+club.training.label+" 훈련 / 해당 수준 공식 경기 표본 확보").font(.subheadline)
+            NavigationLink {ContractMarketView(player:player,calendar:calendar)} label: {Text("실제 제의 · 계약 시장")}.buttonStyle(MatchPixelButtonStyle())
+        }
+    }
+    private func number(_ value:Double?) -> String {value.map {String(format:"%.1f",$0)} ?? "자료 부족"}
+    private func load() {do {owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context);live=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context);eligibility=try OverseasEligibilityStore.current(player:player,calendar:calendar,in:context);failure=nil}catch{failure=error.localizedDescription}}
+    private func run(_ action:() throws -> Void) {do {try action();load()}catch{failure=error.localizedDescription}}
 }

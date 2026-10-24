@@ -3226,3 +3226,31 @@ extension CareerCalendarTests {
         }
     }
 }
+
+extension CareerCalendarTests {
+    func testCareerTargetsSaveFreezeRollbackAndRoleReadinessBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,_)=try overseasOfferFixture(role),c=store.mainContext
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),report=try XCTUnwrap(owner.overseasReports?.last)
+            let catalog=CareerTargetClub.catalog(report),target=try XCTUnwrap(catalog.first)
+            XCTAssertTrue(catalog.contains {$0.route == .npbFirstTeam});XCTAssertTrue(catalog.contains {$0.route == nil})
+            let date=p.gameDate,fatigue=p.fatigue,revision=s.revision,raw=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            XCTAssertThrowsError(try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:target.id,date:date,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,raw);XCTAssertEqual(s.revision,revision)
+            XCTAssertThrowsError(try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:target.id,date:date,revision:-1,in:c))
+            try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:target.id,date:date,revision:revision,in:c)
+            try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:target.id,date:date,revision:-1,in:c,save:{_ in XCTFail("duplicate")})
+            let saved=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertEqual(saved.developmentTarget?.clubID,target.id)
+            let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+            XCTAssertEqual(try encoder.encode(saved.overseasReports),try encoder.encode(owner.overseasReports))
+            let live=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+            let ready=CareerTargetReadiness.make(club:target,live:live,level:"college")
+            XCTAssertEqual(ready.currentH,live.grades.first {$0.id == target.roleID}?.score)
+            XCTAssertEqual(ready.requiredSample,role == .batter ? 40:45)
+            var invalid=saved;invalid.developmentTarget=CareerDevelopmentTarget(reportID:report.id,clubID:"missing",date:date)
+            XCTAssertThrowsError(try invalid.validateDevelopment(today:GameDate(date)))
+            XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue)
+        }
+    }
+}

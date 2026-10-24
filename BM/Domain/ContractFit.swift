@@ -729,6 +729,7 @@ struct CareerContractJournal:Codable,Equatable {
     var overseasEligibility:[OverseasEligibilitySnapshot]? = nil
     var overseasReports:[OverseasScoutingReport]? = nil
     var overseasCareer:OverseasCareerJournal? = nil
+    var developmentTarget:CareerDevelopmentTarget? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -2034,4 +2035,53 @@ struct DomesticMarketEntry:Identifiable {
     let status:String
     let renewal:DomesticRenewalReview?
     var visible:Bool {["검토 가능","수락 · 발효 대기"].contains(status)}
+}
+
+
+struct CareerDevelopmentTarget:Codable,Equatable {
+    let reportID:String
+    let clubID:String
+    let date:String
+}
+struct CareerTargetClub:Identifiable {
+    let id:String
+    let name:String
+    let roleID:String
+    let route:OverseasRoute?
+    let criterion:Double?
+    let blockers:[String]
+    let fit:Double?
+    let demand:String
+    var path:String {route?.label ?? "국내 프로 관찰"}
+    var training:TrainingKind {switch roleID {case "slugger":.power;case "onBase":.discipline;case "field":.defense;default:.control}}
+    static func catalog(_ report:OverseasScoutingReport) -> [Self] {
+        let domestic=(report.observation.contractFit?.clubs ?? []).map {row in
+            Self(id:"domestic/"+row.id,name:row.recruitment.name,roleID:row.recruitment.roleID,route:nil,criterion:row.c,blockers:row.blockers,fit:row.f,demand:row.recruitment.demand.label)
+        }
+        let foreign=(report.market?.clubs ?? []).map {row in
+            Self(id:row.id,name:row.name,roleID:row.roleID,route:row.route,criterion:row.criterion,blockers:row.blockers,fit:row.f,demand:row.demand.label)
+        }
+        return domestic+foreign
+    }
+}
+extension CareerContractJournal {
+    func validateDevelopment(today:GameDate) throws {
+        if let target=developmentTarget {
+            guard let report=overseasReports?.first(where:{$0.id == target.reportID}),
+                  report.observation.observedDate <= target.date,target.date <= today.description,
+                  CareerTargetClub.catalog(report).contains(where:{$0.id == target.clubID}) else {throw ContractRegistrationError.invalid}
+        }
+    }
+}
+struct CareerTargetReadiness {
+    let currentH:Double?
+    let missingH:Double?
+    let sample:Int
+    let requiredSample:Int
+    static func make(club:CareerTargetClub,live:ScoutingObservation,level:String) -> Self {
+        let current=live.grades.first {$0.id == club.roleID}?.score
+        let sample=live.groups.filter {$0.id.hasPrefix(level+"/")}.map {live.role == .batter ? $0.totals.line.plateAppearances:$0.totals.line.pitchingOuts}.max() ?? 0
+        let required=live.role == .batter ? (club.route != nil && club.route != .mlbDevelopment ? 100:40):(club.route != nil && club.route != .mlbDevelopment ? 75:45)
+        return Self(currentH:current,missingH:club.criterion.flatMap {criterion in current.map {max(0,criterion-$0)}},sample:sample,requiredSample:required)
+    }
 }
