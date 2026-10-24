@@ -59,6 +59,10 @@ struct CareerGameView: View {
     }
     @MainActor private func runLiveCareerQA() async {
         guard ProcessInfo.processInfo.arguments.contains("-live-career-autoplay"),livePerformanceQA else {return}
+        let holdsScreen=ProcessInfo.processInfo.arguments.contains("-qa-endurance-seconds")
+        let idleBefore=UIApplication.shared.isIdleTimerDisabled
+        if holdsScreen {UIApplication.shared.isIdleTimerDisabled=true}
+        defer {if holdsScreen {UIApplication.shared.isIdleTimerDisabled=idleBefore}}
         do {
             try await Task.sleep(for:.seconds(15))
             for _ in 0..<180 where !liveQAWindowActive {try await Task.sleep(for:.milliseconds(250))}
@@ -107,7 +111,52 @@ struct CareerGameView: View {
             try data.write(to:FileManager.default.temporaryDirectory.appendingPathComponent("actual-career-audit-"+player.role.rawValue+".json"),options:.atomic)
             MatchRenderMetrics.mark("career.qa.completed")
             MatchRenderMetrics.exportLive(role:player.role.rawValue+"-actual-session-\(Int(ProcessInfo.processInfo.systemUptime*1000))")
+            let args=ProcessInfo.processInfo.arguments
+            if let index=args.firstIndex(of:"-qa-endurance-seconds") {
+                guard args.indices.contains(index+1),let seconds=Int(args[index+1]),(60...3600).contains(seconds) else {
+                    throw NSError(domain:"BM.QA",code:7,userInfo:[NSLocalizedDescriptionKey:"유효한 장시간 QA 길이가 필요합니다."])
+                }
+                try await runEnduranceQA(record:record,seconds:seconds)
+            }
         } catch {self.error=error.localizedDescription}
+    }
+    @MainActor private func runEnduranceQA(record:CareerMatchRecord,seconds:Int) async throws {
+        let saved=try record.snapshot(),payload=record.payload,revision=record.revision,fatigue=player.fatigue,date=player.gameDate
+        let fields=saved.fieldPlays ?? [],homers=saved.homeRuns ?? []
+        guard !fields.isEmpty || !homers.isEmpty else {throw NSError(domain:"BM.QA",code:8)}
+        let session=try LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier).lastPathComponent
+        let role=player.role.rawValue,log=try CareerEnduranceLog(role:role,session:session,seconds:seconds)
+        let oldIdle=UIApplication.shared.isIdleTimerDisabled,oldBattery=UIDevice.current.isBatteryMonitoringEnabled
+        UIApplication.shared.isIdleTimerDisabled=true;UIDevice.current.isBatteryMonitoringEnabled=true
+        defer {UIApplication.shared.isIdleTimerDisabled=oldIdle;UIDevice.current.isBatteryMonitoringEnabled=oldBattery;log.close()}
+        var clip=0
+        while log.elapsed<Double(seconds),!Task.isCancelled {
+            try log.sample(inplay:presenting,clip:clip)
+            if ProcessInfo.processInfo.thermalState == .critical {log.reason="thermal-critical";break}
+            guard liveQAWindowActive else {try await Task.sleep(for:.seconds(1));continue}
+            MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true
+            let marker="qa.endurance.\(role).\(clip)"
+            MatchRenderMetrics.mark(marker+".begin")
+            visualSnapshot=saved;fieldResolved=false;presenting=true
+            let item=clip%(fields.count+homers.count)
+            if item<fields.count {replay=fields[item]} else {homeRunReplay=homers[item-fields.count]}
+            while presenting,log.elapsed<Double(seconds),!Task.isCancelled {
+                try log.sample(inplay:true,clip:clip)
+                try await Task.sleep(for:.milliseconds(100))
+            }
+            let resolved=MatchRenderMetrics.lifecycle.contains {$0.name=="career.inplay.resolved"}
+            if presenting {cancelInput();try await Task.sleep(for:.milliseconds(100))}
+            MatchRenderMetrics.mark(marker+".end")
+            MatchRenderMetrics.exportLive(role:role+"-endurance-clip-\(clip)-\(Int(ProcessInfo.processInfo.systemUptime*1000))")
+            log.clips.append(.init(index:clip,at:ProcessInfo.processInfo.systemUptime,resolved:resolved))
+            clip+=1
+            try await Task.sleep(for:.milliseconds(250))
+        }
+        try Task.checkCancellation()
+        let unchanged=record.payload==payload && record.revision==revision && player.fatigue==fatigue && player.gameDate==date
+        let reopened=try CareerMatchStore.start(player:player,state:calendar,in:context)
+        let count=try context.fetch(FetchDescriptor<CareerMatchRecord>()).filter {$0.playerID==player.id}.count
+        try log.finish(inplay:false,clip:clip,unchanged:unchanged && reopened.id==record.id && reopened.payload==payload && count==1)
     }
     #endif
     private var preparesFieldMotion:Bool {
@@ -324,6 +373,9 @@ struct CareerGameView: View {
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(play.half%2 == 0) == match.isHome,
                         scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{
+                            #if DEBUG
+                            if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
+                            #endif
                             fieldResolved=true
                             if let updated=displaySnapshot.match {
                                 arrivedSnapshot=updated;pulse=MatchPresentation.countPulse(updated.lastManual?.outcome ?? "");pulseAt=Date()
@@ -350,7 +402,11 @@ struct CareerGameView: View {
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(event.half%2 == 0) == match.isHome,
                         scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,
-                        playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{fieldResolved=true;arrivedSnapshot=displaySnapshot.match}) {
+                        playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{
+                            #if DEBUG
+                            if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
+                            #endif
+                            fieldResolved=true;arrivedSnapshot=displaySnapshot.match}) {
                             homeRunReplay=nil;fieldHandoff=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
                         }.id(event.eventID)
                         .frame(height:FieldReplayPresentation.stageHeight(width:geometry.size.width-16,available:geometry.size.height,accessibility:typeSize.isAccessibilitySize))
@@ -550,7 +606,7 @@ struct CareerGameView: View {
                                 }
                             }.background { measure("header") }
                             if match.completed {
-                                results(match, record: record)
+                                if !fieldCoversArena {results(match, record: record)}
                             } else {
                                 arena(match, field: MatchPresentation.fieldSize(
                                     available: CGSize(width: max(1, geometry.size.width - 16), height: geometry.size.height),
@@ -837,3 +893,52 @@ final class MatchArenaSKView:SKView {
         isPaused=true
     }
 }
+
+#if DEBUG
+@MainActor private final class CareerEnduranceLog {
+    struct Sample:Codable {
+        let at:Double;let elapsed:Double;let bytes:UInt64?;let thermal:Int;let lowPower:Bool;let active:Bool
+        let battery:Float;let batteryState:Int;let inplay:Bool;let clip:Int
+    }
+    struct Clip:Codable {let index:Int;let at:Double;let resolved:Bool}
+    struct Report:Codable {
+        let sessionStore:String;let role:String;let targetSeconds:Int;let elapsed:Double;let reason:String
+        let unchanged:Bool?;let sampleFile:String;let samples:[Sample];let clips:[Clip]
+    }
+    let began=ProcessInfo.processInfo.systemUptime
+    let role:String,session:String,target:Int,sampleURL:URL
+    private let stream:FileHandle
+    private var samples:[Sample]=[]
+    var clips:[Clip]=[],reason="complete"
+    var elapsed:Double {ProcessInfo.processInfo.systemUptime-began}
+    init(role:String,session:String,seconds:Int) throws {
+        self.role=role;self.session=session;target=seconds
+        sampleURL=FileManager.default.temporaryDirectory.appendingPathComponent("qa-endurance-\(role)-\(Int(began*1000)).jsonl")
+        FileManager.default.createFile(atPath:sampleURL.path,contents:nil)
+        stream=try FileHandle(forWritingTo:sampleURL)
+    }
+    func sample(inplay:Bool,clip:Int,force:Bool=false) throws {
+        let now=ProcessInfo.processInfo.systemUptime
+        guard force || now-(samples.last?.at ?? 0)>=3 else {return}
+        let active=UIApplication.shared.applicationState == .active && UIApplication.shared.connectedScenes.contains {$0.activationState == .foregroundActive}
+        let sample=Sample(at:now,elapsed:elapsed,bytes:MatchRenderMetrics.footprint(),thermal:ProcessInfo.processInfo.thermalState.rawValue,
+                          lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled,active:active,battery:UIDevice.current.batteryLevel,
+                          batteryState:UIDevice.current.batteryState.rawValue,inplay:inplay,clip:clip)
+        samples.append(sample)
+        var data=try JSONEncoder().encode(sample);data.append(10);try stream.write(contentsOf:data)
+        let progress=Report(sessionStore:session,role:role,targetSeconds:target,elapsed:elapsed,reason:"running",unchanged:nil,
+                            sampleFile:sampleURL.lastPathComponent,samples:[sample],clips:clips.suffix(1).map {$0})
+        try write(progress,name:"progress")
+    }
+    private func write(_ report:Report,name:String) throws {
+        let url=FileManager.default.temporaryDirectory.appendingPathComponent("qa-endurance-\(name)-\(role).json")
+        try JSONEncoder().encode(report).write(to:url,options:.atomic)
+    }
+    func finish(inplay:Bool,clip:Int,unchanged:Bool) throws {
+        try sample(inplay:inplay,clip:clip,force:true)
+        try write(Report(sessionStore:session,role:role,targetSeconds:target,elapsed:elapsed,reason:reason,unchanged:unchanged,
+                         sampleFile:sampleURL.lastPathComponent,samples:samples,clips:clips),name:"final")
+    }
+    func close() {try? stream.close()}
+}
+#endif

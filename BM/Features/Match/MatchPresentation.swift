@@ -1942,18 +1942,28 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     struct Preparation:Codable {let endedAt:Double;let seconds:Double;let images:Int;let bytes:Int}
     struct Memory:Codable {let at:Double;let bytes:UInt64}
     static var memory:[Memory]=[]
-    private static func sampleMemory(force:Bool=false) {
-        let now=ProcessInfo.processInfo.systemUptime
-        guard force || now-(memory.last?.at ?? 0)>=3 else {return}
+    static func footprint()->UInt64? {
         var info=task_vm_info_data_t(),count=mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size/MemoryLayout<integer_t>.size)
         let result=withUnsafeMutablePointer(to:&info) {pointer in
             pointer.withMemoryRebound(to:integer_t.self,capacity:Int(count)) {task_info(mach_task_self_,task_flavor_t(TASK_VM_INFO),$0,&count)}
         }
-        if result == KERN_SUCCESS {memory.append(Memory(at:now,bytes:info.phys_footprint))}
+        return result == KERN_SUCCESS ? info.phys_footprint:nil
+    }
+    private static func sampleMemory(force:Bool=false) {
+        let now=ProcessInfo.processInfo.systemUptime
+        guard force || now-(memory.last?.at ?? 0)>=3 else {return}
+        if let bytes=footprint() {memory.append(Memory(at:now,bytes:bytes))}
     }
     static var preparations:[Preparation]=[]
     static var preparedHits=0,preparedMisses=0
     static var spriteTextureCount=0,spriteTextureSwaps=0,spriteFallbacks=0
+    struct Cadence:Codable {let at:Double;let requested:Int;let scene:String;let time:Double}
+    static var cadence:[Cadence]=[]
+    static func recordCadence(_ fps:Int,scene:InplayFieldScene) {
+        guard enabled else {return}
+        cadence.append(Cadence(at:ProcessInfo.processInfo.systemUptime,requested:fps,scene:String(describing:ObjectIdentifier(scene)),time:scene.displayedTime))
+        mark("cadence.request.\(fps)")
+    }
     struct MotionPolicy:Codable {let effectiveReduced:Bool;let effectsReduced:Bool;let swiftUIReduced:Bool;let uiReduced:Bool;let lowPower:Bool}
     static var motionPolicy:MotionPolicy?
     static var enabled=false
@@ -1964,9 +1974,9 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     private static var exportIndex=0
     static func exportLive(role:String) {
         guard enabled else {return}
-        struct Report:Encodable {let role:String;let lifecycle:[Lifecycle];let motionPolicy:MotionPolicy?;let preparations:[Preparation];let frames:[Frame];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int}
+        struct Report:Encodable {let role:String;let lifecycle:[Lifecycle];let motionPolicy:MotionPolicy?;let preparations:[Preparation];let frames:[Frame];let cadence:[Cadence];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int}
         sampleMemory(force:true)
-        let report=Report(role:role,lifecycle:lifecycle,motionPolicy:motionPolicy,preparations:preparations,frames:frames,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks)
+        let report=Report(role:role,lifecycle:lifecycle,motionPolicy:motionPolicy,preparations:preparations,frames:frames,cadence:cadence,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks)
         exportIndex+=1
         if let data=try? JSONEncoder().encode(report) {
             try? data.write(to:FileManager.default.temporaryDirectory.appending(path:"match-live-\(role)-\(exportIndex).json"),options:.atomic)
@@ -1975,11 +1985,12 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     private(set) static var frames:[Frame]=[]
     static func begin() -> Double? {enabled ? ProcessInfo.processInfo.systemUptime:nil}
     static func end(_ kind:String,started:Double?,playbackTime:Double?=nil) {
-        guard enabled,let started,frames.count<12_000 else {return}
-        frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000,playbackTime:playbackTime))
+        guard enabled,let started else {return}
         sampleMemory()
+        guard frames.count<12_000 else {return}
+        frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000,playbackTime:playbackTime))
     }
-    static func reset() {lifecycle=[];motionPolicy=nil;frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
+    static func reset() {cadence=[];lifecycle=[];motionPolicy=nil;frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
 }
 #endif
 
@@ -2299,6 +2310,7 @@ private struct InplayFieldSurface:View {
                 .onAppear {
                     #if DEBUG
                     MatchRenderMetrics.mark("surfaceAppeared")
+                    MatchRenderMetrics.recordCadence(frameRate,scene:scene)
                     #endif
                     lowPower=ProcessInfo.processInfo.isLowPowerModeEnabled
                     scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText)
@@ -2318,6 +2330,7 @@ private struct InplayFieldSurface:View {
                 .onChange(of:effectsReduced) {_,value in scene.setEffectsReduced(value)}
                 #if DEBUG
                 .onChange(of:showsContactPoints) {_,value in scene.setContactPoints(value)}
+                .onChange(of:frameRate) {_,value in MatchRenderMetrics.recordCadence(value,scene:scene)}
                 #endif
                 .onDisappear {scene.isPaused=true}
                 .overlay {

@@ -2477,3 +2477,17 @@ import SpriteKit
         }
     }
 }
+
+@MainActor final class EnduranceMetricsTests:XCTestCase {
+    func testMemorySamplingContinuesAfterBoundedFrameBufferFills() async throws {
+        MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true
+        defer {MatchRenderMetrics.enabled=false;MatchRenderMetrics.reset()}
+        for _ in 0..<12_000 {MatchRenderMetrics.end("probe",started:ProcessInfo.processInfo.systemUptime)}
+        XCTAssertEqual(MatchRenderMetrics.frames.count,12_000)
+        let before=MatchRenderMetrics.memory.count
+        try await Task.sleep(for:.milliseconds(3100))
+        MatchRenderMetrics.end("probe",started:ProcessInfo.processInfo.systemUptime)
+        XCTAssertEqual(MatchRenderMetrics.frames.count,12_000)
+        XCTAssertGreaterThan(MatchRenderMetrics.memory.count,before)
+    }
+}
