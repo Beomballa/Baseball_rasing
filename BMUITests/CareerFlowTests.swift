@@ -3011,3 +3011,28 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testContractMarketBothRolesShowsComparisonAndRenewalDecision() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-overseas-renewal-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:180))
+        for role in ["batter","pitcher"] {
+            let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
+            let market=app.buttons["openContractMarket"];revealFit(market,in:app);market.tap()
+            XCTAssertTrue(app.staticTexts["marketSummary"].waitForExistence(timeout:10))
+            XCTAssertFalse(app.staticTexts["marketError"].exists)
+            let renewal=app.buttons["marketRenewal"];revealFit(renewal,in:app);renewal.tap()
+            let evaluate=app.buttons["evaluateOverseasRenewal"];revealFit(evaluate,in:app);evaluate.tap()
+            XCTAssertFalse(app.staticTexts["overseasRenewalError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let status=app.staticTexts["marketOfferStatus"].firstMatch;revealFit(status,in:app);XCTAssertEqual(status.label,"검토 가능")
+            let capture=XCTAttachment(screenshot:app.screenshot());capture.name="market-"+role+"-comparison";capture.lifetime = .keepAlways;add(capture)
+            let decide=app.buttons["marketRenewal"];revealFit(decide,in:app);decide.tap()
+            let accept=app.buttons["acceptOverseasRenewal"];revealFit(accept,in:app);accept.tap();app.buttons["confirmOverseasRenewal"].firstMatch.tap()
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let accepted=app.staticTexts["marketOfferStatus"].firstMatch;revealFit(accepted,in:app);XCTAssertTrue(accepted.label.contains("수락"))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

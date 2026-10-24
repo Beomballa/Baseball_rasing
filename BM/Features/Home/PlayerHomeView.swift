@@ -64,6 +64,8 @@ struct PlayerHomeView: View {
                 if let calendar {
                     CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
                     playActions(calendar)
+                    NavigationLink {ContractMarketView(player:player,calendar:calendar)} label: {Text("계약 시장 · 잔류 / 외부 비교")}
+                        .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openContractMarket")
                     CareerContractStatusPanel(player:player,calendar:calendar).id(player.id)
                     ContractEvaluationHomePanel(player:player,calendar:calendar).id(player.id)
                     CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
@@ -1445,6 +1447,8 @@ struct OverseasRenewalView:View {
                                 Text(offer.effective+" ~ "+offer.economicEnd+"\n수락 마감 "+offer.expires).font(.caption.monospaced()).lineSpacing(5)
                                 if let decision=(state.renewalDecisions ?? []).first(where:{$0.offerID == offer.id}) {
                                     Text(decision.kind == .accepted ? "수락 완료 · "+(offer.effective > player.gameDate ? "갱신 발효 대기":"갱신 발효"):"거절 완료 · 소속/보유권리 유지").font(.subheadline.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("overseasRenewalDecision")
+                                } else if state.renewalClosedByTransfer(offer,on:player.gameDate) {
+                                    Text("다른 제의 수락 · 종료").font(.subheadline).accessibilityIdentifier("overseasRenewalClosed")
                                 } else if offer.expires >= player.gameDate {
                                     Button("재계약 수락") {command=(offer.id,true,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptOverseasRenewal")
                                     Button("재계약 거절") {command=(offer.id,false,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("rejectOverseasRenewal")
@@ -1554,4 +1558,64 @@ struct FAManagementPanel:View {
         }
     }
     private func run(_ action:() throws -> Void) {do {try action();failure=nil}catch{failure=error.localizedDescription}}
+}
+
+
+struct ContractMarketView:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var showHistory=false
+    var body:some View {
+        let _=calendar.revision
+        ScrollView {
+            VStack(alignment:.leading,spacing:16) {
+                switch Result(catching:{try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)}) {
+                case .failure(let error):Text(error.localizedDescription).accessibilityIdentifier("marketError")
+                case .success(let owner):
+                    let state=owner.overseasCareer ?? OverseasCareerJournal()
+                    let entries=state.marketEntries(on:player.gameDate)
+                    GamePanel(title:"CONTRACT MARKET · 계약 시장",onBoard:true,contentSpacing:12) {
+                        Text("기준일 "+player.gameDate).font(.caption.monospaced())
+                        Text("검토 가능 \(entries.filter {$0.status == "검토 가능"}.count)건 · 잔류 / 외부 조건 비교").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketSummary")
+                        Text("연봉지수는 게임 내 비교값입니다. 계약 기간·역할·발효일을 함께 확인하세요. 대학 지원금과 연봉을 같은 금액으로 비교하지 않습니다.").font(.caption).lineSpacing(5)
+                        Text("수락 시 다른 열린 제의를 닫고 발효일까지 현재 소속을 유지합니다. 마감·거절·제의 없음은 자동 방출이나 FA가 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
+                    Button(showHistory ? "이전 제의 접기":"이전 제의 이력 보기") {showHistory.toggle()}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketHistory")
+                    ForEach(entries.filter {showHistory || ["검토 가능","수락 · 발효 대기"].contains($0.status)}) {entry in
+                        GamePanel(title:(entry.retention ? "잔류 · ":"외부 · ")+entry.offer.name,onBoard:true,contentSpacing:12) {
+                            Text(entry.status).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketOfferStatus")
+                            Text(entry.offer.route.label+" / "+DomesticContractOffer.roleName(entry.offer.roleID)).font(.subheadline)
+                            Text("연봉지수 \(entry.offer.economicIndex) × \(entry.offer.years)년 · 총 \(entry.offer.economicIndex * entry.offer.years)지수").font(.subheadline.bold())
+                            Text("마감 "+entry.offer.expires+"\n발효 "+entry.offer.effective+" ~ "+entry.offer.economicEnd).font(.caption.monospaced()).lineSpacing(5)
+                            Text("출전·승격 보장 없음").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        }
+                    }
+                    GamePanel(title:"심사 · 결정 창구",onBoard:true,contentSpacing:12) {
+                        NavigationLink {OverseasRenewalView(player:player,calendar:calendar)} label: {Text("잔류 심사 · 수락 / 거절")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketRenewal")
+                        NavigationLink {OverseasContractsView(player:player,calendar:calendar)} label: {Text("외부 심사 · 수락 / 거절")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketExternal")
+                        NavigationLink {OverseasScoutingReportView(player:player,calendar:calendar)} label: {Text("28일 보고서 · 부족 조건 확인")}.buttonStyle(MatchPixelButtonStyle())
+                        Text("국내 신인·대학·육성 제의는 기존 진로 창구에서 확인합니다.").font(.caption)
+                        ContractEvaluationHomePanel(player:player,calendar:calendar)
+                    }
+                    GamePanel(title:"마감 · 제의 없음 · 재도전",onBoard:true,contentSpacing:12) {
+                        if !entries.contains(where:{$0.status == "검토 가능"}) {
+                            Text("현재 검토할 제의 없음").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketEmpty")
+                        }
+                        Text("같은 평가 창에서는 재심사하거나 만료 제의를 재발행하지 않습니다. 현재 창의 보고서와 부족 조건을 확인하고 다음 유효 창에 새 자료로 도전하세요.").font(.caption).lineSpacing(5)
+                        if let date=try? GameDate(player.gameDate),let membership=try? owner.current(on:date) {
+                            Text("다음 소속 경로 심사 창 · "+state.nextMarketWindow(after:date,hasMembership:true).start.description).font(.subheadline).foregroundStyle(GameTheme.gold)
+                            Text(membership.name+"의 소속·권리는 별도 발효/해제 전까지 유지됩니다.").font(.caption)
+                        } else if let date=try? GameDate(player.gameDate) {
+                            Text("다음 무소속 심사 창 · "+state.nextMarketWindow(after:date,hasMembership:false).start.description).font(.subheadline).foregroundStyle(GameTheme.gold)
+                        }
+                        Text("평가 창: 4·7·11월 1~14일. 국내 재입단은 4·7월, 재학생 프로 지원·프로 갱신/이적은 11월에 자격을 확인합니다. 날짜는 홈에서 진행합니다.").font(.caption).lineSpacing(5)
+                        OverseasReleasePanel(player:player,calendar:calendar)
+                        DomesticReleasePanel(player:player,calendar:calendar)
+                        FAManagementPanel(player:player,calendar:calendar)
+                    }
+                }
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("계약 시장").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
+    }
 }

@@ -1983,3 +1983,38 @@ extension OverseasOfferEvaluation {
         result.mobility=context;return result
     }
 }
+
+
+// Read-only market projection: original offers and decisions remain the source of truth.
+struct ContractMarketEntry:Identifiable,Equatable {
+    let offer:OverseasOffer
+    let retention:Bool
+    let status:String
+    var id:String {offer.id}
+}
+extension OverseasCareerJournal {
+    func renewalClosedByTransfer(_ offer:OverseasOffer,on date:String) -> Bool {
+        guard let review=(renewalReviews ?? []).first(where:{$0.offer?.id == offer.id}) else {return false}
+        return transitions.contains {$0.sourceMembershipID == review.source.offerID && $0.acceptedDate <= date && $0.acceptedDate >= offer.issued && $0.acceptedDate <= offer.expires}
+    }
+    func nextMarketWindow(after date:GameDate,hasMembership:Bool) -> ContractEvaluationWindow {
+        let months=hasMembership ? [11]:[4,7,11]
+        return (date.year...date.year+1).flatMap {year in months.map {ContractEvaluationWindow(year:year,month:$0)}}.first {$0.start > date}!
+    }
+    func marketEntries(on date:String) -> [ContractMarketEntry] {
+        func status(_ offer:OverseasOffer,_ kind:DomesticOfferDecisionKind?,closed:Bool=false) -> String {
+            if let kind {return kind == .accepted ? (date < offer.effective ? "수락 · 발효 대기":"수락 · 발효 완료"):kind == .rejected ? "거절":"다른 제의 수락 · 종료"}
+            if closed {return "다른 제의 수락 · 종료"}
+            if date < offer.issued {return "발행 전"}
+            return date > offer.expires ? "마감":"검토 가능"
+        }
+        let renewals=(renewalReviews ?? []).compactMap {review -> ContractMarketEntry? in
+            guard let offer=review.offer else {return nil}
+            return ContractMarketEntry(offer:offer,retention:true,status:status(offer,(renewalDecisions ?? []).first {$0.offerID == offer.id}?.kind,closed:renewalClosedByTransfer(offer,on:date)))
+        }
+        let external=evaluations.flatMap {evaluation in evaluation.offers.map {offer in
+            ContractMarketEntry(offer:offer,retention:offer.teamID == evaluation.source?.teamID,status:status(offer,decisions.first {$0.offerID == offer.id}?.kind))
+        }}
+        return (renewals+external).sorted {$0.offer.issued == $1.offer.issued ? $0.id < $1.id:$0.offer.issued > $1.offer.issued}
+    }
+}

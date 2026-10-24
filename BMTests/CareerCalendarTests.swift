@@ -2850,6 +2850,7 @@ extension CareerCalendarTests {
         let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
         XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),raw)
         XCTAssertTrue(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer!.hasPendingRenewal(on:p.gameDate))
+        XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer?.marketEntries(on:p.gameDate).first {$0.id == terms.id}?.status,"수락 · 발효 대기")
         p.gameDate=terms.effective;try c.save();XCTAssertEqual(try s.registration(for:p)?.economicEnd,terms.economicEnd)
     }
 }
@@ -3167,5 +3168,41 @@ extension CareerCalendarTests {
         XCTAssertLessThan(state.faService?.filter {$0.level == "mlb-first-team"}.count ?? 0,6)
         XCTAssertNil(state.faDeclarations);XCTAssertNotNil(state.evaluations.last?.mobility?.release)
         XCTAssertTrue(state.evaluations.last?.offers.contains {$0.route == .mlbFirstTeam} == true)
+    }
+}
+
+
+extension CareerCalendarTests {
+    func testContractMarketProjectsRetentionDeadlineAndDecisionBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,_)=try overseasRenewalFixture(role),c=store.mainContext
+            let date=p.gameDate,fatigue=p.fatigue
+            let records=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            try OverseasContractStore.evaluateRenewal(player:p,calendar:s,date:date,revision:s.revision,in:c)
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            let state=try XCTUnwrap(owner.overseasCareer),offer=try XCTUnwrap(state.renewalReviews?.last?.offer)
+            let row=try XCTUnwrap(state.marketEntries(on:offer.expires).first {$0.id == offer.id})
+            XCTAssertTrue(row.retention);XCTAssertEqual(row.status,"검토 가능")
+            let expired=try GameDate(offer.expires).adding(days:1).description
+            XCTAssertEqual(state.marketEntries(on:expired).first {$0.id == offer.id}?.status,"마감")
+            var closed=state
+            closed.transitions.append(OverseasTransition(offerID:"projection-only",sourceMembershipID:try owner.current(on:GameDate(date))?.offerID,acceptedDate:date,destination:offer.membership()))
+            XCTAssertTrue(closed.renewalClosedByTransfer(offer,on:date))
+            XCTAssertEqual(closed.marketEntries(on:date).first {$0.id == offer.id}?.status,"다른 제의 수락 · 종료")
+            try OverseasContractStore.decideRenewal(player:p,calendar:s,offerID:offer.id,accept:true,date:date,revision:s.revision,in:c)
+            try OverseasContractStore.decideRenewal(player:p,calendar:s,offerID:offer.id,accept:true,date:date,revision:-1,in:c,save:{_ in XCTFail("duplicate")})
+            let accepted=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertEqual(accepted.overseasCareer?.marketEntries(on:date).first {$0.id == offer.id}?.status,"수락 · 발효 대기")
+            XCTAssertEqual(accepted.memberships,owner.memberships)
+            XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),records)
+        }
+    }
+    func testContractMarketEmptyProjectionDoesNotCreateOffers() {
+        let state=OverseasCareerJournal()
+        XCTAssertTrue(state.marketEntries(on:"2026-11-01").isEmpty)
+        XCTAssertEqual(state,OverseasCareerJournal())
+        XCTAssertEqual(state.nextMarketWindow(after:try! GameDate("2026-11-14"),hasMembership:true).id,"2027-11")
+        XCTAssertEqual(state.nextMarketWindow(after:try! GameDate("2026-11-14"),hasMembership:false).id,"2027-04")
     }
 }

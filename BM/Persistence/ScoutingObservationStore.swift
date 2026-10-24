@@ -925,6 +925,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
         guard let review=(value.renewalReviews ?? []).first(where:{$0.offer?.id == offerID}),let offer=review.offer else {throw ContractRegistrationError.invalid}
         guard date >= offer.issued,date <= offer.expires else {throw ContractRegistrationError.expired}
+        guard !value.renewalClosedByTransfer(offer,on:date) else {throw ContractRegistrationError.closed}
         guard let member=try owner.current(on:GameDate(date)),member == review.source else {throw ContractRegistrationError.stale}
         if accept {
             guard !value.hasPending(on:date),!value.hasPendingRenewal(on:date),!value.hasPendingFA(on:date),!(value.promotions ?? []).contains(where:{$0.sourceOfferID == member.offerID && $0.effective > date}) else {throw ContractRegistrationError.registered}
