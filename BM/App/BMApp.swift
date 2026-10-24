@@ -204,6 +204,11 @@ struct CareerPathVerification: View {
                     }
                     if args.contains("-career-objectives-verification"),args.contains("-college-pro-verification") {
                         try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                        if args.contains("-goal-special-verification"),
+                           let report=try ContractRegistrationStore.journal(player:p,calendar:calendar,in:c.mainContext).overseasReports?.last,
+                           let club=CareerTargetClub.catalog(report).first(where:{$0.roleID == (role == .batter ? "field":"starter")}) {
+                            try OverseasContractStore.selectTarget(player:p,calendar:calendar,reportID:report.id,clubID:club.id,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                        }
                     }
                     if args.contains("-overseas-renewal-verification"),args.contains("-college-pro-verification") {
                         try seedOverseasRenewal(player:p,calendar:calendar,in:c.mainContext)

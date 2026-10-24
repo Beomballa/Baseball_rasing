@@ -202,7 +202,7 @@ struct ScoutingReference: Codable, Equatable {
             pitches += 1
         }
     }
-    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil) -> CareerMatch {
+    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil,fatigue:Int=24,assessmentRoster:MatchNPCFielders?=nil) -> CareerMatch {
         var match = CareerMatch(random:seed,isHome:home,role:role.rawValue,appearance:true,
             contact:values.contact,power:values.power,discipline:values.discipline,mastery:values.pitches)
         match.controlVersion=2;match.trainingEffectsVersion=1;match.detailedFieldVersion=5
@@ -212,12 +212,13 @@ struct ScoutingReference: Codable, Equatable {
             let own="hs-ref-001",opponent=String(format:"hs-ref-%03d",2+Int(seed%5))
             match.npcFielders=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:home ? own:opponent,awayID:home ? opponent:own)
         }
+        if let assessmentRoster {match.npcFielders=assessmentRoster}
         match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
-        match.abilityStats=MatchAbilityStats(mental:values.mental,velocity:values.velocity,control:values.control,stuff:values.stuff,stamina:values.stamina,fatigue:24)
+        match.abilityStats=MatchAbilityStats(mental:values.mental,velocity:values.velocity,control:values.control,stuff:values.stuff,stamina:values.stamina,fatigue:fatigue)
         match.fieldStats=MatchFieldStats(speed:values.speed,defense:values.defense,arm:values.arm,position:position)
         match.fieldStats?.version=role == .batter ? 3:2;match.fieldStats?.activeTraits=[]
         if role == .batter {match.fieldStats?.positionMastery=60}
-        match.pitching=MatchPitching(startingFatigue:24);match.scoutingPerformance=tracked ? .tracked:MatchScoutingPerformance()
+        match.pitching=MatchPitching(startingFatigue:fatigue);match.scoutingPerformance=tracked ? .tracked:MatchScoutingPerformance()
         match.settle();return match
     }
 }
@@ -733,6 +734,9 @@ struct CareerContractJournal:Codable,Equatable {
     var developmentProjects:[CareerDevelopmentProject]? = nil
     var developmentReviews:[CareerProjectReview]? = nil
     var gamePlanReports:[MatchPlanObservation]? = nil
+    var specialTrainings:[GoalSpecialTraining]? = nil
+    var specialAssessments:[GoalSpecialAssessment]? = nil
+    var specialReports:[GoalSpecialReport]? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -2182,5 +2186,136 @@ extension CareerContractJournal {
                       item.outcome.checks.count == 2,item.outcome.checks.allSatisfy({$0.value >= 0 && $0.target >= 0}) else {throw ContractRegistrationError.invalid}
             }
         }
+    }
+}
+
+
+struct GoalSpecialTraining:Codable,Equatable,Identifiable {
+    let id:String
+    let target:CareerDevelopmentTarget
+    let date:String
+    let kind:TrainingKind
+    let recordKey:String
+}
+struct GoalSpecialAssessment:Codable,Equatable,Identifiable {
+    let id:String
+    let target:CareerDevelopmentTarget
+    let date:String
+    let period:Int
+    let role:PlayerRole
+    let position:String
+    let level:String
+    let opponentID:String
+    let values:PlayerInitialValues
+    let fatigue:Int
+    var calendarRevision:Int
+    var games:[CareerMatch]=[]
+    var completed:Bool {games.count == 2}
+    var seed:UInt64 {DomesticSelection.hash(id+"/"+target.reportID+"/"+target.clubID)}
+    var totals:PersonalSeasonTotals {
+        var total=PersonalSeasonTotals();for game in games {_ = try? total.add(game.line)};return total
+    }
+    var score:Double {
+        let line=totals.line
+        if role == .batter {return line.plateAppearances == 0 ? 0:ScoutingContractFit.round(100*Double(line.hits+line.walks)/Double(line.plateAppearances))}
+        let faced=games.reduce(0){$0+($1.scoutingPerformance?.battersFaced ?? 0)},homers=games.reduce(0){$0+($1.scoutingPerformance?.homersAllowed ?? 0)}
+        return faced == 0 ? 0:ScoutingContractFit.round(max(0,min(100,50+100*Double(line.pitchingStrikeouts-line.pitchingWalks-2*homers)/Double(faced))))
+    }
+    @MainActor mutating func advance() throws {
+        guard !completed else {throw MatchError.finished}
+        let home=games.count.isMultiple(of:2),own="goal-evaluation-own"
+        let roster=MatchNPCFielders.make(year:try GameDate(date).year,competition:level,homeID:home ? own:opponentID,awayID:home ? opponentID:own)
+        var match=ScoutingReferenceSimulation.fixture(role:role,position:position,values:values,seed:seed &+ UInt64(games.count),home:home,tracked:true,battedBallVersion:1,fatigue:fatigue,assessmentRoster:roster)
+        match.competition=level;try match.advance(.automatic);games.append(match)
+    }
+    func validate() throws {
+        guard games.count <= 2,(0...100).contains(fatigue),calendarRevision >= 0,!opponentID.isEmpty,
+              [values.contact,values.power,values.discipline,values.speed,values.defense,values.arm,values.mental].allSatisfy({$0.isFinite && (0...100).contains($0)}),
+              [values.velocity,values.control,values.stuff,values.stamina].compactMap({$0}).allSatisfy({$0.isFinite && (0...100).contains($0)}),
+              values.pitches.values.allSatisfy({$0.isFinite && (0...100).contains($0)}) else {throw MatchError.invalidRecord}
+        for game in games {
+            guard game.completed,game.appearance,game.role == role.rawValue,game.competition == level,game.abilityExperience == nil,game.positionExperience == nil,
+                  game.abilityStats?.fatigue == fatigue,let performance=game.scoutingPerformance,performance.inputs?.direct == 0,
+                  let roster=game.npcFielders else {throw MatchError.invalidRecord}
+            try roster.validate();try game.validatePitching();try game.validateDetailedField();try performance.validate(line:game.line,role:role)
+            var checked=PersonalSeasonTotals();try checked.add(game.line)
+        }
+        guard score.isFinite,(0...100).contains(score) else {throw MatchError.invalidRecord}
+    }
+}
+enum GoalSpecialEvidenceKind:String,Codable {case training,assessment}
+struct GoalSpecialEvidence:Codable,Equatable,Identifiable {
+    let id:String
+    let kind:GoalSpecialEvidenceKind
+    let target:CareerDevelopmentTarget
+    let date:String
+    let score:Double
+    let growth:Double
+    let summary:String
+}
+struct GoalSpecialReport:Codable,Equatable,Identifiable {
+    let reportID:String
+    let period:Int
+    let date:String
+    let evidence:[GoalSpecialEvidence]
+    var id:String {reportID}
+}
+struct GoalSpecialRecommendation {
+    let kind:TrainingKind
+    let current:Double
+    let reason:String
+    static func make(club:CareerTargetClub,abilities:HomeAbilitySummary) -> Self? {
+        let candidates:[TrainingKind]=switch club.roleID {case "slugger":[.power,.contact];case "onBase":[.discipline,.contact];case "field":[.defense,.arm,.speed];default:[.control,.stuff,.velocity,.stamina]}
+        let rows=candidates.compactMap {kind -> (TrainingKind,Double)? in
+            let id="home"+kind.rawValue.prefix(1).uppercased()+kind.rawValue.dropFirst()
+            return abilities.originals.first(where:{$0.id == id && $0.current < 100}).map {(kind,$0.current)}
+        }
+        guard let low=rows.min(by:{$0.1 == $1.1 ? $0.0.rawValue < $1.0.rawValue:$0.1 < $1.1}) else {return nil}
+        return Self(kind:low.0,current:low.1,reason:DomesticContractOffer.roleName(club.roleID)+" 역할의 관련 능력 중 낮은 "+low.0.label+" 보완")
+    }
+}
+extension CareerContractJournal {
+    func specialClub(_ target:CareerDevelopmentTarget) -> CareerTargetClub? {
+        overseasReports?.first(where:{$0.id == target.reportID}).flatMap {report in CareerTargetClub.catalog(report).first {$0.id == target.clubID}}
+    }
+    func validateSpecial(origin:String,today:GameDate,reports:[String:(Int,String)]) throws {
+        let trainings=specialTrainings ?? [],assessments=specialAssessments ?? [],observations=specialReports ?? []
+        guard Set(trainings.map(\.id)).count == trainings.count,Set(trainings.map(\.recordKey)).count == trainings.count,
+              Set(assessments.map(\.period)).count == assessments.count,assessments.filter({!$0.completed}).count <= 1,
+              Set(observations.map(\.period)).count == observations.count else {throw ContractRegistrationError.invalid}
+        for training in trainings {
+            guard specialClub(training.target) != nil,training.date <= today.description,training.date >= training.target.date,
+                  training.recordKey == playerID.uuidString+":"+training.date,training.id == "goal-training-v1/"+training.recordKey else {throw ContractRegistrationError.invalid}
+        }
+        for assessment in assessments {
+            guard let club=specialClub(assessment.target),assessment.date <= today.description,assessment.date >= assessment.target.date,
+                  assessment.id == playerID.uuidString+":goal-assessment-v1:"+String(assessment.period),
+                  assessment.period == (try ScoutingPeriod(origin:GameDate(origin),today:GameDate(assessment.date))).index,
+                  assessment.level == club.assessmentLevel,assessment.opponentID == club.assessmentTeamID,
+                  club.roleID == "starter" ? assessment.role == .pitcher:assessment.role == .batter else {throw ContractRegistrationError.invalid}
+            try assessment.validate()
+        }
+        let keys=observations.flatMap {$0.evidence.map(\.id)}
+        guard Set(keys).count == keys.count else {throw ContractRegistrationError.invalid}
+        for report in observations {
+            guard let source=reports[report.reportID],source.0 == report.period,source.1 == report.date,!report.evidence.isEmpty else {throw ContractRegistrationError.invalid}
+            for row in report.evidence {
+                guard row.date <= report.date,(try ScoutingPeriod(origin:GameDate(origin),today:GameDate(row.date))).index < report.period,
+                      row.score.isFinite,(0...100).contains(row.score),row.growth.isFinite,row.growth >= 0,
+                      row.kind == .training ? trainings.contains(where:{$0.id == row.id && $0.target == row.target}):assessments.contains(where:{$0.id == row.id && $0.target == row.target && $0.completed}) else {throw ContractRegistrationError.invalid}
+            }
+        }
+    }
+}
+
+
+extension CareerTargetClub {
+    var assessmentLevel:String {switch route {case .mlbDevelopment:"mlb-development";case .npbFirstTeam:"npb-first-team";case .mlbFirstTeam:"mlb-first-team";case nil:"domestic-development"}}
+    var assessmentTeamID:String? {
+        let parts=id.components(separatedBy:"/")
+        guard parts.count == 3 else {return nil}
+        if route == nil {let team="dev-"+parts[1];return CareerTeamDirectory.domesticIDs.contains(team) ? team:nil}
+        guard let index=Int(parts[1]),(0..<6).contains(index) else {return nil}
+        return (route == .npbFirstTeam ? CareerTeamDirectory.japaneseFirstIDs:route == .mlbFirstTeam ? CareerTeamDirectory.americanFirstIDs:CareerTeamDirectory.americanDevelopmentIDs)[index]
     }
 }

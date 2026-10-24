@@ -3103,3 +3103,52 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testGoalSpecialAssessmentBothRolesResumesAndConsumesOneAction() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification","-goal-special-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:120))
+        for role in ["batter","pitcher"] {
+            let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
+            let open=app.buttons["openGoalSpecial"];revealFit(open,in:app);open.tap()
+            XCTAssertTrue(app.staticTexts["specialTarget"].waitForExistence(timeout:15))
+            let recommendation=app.staticTexts["specialTrainingRecommendation"];XCTAssertTrue(recommendation.exists)
+            let start=app.buttons["startGoalAssessment"];revealFit(start,in:app);start.tap()
+            let progress=app.staticTexts["goalAssessmentProgress"];revealFit(progress,in:app);XCTAssertTrue(progress.label.hasPrefix("0 / 2"))
+            let advance=app.buttons["advanceGoalAssessment"];revealFit(advance,in:app);advance.tap()
+            XCTAssertTrue(app.staticTexts["goalAssessmentProgress"].label.hasPrefix("1 / 2"))
+            let continued=app.buttons["advanceGoalAssessment"];revealFit(continued,in:app)
+            XCTAssertGreaterThanOrEqual(continued.frame.minY,app.staticTexts["goalAssessmentRecord"].frame.maxY)
+            let partial=XCTAttachment(screenshot:app.screenshot());partial.name="goal-assessment-"+role+"-partial";partial.lifetime = .keepAlways;add(partial)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let again=app.buttons["openGoalSpecial"];revealFit(again,in:app);again.tap()
+            let resumed=app.staticTexts["goalAssessmentProgress"];revealFit(resumed,in:app);XCTAssertTrue(resumed.label.hasPrefix("1 / 2"))
+            let finish=app.buttons["advanceGoalAssessment"];revealFit(finish,in:app);finish.tap()
+            XCTAssertTrue(app.staticTexts["goalAssessmentProgress"].label.hasPrefix("2 / 2"));XCTAssertFalse(app.buttons["advanceGoalAssessment"].exists)
+            let score=app.staticTexts["goalAssessmentScore"];revealFit(score,in:app);XCTAssertTrue(score.label.contains("최종"))
+            XCTAssertFalse(app.staticTexts["goalSpecialError"].exists)
+            let final=XCTAttachment(screenshot:app.screenshot());final.name="goal-assessment-"+role+"-completed";final.lifetime = .keepAlways;add(final)
+            let daily=app.staticTexts["specialDailyState"];revealFit(daily,in:app);XCTAssertTrue(daily.label.contains("오늘 행동 완료"))
+            XCTAssertFalse(app.buttons["startGoalSpecialTraining"].isEnabled)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+    @MainActor func testGoalSpecialTrainingBothRolesUsesExistingMinigameAndResumes() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification","-goal-special-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:120))
+        for role in ["batter","pitcher"] {
+            let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
+            let open=app.buttons["openGoalSpecial"];revealFit(open,in:app);open.tap()
+            let start=app.buttons["startGoalSpecialTraining"];revealFit(start,in:app);start.tap()
+            let progress=app.staticTexts.matching(identifier:"trainingProgress").matching(NSPredicate(format:"label CONTAINS %@", "0 / 5")).firstMatch;XCTAssertTrue(progress.waitForExistence(timeout:15))
+            XCTAssertFalse(app.staticTexts["trainingError"].exists)
+            let capture=XCTAttachment(screenshot:app.screenshot());capture.name="goal-special-training-"+role;capture.lifetime = .keepAlways;add(capture)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let resume=app.buttons["startGoalSpecialTraining"];revealFit(resume,in:app);resume.tap()
+            XCTAssertTrue(progress.waitForExistence(timeout:15));XCTAssertFalse(app.staticTexts["trainingError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

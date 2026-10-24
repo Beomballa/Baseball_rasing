@@ -1,5 +1,7 @@
 # BM iOS 작업 기준
 
+- native-goal-special-v1은 선택 specialTrainings/specialAssessments/specialReports로 목표 역할 최저 관련 능력의 기존5회 훈련과 실제 능력/구종·시작피로/목표팀 NPC 고정 자동2경기 진단을 연결한다. 기존 훈련 성장/피로+6·보상1회, 평가전 완료 행동/피로+8·주기당1회/진행 잠금·원자save/rollback·다음 주기 최초 보고서 근거 전체1회를 지킨다. 평가전은 XP/공식표본·무소속 인증/H/P/F 가산이 아니며 무특성/포지션60 비교 fixture다. V13/옛 nil 저장·경기 원문/이어하기·결과1회 유지. 현행 gameplay-spec v0.101, 과거 특별훈련 미구현 문구는 이력이다.
+
 - native-game-plan-v1은 기존 NPC v1 상대 주력/수비/송구 기반 분석·역할별3계획이다. CareerMatch 선택 preparation은 경기 시작과 원자save/rollback·이후 잠금/원문 이어하기, 기존 nil은 소급 생성하지 않는다. 확률/RNG/능력/XP·F 보너스를 추가하지 않는다. 선택 gamePlanReports는 다음 주기 최초 일반/해외 보고서에 완료 개인 경기 키·수행/환경을 전체1회 고정하며 보고서 실패도 함께rollback한다. 실제 경기 판정/저장/소속/결과1회 유지, 구종/타격 성향을 자료 없이 주장하지 않는다. 상세 gameplay-spec v0.100. 예전 후속4 문구는 이력이다.
 
 - native-career-project-v1은 선택 developmentProjects/developmentReviews로 실제 완료 훈련·공식 경기 진척만 보존한다. 기준선/기간/시작 소속수준/역할·훈련종류를 확인하고 다음 주기 최초 보고서당1회 고정/원자rollback한다. 과제XP·H/P/F가산·계약 보장/자동FA는 없다. 비경기 일정은 훈련 집중/공식표본0을 명시하고 무소속은 먼저 소속 확보, 활성 프로젝트 목표변경 잠금·기존 판정/이어하기/결과1회를 유지한다. 현행 gameplay-spec v0.99이며 과거 미구현 문구는 이력이다.

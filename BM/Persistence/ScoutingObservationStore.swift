@@ -553,11 +553,13 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             guard service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
         }
         try value.validateDevelopment(today:GameDate(player.gameDate))
-        if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil {
+        if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil || value.specialTrainings != nil || value.specialAssessments != nil || value.specialReports != nil {
             var sources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
             for row in try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context) {let observation=try row.snapshot();sources[row.key]=(observation.period,observation.observedDate)}
             try value.validateProjects(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
             try value.validateGamePlanReports(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
+            try value.validateSpecial(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
+            try GoalSpecialStore.validateTrainings(owner:value,player:player,in:context)
         }
         return value
     }
@@ -763,6 +765,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         journal.overseasReports=(journal.overseasReports ?? [])+[report]
         try CareerProjectStore.appendReview(owner:&journal,player:player,observation:observation,reportID:report.id,in:context)
         try MatchPlanReportStore.append(owner:&journal,player:player,calendar:calendar,observation:observation,reportID:report.id,in:context)
+        try GoalSpecialStore.appendEvidence(owner:&journal,player:player,calendar:calendar,observation:observation,reportID:report.id,in:context)
         do {
             if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(journal)}
             else {context.insert(try CareerContractRegistration(journal))}
@@ -1067,6 +1070,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         let before=owner
         try appendReview(owner:&owner,player:player,observation:observation,reportID:reportID,in:context)
         try MatchPlanReportStore.append(owner:&owner,player:player,calendar:calendar,observation:observation,reportID:reportID,in:context)
+        try GoalSpecialStore.appendEvidence(owner:&owner,player:player,calendar:calendar,observation:observation,reportID:reportID,in:context)
         guard owner != before else {return}
         if let row {row.payload=try JSONEncoder().encode(owner)} else {context.insert(try CareerContractRegistration(owner))}
     }
@@ -1118,4 +1122,98 @@ enum CareerProjectError:LocalizedError {
         results.sort {$0.date == $1.date ? $0.matchKey < $1.matchKey:$0.date < $1.date}
         owner.gamePlanReports=(owner.gamePlanReports ?? [])+[MatchPlanObservation(reportID:reportID,period:observation.period,date:observation.observedDate,results:results)]
     }
+}
+
+
+@MainActor enum GoalSpecialStore {
+    static func requireNoPending(player:CareerPlayer,in context:ModelContext) throws {
+        guard let row=try ContractRegistrationStore.row(player:player,in:context) else {return}
+        let owner=try JSONDecoder().decode(CareerContractJournal.self,from:row.payload)
+        if (owner.specialAssessments ?? []).contains(where:{!$0.completed}) {throw GoalSpecialError.pending}
+    }
+    private static func requireReady(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext) throws {
+        guard !context.hasChanges,date == player.gameDate,revision == calendar.revision else {throw ContractRegistrationError.stale}
+        try CareerTrainingStore.requireNoPending(player:player,in:context)
+        guard !calendar.hasAction(on:date) else {throw TrainingError.actionUsed}
+        let id=player.id
+        for row in try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id})) {guard try row.snapshot().completed else {throw ContractRegistrationError.busy}}
+    }
+    private static func commit(_ owner:CareerContractJournal,player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext,save:CalendarProgression.Save) throws {
+        if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(owner)} else {context.insert(try CareerContractRegistration(owner))}
+        _ = try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        try save(context)
+    }
+    static func startTraining(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws -> CareerTrainingRecord {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        if (owner.specialTrainings ?? []).contains(where:{$0.date == date}),date == player.gameDate,let row=try CareerTrainingStore.record(player:player,in:context) {return row}
+        try requireReady(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        guard try CareerTrainingStore.record(player:player,in:context) == nil,let target=owner.developmentTarget,let club=owner.specialClub(target) else {throw GoalSpecialError.target}
+        let live=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
+        guard let recommendation=GoalSpecialRecommendation.make(club:club,abilities:live.abilities) else {throw TrainingError.limit}
+        do {
+            let row=try CareerTrainingStore.start(player:player,state:calendar,kind:recommendation.kind,in:context,save:{_ in})
+            let assignment=GoalSpecialTraining(id:"goal-training-v1/"+row.key,target:target,date:date,kind:recommendation.kind,recordKey:row.key)
+            owner.specialTrainings=(owner.specialTrainings ?? [])+[assignment];owner.revision += 1
+            try commit(owner,player:player,calendar:calendar,in:context,save:save);return row
+        } catch {context.rollback();throw error}
+    }
+    static func startAssessment(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        let period=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(date)).index
+        if (owner.specialAssessments ?? []).contains(where:{$0.period == period}) {return}
+        try requireReady(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        guard let target=owner.developmentTarget,let club=owner.specialClub(target) else {throw GoalSpecialError.target}
+        let live=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
+        let values=Dictionary(uniqueKeysWithValues:live.abilities.originals.map {($0.id,$0.current)})
+        guard let mental=values["homeMental"] else {throw TrainingError.invalidRecord}
+        let snapshot=PlayerInitialValues(contact:player.contact,power:player.power,discipline:player.discipline,speed:player.speed,defense:player.defense,arm:player.arm,mental:mental,velocity:values["homeVelocity"],control:values["homeControl"],stuff:values["homeStuff"],stamina:values["homeStamina"],pitches:Dictionary(uniqueKeysWithValues:player.pitches.map {($0.code,$0.mastery)}))
+        guard let opponentID=club.assessmentTeamID else {throw GoalSpecialError.target}
+        let value=GoalSpecialAssessment(id:player.id.uuidString+":goal-assessment-v1:"+String(period),target:target,date:date,period:period,role:player.role,position:player.role == .pitcher ? "P":player.positionRaw,level:club.assessmentLevel,opponentID:opponentID,values:snapshot,fatigue:player.fatigue,calendarRevision:calendar.revision+1)
+        owner.specialAssessments=(owner.specialAssessments ?? [])+[value];owner.revision += 1
+        do {calendar.revision += 1;try commit(owner,player:player,calendar:calendar,in:context,save:save)}catch{context.rollback();throw error}
+    }
+    static func advanceAssessment(player:CareerPlayer,calendar:CareerCalendarState,id:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        guard !context.hasChanges,calendar.revision == revision else {throw ContractRegistrationError.stale}
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        guard let index=owner.specialAssessments?.firstIndex(where:{$0.id == id}),var value=owner.specialAssessments?[index] else {throw MatchError.invalidRecord}
+        guard !value.completed else {throw MatchError.finished}
+        guard value.calendarRevision == revision,value.date == player.gameDate,value.fatigue == player.fatigue,!calendar.hasAction(on:player.gameDate) else {throw ContractRegistrationError.stale}
+        try value.advance();value.calendarRevision += 1
+        owner.specialAssessments?[index]=value;owner.revision += 1
+        do {
+            if value.completed {calendar.actionDate=player.gameDate;player.fatigue=min(100,player.fatigue+8)}
+            calendar.revision += 1;try commit(owner,player:player,calendar:calendar,in:context,save:save)
+        } catch {context.rollback();throw error}
+    }
+    static func validateTrainings(owner:CareerContractJournal,player:CareerPlayer,in context:ModelContext) throws {
+        guard owner.specialTrainings?.isEmpty == false else {return}
+        let id=player.id,rows=try context.fetch(FetchDescriptor<CareerTrainingRecord>(predicate:#Predicate {$0.playerID == id}))
+        for assignment in owner.specialTrainings ?? [] {
+            guard let row=rows.first(where:{$0.key == assignment.recordKey}) else {throw TrainingError.invalidRecord}
+            let training=try row.snapshot()
+            guard training.role == player.roleRaw,training.selectedKind == assignment.kind,training.trait == nil,training.position == nil else {throw TrainingError.invalidRecord}
+        }
+    }
+    static func appendEvidence(owner:inout CareerContractJournal,player:CareerPlayer,calendar:CareerCalendarState,observation:ScoutingObservation,reportID:String,in context:ModelContext) throws {
+        guard !(owner.specialReports ?? []).contains(where:{$0.period == observation.period}) else {return}
+        let included=Set((owner.specialReports ?? []).flatMap {$0.evidence.map(\.id)}),id=player.id
+        let rows=try context.fetch(FetchDescriptor<CareerTrainingRecord>(predicate:#Predicate {$0.playerID == id && $0.completed}))
+        var evidence:[GoalSpecialEvidence]=[]
+        for assignment in owner.specialTrainings ?? [] where !included.contains(assignment.id) {
+            guard assignment.date <= observation.observedDate,try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(assignment.date)).index < observation.period,
+                  let row=rows.first(where:{$0.key == assignment.recordKey}) else {continue}
+            let training=try row.snapshot()
+            evidence.append(GoalSpecialEvidence(id:assignment.id,kind:.training,target:assignment.target,date:assignment.date,score:training.average,growth:training.gain,summary:assignment.kind.label+" 특별 훈련 · 5회 완료"))
+        }
+        for assessment in owner.specialAssessments ?? [] where assessment.completed && !included.contains(assessment.id) {
+            guard assessment.period < observation.period,assessment.date <= observation.observedDate else {continue}
+            evidence.append(GoalSpecialEvidence(id:assessment.id,kind:.assessment,target:assessment.target,date:assessment.date,score:assessment.score,growth:0,summary:"자동 평가전2경기 · "+(assessment.role == .batter ? "\(assessment.totals.line.plateAppearances)타석":"\(assessment.totals.innings)이닝")))
+        }
+        guard !evidence.isEmpty else {return}
+        evidence.sort {$0.id < $1.id};owner.specialReports=(owner.specialReports ?? [])+[GoalSpecialReport(reportID:reportID,period:observation.period,date:observation.observedDate,evidence:evidence)]
+    }
+}
+enum GoalSpecialError:LocalizedError {
+    case pending,target
+    var errorDescription:String? {switch self {case .pending:"진행 중인 목표 구단 평가전을 먼저 마쳐 주세요. 특별 훈련·평가전 화면에서 이어갈 수 있습니다.";case .target:"먼저 관찰 보고서에서 목표 구단과 역할을 선택해 주세요."}}
 }
