@@ -3254,3 +3254,89 @@ extension CareerCalendarTests {
         }
     }
 }
+
+extension CareerCalendarTests {
+    func testDevelopmentProjectsUseOnlyNewOfficialAndMatchingCompletedTrainingAndFreezeNextReport() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,_)=try overseasOfferFixture(role),c=store.mainContext
+            p.gameDate="2033-03-28";s.actionDate=nil;try c.save()
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let report=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasReports?.last)
+            let club=try XCTUnwrap(CareerTargetClub.catalog(report).first {$0.roleID == (role == .batter ? "field":"starter")})
+            try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:club.id,date:p.gameDate,revision:s.revision,in:c)
+            let original=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,rev=s.revision
+            XCTAssertThrowsError(try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:rev,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,original);XCTAssertEqual(s.revision,rev)
+            try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:rev,in:c)
+            try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:-1,in:c,save:{_ in XCTFail("duplicate")})
+            let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentProjects?.last)
+            XCTAssertEqual(project.training,role == .batter ? .defense:.control)
+            let another=try XCTUnwrap(CareerTargetClub.catalog(report).last)
+            XCTAssertThrowsError(try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:another.id,date:p.gameDate,revision:s.revision,in:c))
+            for day in [0,1,3] {
+                p.gameDate=try GameDate(project.start).adding(days:day).description;s.actionDate=nil;try c.save()
+                let row=try CareerTrainingStore.start(player:p,state:s,kind:project.training,in:c)
+                for _ in 0..<5 {
+                    let training=try row.snapshot(),target=training.targets[training.scores.count]
+                    let input=TrainingInput(x:target.x,y:target.y)
+                    try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:input,in:c)
+                }
+            }
+            let member=try XCTUnwrap(s.registration(for:p))
+            let fixture=try XCTUnwrap(s.fixtures(for:p,year:2033).first {$0.isAppearance(for:role) && $0.date.description >= p.gameDate && $0.date.description <= project.end})
+            p.gameDate=fixture.date.description;s.actionDate=nil;try c.save()
+            var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",values:PlayerInitialValues(contact:80,power:80,discipline:80,speed:70,defense:80,arm:80,mental:80,velocity:80,control:80,stuff:80,stamina:80),seed:818,home:fixture.homeID == member.teamID,tracked:true)
+            match.competition="college";try match.advance(.automatic)
+            let record=try CareerMatchRecord(player:p,fixture:fixture,match:match);record.completed=true;record.rulesVersion="native-match-v2";c.insert(record);try c.save()
+            let progress=try CareerProjectStore.progress(project,player:p,on:p.gameDate,in:c)
+            XCTAssertEqual(progress.trainingKeys.count,3);XCTAssertEqual(progress.qualitySessions,3)
+            XCTAssertEqual(progress.sample,role == .batter ? match.line.plateAppearances:match.line.pitchingOuts)
+            XCTAssertEqual(progress.matchKeys,[record.key])
+            var excluded=project
+            excluded=CareerDevelopmentProject(id:project.id,target:project.target,start:project.start,end:project.end,period:project.period,role:project.role,level:"mlb-first-team",training:project.training,baselineMatches:[],baselineTrainings:progress.trainingKeys,requiredSample:project.requiredSample)
+            let ignored=try CareerProjectStore.progress(excluded,player:p,on:p.gameDate,in:c)
+            XCTAssertEqual(ignored.sample,0);XCTAssertEqual(ignored.trainingKeys.count,0)
+            p.gameDate=try GameDate(project.end).adding(days:5).description;try c.save()
+            let fatigue=p.fatigue,revision=s.revision,bytes=record.payload
+            let originalJournal=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,originalJournal)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),review=try XCTUnwrap(owner.developmentReviews?.last)
+            XCTAssertEqual(review.progress,progress)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentReviews?.count,1)
+            XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision);XCTAssertEqual(record.payload,bytes)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentReviews?.count,1)
+        }
+    }
+    func testDevelopmentProjectCompletionBoundaryDoesNotGiveRewards() {
+        let complete=CareerProjectProgress(matchKeys:["official"],trainingKeys:["a","b","c"],qualitySessions:2,sample:20,growth:0.1,requiredSample:20)
+        XCTAssertTrue(complete.complete)
+        XCTAssertFalse(CareerProjectProgress(matchKeys:["official"],trainingKeys:["a","b","c"],qualitySessions:1,sample:20,growth:0.1,requiredSample:20).complete)
+        XCTAssertFalse(CareerProjectProgress(matchKeys:["official"],trainingKeys:["a","b","c"],qualitySessions:2,sample:19,growth:0.1,requiredSample:20).complete)
+    }
+}
+
+extension CareerCalendarTests {
+    func testDevelopmentTargetAndProjectV12DiskReopenPreservesAllOriginalRecords() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("career.store");var id:UUID!,target:CareerDevelopmentTarget!,project:CareerDevelopmentProject!,raw:[Data]=[]
+        do {
+            let (store,p,s,_)=try overseasOfferFixture(.pitcher,legacyURL:url),c=store.mainContext
+            id=p.id;raw=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            let report=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasReports?.last),club=try XCTUnwrap(CareerTargetClub.catalog(report).first)
+            try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:club.id,date:p.gameDate,revision:s.revision,in:c)
+            try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c);target=owner.developmentTarget;project=owner.developmentProjects?.last
+            XCTAssertEqual(project.requiredSample,0,"offseason is training observation; no fake official sample")
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        let restored=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+        XCTAssertEqual(restored.developmentTarget,target);XCTAssertEqual(restored.developmentProjects?.last,project)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),raw)
+        XCTAssertEqual(restored.activeProject(on:p.gameDate),project)
+    }
+}

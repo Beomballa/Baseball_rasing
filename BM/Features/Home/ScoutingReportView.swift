@@ -98,6 +98,7 @@ struct SavedScoutingObservationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                CareerProjectReportEvidence(playerID:value.playerID,period:value.period)
                 GamePanel(title:"관심 구단 · 확정 관찰",onBoard:true,contentSpacing:16) {ScoutingInterestList(value:value)}
                 ScoutDossier(title: "\(value.period + 1)차 관찰 보고서", code: "OBSERVATION / FIXED RECORD", stamp: "관찰 확정", isPreview: false) {
                     HStack(alignment: .top, spacing: 16) {

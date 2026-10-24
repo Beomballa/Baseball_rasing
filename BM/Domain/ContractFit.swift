@@ -730,6 +730,8 @@ struct CareerContractJournal:Codable,Equatable {
     var overseasReports:[OverseasScoutingReport]? = nil
     var overseasCareer:OverseasCareerJournal? = nil
     var developmentTarget:CareerDevelopmentTarget? = nil
+    var developmentProjects:[CareerDevelopmentProject]? = nil
+    var developmentReviews:[CareerProjectReview]? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -2083,5 +2085,66 @@ struct CareerTargetReadiness {
         let sample=live.groups.filter {$0.id.hasPrefix(level+"/")}.map {live.role == .batter ? $0.totals.line.plateAppearances:$0.totals.line.pitchingOuts}.max() ?? 0
         let required=live.role == .batter ? (club.route != nil && club.route != .mlbDevelopment ? 100:40):(club.route != nil && club.route != .mlbDevelopment ? 75:45)
         return Self(currentH:current,missingH:club.criterion.flatMap {criterion in current.map {max(0,criterion-$0)}},sample:sample,requiredSample:required)
+    }
+}
+
+
+struct CareerDevelopmentProject:Codable,Equatable,Identifiable {
+    let id:String
+    let target:CareerDevelopmentTarget
+    let start:String
+    let end:String
+    let period:Int
+    let role:PlayerRole
+    let level:String
+    let training:TrainingKind
+    let baselineMatches:[String]
+    let baselineTrainings:[String]
+    let requiredSample:Int
+}
+struct CareerProjectProgress:Codable,Equatable {
+    let matchKeys:[String]
+    let trainingKeys:[String]
+    let qualitySessions:Int
+    let sample:Int
+    let growth:Double
+    var complete:Bool {trainingKeys.count >= 3 && qualitySessions >= 2 && sample >= requiredSample}
+    let requiredSample:Int
+}
+struct CareerProjectReview:Codable,Equatable,Identifiable {
+    let projectID:String
+    let reportID:String
+    let period:Int
+    let date:String
+    let progress:CareerProjectProgress
+    var id:String {projectID+":"+String(period)}
+}
+extension CareerContractJournal {
+    func activeProject(on date:String) -> CareerDevelopmentProject? {
+        (developmentProjects ?? []).last {project in
+            project.start <= date && date <= project.end && !(developmentReviews ?? []).contains {$0.projectID == project.id && $0.progress.complete}
+        }
+    }
+    func validateProjects(origin:String,today:GameDate,reports:[String:(Int,String)]) throws {
+        let projects=developmentProjects ?? [],reviews=developmentReviews ?? []
+        guard Set(projects.map(\.id)).count == projects.count,Set(projects.map(\.period)).count == projects.count,Set(reviews.map(\.id)).count == reviews.count else {throw ContractRegistrationError.invalid}
+        for project in projects {
+            guard let report=overseasReports?.first(where:{$0.id == project.target.reportID}),
+                  let club=CareerTargetClub.catalog(report).first(where:{$0.id == project.target.clubID}),
+                  project.role == report.observation.role,project.start >= project.target.date,project.start <= today.description,
+                  project.end == (try GameDate(project.start).adding(days:27).description),
+                  project.period == (try ScoutingPeriod(origin:GameDate(origin),today:GameDate(project.start))).index,
+                  project.id == playerID.uuidString+":development-project-v1:"+String(project.period),
+                  project.training == club.training,["highschool","college","domestic-development","domestic-first-team","mlb-development","npb-first-team","mlb-first-team"].contains(project.level),
+                  (0...(project.role == .batter ? 20:18)).contains(project.requiredSample),
+                  Set(project.baselineMatches).count == project.baselineMatches.count,Set(project.baselineTrainings).count == project.baselineTrainings.count else {throw ContractRegistrationError.invalid}
+        }
+        for review in reviews {
+            guard let project=projects.first(where:{$0.id == review.projectID}),let source=reports[review.reportID],
+                  source.0 == review.period,source.1 == review.date,review.date <= today.description,review.date >= project.start,review.period > project.period,
+                  review.progress.sample >= 0,review.progress.qualitySessions >= 0,review.progress.qualitySessions <= review.progress.trainingKeys.count,
+                  review.progress.growth.isFinite,review.progress.growth >= 0,review.progress.requiredSample == project.requiredSample,
+                  Set(review.progress.matchKeys).count == review.progress.matchKeys.count,Set(review.progress.trainingKeys).count == review.progress.trainingKeys.count else {throw ContractRegistrationError.invalid}
+        }
     }
 }

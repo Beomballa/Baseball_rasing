@@ -202,6 +202,9 @@ struct CareerPathVerification: View {
                     if args.contains("-college-pro-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedCollegePro(player:p,calendar:calendar,in:c.mainContext)
                     }
+                    if args.contains("-career-objectives-verification"),args.contains("-college-pro-verification") {
+                        try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                    }
                     if args.contains("-overseas-renewal-verification"),args.contains("-college-pro-verification") {
                         try seedOverseasRenewal(player:p,calendar:calendar,in:c.mainContext)
                     }

@@ -3036,3 +3036,34 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testUnifiedMarketTargetsAndProjectBothRoles() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:180))
+        for role in ["batter","pitcher"] {
+            let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
+            let market=app.buttons["openContractMarket"];revealFit(market,in:app);market.tap()
+            let history=app.buttons["marketHistory"];revealFit(history,in:app);history.tap()
+            let domestic=app.staticTexts.matching(identifier:"domesticMarketEconomic").matching(NSPredicate(format:"label CONTAINS %@","지원지수")).firstMatch;revealFit(domestic,in:app);XCTAssertTrue(domestic.exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let goals=app.buttons["openCareerObjectives"];revealFit(goals,in:app);goals.tap()
+            let picker=app.buttons["targetClub"];XCTAssertTrue(picker.waitForExistence(timeout:15));picker.tap()
+            let roleName=role == "batter" ? "수비":"선발 투수"
+            app.buttons["인천 하버스 · "+roleName].firstMatch.tap()
+            let save=app.buttons["saveCareerTarget"];revealFit(save,in:app);save.tap()
+            let summary=app.staticTexts["careerTargetSummary"];revealFit(summary,in:app);XCTAssertTrue(summary.label.contains("국내 프로"))
+            XCTAssertFalse(app.staticTexts["objectivesError"].exists)
+            let before=XCTAttachment(screenshot:app.screenshot());before.name="objectives-"+role;before.lifetime = .keepAlways;add(before)
+            let start=app.buttons["startCareerProject"];revealFit(start,in:app);start.tap()
+            let status=app.staticTexts["projectStatus"];revealFit(status,in:app);XCTAssertEqual(status.label,"진행 중")
+            XCTAssertFalse(app.staticTexts["projectError"].exists)
+            let project=XCTAttachment(screenshot:app.screenshot());project.name="project-"+role;project.lifetime = .keepAlways;add(project)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let again=app.buttons["openCareerObjectives"];revealFit(again,in:app);again.tap()
+            let retained=app.staticTexts["projectStatus"];revealFit(retained,in:app);XCTAssertEqual(retained.label,"진행 중")
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

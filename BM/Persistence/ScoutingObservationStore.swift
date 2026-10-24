@@ -192,7 +192,9 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
         let rows = try reports(player: player, calendar: calendar, in: context)
         if let row = rows.first(where: { $0.period == cycle.index }) { return row }
         let value = try currentObservation(player:player,calendar:calendar,in:context)
-        let row = try CareerScoutingReport(value); context.insert(row); return row
+        let row = try CareerScoutingReport(value); context.insert(row)
+        try CareerProjectStore.observe(player:player,calendar:calendar,observation:value,reportID:row.key,in:context)
+        return row
     }
     static func currentObservation(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> ScoutingObservation {
         let cycle = try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(player.gameDate))
@@ -551,6 +553,11 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             guard service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
         }
         try value.validateDevelopment(today:GameDate(player.gameDate))
+        if value.developmentProjects != nil || value.developmentReviews != nil {
+            var sources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
+            for row in try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context) {let observation=try row.snapshot();sources[row.key]=(observation.period,observation.observedDate)}
+            try value.validateProjects(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
+        }
         return value
     }
     static func releaseCandidate(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> (key:String,review:DomesticRenewalReview,eligible:Bool)? {
@@ -753,6 +760,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         let report=try OverseasScoutingReport.make(observation:observation,eligibility:eligibility)
         try report.validate(playerID:player.id,today:GameDate(date))
         journal.overseasReports=(journal.overseasReports ?? [])+[report]
+        try CareerProjectStore.appendReview(owner:&journal,player:player,observation:observation,reportID:report.id,in:context)
         do {
             if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(journal)}
             else {context.insert(try CareerContractRegistration(journal))}
@@ -1013,9 +1021,78 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
         if owner.developmentTarget?.reportID == reportID && owner.developmentTarget?.clubID == clubID {return}
         try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        guard owner.activeProject(on:date) == nil else {throw ContractRegistrationError.busy}
         guard let report=owner.overseasReports?.first(where:{$0.id == reportID}),report.period == (try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(date))).index,
               CareerTargetClub.catalog(report).contains(where:{$0.id == clubID}) else {throw ContractRegistrationError.invalid}
         owner.developmentTarget=CareerDevelopmentTarget(reportID:reportID,clubID:clubID,date:date);owner.revision += 1
         try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
+}
+
+
+@MainActor enum CareerProjectStore {
+    static func progress(_ project:CareerDevelopmentProject,on date:String,matches:[CareerMatchRecord],trainings:[CareerTrainingRecord]) throws -> CareerProjectProgress {
+        let end=min(date,project.end)
+        var matchKeys:[String]=[],trainingKeys:[String]=[],quality=0,sample=0,growth=0.0
+        for row in matches where row.gameDate >= project.start && row.gameDate <= end && row.completed && row.appearance && !project.baselineMatches.contains(row.key) {
+            let match=try row.snapshot()
+            guard match.completed,match.appearance,match.role == project.role.rawValue,match.competition == project.level else {continue}
+            matchKeys.append(row.key);sample += project.role == .batter ? match.line.plateAppearances:match.line.pitchingOuts
+        }
+        for row in trainings where row.gameDate >= project.start && row.gameDate <= end && row.completed && !project.baselineTrainings.contains(row.key) {
+            let training=try row.snapshot()
+            guard training.role == project.role.rawValue,training.selectedKind == project.training,training.trait == nil,training.position == nil else {continue}
+            trainingKeys.append(row.key);if training.average >= 75 {quality += 1};growth += training.gain
+        }
+        return CareerProjectProgress(matchKeys:matchKeys.sorted(),trainingKeys:trainingKeys.sorted(),qualitySessions:quality,sample:sample,growth:TrainingRules.round(growth),requiredSample:project.requiredSample)
+    }
+    static func progress(_ project:CareerDevelopmentProject,player:CareerPlayer,on date:String,in context:ModelContext) throws -> CareerProjectProgress {
+        let id=player.id
+        return try progress(project,on:date,matches:context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id})),trainings:context.fetch(FetchDescriptor<CareerTrainingRecord>(predicate:#Predicate {$0.playerID == id})))
+    }
+    static func appendReview(owner:inout CareerContractJournal,player:CareerPlayer,observation:ScoutingObservation,reportID:String,in context:ModelContext) throws {
+        for project in owner.developmentProjects ?? [] where project.start <= observation.observedDate && project.period < observation.period {
+            guard !(owner.developmentReviews ?? []).contains(where:{$0.projectID == project.id && ($0.period == observation.period || $0.progress.complete || $0.date > project.end)}) else {continue}
+            let value=try progress(project,player:player,on:observation.observedDate,in:context)
+            owner.developmentReviews=(owner.developmentReviews ?? [])+[CareerProjectReview(projectID:project.id,reportID:reportID,period:observation.period,date:observation.observedDate,progress:value)]
+        }
+    }
+    // The enclosing report/day command owns saving and rollback.
+    static func observe(player:CareerPlayer,calendar:CareerCalendarState,observation:ScoutingObservation,reportID:String,in context:ModelContext) throws {
+        guard let row=try ContractRegistrationStore.row(player:player,in:context) else {return}
+        var owner=try JSONDecoder().decode(CareerContractJournal.self,from:row.payload)
+        guard owner.developmentProjects?.isEmpty == false else {return}
+        try appendReview(owner:&owner,player:player,observation:observation,reportID:reportID,in:context)
+        row.payload=try JSONEncoder().encode(owner)
+    }
+}
+@MainActor extension OverseasContractStore {
+    static func startProject(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        let period=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(date)).index
+        if (owner.developmentProjects ?? []).contains(where:{$0.period == period}) {return}
+        try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        guard owner.activeProject(on:date) == nil,let target=owner.developmentTarget,
+              let report=owner.overseasReports?.first(where:{$0.id == target.reportID && $0.period == period}),
+              let club=CareerTargetClub.catalog(report).first(where:{$0.id == target.clubID}) else {throw ContractRegistrationError.invalid}
+        let id=player.id,day=date
+        let matches=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.gameDate == day})).filter(\.completed).map(\.key).sorted()
+        let trainings=try context.fetch(FetchDescriptor<CareerTrainingRecord>(predicate:#Predicate {$0.playerID == id && $0.gameDate == day})).filter(\.completed).map(\.key).sorted()
+        let member=try owner.current(on:GameDate(date))
+        let level:String
+        if let member {level=member.level} else {level=(try calendar.age(of:player)) <= 18 ? "highschool":"unsigned"}
+        guard level != "unsigned" else {throw CareerProjectError.affiliation}
+        let end=try GameDate(date).adding(days:27)
+        let scheduled=try calendar.fixtures(for:player,year:GameDate(date).year).filter {$0.date.description >= date && $0.date <= end && $0.isAppearance(for:player.role)}.count
+        let sampleGoal=player.role == .batter ? min(20,scheduled*4):min(18,scheduled*18)
+        let project=CareerDevelopmentProject(id:player.id.uuidString+":development-project-v1:"+String(period),target:target,start:date,end:try GameDate(date).adding(days:27).description,period:period,role:player.role,level:level,training:club.training,baselineMatches:matches,baselineTrainings:trainings,requiredSample:sampleGoal)
+        owner.developmentProjects=(owner.developmentProjects ?? [])+[project];owner.revision += 1
+        try write(owner,player:player,calendar:calendar,in:context,save:save)
+    }
+}
+
+
+enum CareerProjectError:LocalizedError {
+    case affiliation
+    var errorDescription:String? {"공식 출전 소속이 필요합니다. 무소속은 계약 시장의 인증 평가전·재입단 경로를 먼저 확인하세요."}
 }
