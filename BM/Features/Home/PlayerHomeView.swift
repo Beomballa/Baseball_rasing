@@ -1120,6 +1120,11 @@ struct OverseasEligibilityPanel:View {
                 }
                 NavigationLink {OverseasScoutingReportView(player:player,calendar:calendar)} label: {Text("해외 성적 비교 · 성장 전망")}
                     .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openOverseasReport")
+                if let report=try? OverseasReportStore.current(player:player,calendar:calendar,in:context),let market=report.market {
+                    let interests=market.clubs.filter {$0.interest != nil}
+                    Text(interests.isEmpty ? "최근 해외 보고서 · 관심 없음":"최근 해외 보고서 · 관심 역할 \(interests.count)건 / 정식 제의 별도")
+                        .font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homeOverseasInterest")
+                }
                 HomeDetailButton(title:"경력 근거 · 부족 조건",expanded:$details,identifier:"overseasEligibilityDetails")
                 if details {
                     ForEach(value.routes) {row in
@@ -1163,6 +1168,7 @@ struct OverseasScoutingReportView:View {
                     if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasReportError")}
                 }
                 if let report {
+                    OverseasMarketPanel(report:report)
                     GamePanel(title:"동일 환경 · 성적 비교",onBoard:true,contentSpacing:12) {
                         ForEach(report.comparisons) {row in
                             VStack(alignment:.leading,spacing:7) {
@@ -1197,4 +1203,38 @@ struct OverseasScoutingReportView:View {
         catch {failure=error.localizedDescription}
         working=false
     }
+}
+
+struct OverseasMarketPanel:View {
+    let report:OverseasScoutingReport
+    @State private var expanded=false
+    private var best:[OverseasClubEvaluation] {
+        var picked=[String:OverseasClubEvaluation]()
+        for row in report.market?.clubs ?? [] where row.interest != nil {
+            let key=row.route.id+"/"+row.name
+            if picked[key] == nil || (row.f ?? -1000) > (picked[key]?.f ?? -1000) {picked[key]=row}
+        }
+        return picked.values.sorted {a,b in a.f == b.f ? a.id<b.id:(a.f ?? -1000)>(b.f ?? -1000)}
+    }
+    var body:some View {
+        GamePanel(title:"해외 모집 · 관심 구단",onBoard:true,contentSpacing:12) {
+            if report.market == nil {Text("이전 보고서에는 해외 모집 자료가 없습니다. 다음 주기부터 기록합니다.").font(.caption)}
+            else if best.isEmpty {
+                Text("현재 해외 관심 구단 없음").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasInterestEmpty")
+                Text("관찰 표본·기량·모집 조건을 보완하세요. 관심이나 제의를 채우려고 구단을 재추첨하지 않습니다.").font(.caption)
+            } else {
+                ForEach(Array((expanded ? best:Array(best.prefix(3))))) {row in
+                    VStack(alignment:.leading,spacing:8) {
+                        Text(row.name+" · "+row.route.label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                        Text(DomesticContractOffer.roleName(row.roleID)+" · "+(row.interest?.label ?? "관찰 대기")+" / F "+String(format:"%+.1f",row.f ?? 0)).font(.subheadline).accessibilityIdentifier("overseasClubInterest")
+                        Text("H \(number(row.h)) / C \(number(row.criterion)) / P \(number(row.p)) · 자리\(row.seats) / 예산\(row.budget)").font(.caption.monospaced())
+                        Text(row.blockers.isEmpty ? "기량상 후보 · 실제 계약 자격/기간·예산·경쟁 심사는 별도":row.blockers.prefix(2).joined(separator:" / ")).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }.padding(.vertical,6)
+                }
+                Button(expanded ? "관심 구단 접기":"관심 구단 전체 \(best.count)건") {expanded.toggle()}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("overseasInterestDetails")
+            }
+            Text("가상 구단의 고정 모집 자료입니다. 관심은 정식 계약 제의나 출전 보장이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+        }
+    }
+    private func number(_ value:Double?) -> String {value.map {String(format:"%.1f",$0)} ?? "—"}
 }

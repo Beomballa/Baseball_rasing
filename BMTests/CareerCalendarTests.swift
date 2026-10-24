@@ -2418,3 +2418,36 @@ extension CareerCalendarTests {
         XCTAssertTrue(report.comparisons.allSatisfy {$0.verified});XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matches)
     }
 }
+
+extension CareerCalendarTests {
+    func testOverseasMarketUsesFrozenRoleDemandAndRightsWithoutCreatingOffers() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try collegeProFixture(role),c=store.mainContext
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let report=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c)),market=try XCTUnwrap(report.market)
+            XCTAssertEqual(report.version,2);XCTAssertEqual(market.clubs.count,role == .batter ? 54:18)
+            XCTAssertEqual(market,OverseasMarket.make(report:report));XCTAssertTrue(market.clubs.contains {$0.interest != nil})
+            for row in market.clubs {
+                XCTAssertGreaterThanOrEqual(row.criterion,OverseasMarket.minimum(row.route,row.roleID))
+                XCTAssertEqual(row.seats,row.demand == .none ? 0:1)
+                if row.route != .mlbDevelopment {XCTAssertTrue(row.blockers.contains {$0.contains("대학") || $0.contains("전력")})}
+            }
+            let members=try ContractRegistrationStore.journal(player:p,calendar:s,in:c).memberships
+            p.power += 1;try c.save()
+            XCTAssertEqual(try OverseasReportStore.current(player:p,calendar:s,in:c)?.market,market)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).memberships,members)
+        }
+    }
+    func testOverseasOldReportDoesNotGainMarketAndCorruptMarketIsRejected() throws {
+        let (store,p,s)=try collegeProFixture(.batter),c=store.mainContext
+        try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),bytes=row.payload
+        var json=try XCTUnwrap(JSONSerialization.jsonObject(with:bytes) as? [String:Any]),reports=try XCTUnwrap(json["overseasReports"] as? [[String:Any]])
+        reports[0]["market"]=nil;reports[0]["version"]=1;json["overseasReports"]=reports;row.payload=try JSONSerialization.data(withJSONObject:json);try c.save()
+        let legacy=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c));XCTAssertNil(legacy.market)
+        try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        XCTAssertNil(try OverseasReportStore.current(player:p,calendar:s,in:c)?.market)
+        reports[0]["version"]=2;json["overseasReports"]=reports;row.payload=try JSONSerialization.data(withJSONObject:json)
+        XCTAssertThrowsError(try ContractRegistrationStore.journal(player:p,calendar:s,in:c));c.rollback()
+    }
+}

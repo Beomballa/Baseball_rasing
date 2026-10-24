@@ -2878,3 +2878,19 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testOverseasMarketBothRolesShowsInterestAsSeparateFromOffers() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification"];app.launch()
+        for role in ["batter","pitcher"] {
+            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
+            let open=app.buttons["openOverseasReport"];revealFit(open,in:app);open.tap();app.buttons["captureOverseasReport"].tap()
+            let interest=app.staticTexts["overseasClubInterest"].firstMatch;revealFit(interest,in:app);XCTAssertTrue(interest.exists)
+            let all=app.buttons["overseasInterestDetails"];revealFit(all,in:app);all.tap()
+            XCTAssertFalse(app.buttons["acceptOverseasOffer"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let summary=app.staticTexts["homeOverseasInterest"];revealFit(summary,in:app);XCTAssertTrue(summary.label.contains("정식 제의 별도"))
+        }
+        app.terminate()
+    }
+}

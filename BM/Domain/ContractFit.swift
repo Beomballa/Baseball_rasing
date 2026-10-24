@@ -1249,6 +1249,7 @@ struct OverseasScoutingReport:Codable {
     let observation:ScoutingObservation
     let comparisons:[ScoutingPerformanceComparison]
     let projections:[OverseasGrowthProjection]
+    var market:OverseasMarket? = nil
     var id:String {observation.playerID.uuidString+":overseas-report-v1:"+String(period)}
     var selected:ScoutingPerformanceComparison? {ScoutingContractFit.selected(comparisons,role:observation.role)}
     @MainActor static func make(observation:ScoutingObservation,eligibility:OverseasEligibilitySnapshot) throws -> Self {
@@ -1261,13 +1262,15 @@ struct OverseasScoutingReport:Codable {
             let p=verified ? ScoutingContractFit.correction(value:value!,reference:ref!.value!,n:group.performance!.sample(group.totals.line,role:observation.role)):0
             return ScoutingPerformanceComparison(id:group.id,totals:group.totals,performance:group.performance,reference:ref,value:value,correction:p,verified:verified,reason:verified ? "성인 표준 NPC 기준 · 원소속 수준/입력 환경 분리":"지원 환경/성적 비교 미검증 · P=0")
         }
-        return Self(version:1,period:observation.period,eligibility:eligibility,observation:observation,comparisons:comparisons,projections:try OverseasGrowthProjection.make(observation:observation))
+        var result=Self(version:2,period:observation.period,eligibility:eligibility,observation:observation,comparisons:comparisons,projections:try OverseasGrowthProjection.make(observation:observation))
+        result.market=OverseasMarket.make(report:result);return result
     }
     func validate(playerID:UUID,today:GameDate) throws {
         try eligibility.validate(playerID:playerID,today:today);try observation.validate()
-        guard version == 1,observation.playerID == playerID,period == observation.period,eligibility.evidence.date == observation.observedDate,
+        guard [1,2].contains(version),observation.playerID == playerID,period == observation.period,eligibility.evidence.date == observation.observedDate,
               comparisons.count <= observation.groups.count,Set(comparisons.map(\.id)).count == comparisons.count,
               projections == (try OverseasGrowthProjection.make(observation:observation)) else {throw ContractEvaluationError.invalid}
+        guard version == 1 ? market == nil:market == OverseasMarket.make(report:self) else {throw ContractEvaluationError.invalid}
         let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
         guard comparisons.map(\.id) == observation.groups.filter({$0.id.hasPrefix(level+"/")}).map(\.id) else {throw ContractEvaluationError.invalid}
         for row in comparisons {
@@ -1281,5 +1284,68 @@ struct OverseasScoutingReport:Codable {
             let p=verified ? ScoutingContractFit.correction(value:value!,reference:row.reference!.value!,n:row.performance!.sample(row.totals.line,role:observation.role)):0
             guard row.value == value,row.verified == verified,row.correction == p else {throw ContractEvaluationError.invalid}
         }
+    }
+}
+
+struct OverseasClubEvaluation:Codable,Equatable,Identifiable {
+    let id:String
+    let name:String
+    let route:OverseasRoute
+    let roleID:String
+    let demand:RecruitmentDemand
+    let criterion:Double
+    let competitor:Double?
+    let budget:Int
+    let seats:Int
+    let h:Double?
+    let projection:Double?
+    let p:Double
+    let f:Double?
+    let interest:ScoutingInterestLevel?
+    let blockers:[String]
+}
+struct OverseasMarket:Codable,Equatable {
+    let version:Int
+    let seed:String
+    let clubs:[OverseasClubEvaluation]
+    static let americanNames=["퍼시픽 웨이브스","캐니언 호크스","레이크 베어스","메트로 나이츠","애틀랜틱 세일러스","프레리 버팔로스"]
+    static let japaneseNames=["동도 스카이스","항남 마리너즈","서경 피닉스","북해 스노우스","중앙 레일즈","남양 선즈"]
+    static func minimum(_ route:OverseasRoute,_ role:String) -> Double {
+        let rows:[OverseasRoute:[String:Double]]=[.mlbDevelopment:["slugger":68,"onBase":65,"field":62,"starter":65],.npbFirstTeam:["slugger":80,"onBase":77,"field":73,"starter":76],.mlbFirstTeam:["slugger":88,"onBase":85,"field":81,"starter":84]]
+        return rows[route]![role]!
+    }
+    static func make(report:OverseasScoutingReport) -> Self {
+        let seed=report.observation.playerID.uuidString+"/overseas-market-v1/"+String(report.period)
+        let source=report.selected,role=report.observation.role
+        let enough=source.map {role == .batter ? $0.totals.line.plateAppearances >= 40:$0.totals.line.pitchingOuts >= 45} ?? false
+        let p=enough ? source?.correction ?? 0:0
+        var rows:[OverseasClubEvaluation]=[]
+        for route in OverseasRoute.allCases {
+            let names=route == .npbFirstTeam ? japaneseNames:americanNames
+            for index in names.indices {for grade in report.observation.grades {
+                let id=route.id+"/\(index)/"+grade.id,bits=DomesticSelection.hash(seed+id)
+                let demand:RecruitmentDemand=bits%5 == 0 ? .none:bits%3 == 0 ? .vacancy:.depth
+                let minimum=minimum(route,grade.id),competitor=demand == .vacancy ? nil:minimum+Double((bits/11)%9)
+                let c=max(minimum,competitor ?? minimum),f=grade.score.map {ScoutingContractFit.round($0-c+p)}
+                let budget=300+Int((bits/23)%401),seats=demand == .none ? 0:1
+                let projected=report.projections.first {$0.roleID == grade.id}?.baseline
+                var blockers:[String]=[]
+                if !enough {blockers.append("동일 환경 관찰40타석/15이닝 필요")}
+                if seats == 0 {blockers.append("현재 역할 모집 없음")}
+                if grade.score == nil {blockers.append("역할 기량 미확인")}
+                if let f,f < 0 {blockers.append("현재 기량 F "+String(format:"%+.1f",f)+" · 계약 기준0 보완")}
+                if grade.id == "field" {
+                    if (report.observation.positionMastery ?? 0)<70 || (report.observation.abilities.originals.first {$0.id == "homeDefense"}?.current ?? 0)<70 {blockers.append("주 포지션/원본 수비70 필요")}
+                    let values=Dictionary(uniqueKeysWithValues:report.observation.abilities.originals.map {($0.id,$0.current)})
+                    let attack=(values["homeContact"] ?? 0)*0.5+(values["homePower"] ?? 0)*0.15+(values["homeDiscipline"] ?? 0)*0.35
+                    if route != .mlbDevelopment && attack < (route == .npbFirstTeam ? 60:68) {blockers.append("수비형 해외 공격 기량 기준 부족")}
+                    if report.observation.position == "C" {blockers.append("해외 포수 전용 사건/평가 검증 필요")}
+                }
+                if let eligibility=report.eligibility.routes.first(where:{$0.route == route}),eligibility.status != .reviewable {blockers += eligibility.reasons}
+                let interest=enough && seats>0 ? f.flatMap(ScoutingInterestLevel.at):nil
+                rows.append(OverseasClubEvaluation(id:id,name:names[index],route:route,roleID:grade.id,demand:demand,criterion:c,competitor:competitor,budget:budget,seats:seats,h:grade.score,projection:projected,p:p,f:f,interest:interest,blockers:blockers))
+            }}
+        }
+        return Self(version:1,seed:seed,clubs:rows)
     }
 }
