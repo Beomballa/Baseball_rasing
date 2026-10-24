@@ -1067,6 +1067,8 @@ extension CareerFlowTests {
         reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
         assertArenaFits(app,button:"gamePitch",ratio:1219.0/1290)
         XCTAssertTrue(app.otherElements["releaseGauge"].exists)
+        app.buttons["gamePlaybackMenu"].tap();app.buttons["연속 재생"].tap()
+        XCTAssertEqual(app.buttons["gamePlaybackMenu"].value as? String,"연속 재생")
         let pitcherScreen=XCTAttachment(screenshot:app.screenshot());pitcherScreen.name="Arcade pitcher gameplay";pitcherScreen.lifetime = .keepAlways;add(pitcherScreen)
         let stage=app.descendants(matching:.any).matching(identifier:"inplayFieldStage").firstMatch
         var found=false
@@ -1084,10 +1086,12 @@ extension CareerFlowTests {
         XCTAssertTrue(found,"A live fair ball must enter the dedicated field stage")
         let field=app.descendants(matching:.any).matching(identifier:"fieldReplayCanvas").firstMatch
         let firstProgress=field.value as? String
+        let firstFieldImage=field.screenshot().pngRepresentation
         XCTAssertNotEqual(firstProgress,"플레이 완료","A new fair ball must start before the final result")
         Thread.sleep(forTimeInterval:1)
         XCTAssertTrue(stage.exists,"The fair ball must not immediately jump to the result")
-        XCTAssertNotEqual(field.value as? String,firstProgress,"The saved field clock must advance")
+        // Text now updates at phase boundaries; verify the moving field pixels instead.
+        XCTAssertNotEqual(field.screenshot().pngRepresentation,firstFieldImage,"The rendered field must advance while the phase text can remain stable")
         verifyImmersiveField(app,name:"Live field motion and opaque runner")
         let ended=XCTNSPredicateExpectation(predicate:NSPredicate(format:"exists == false"),object:stage)
         XCTAssertEqual(XCTWaiter.wait(for:[ended],timeout:30),.completed)
@@ -1095,6 +1099,7 @@ extension CareerFlowTests {
         app.terminate();app.launch()
         reveal(app.buttons["openCareerGame"],in:app);app.buttons["openCareerGame"].tap()
         XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
+        XCTAssertEqual(app.buttons["gamePlaybackMenu"].value as? String,"연속 재생")
         // Same saved play in the real screen, cold process for each mode; neither replay rewards.
         for canvas in [true,false] {
             app.terminate();app.launchArguments=["-match-render-performance"]+(canvas ? ["-field-canvas-comparison"]:[]);app.launch()

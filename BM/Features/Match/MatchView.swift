@@ -502,4 +502,32 @@ struct MatchReplayVerification:View {
             .navigationTitle("통합 재현실").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
     }
 }
+// Synthetic read-only render cases: no career store, input, rewards or dates.
+struct FieldPerformanceAutoplay:View {
+    @State private var index=0
+    @State private var cases:[MatchDetailedPlay]=[]
+    var body:some View {
+        VStack(spacing:8) {
+            Text("QA 자동 렌더링 · 저장 미사용").font(.headline).foregroundStyle(GameTheme.gold)
+            if !cases.isEmpty,index<8 {
+                let pitcher=index>=4
+                let forceContinuous=index%4>=2
+                let play=cases[index%2]
+                Text("\(pitcher ? "투수":"타자") · \(GroundFieldScene.supports(play) ? "SpriteKit":"Canvas") · \(forceContinuous ? "연속 재생 강제 비교":"시스템 설정")").font(.caption)
+                DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",ownTeamFielding:pitcher,
+                    playbackMode:forceContinuous ? .continuous:.system,preparesMotion:true) {
+                        MatchRenderMetrics.exportLive(role:"autoplay-\(index)")
+                        MatchRenderMetrics.enabled=false
+                        index+=1
+                    }.id(index)
+                    .task(id:index) {MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true}
+            } else {Text(cases.isEmpty ? "준비 중":"8개 장면 측정 완료")}
+        }.padding(8).background(GameTheme.navy.ignoresSafeArea()).foregroundStyle(GameTheme.paper)
+        .task {
+            guard cases.isEmpty else {return}
+            if let fixtures=try? MatchReplayFixture.make(pitcher:false),let ground=fixtures.compactMap(\.field).first(where:GroundFieldScene.supports),
+               let other=fixtures.compactMap(\.field).first(where:{!GroundFieldScene.supports($0)}) {cases=[ground,other]}
+        }
+    }
+}
 #endif

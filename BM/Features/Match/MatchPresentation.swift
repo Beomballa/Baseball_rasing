@@ -1340,12 +1340,14 @@ struct DetailedFieldReplayBoard: View {
     var reduceMotionOverride:Bool? = nil
     var handoff:FieldContactHandoff? = nil
     var showsContactPoints = false
+    var playbackMode:FieldPlaybackMode = .system
     var preparesMotion=false
     var onResolved: @MainActor () -> Void = {}
     let complete: @MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Environment(\.dynamicTypeSize) private var typeSize
-    private var reduced:Bool {reduceMotionOverride ?? systemReduced}
+    private var reduced:Bool {reduceMotionOverride ?? playbackMode.reducesMovement(system:systemReduced)}
+    private var effectsReduced:Bool { reduceMotionOverride != nil ? reduced : (reduced || systemReduced) }
     @State private var start:Double?
     @State private var groundScene:GroundFieldScene?
     private var usesGroundScene:Bool {
@@ -1363,9 +1365,57 @@ struct DetailedFieldReplayBoard: View {
     }
     @State private var resolved = false
     private var seconds: Double {FieldReplayPresentation.seconds(play,reduced:reduced,animated:animated)}
+    private var phaseDates: [Date] {
+        guard let start else { return [.now] }
+        let elapsed=playbackHandoff?.elapsed(at:start) ?? 0
+        let origin=Date(timeIntervalSinceNow:start-ProcessInfo.processInfo.systemUptime)
+        return FieldReplayPhaseSchedule.moments(play).map { origin.addingTimeInterval(max(0,$0-elapsed)) }
+    }
     var body: some View {
-        TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved || (preparesMotion && prepared == nil))) { timeline in
-            let now=ProcessInfo.processInfo.systemUptime
+        Group {
+            if usesGroundScene {
+                TimelineView(.explicit(phaseDates)) { _ in replayFrame(now:ProcessInfo.processInfo.systemUptime) }
+            } else {
+                TimelineView(.animation(minimumInterval:reduced ? 0.15:1.0/30,paused:previewTime != nil || !animated || resolved || (preparesMotion && prepared == nil))) { _ in
+                    replayFrame(now:ProcessInfo.processInfo.systemUptime)
+                }
+            }
+        }
+        .task(id:play.eventID + (animated ? ":live":":still")) {
+            guard previewTime == nil else {return}
+            #if DEBUG
+            MatchRenderMetrics.motionPolicy=MatchRenderMetrics.MotionPolicy(effectiveReduced:reduced,swiftUIReduced:systemReduced,uiReduced:UIAccessibility.isReduceMotionEnabled,lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled)
+            #endif
+            if preparesMotion {
+                let began=ProcessInfo.processInfo.systemUptime
+                guard let requests=await sprites.requests(duration:play.duration,reduced:reduced,actorsAt:{sprites.actors(play,time:$0,reduced:reduced,finished:false)}),
+                      let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+                if usesGroundScene {
+                    let scene=GroundFieldScene(play:play,sprites:sprites,prepared:images,scoreText:scoreText)
+                    await scene.preload()
+                    guard !Task.isCancelled else {return}
+                    groundScene=scene
+                }
+                prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
+                #if DEBUG
+                MatchRenderMetrics.motionPolicy=MatchRenderMetrics.MotionPolicy(effectiveReduced:reduced,swiftUIReduced:systemReduced,uiReduced:UIAccessibility.isReduceMotionEnabled,lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled)
+                MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
+                #endif
+            }
+            start=ProcessInfo.processInfo.systemUptime;resolved=false
+            groundScene?.setClock(start:start!,handoff:playbackHandoff,reduced:reduced)
+            guard animated else {return}
+            let elapsed=playbackHandoff?.elapsed(at:ProcessInfo.processInfo.systemUptime) ?? 0
+            do {try await Task.sleep(for:.seconds(max(0,seconds-elapsed)))} catch {return}
+            guard !Task.isCancelled else {return}
+            resolved=true;onResolved()
+            if animated {
+                do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:reduced,match:true)))} catch {return}
+            }
+            if !Task.isCancelled {complete()}
+        }
+    }
+    @ViewBuilder private func replayFrame(now:Double) -> some View {
             let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:playbackHandoff,now:now)
             let time=previewTime.map {max(0,min(play.duration,$0))} ?? (resolved ? play.duration:FieldReplayPresentation.time(play,elapsed:elapsed,reduced:reduced,animated:animated))
             let finished=previewTime.map {$0>=play.duration} ?? (!animated || resolved)
@@ -1383,7 +1433,7 @@ struct DetailedFieldReplayBoard: View {
                 #endif
                 GeometryReader { geometry in
                 if usesGroundScene,let groundScene {
-                    GroundFieldSurface(scene:groundScene,scoreText:scoreText,finished:finished,reduced:reduced)
+                    GroundFieldSurface(scene:groundScene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced)
                 } else {
                 Canvas { context,size in
                     #if DEBUG
@@ -1398,7 +1448,7 @@ struct DetailedFieldReplayBoard: View {
                     if let handoff=playbackHandoff {
                         let cut=max(0,min(play.duration,handoff.cutAt-handoff.startedAt))
                         let ball=FieldBallPresentation.point(play,time:cut,size:size,leftIndex:ownTeamFielding == true && throwingHand == "left" ? DetailedFieldRules.names.firstIndex(of:ownPosition ?? ""):nil)
-                        let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:ball,canvas:geometry.frame(in:.global),now:now,reduced:reduced)
+                        let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:ball,canvas:geometry.frame(in:.global),now:now,reduced:effectsReduced)
                         context.clip(to:Path(CGRect(origin:.zero,size:size)))
                         context.translateBy(x:offset.x,y:offset.y)
                     }
@@ -1437,7 +1487,7 @@ struct DetailedFieldReplayBoard: View {
                     }
                     let groundBall=point(FieldNode.sample(play.ball,at:time))
                     context.fill(Path(ellipseIn:CGRect(x:groundBall.x-3,y:groundBall.y-1,width:6,height:2)),with:.color(.black.opacity(0.4)))
-                    for i in 1...3 where !reduced && time<Double(play.ball.last?.at ?? 0) {
+                    for i in 1...3 where !effectsReduced && time<Double(play.ball.last?.at ?? 0) {
                         let p=ballPoint(max(0,time-Double(i)*0.04))
                         context.fill(Path(CGRect(x:p.x,y:p.y,width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
                     }
@@ -1473,37 +1523,8 @@ struct DetailedFieldReplayBoard: View {
                     .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
             }.padding(4).background(GameTheme.board)
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
-        }
-        .task(id:play.eventID + (animated ? ":live":":still")) {
-            guard previewTime == nil else {return}
-            if preparesMotion {
-                let began=ProcessInfo.processInfo.systemUptime
-                guard let requests=await sprites.requests(duration:play.duration,reduced:reduced,actorsAt:{sprites.actors(play,time:$0,reduced:reduced,finished:false)}),
-                      let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
-                if usesGroundScene {
-                    let scene=GroundFieldScene(play:play,sprites:sprites,prepared:images,scoreText:scoreText)
-                    await scene.preload()
-                    guard !Task.isCancelled else {return}
-                    groundScene=scene
-                }
-                prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
-                #if DEBUG
-                MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
-                #endif
-            }
-            start=ProcessInfo.processInfo.systemUptime;resolved=false
-            groundScene?.setClock(start:start!,handoff:playbackHandoff,reduced:reduced)
-            guard animated else {return}
-            let elapsed=playbackHandoff?.elapsed(at:ProcessInfo.processInfo.systemUptime) ?? 0
-            do {try await Task.sleep(for:.seconds(max(0,seconds-elapsed)))} catch {return}
-            guard !Task.isCancelled else {return}
-            resolved=true;onResolved()
-            if animated {
-                do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:reduced,match:true)))} catch {return}
-            }
-            if !Task.isCancelled {complete()}
-        }
     }
+
 }
 
 struct FieldReplayDetails: View {
@@ -1708,11 +1729,13 @@ struct HomeRunReplayBoard:View {
     var animated=true
     var previewTime:Double?=nil
     var reduceMotionOverride:Bool?=nil
+    var playbackMode:FieldPlaybackMode = .system
     var preparesMotion=false
     var onResolved:@MainActor () -> Void = {}
     var complete:@MainActor () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var systemReduced
-    private var reduced:Bool {reduceMotionOverride ?? systemReduced}
+    private var reduced:Bool {reduceMotionOverride ?? playbackMode.reducesMovement(system:systemReduced)}
+    private var effectsReduced:Bool { reduceMotionOverride != nil ? reduced : (reduced || systemReduced) }
     @State private var start=ProcessInfo.processInfo.systemUptime
     @State private var prepared:FieldRasterArt.Prepared?
     @State private var preparationDelay=0.0
@@ -1744,7 +1767,7 @@ struct HomeRunReplayBoard:View {
                         var context=context
                         if let handoff=playbackHandoff {
                             let cut=max(0,min(event.duration,handoff.cutAt-handoff.startedAt))
-                            let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:HomeRunPresentation.ballPoint(event,time:cut,size:size),canvas:geometry.frame(in:.global),now:now,reduced:reduced)
+                            let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:HomeRunPresentation.ballPoint(event,time:cut,size:size),canvas:geometry.frame(in:.global),now:now,reduced:effectsReduced)
                             context.clip(to:Path(CGRect(origin:.zero,size:size)));context.translateBy(x:offset.x,y:offset.y)
                         }
                         if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
@@ -1761,7 +1784,7 @@ struct HomeRunReplayBoard:View {
                         context.draw(Text(scoreText).font(.system(size:max(12,size.width*0.027),weight:.bold,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:scoreboard.midX,y:scoreboard.midY))
                         if time<=event.flight {
                             let p=HomeRunPresentation.ballPoint(event,time:time,size:size)
-                            for i in 1...3 where !reduced {
+                            for i in 1...3 where !effectsReduced {
                                 let tail=HomeRunPresentation.ballPoint(event,time:max(0,time-Double(i)*0.04),size:size)
                                 context.fill(Path(CGRect(x:tail.x,y:tail.y,width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
                             }
@@ -1841,6 +1864,8 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     static var preparations:[Preparation]=[]
     static var preparedHits=0,preparedMisses=0
     static var spriteTextureCount=0,spriteTextureSwaps=0,spriteFallbacks=0
+    struct MotionPolicy:Codable {let effectiveReduced:Bool;let swiftUIReduced:Bool;let uiReduced:Bool;let lowPower:Bool}
+    static var motionPolicy:MotionPolicy?
     static var enabled=false
     static func prepared(seconds:Double,images:FieldRasterArt.Prepared) {
         guard enabled else {return}
@@ -1849,9 +1874,9 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     private static var exportIndex=0
     static func exportLive(role:String) {
         guard enabled else {return}
-        struct Report:Encodable {let role:String;let preparations:[Preparation];let frames:[Frame];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int}
+        struct Report:Encodable {let role:String;let motionPolicy:MotionPolicy?;let preparations:[Preparation];let frames:[Frame];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int}
         sampleMemory(force:true)
-        let report=Report(role:role,preparations:preparations,frames:frames,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks)
+        let report=Report(role:role,motionPolicy:motionPolicy,preparations:preparations,frames:frames,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks)
         exportIndex+=1
         if let data=try? JSONEncoder().encode(report) {
             try? data.write(to:FileManager.default.temporaryDirectory.appending(path:"match-live-\(role)-\(exportIndex).json"),options:.atomic)
@@ -1864,7 +1889,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000))
         sampleMemory()
     }
-    static func reset() {frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
+    static func reset() {motionPolicy=nil;frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
 }
 #endif
 
@@ -1899,7 +1924,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     private var actors:[ActorNode]=[]
     private var textures:[String:SKTexture]=[:]
     private var started=0.0,handoff:FieldContactHandoff?
-    private var reduced=false,finished=false
+    private var reduced=false,effectsReduced=false,finished=false
     var canvasFrame:CGRect = .zero
     private(set) var displayedTime=0.0
     private(set) var textureChanges=0
@@ -1937,7 +1962,8 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         await withCheckedContinuation {continuation in SKTexture.preload(values) {continuation.resume()}}
     }
     func setClock(start:Double,handoff:FieldContactHandoff?,reduced:Bool) {started=start;self.handoff=handoff;self.reduced=reduced}
-    func setReduced(_ value:Bool) {reduced=value}
+    func setReduced(_ value:Bool) {reduced=value;effectsReduced=value}
+    func setEffectsReduced(_ value:Bool) {effectsReduced=value}
     func setScore(_ text:String) {score.text=text}
     func setFinished(_ value:Bool) {finished=value;if value {display(time:play.duration,finished:true)}}
     private func convertPoint(_ point:CGPoint) -> CGPoint {CGPoint(x:point.x,y:size.height-point.y)}
@@ -1952,7 +1978,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         if let handoff,canvasFrame.width>0,canvasFrame.height>0 {
             let cut=handoff.cutAt-handoff.startedAt
             let point=FieldBallPresentation.point(play,time:cut,size:canvasFrame.size,leftIndex:leftIndex)
-            let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:point,canvas:canvasFrame,now:now,reduced:reduced)
+            let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:point,canvas:canvasFrame,now:now,reduced:effectsReduced)
             content.position=CGPoint(x:offset.x*size.width/canvasFrame.width,y:-offset.y*size.height/canvasFrame.height)
         }
     }
@@ -1993,7 +2019,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         ballShadow.position=convertPoint(ground)
         let point=FieldBallPresentation.point(play,time:time,size:size,leftIndex:leftIndex);ball.position=convertPoint(point)
         let diameter=max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size));ball.size=CGSize(width:diameter,height:diameter)
-        for (index,node) in trail.enumerated() {node.isHidden=reduced || time>=(play.ball.last?.at ?? 0);let p=FieldBallPresentation.point(play,time:max(0,time-Double(index+1)*0.04),size:size,leftIndex:leftIndex);node.position=convertPoint(CGPoint(x:p.x+1,y:p.y+1))}
+        for (index,node) in trail.enumerated() {node.isHidden=effectsReduced || time>=(play.ball.last?.at ?? 0);let p=FieldBallPresentation.point(play,time:max(0,time-Double(index+1)*0.04),size:size,leftIndex:leftIndex);node.position=convertPoint(CGPoint(x:p.x+1,y:p.y+1))}
         result.isHidden = !finished
     }
     #if DEBUG
@@ -2005,19 +2031,34 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
 }
 
 private struct GroundFieldSurface:View {
+    private var frameRate: Int {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ground-60hz-comparison") { return 60 }
+        #endif
+        return 30
+    }
     let scene:GroundFieldScene
     let scoreText:String
     let finished:Bool
     let reduced:Bool
+    let effectsReduced:Bool
     var body:some View {
         GeometryReader {geometry in
-            SpriteView(scene:scene,preferredFramesPerSecond:30,options:[.ignoresSiblingOrder])
-                .onAppear {scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText);scene.setReduced(reduced);scene.setFinished(finished)}
+            SpriteView(scene:scene,preferredFramesPerSecond:frameRate,options:[.ignoresSiblingOrder])
+                .onAppear {scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText);scene.setReduced(reduced);scene.setEffectsReduced(effectsReduced);scene.setFinished(finished)}
                 .onChange(of:geometry.frame(in:.global)) {_,frame in scene.canvasFrame=frame}
                 .onChange(of:scoreText) {_,text in scene.setScore(text)}
                 .onChange(of:finished) {_,value in scene.setFinished(value)}
-                .onChange(of:reduced) {_,value in scene.setReduced(value)}
+                .onChange(of:reduced) {_,value in scene.setReduced(value);scene.setEffectsReduced(effectsReduced)}
+                .onChange(of:effectsReduced) {_,value in scene.setEffectsReduced(value)}
                 .onDisappear {scene.isPaused=true}
         }
+    }
+}
+
+// Only the text/receipt changes on these boundaries; SpriteKit owns moving frames.
+enum FieldReplayPhaseSchedule {
+    static func moments(_ play: MatchDetailedPlay) -> [Double] {
+        Array(Set([0,play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration])).sorted()
     }
 }

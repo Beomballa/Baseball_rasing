@@ -18,6 +18,60 @@ import SwiftUI
         return try CareerMatchStore.start(player: player, state: state, in: context)
     }
 
+    func testDisplaySnapshotDecodesOnceAcrossRepeatedFramesAndRevalidatesAfterSave() throws {
+        for role in PlayerRole.allCases {
+            let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+            let (player,state)=try setup(role:role,in:context),record=try ready(player,state,in:context)
+            var cache=MatchDisplaySnapshot()
+            let original=record.payload,revision=record.revision,fatigue=player.fatigue
+            for _ in 0..<600 { _ = try cache.refresh(record) }
+            XCTAssertEqual(cache.decodeCount,1)
+            XCTAssertEqual(record.payload,original);XCTAssertEqual(record.revision,revision);XCTAssertEqual(player.fatigue,fatigue)
+            try CareerMatchStore.advance(player:player,state:state,record:record,revision:record.revision,input:.automatic,in:context)
+            let fresh=try cache.refresh(record)
+            XCTAssertEqual(cache.decodeCount,2);XCTAssertTrue(fresh.completed)
+            XCTAssertEqual(fresh.line.pitches,try record.snapshot().line.pitches)
+            for _ in 0..<600 { _ = try cache.refresh(record) }
+            XCTAssertEqual(cache.decodeCount,2)
+            var reopened=MatchDisplaySnapshot();XCTAssertEqual(try reopened.refresh(record).line.pitches,fresh.line.pitches)
+            XCTAssertEqual(reopened.decodeCount,1)
+        }
+    }
+    func testDisplaySnapshotInvalidatesCorruptPayloadAndMetadataWithoutShowingStaleData() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+        let (player,state)=try setup(in:context),record=try ready(player,state,in:context)
+        var cache=MatchDisplaySnapshot();_ = try cache.refresh(record)
+        let payload=record.payload
+        record.payload=Data("invalid".utf8)
+        XCTAssertThrowsError(try cache.refresh(record));XCTAssertNil(cache.match)
+        XCTAssertThrowsError(try cache.refresh(record));XCTAssertEqual(cache.decodeCount,2)
+        record.payload=payload;_ = try cache.refresh(record);XCTAssertNotNil(cache.match)
+        record.completed.toggle()
+        XCTAssertThrowsError(try cache.refresh(record));XCTAssertNil(cache.match)
+        record.completed.toggle();_ = try cache.refresh(record);XCTAssertNotNil(cache.match)
+        XCTAssertEqual(record.payload,payload)
+    }
+    func testFieldPlaybackModeKeepsSystemDefaultAndAllowsExplicitContinuousMovement() {
+        for system in [false,true] {
+            XCTAssertEqual(FieldPlaybackMode.system.reducesMovement(system:system),system)
+            XCTAssertFalse(FieldPlaybackMode.continuous.reducesMovement(system:system))
+            XCTAssertTrue(FieldPlaybackMode.stills.reducesMovement(system:system))
+        }
+    }
+
+    func testGroundTextScheduleUsesSavedPhaseBoundariesOnly() throws {
+        let play=try FieldVerificationScenario.groundOut.make()
+        let times=FieldReplayPhaseSchedule.moments(play)
+        XCTAssertEqual(times,Array(Set(times)).sorted())
+        XCTAssertEqual(times.first,0);XCTAssertEqual(times.last,play.duration)
+        for time in [play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt] {XCTAssertTrue(times.contains(time))}
+        XCTAssertLessThanOrEqual(times.count,7)
+        for time in times.dropLast() {
+            let next=times.first { $0>time }!
+            XCTAssertEqual(FieldReplayPresentation.phase(play,time:time,finished:false),FieldReplayPresentation.phase(play,time:(time+next)/2,finished:false))
+        }
+    }
+
     func testBothRolesCompleteOnceAndUnlockOnlyCompletedGameDay() throws {
         for role in PlayerRole.allCases {
             let container = try CareerStore.makeContainer(inMemory: true); let context = container.mainContext

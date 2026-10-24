@@ -15,9 +15,31 @@ struct PlayerHomeView: View {
     @Query private var abilityProfiles: [PlayerAbilities]
     @Query(sort: \CareerTrainingRecord.gameDate, order: .reverse) private var trainingRecords: [CareerTrainingRecord]
     @State private var showOriginals = false
+    @State private var recentSnapshots: [String: MatchDisplaySnapshot] = [:]
+    private var recentRecords: [CareerMatchRecord] { Array(gameRecords.filter { $0.playerID == player.id && $0.completed }.prefix(5)) }
     private var abilities: PlayerAbilities? { abilityProfiles.first { $0.playerID == player.id } }
     private var todayTraining: CareerTrainingRecord? { trainingRecords.first { $0.playerID == player.id && $0.gameDate == player.gameDate } }
     private var age: Int { (try? calendar?.age(of: player)) ?? player.startAge }
+
+    @ViewBuilder private var rolePicker: some View {
+                if players.count > 1 {
+                    let roleLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
+                    roleLayout {
+                        ForEach(players) { candidate in
+                            Button { select(candidate.id) } label: {
+                                VStack(spacing: 2) {
+                                    Text(candidate.role.label).font(.subheadline.bold())
+                                    Text(candidate.name).font(.caption).lineLimit(1)
+                                }.frame(maxWidth: .infinity, minHeight: 48)
+                                    .foregroundStyle(candidate.id == player.id ? GameTheme.gold : GameTheme.boardInk)
+                                    .background(GameTheme.boardPanel)
+                                    .overlay(Rectangle().strokeBorder(candidate.id == player.id ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
+                            }.buttonStyle(.plain).accessibilityIdentifier("homeRole-" + candidate.roleRaw)
+                                .accessibilityAddTraits(candidate.id == player.id ? .isSelected : [])
+                        }
+                    }
+                }
+    }
 
     private var affiliationLabel:String {
         do {
@@ -37,23 +59,7 @@ struct PlayerHomeView: View {
                     NavigationLink { TrainingPracticeView(sourcePlayers: players, initialRole: player.role) } label: { Text("자유 연습") }
                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openTrainingPractice")
                 }
-                if players.count > 1 {
-                    let roleLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
-                    roleLayout {
-                        ForEach(players) { candidate in
-                            Button { select(candidate.id) } label: {
-                                VStack(spacing: 2) {
-                                    Text(candidate.role.label).font(.subheadline.bold())
-                                    Text(candidate.name).font(.caption).lineLimit(1)
-                                }.frame(maxWidth: .infinity, minHeight: 48)
-                                    .foregroundStyle(candidate.id == player.id ? GameTheme.gold : GameTheme.boardInk)
-                                    .background(GameTheme.boardPanel)
-                                    .overlay(Rectangle().strokeBorder(candidate.id == player.id ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
-                            }.buttonStyle(.plain).accessibilityIdentifier("homeRole-" + candidate.roleRaw)
-                                .accessibilityAddTraits(candidate.id == player.id ? .isSelected : [])
-                        }
-                    }
-                }
+                rolePicker
                 profile
                 if let calendar {
                     CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
@@ -114,7 +120,7 @@ struct PlayerHomeView: View {
                     }
                 }
                 if let recent = gameRecords.first(where: { $0.playerID == player.id && $0.completed }),
-                   let experience = try? recent.snapshot().positionExperience {
+                   let experience = recentSnapshots[recent.key]?.match?.positionExperience {
                     GamePanel(title: "최근 경기 · 실전 포지션 XP", onBoard: true) {
                         Text("\(experience.position.label) · 수비 \(experience.events.count)회 / 아웃 \(experience.successes)회")
                             .font(.subheadline)
@@ -146,6 +152,15 @@ struct PlayerHomeView: View {
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .onChange(of: player.id) { _, _ in showOriginals = false }
+            .onChange(of: recentRecords.map(MatchDisplaySnapshot.Token.init), initial: true) { _, _ in
+                var next: [String: MatchDisplaySnapshot] = [:]
+                for record in recentRecords {
+                    var cached = recentSnapshots[record.key] ?? MatchDisplaySnapshot()
+                    _ = try? cached.refresh(record)
+                    next[record.key] = cached
+                }
+                recentSnapshots = next
+            }
     }
 
     private var profile: some View {
@@ -189,10 +204,10 @@ struct PlayerHomeView: View {
 
     private var recentGames: some View {
         GamePanel(title: "최근 5경기", onBoard: true) {
-            let recent = gameRecords.filter { $0.playerID == player.id && $0.completed }.prefix(5)
+            let recent = recentRecords
             if recent.isEmpty { Text("완료한 경기가 없습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted) }
             ForEach(Array(recent)) { record in
-                if let match = try? record.snapshot() {
+                if let match = recentSnapshots[record.key]?.match {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
                             Text(record.gameDate).font(.caption.monospaced())
@@ -205,7 +220,8 @@ struct PlayerHomeView: View {
                             .font(.caption)
                     }.padding(.vertical, 5)
                     Rectangle().fill(GameTheme.boardLine.opacity(0.4)).frame(height: 1).accessibilityHidden(true)
-                } else { Text("\(record.gameDate) 기록을 읽을 수 없습니다. 기존 저장은 유지합니다.").font(.caption).foregroundStyle(GameTheme.gold) }
+                } else if recentSnapshots[record.key] == nil { Text("기록 확인 중").font(.caption) }
+                else { Text("\(record.gameDate) 기록을 읽을 수 없습니다. 기존 저장은 유지합니다.").font(.caption).foregroundStyle(GameTheme.gold) }
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("homeGameResults")
     }

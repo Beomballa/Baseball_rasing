@@ -28,6 +28,9 @@ struct CareerGameView: View {
     @State private var aimX = 0.5
     @State private var aimY = 0.5
     @State private var record: CareerMatchRecord?
+    @State private var displaySnapshot = MatchDisplaySnapshot()
+    @AppStorage("bm.fieldPlaybackMode.v1") private var fieldPlaybackRaw = FieldPlaybackMode.system.rawValue
+    private var fieldPlaybackMode: FieldPlaybackMode { FieldPlaybackMode(rawValue:fieldPlaybackRaw) ?? .system }
     @State private var error: String?
     @State private var pitchCode = ""
     @State private var confirmAutomatic = false
@@ -58,14 +61,16 @@ struct CareerGameView: View {
     }
     private var fieldCoversArena:Bool {replay != nil || homeRunReplay != nil}
     private var inputLocked: Bool { clock.running || presenting || retrySave != nil }
-    private var opponentSide: OpponentBatterSide { (visualSnapshot ?? (try? record?.snapshot()))?.opponentBatterSide ?? .right }
+    private var opponentSide: OpponentBatterSide { (visualSnapshot ?? displaySnapshot.match)?.opponentBatterSide ?? .right }
     private func configureScene() {
         scene.configure(hand: player.throwingHandRaw, kit: player.kit, role: player.role, appearance: player.appearance,
                         jerseyNumber: player.jerseyNumber, batterSide: opponentSide)
     }
     private func load() {
         do {
-            record = try CareerMatchStore.start(player: player, state: calendar, in: context)
+            let saved = try CareerMatchStore.start(player: player, state: calendar, in: context)
+            record = saved
+            try displaySnapshot.refresh(saved)
             if pitchCode.isEmpty { pitchCode = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "" }
         } catch { self.error = error.localizedDescription }
     }
@@ -98,7 +103,7 @@ struct CareerGameView: View {
                                          revision: pending.attempt.revision, input: pending.attempt.input,
                                          pitchCode: pending.attempt.pitchCode, control: pending.control, in: context)
             retrySave = nil
-            let updated=try record.snapshot()
+            let updated=try displaySnapshot.refresh(record)
             let added=Array((updated.fieldPlays ?? []).dropFirst(previous.fieldPlays?.count ?? 0))
             let homeRun=Array((updated.homeRuns ?? []).dropFirst(previous.homeRuns?.count ?? 0)).first {
                 $0.half == previous.half && $0.order == (previous.half%2 == 1 ? previous.homeOrder:previous.awayOrder) && pending.attempt.input != .watch
@@ -145,6 +150,7 @@ struct CareerGameView: View {
         do {
             try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: record.revision,
                                          input: input, pitchCode: pitchCode, in: context)
+            _ = try displaySnapshot.refresh(record)
             _ = scene.demonstrate(reduceMotion: reduced)
         } catch { self.error = error.localizedDescription }
     }
@@ -247,9 +253,9 @@ struct CareerGameView: View {
                     DetailedFieldReplayBoard(play:play,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(play.half%2 == 0) == match.isHome,
-                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,preparesMotion:preparesFieldMotion,onResolved:{
+                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{
                             fieldResolved=true
-                            if let updated=try? record?.snapshot() {
+                            if let updated=displaySnapshot.match {
                                 arrivedSnapshot=updated;pulse=MatchPresentation.countPulse(updated.lastManual?.outcome ?? "");pulseAt=Date()
                             }
                         }) {
@@ -274,7 +280,7 @@ struct CareerGameView: View {
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(event.half%2 == 0) == match.isHome,
                         scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,
-                        preparesMotion:preparesFieldMotion,onResolved:{fieldResolved=true;arrivedSnapshot=try? record?.snapshot()}) {
+                        playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{fieldResolved=true;arrivedSnapshot=displaySnapshot.match}) {
                             homeRunReplay=nil;fieldHandoff=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
                         }.id(event.eventID)
                         .frame(height:FieldReplayPresentation.stageHeight(width:geometry.size.width-16,available:geometry.size.height,accessibility:typeSize.isAccessibilitySize))
@@ -464,7 +470,7 @@ struct CareerGameView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 6) {
-                        if let record, let savedMatch = try? record.snapshot() {
+                        if let record, let savedMatch = displaySnapshot.match {
                             let match = visualSnapshot ?? savedMatch
                             VStack(spacing: 6) {
                                 scoreHeader(arrivedSnapshot ?? match, record: record)
@@ -530,8 +536,8 @@ struct CareerGameView: View {
             }
         }
         .overlay {
-            if let replay,let saved=try? record?.snapshot() {inplayStage(replay,match:visualSnapshot ?? saved)}
-            if let homeRunReplay,let saved=try? record?.snapshot() {homeRunStage(homeRunReplay,match:visualSnapshot ?? saved)}
+            if let replay,let saved=displaySnapshot.match {inplayStage(replay,match:visualSnapshot ?? saved)}
+            if let homeRunReplay,let saved=displaySnapshot.match {homeRunStage(homeRunReplay,match:visualSnapshot ?? saved)}
         }
         .toolbar((replay != nil || homeRunReplay != nil) ? .hidden:.visible,for:.navigationBar)
         .background(Color(hex: 0x18334b)).foregroundStyle(Color(hex: 0xeee9cd))
@@ -539,6 +545,14 @@ struct CareerGameView: View {
         .toolbarBackground(Color(hex: 0x18334b), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Picker("인플레이 재생",selection:$fieldPlaybackRaw) {
+                        ForEach(FieldPlaybackMode.allCases,id:\.rawValue) { mode in Text(mode.label).tag(mode.rawValue) }
+                    }
+                } label: { Text("재생").font(.caption.bold()).frame(minWidth:44,minHeight:44) }
+                    .disabled(inputLocked).accessibilityIdentifier("gamePlaybackMenu").accessibilityValue(fieldPlaybackMode.label)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 if let record, !record.completed {
                     Button(record.appearance ? "자동" : "팀 진행") { confirmAutomatic = true }
@@ -548,6 +562,10 @@ struct CareerGameView: View {
             }
         }
         .onAppear { load(); configureScene() }
+        .onChange(of: record.map(MatchDisplaySnapshot.Token.init)) { _, _ in
+            guard let record else { return }
+            do { try displaySnapshot.refresh(record) } catch { self.error = error.localizedDescription }
+        }
         #if DEBUG
         .onChange(of:fieldCoversArena) {_,covered in
             guard ProcessInfo.processInfo.arguments.contains("-match-render-performance") else {return}
@@ -624,4 +642,55 @@ private struct MatchNPCFieldersPanel:View {
 private struct MatchArenaFrameKey:PreferenceKey {
     static let defaultValue:CGRect = .zero
     static func reduce(value:inout CGRect,nextValue:()->CGRect) {value=nextValue()}
+}
+
+// View-owned decoded data; store commands still validate the authoritative ledger.
+@MainActor struct MatchDisplaySnapshot {
+    struct Token: Equatable {
+        let key: String
+        let playerID: UUID
+        let fixtureID: String
+        let gameDate: String
+        let opponentID: String
+        let appearance: Bool
+        let payload: Data
+        let revision: Int
+        let completed: Bool
+        let fatigueBefore: Int
+        let fatigueAfter: Int
+        let rulesVersion: String
+        init(_ record: CareerMatchRecord) {
+            key=record.key;playerID=record.playerID;fixtureID=record.fixtureID;gameDate=record.gameDate
+            opponentID=record.opponentID;appearance=record.appearance;payload=record.payload;revision=record.revision
+            completed=record.completed;fatigueBefore=record.fatigueBefore;fatigueAfter=record.fatigueAfter;rulesVersion=record.rulesVersion
+        }
+    }
+    private var token: Token?
+    private var result: Result<CareerMatch, Error>?
+    var match: CareerMatch? { try? result?.get() }
+    #if DEBUG
+    private(set) var decodeCount=0
+    #endif
+    @discardableResult mutating func refresh(_ record: CareerMatchRecord) throws -> CareerMatch {
+        let next=Token(record)
+        if token != next {
+            token=next
+            #if DEBUG
+            decodeCount+=1
+            #endif
+            result=Result { try record.snapshot() }
+        }
+        guard let result else { throw MatchError.invalidRecord }
+        return try result.get()
+    }
+}
+
+enum FieldPlaybackMode: String, CaseIterable {
+    case system, continuous, stills
+    var label: String {
+        switch self {case .system: "시스템 설정";case .continuous: "연속 재생";case .stills: "단계별 재생"}
+    }
+    func reducesMovement(system: Bool) -> Bool {
+        switch self {case .system: system;case .continuous: false;case .stills: true}
+    }
 }

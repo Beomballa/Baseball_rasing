@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-match-presentation-verification") {
+            if ProcessInfo.processInfo.arguments.contains("-field-performance-autoplay") {
+                FieldPerformanceAutoplay()
+            } else if ProcessInfo.processInfo.arguments.contains("-match-presentation-verification") {
                 NavigationStack {MatchReplayVerification()}
             } else if ProcessInfo.processInfo.arguments.contains("-home-run-verification") {
                 NavigationStack {HomeRunVerification()}
