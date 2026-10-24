@@ -3663,3 +3663,138 @@ extension CareerCalendarTests {
         XCTAssertTrue(preparation.fieldDefenseMissing);XCTAssertTrue(preparation.actions.contains(.special))
     }
 }
+
+extension CareerCalendarTests {
+    // Policy-only snapshots cover branches without writing synthetic evaluations into a player store.
+    private func assignmentObservation(_ source:ScoutingObservation,values:[String:Double]=[:],mastery:Double=80,sample:Int=1000) throws -> ScoutingObservation {
+        let originals=source.abilities.originals.map {HomeAbilityValue(id:$0.id,label:$0.label,current:values[$0.id] ?? 80,initial:$0.initial)}
+        let abilities=HomeAbilitySummary(axes:source.abilities.axes,originals:originals,pitches:source.abilities.pitches,hasInitialValues:true)
+        let grades=try ScoutingRoleEvaluation.grades(role:source.role,abilities:abilities,positionMastery:mastery)
+        var totals=PersonalSeasonTotals();totals.games=1
+        if source.role == .batter {totals.line.plateAppearances=sample;totals.line.atBats=sample}else{totals.line.pitchingOuts=sample}
+        let groups=[ScoutingSampleGroup(id:"college/policy-test",totals:totals,performance:nil)]
+        var json=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(source)) as? [String:Any])
+        json["abilities"]=try JSONSerialization.jsonObject(with:JSONEncoder().encode(abilities));json["grades"]=try JSONSerialization.jsonObject(with:JSONEncoder().encode(grades))
+        json["groups"]=try JSONSerialization.jsonObject(with:JSONEncoder().encode(groups));json["positionMastery"]=mastery
+        return try JSONDecoder().decode(ScoutingObservation.self,from:JSONSerialization.data(withJSONObject:json))
+    }
+    func testClubAssignmentsDifferByRoleDeficitRecruitmentAndScheduleWithoutRewards() throws {
+        let (store,p,s)=try goalSpecialFixture(.batter),c=store.mainContext,report=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasReports?.last)
+        func club(_ role:String,_ criterion:Double?=40,_ route:OverseasRoute?=nil) -> CareerTargetClub {
+            CareerTargetClub(id:"same-club/"+role,name:"목표 구단",roleID:role,route:route,criterion:criterion,blockers:["별도 권리 확인"],fit:0,demand:criterion == nil ? "모집 없음":"주전 공석")
+        }
+        func plan(_ role:String,_ values:[String:Double]=[:],_ mastery:Double=80,_ sample:Int=1000,_ criterion:Double?=40,_ route:OverseasRoute?=nil,_ scheduled:Int=20) throws -> CareerProjectAssignment {
+            CareerProjectAssignment.make(club:club(role,criterion,route),observation:try assignmentObservation(report.observation,values:values,mastery:mastery,sample:sample),level:"college",sampleGoal:scheduled)
+        }
+        XCTAssertEqual(try plan("slugger").metric,.extraBase);XCTAssertEqual(try plan("onBase").metric,.onBase)
+        XCTAssertEqual(try plan("onBase").metricGoal,3)
+        let position=try plan("field",[:],60);XCTAssertEqual(position.metric,.position);XCTAssertEqual(position.metricGoal,2)
+        let defense=try plan("field",["homeDefense":60]);XCTAssertEqual(defense.trainingGoal,4);XCTAssertEqual(defense.metric,.field)
+        let attack=try plan("field",["homeContact":10,"homePower":20,"homeDiscipline":30],80,1000,40,.npbFirstTeam)
+        XCTAssertEqual(attack.training,.contact);XCTAssertEqual(attack.metric,.onBase)
+        XCTAssertEqual(try plan("slugger",[:],80,0).metric,.sample)
+        XCTAssertEqual(try plan("slugger",[:],80,1000,99).trainingGoal,4)
+        XCTAssertEqual(try plan("slugger",["homeContact":20,"homePower":90],80,1000,99).training,.contact)
+        XCTAssertEqual(try plan("slugger",[:],80,1000,40).trainingGoal,2)
+        XCTAssertEqual(try plan("slugger",[:],80,1000,nil).metric,.sample)
+        XCTAssertEqual(try plan("slugger",[:],80,1000,40,nil,0).metricGoal,0)
+        XCTAssertEqual(try plan("field",[:],60,1000,40,nil,0).metricGoal,2)
+        let (pitchStore,pitcher,calendar)=try goalSpecialFixture(.pitcher)
+        let pitchReport=try XCTUnwrap(ContractRegistrationStore.journal(player:pitcher,calendar:calendar,in:pitchStore.mainContext).overseasReports?.last)
+        let stuff=CareerProjectAssignment.make(club:club("starter"),observation:try assignmentObservation(pitchReport.observation,values:["homeStuff":40]),level:"college",sampleGoal:18)
+        XCTAssertEqual(stuff.training,.stuff);XCTAssertEqual(stuff.metric,.strikeouts)
+        let stamina=CareerProjectAssignment.make(club:club("starter"),observation:try assignmentObservation(pitchReport.observation,values:["homeStamina":40]),level:"college",sampleGoal:18)
+        XCTAssertEqual(stamina.training,.stamina);XCTAssertEqual(stamina.metric,.innings)
+    }
+    func testClubAssignmentStartFreezeRollbackAndReportOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try goalSpecialFixture(role),c=store.mainContext
+            let before=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,revision=s.revision,fatigue=p.fatigue,date=p.gameDate
+            XCTAssertThrowsError(try OverseasContractStore.startProject(player:p,calendar:s,date:date,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,before);XCTAssertEqual(s.revision,revision)
+            try OverseasContractStore.startProject(player:p,calendar:s,date:date,revision:revision,in:c)
+            let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentProjects?.last),assignment=try XCTUnwrap(project.assignment)
+            try OverseasContractStore.startProject(player:p,calendar:s,date:date,revision:-1,in:c,save:{_ in XCTFail("duplicate")})
+            p.defense=min(100,p.defense+1);try c.save()
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentProjects?.last?.assignment,assignment)
+            let originalGames=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            p.gameDate=try GameDate(project.end).adding(days:1).description;try c.save()
+            let raw=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,raw)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let review=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentReviews?.last)
+            XCTAssertEqual(review.progress.task?.metric,assignment.metric);XCTAssertEqual(review.progress.task?.trainingGoal,assignment.trainingGoal)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentReviews,[review])
+            XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision+1);XCTAssertFalse(s.hasAction(on:p.gameDate))
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),originalGames)
+        }
+    }
+}
+
+extension CareerCalendarTests {
+    func testClubAssignmentPositionTrainingAndRoleMetricsUseCompletedSourcesOnly() throws {
+        let (store,p,s)=try goalSpecialFixture(.batter),c=store.mainContext
+        let report=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasReports?.last)
+        let club=try XCTUnwrap(CareerTargetClub.catalog(report).first {$0.roleID == "field" && $0.criterion != nil})
+        try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:club.id,date:p.gameDate,revision:s.revision,in:c)
+        try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentProjects?.last)
+        XCTAssertEqual(project.assignment?.metric,.position)
+        let position=try XCTUnwrap(FieldPosition(rawValue:project.assignment?.position ?? ""))
+        let normal=try CareerTrainingStore.start(player:p,state:s,kind:project.training,in:c);try finishSpecialTraining(normal,p,s,c)
+        var positionKeys:[String]=[]
+        for day in 1...3 {
+            p.gameDate=try GameDate(project.start).adding(days:day).description;s.actionDate=nil;try c.save()
+            let selected=day == 3 ? (position == .catcher ? FieldPosition.shortstop:.catcher):position
+            let row=try CareerTrainingStore.start(player:p,state:s,position:selected,in:c)
+            while !row.completed {
+                let training=try row.snapshot(),target=training.targets[training.scores.count]
+                try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(x:target.x,y:target.y,force:0,angle:0,base:selected.targetBase),in:c)
+            }
+            if day<3 {positionKeys.append(row.key)}
+        }
+        let raw=try c.fetch(FetchDescriptor<CareerTrainingRecord>()).map(\.payload),fatigue=p.fatigue
+        let progress=try CareerProjectStore.progress(project,player:p,on:p.gameDate,in:c)
+        XCTAssertEqual(progress.trainingKeys,[normal.key]);XCTAssertEqual(progress.task?.value,2);XCTAssertEqual(progress.task?.keys,positionKeys.sorted());XCTAssertFalse(progress.complete)
+        var boundary=CareerProjectProgress(matchKeys:[],trainingKeys:["1","2","3"],qualitySessions:2,sample:project.requiredSample,growth:0,requiredSample:project.requiredSample)
+        boundary.task=CareerProjectTaskProgress(metric:.position,value:1,goal:2,keys:["position1"],trainingGoal:3,qualityGoal:2);XCTAssertFalse(boundary.complete)
+        boundary.task=CareerProjectTaskProgress(metric:.position,value:2,goal:2,keys:["position1","position2"],trainingGoal:3,qualityGoal:2);XCTAssertTrue(boundary.complete)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerTrainingRecord>()).map(\.payload),raw);XCTAssertEqual(p.fatigue,fatigue);XCTAssertFalse(c.hasChanges)
+        var match=ScoutingReferenceSimulation.fixture(role:.pitcher,position:"P",values:PlayerArchetype.initial(for:.pitcher).values,seed:17,home:true)
+        match.line.pitchingOuts=9;match.line.pitchingWalks=1;match.line.pitchingStrikeouts=2
+        XCTAssertEqual(CareerProjectMetric.control.value(in:match),1);XCTAssertEqual(CareerProjectMetric.strikeouts.value(in:match),0)
+        match.line.pitchingStrikeouts=3;match.line.pitchingWalks=2
+        XCTAssertEqual(CareerProjectMetric.control.value(in:match),0);XCTAssertEqual(CareerProjectMetric.strikeouts.value(in:match),1)
+        match.line.pitchingOuts=17;XCTAssertEqual(CareerProjectMetric.innings.value(in:match),0)
+        match.line.pitchingOuts=18;XCTAssertEqual(CareerProjectMetric.innings.value(in:match),1)
+        match.line.hits=2;match.line.walks=1;match.line.homeRuns=1;match.scoutingPerformance=MatchScoutingPerformance.tracked;match.scoutingPerformance?.doubles=2
+        XCTAssertEqual(CareerProjectMetric.onBase.value(in:match),3);XCTAssertEqual(CareerProjectMetric.extraBase.value(in:match),3)
+    }
+    func testClubAssignmentsAndLegacyNilProjectDiskReopenPreservesOriginals() throws {
+        for legacy in [false,true] {
+            let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+            let url=dir.appendingPathComponent("career.store");var id:UUID!,bytes:Data!,games:[Data]=[]
+            do {
+                let (store,p,s)=try goalSpecialFixture(.pitcher,legacyURL:url),c=store.mainContext
+                try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+                let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c))
+                if legacy {
+                    var owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+                    owner.developmentProjects?[0].assignment=nil
+                    row.payload=try JSONEncoder().encode(owner);try c.save()
+                }
+                id=p.id;bytes=row.payload;games=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            }
+            let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+            let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentProjects?.last)
+            XCTAssertEqual(project.assignment == nil,legacy)
+            try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:-1,in:c,save:{_ in XCTFail("must not regenerate")})
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,bytes)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),games);XCTAssertFalse(c.hasChanges)
+        }
+    }
+}

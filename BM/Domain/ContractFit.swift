@@ -2106,6 +2106,7 @@ struct CareerDevelopmentProject:Codable,Equatable,Identifiable {
     let baselineMatches:[String]
     let baselineTrainings:[String]
     let requiredSample:Int
+    var assignment:CareerProjectAssignment? = nil
 }
 struct CareerProjectProgress:Codable,Equatable {
     let matchKeys:[String]
@@ -2113,8 +2114,9 @@ struct CareerProjectProgress:Codable,Equatable {
     let qualitySessions:Int
     let sample:Int
     let growth:Double
-    var complete:Bool {trainingKeys.count >= 3 && qualitySessions >= 2 && sample >= requiredSample}
+    var complete:Bool {trainingKeys.count >= (task?.trainingGoal ?? 3) && qualitySessions >= (task?.qualityGoal ?? 2) && sample >= requiredSample && (task.map {$0.value >= $0.goal} ?? true)}
     let requiredSample:Int
+    var task:CareerProjectTaskProgress? = nil
 }
 struct CareerProjectReview:Codable,Equatable,Identifiable {
     let projectID:String
@@ -2140,9 +2142,10 @@ extension CareerContractJournal {
                   project.end == (try GameDate(project.start).adding(days:27).description),
                   project.period == (try ScoutingPeriod(origin:GameDate(origin),today:GameDate(project.start))).index,
                   project.id == playerID.uuidString+":development-project-v1:"+String(project.period),
-                  project.training == club.training,["highschool","college","domestic-development","domestic-first-team","mlb-development","npb-first-team","mlb-first-team"].contains(project.level),
+                  project.training == (project.assignment?.training ?? club.training),["highschool","college","domestic-development","domestic-first-team","mlb-development","npb-first-team","mlb-first-team"].contains(project.level),
                   (0...(project.role == .batter ? 20:18)).contains(project.requiredSample),
                   Set(project.baselineMatches).count == project.baselineMatches.count,Set(project.baselineTrainings).count == project.baselineTrainings.count else {throw ContractRegistrationError.invalid}
+            if let assignment=project.assignment {guard assignment == CareerProjectAssignment.make(club:club,observation:report.observation,level:project.level,sampleGoal:project.requiredSample) else {throw ContractRegistrationError.invalid}}
         }
         for review in reviews {
             guard let project=projects.first(where:{$0.id == review.projectID}),let source=reports[review.reportID],
@@ -2150,6 +2153,11 @@ extension CareerContractJournal {
                   review.progress.sample >= 0,review.progress.qualitySessions >= 0,review.progress.qualitySessions <= review.progress.trainingKeys.count,
                   review.progress.growth.isFinite,review.progress.growth >= 0,review.progress.requiredSample == project.requiredSample,
                   Set(review.progress.matchKeys).count == review.progress.matchKeys.count,Set(review.progress.trainingKeys).count == review.progress.trainingKeys.count else {throw ContractRegistrationError.invalid}
+            if let assignment=project.assignment {
+                guard let task=review.progress.task,task.metric == assignment.metric,task.goal == assignment.metricGoal,
+                      task.trainingGoal == assignment.trainingGoal,task.qualityGoal == assignment.qualityGoal,task.value >= 0,
+                      Set(task.keys).count == task.keys.count else {throw ContractRegistrationError.invalid}
+            } else if review.progress.task != nil {throw ContractRegistrationError.invalid}
         }
     }
 }
@@ -2455,4 +2463,77 @@ struct ObservationPeriodReview {
         let previous=sources.values.filter {$0.period<current.period}.max {$0.period<$1.period}
         return Self(current:current,previous:previous,overseas:owner.overseasReports?.first {$0.period == current.period},previousOverseas:previous.flatMap {old in owner.overseasReports?.first {$0.period == old.period}},target:owner.developmentTarget,stale:current.period != period)
     }
+}
+
+enum CareerProjectMetric:String,Codable {
+    case extraBase,onBase,field,control,strikeouts,innings,position,sample
+    var label:String {switch self {
+    case .extraBase:"공식 경기 2루타·홈런";case .onBase:"공식 경기 안타·볼넷";case .field:"실제 참여 수비";case .control:"3이닝 이상·볼넷1 이하 등판";case .strikeouts:"3이닝 이상·탈삼진3 이상 등판";case .innings:"6이닝 이상 등판";case .position:"시작 포지션 훈련 완료";case .sample:"공식 표본 확보"
+    }}
+    var unit:String {switch self {case .control,.strikeouts,.innings:"경기";default:"회"}}
+    func value(in match:CareerMatch) -> Int {
+        switch self {
+        case .extraBase:(match.scoutingPerformance?.doubles ?? 0)+match.line.homeRuns
+        case .onBase:match.line.hits+match.line.walks
+        case .field:match.fieldPlays?.filter(\.ownParticipation).count ?? 0
+        case .control:match.line.pitchingOuts >= 9 && match.line.pitchingWalks <= 1 ? 1:0
+        case .strikeouts:match.line.pitchingOuts >= 9 && match.line.pitchingStrikeouts >= 3 ? 1:0
+        case .innings:match.line.pitchingOuts >= 18 ? 1:0
+        case .position,.sample:0
+        }
+    }
+}
+struct CareerProjectAssignment:Codable,Equatable {
+    var version=1
+    let focus:String
+    let reason:String
+    let demand:String
+    let blockers:[String]
+    let training:TrainingKind
+    let trainingGoal:Int
+    let qualityGoal:Int
+    let metric:CareerProjectMetric
+    let metricGoal:Int
+    let position:String?
+    static func make(club:CareerTargetClub,observation:ScoutingObservation,level:String,sampleGoal:Int) -> Self {
+        let values=Dictionary(uniqueKeysWithValues:observation.abilities.originals.map {($0.id,$0.current)})
+        let h=observation.grades.first {$0.id == club.roleID}?.score
+        let readiness=CareerTargetReadiness.make(club:club,live:observation,level:level)
+        var training=club.training,focus="역할 실전 관찰",reason="목표 역할의 실제 경기 수행을 관찰합니다."
+        var metric:CareerProjectMetric = switch club.roleID {case "slugger":.extraBase;case "onBase":.onBase;case "field":.field;default:.control}
+        var count=2,quality=1,goal=sampleGoal>0 ? (metric == .field ? 2:metric == .onBase ? 3:1):0,position:String?
+        if club.criterion == nil {
+            focus="모집·기준 확인 전 준비";reason="현재 모집 기준이 확인되지 않아 개인 훈련을 준비합니다. 구단 요청이나 선발 통과가 아닙니다.";metric = .sample;goal=0
+        } else if club.roleID == "field" && (observation.positionMastery ?? 0)<70 {
+            focus="주 포지션 숙련 보완";reason="목표 수비 역할의 포지션 숙련70 조건을 준비합니다.";metric = .position;goal=2;position=observation.position;count=3;quality=2
+        } else if club.roleID == "field" && (values["homeDefense"] ?? 0)<70 {
+            focus="원본 수비 보완";reason="목표 수비 역할의 원본 수비70 조건을 준비합니다.";count=4;quality=2
+        } else if club.roleID == "field",let route=club.route,route != .mlbDevelopment,
+                  (values["homeContact"] ?? 0)*0.5+(values["homePower"] ?? 0)*0.15+(values["homeDiscipline"] ?? 0)*0.35 < (route == .npbFirstTeam ? 60:68) {
+            focus="해외 수비형 공격 보완";reason="수비 역할에도 필요한 별도 공격 기준을 준비합니다."
+            training=[TrainingKind.contact,.power,.discipline].min {a,b in
+                func amount(_ kind:TrainingKind) -> Double {values["home"+kind.rawValue.prefix(1).uppercased()+kind.rawValue.dropFirst()] ?? 0}
+                return amount(a) == amount(b) ? a.rawValue<b.rawValue:amount(a)<amount(b)
+            }!;metric = .onBase;goal=sampleGoal>0 ? 1:0;count=3;quality=2
+        } else if readiness.sample<readiness.requiredSample {
+            focus="공식 출전 표본 확보";reason="해당 수준·단일 환경의 관찰 표본이 부족합니다. 과제 합계는 정식 심사의 환경별 표본과 구분합니다.";metric = .sample;goal=0;count=3;quality=2
+        } else if let h,let criterion=club.criterion,h<criterion {
+            focus="역할 기량 보완";reason="관찰 역할 기량이 구단 기준보다 낮아 관련 능력 중 낮은 항목을 준비합니다.";training=GoalSpecialRecommendation.make(club:club,abilities:observation.abilities)?.kind ?? club.training;count=4;quality=2
+        }
+        if club.roleID == "starter",metric != .sample {
+            let control=values["homeControl"] ?? 0,stuff=values["homeStuff"] ?? 0,stamina=values["homeStamina"] ?? 0
+            if stamina<min(control,stuff) {training = .stamina;metric = .innings}
+            else if stuff<control {training = .stuff;metric = .strikeouts}
+        }
+        if sampleGoal == 0 && metric != .position {goal=0;reason += " 기간 내 개인 출전 일정이 없어 실전 목표는 부여하지 않습니다."}
+        return Self(focus:focus,reason:reason,demand:club.demand,blockers:club.blockers,training:training,trainingGoal:count,qualityGoal:quality,metric:metric,metricGoal:goal,position:position)
+    }
+}
+struct CareerProjectTaskProgress:Codable,Equatable {
+    let metric:CareerProjectMetric
+    let value:Int
+    let goal:Int
+    let keys:[String]
+    let trainingGoal:Int
+    let qualityGoal:Int
 }

@@ -3174,3 +3174,34 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testClubAssignmentBothRolesStartFrozenTasksAndNextReport() throws {
+        let app=XCUIApplication()
+        let base=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification","-club-assignment-verification"]
+        for reportMode in [false,true] {
+            app.launchArguments=base+(reportMode ? ["-club-assignment-report-verification"]:[]);app.launch()
+            XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:120))
+            for role in ["batter","pitcher"] {
+                let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
+                if reportMode {
+                    let open=app.buttons["openObservationReview"];revealFit(open,in:app);open.tap()
+                    let frozen=app.staticTexts["reportAssignmentFocus"];guard frozen.waitForExistence(timeout:20) else {XCTFail("fixed assignment evidence missing");return};revealFit(frozen,in:app);XCTAssertTrue(frozen.exists)
+                    XCTAssertTrue(app.staticTexts["reportProjectEvidence"].exists)
+                    XCTAssertFalse(app.staticTexts["reviewError"].exists)
+                } else {
+                    let open=app.buttons["openCareerObjectives"];revealFit(open,in:app);open.tap()
+                    let start=app.buttons["startCareerProject"];revealFit(start,in:app);start.tap()
+                    let focus=app.staticTexts["projectAssignmentFocus"];revealFit(focus,in:app);XCTAssertTrue(focus.exists)
+                    if role == "batter" {XCTAssertTrue(focus.label.contains("포지션"))}
+                    let reason=app.staticTexts["projectAssignmentReason"];XCTAssertTrue(reason.exists)
+                    let task=app.staticTexts.matching(identifier:"projectTask").firstMatch;revealFit(task,in:app);XCTAssertTrue(task.exists)
+                    XCTAssertFalse(app.staticTexts["projectError"].exists)
+                }
+                let image=XCTAttachment(screenshot:app.screenshot());image.name="club-assignment-"+role+(reportMode ? "-report":"-tasks");image.lifetime = .keepAlways;add(image)
+                app.navigationBars.buttons.element(boundBy:0).tap()
+            }
+            app.terminate()
+        }
+    }
+}

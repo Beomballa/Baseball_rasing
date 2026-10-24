@@ -1734,7 +1734,7 @@ struct CareerProjectPanel:View {
     @State private var failure:String?
     var body:some View {
         GamePanel(title:"PLAYER PROJECT · 28일 관찰 과제",onBoard:true,contentSpacing:12) {
-            Text("목표 역할 훈련과 공식 출전 기록을 다음 관찰 보고서에 남깁니다. 시작은 하루 행동을 소비하지 않고, 실제 훈련/경기는 기존 행동·피로 규칙을 따릅니다.").font(.caption).lineSpacing(5)
+            Text("목표 구단의 모집 역할·부족 조건을 바탕으로 선수가 선택한 과제입니다. 구단이 보낸 요청이 아닙니다. 시작은 하루 행동을 소비하지 않고, 실제 훈련/경기는 기존 행동·피로 규칙을 따릅니다.").font(.caption).lineSpacing(5)
             if let project=owner.developmentProjects?.last {
                 projectDetails(project)
             }
@@ -1746,24 +1746,37 @@ struct CareerProjectPanel:View {
             }
             if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("projectError")}
             Text("완료해도 계약 확정·적합도 가산·추가 성장 보상은 없습니다. 실제 능력/공식 성적은 기존 선발 심사에 반영됩니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-        }
+        }.fixedSize(horizontal:false,vertical:true).id(owner.developmentProjects?.last?.id ?? "no-project")
     }
     @ViewBuilder private func projectDetails(_ project:CareerDevelopmentProject) -> some View {
         Text(project.training.label+" 집중 / "+project.start+" ~ "+project.end).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("projectSummary")
+        if let assignment=project.assignment {
+            VStack(alignment:.leading,spacing:10) {
+                Text(assignment.focus).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("projectAssignmentFocus")
+                Text(assignment.reason).font(.subheadline).accessibilityIdentifier("projectAssignmentReason")
+                Text("시작 시 모집 · "+assignment.demand+" / 원 보고서 기준 고정").font(.caption)
+                ForEach(Array(assignment.blockers.enumerated()),id:\.offset) {_,reason in Text("별도 심사 조건 · "+reason).font(.caption)}
+            }.fixedSize(horizontal:false,vertical:true)
+        } else {Text("기존 저장 과제 · 훈련3회/우수2회 조건 유지").font(.caption)}
         switch Result(catching:{try CareerProjectStore.progress(project,player:player,on:player.gameDate,in:context)}) {
         case .failure(let error):Text(error.localizedDescription).font(.caption)
         case .success(let progress):
             let review=owner.developmentReviews?.last(where:{$0.projectID == project.id})
             Text(review?.progress.complete == true ? "보고서 확인 · 프로젝트 완료":player.gameDate > project.end ? "기간 종료 · 달성 기록 보존":progress.complete ? "목표 달성 · 다음 보고서 관찰 대기":"진행 중").font(.subheadline.bold()).accessibilityIdentifier("projectStatus")
-            taskRow("관련 능력 훈련",value:progress.trainingKeys.count,total:3,unit:"회")
-            taskRow("평균75점 이상 훈련",value:progress.qualitySessions,total:2,unit:"회")
+            taskRow("관련 능력 훈련",value:progress.trainingKeys.count,total:progress.task?.trainingGoal ?? 3,unit:"회")
+            taskRow("평균75점 이상 훈련",value:progress.qualitySessions,total:progress.task?.qualityGoal ?? 2,unit:"회")
+            if let task=progress.task,task.goal>0 {taskRow(task.metric.label,value:task.value,total:task.goal,unit:task.metric.unit)}
             if project.requiredSample > 0 {
                 taskRow("시작 소속 수준 공식 출전",value:progress.sample,total:project.requiredSample,unit:project.role == .batter ? "타석":"아웃")
             } else {Text("비출전 일정 · 이번 프로젝트는 훈련 집중 관찰입니다. 공식 출전 과제는 부여하지 않습니다.").font(.caption).foregroundStyle(GameTheme.gold)}
             Text("실제 해당 훈련 성장 합계 +"+String(format:"%.1f",progress.growth)+" · 기존 성장 기록").font(.caption)
+            NavigationLink {CareerTrainingView(player:player,calendar:calendar)} label: {Text(project.training.label+" 훈련 선택 / 이어하기")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("projectTrainingAction")
+            if project.assignment?.metric == .position {
+                NavigationLink {PositionTrainingView(player:player,calendar:calendar)} label: {Text("시작 포지션 "+(project.assignment?.position ?? "")+" 숙련 훈련")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("projectPositionAction")
+            }
             Text("훈련 종류: "+project.training.label+" / 경기 수준: "+project.level+". 연습 모드·인증 평가전·미완료 경기·다른 수준 경기는 제외합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
             ForEach((owner.developmentReviews ?? []).filter {$0.projectID == project.id}) {review in
-                Text("관찰 확정 "+review.date+" · 훈련 \(review.progress.trainingKeys.count)/3 · 우수 \(review.progress.qualitySessions)/2 · 표본 \(review.progress.sample)/\(project.requiredSample)").font(.caption).accessibilityIdentifier("projectFrozenReview")
+                Text("관찰 확정 "+review.date+" · 훈련 \(review.progress.trainingKeys.count)/\(review.progress.task?.trainingGoal ?? 3) · 우수 \(review.progress.qualitySessions)/\(review.progress.task?.qualityGoal ?? 2) · 표본 \(review.progress.sample)/\(project.requiredSample)").font(.caption).accessibilityIdentifier("projectFrozenReview")
             }
         }
     }
@@ -1799,16 +1812,19 @@ struct CareerProjectReportEvidence:View {
     let period:Int
     @Environment(\.modelContext) private var context
     @State private var reviews:[CareerProjectReview]=[]
+    @State private var assignments:[String:CareerProjectAssignment]=[:]
     @State private var plans:[MatchPlanObservation]=[]
     @State private var special:[GoalSpecialReport]=[]
     @State private var failure:String?
     var body:some View {
-        Group {
+        VStack(alignment:.leading,spacing:16) {
             if !reviews.isEmpty {
                 GamePanel(title:"선수 프로젝트 · 확정 관찰 근거",onBoard:true,contentSpacing:12) {
                     ForEach(reviews) {review in
                         Text(review.date+" 고정 · "+(review.progress.complete ? "과제 완료":"진척 관찰")).font(.headline).foregroundStyle(GameTheme.gold)
-                        Text("관련 훈련 \(review.progress.trainingKeys.count)/3 · 우수 \(review.progress.qualitySessions)/2 · 공식 표본 \(review.progress.sample)/\(review.progress.requiredSample)").font(.caption).accessibilityIdentifier("reportProjectEvidence")
+                        if let assignment=assignments[review.projectID] {Text(assignment.focus+" · "+assignment.reason).font(.subheadline).accessibilityIdentifier("reportAssignmentFocus")}
+                        Text("관련 훈련 \(review.progress.trainingKeys.count)/\(review.progress.task?.trainingGoal ?? 3) · 우수 \(review.progress.qualitySessions)/\(review.progress.task?.qualityGoal ?? 2) · 공식 표본 \(review.progress.sample)/\(review.progress.requiredSample)").font(.caption).accessibilityIdentifier("reportProjectEvidence")
+                        if let task=review.progress.task,task.goal>0 {Text(task.metric.label+" \(task.value)/\(task.goal)"+task.metric.unit).font(.caption).accessibilityIdentifier("reportAssignmentProgress")}
                     }
                     Text("같은 주기 최초 보고서의 관찰 결과입니다. 계약 보너스 없이 실제 훈련/공식 출전 근거만 보존합니다.").font(.caption)
                 }
@@ -1840,6 +1856,7 @@ struct CareerProjectReportEvidence:View {
                       let calendar=try context.fetch(FetchDescriptor<CareerCalendarState>(predicate:#Predicate {$0.playerID == id})).first else {throw ContractRegistrationError.invalid}
                 let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
                 reviews=owner.developmentReviews?.filter {$0.period == period} ?? []
+                assignments=Dictionary(uniqueKeysWithValues:(owner.developmentProjects ?? []).compactMap {project in project.assignment.map {(project.id,$0)}})
                 plans=owner.gamePlanReports?.filter {$0.period == period} ?? []
                 special=owner.specialReports?.filter {$0.period == period} ?? [];failure=nil
             } catch {failure=error.localizedDescription}

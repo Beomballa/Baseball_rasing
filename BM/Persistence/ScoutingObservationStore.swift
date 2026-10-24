@@ -1038,18 +1038,27 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
 @MainActor enum CareerProjectStore {
     static func progress(_ project:CareerDevelopmentProject,on date:String,matches:[CareerMatchRecord],trainings:[CareerTrainingRecord]) throws -> CareerProjectProgress {
         let end=min(date,project.end)
-        var matchKeys:[String]=[],trainingKeys:[String]=[],quality=0,sample=0,growth=0.0
+        var matchKeys:[String]=[],trainingKeys:[String]=[],taskKeys:[String]=[],quality=0,sample=0,growth=0.0,taskValue=0
         for row in matches where row.gameDate >= project.start && row.gameDate <= end && row.completed && row.appearance && !project.baselineMatches.contains(row.key) {
             let match=try row.snapshot()
             guard match.completed,match.appearance,match.role == project.role.rawValue,match.competition == project.level else {continue}
             matchKeys.append(row.key);sample += project.role == .batter ? match.line.plateAppearances:match.line.pitchingOuts
+            if let assignment=project.assignment {
+                let value=assignment.metric.value(in:match);taskValue += value;if value>0 {taskKeys.append(row.key)}
+            }
         }
         for row in trainings where row.gameDate >= project.start && row.gameDate <= end && row.completed && !project.baselineTrainings.contains(row.key) {
             let training=try row.snapshot()
-            guard training.role == project.role.rawValue,training.selectedKind == project.training,training.trait == nil,training.position == nil else {continue}
+            guard training.role == project.role.rawValue,training.trait == nil else {continue}
+            if let assignment=project.assignment,assignment.metric == .position,training.position?.rawValue == assignment.position,training.position != nil {
+                taskValue += 1;taskKeys.append(row.key)
+            }
+            guard training.selectedKind == project.training,training.position == nil else {continue}
             trainingKeys.append(row.key);if training.average >= 75 {quality += 1};growth += training.gain
         }
-        return CareerProjectProgress(matchKeys:matchKeys.sorted(),trainingKeys:trainingKeys.sorted(),qualitySessions:quality,sample:sample,growth:TrainingRules.round(growth),requiredSample:project.requiredSample)
+        var progress=CareerProjectProgress(matchKeys:matchKeys.sorted(),trainingKeys:trainingKeys.sorted(),qualitySessions:quality,sample:sample,growth:TrainingRules.round(growth),requiredSample:project.requiredSample)
+        if let assignment=project.assignment {progress.task=CareerProjectTaskProgress(metric:assignment.metric,value:taskValue,goal:assignment.metricGoal,keys:taskKeys.sorted(),trainingGoal:assignment.trainingGoal,qualityGoal:assignment.qualityGoal)}
+        return progress
     }
     static func progress(_ project:CareerDevelopmentProject,player:CareerPlayer,on date:String,in context:ModelContext) throws -> CareerProjectProgress {
         let id=player.id
@@ -1094,7 +1103,9 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         let end=try GameDate(date).adding(days:27)
         let scheduled=try calendar.fixtures(for:player,year:GameDate(date).year).filter {$0.date.description >= date && $0.date <= end && $0.isAppearance(for:player.role)}.count
         let sampleGoal=player.role == .batter ? min(20,scheduled*4):min(18,scheduled*18)
-        let project=CareerDevelopmentProject(id:player.id.uuidString+":development-project-v1:"+String(period),target:target,start:date,end:try GameDate(date).adding(days:27).description,period:period,role:player.role,level:level,training:club.training,baselineMatches:matches,baselineTrainings:trainings,requiredSample:sampleGoal)
+        let assignment=CareerProjectAssignment.make(club:club,observation:report.observation,level:level,sampleGoal:sampleGoal)
+        var project=CareerDevelopmentProject(id:player.id.uuidString+":development-project-v1:"+String(period),target:target,start:date,end:try GameDate(date).adding(days:27).description,period:period,role:player.role,level:level,training:assignment.training,baselineMatches:matches,baselineTrainings:trainings,requiredSample:sampleGoal)
+        project.assignment=assignment
         owner.developmentProjects=(owner.developmentProjects ?? [])+[project];owner.revision += 1
         try write(owner,player:player,calendar:calendar,in:context,save:save)
     }

@@ -204,10 +204,17 @@ struct CareerPathVerification: View {
                     }
                     if args.contains("-career-objectives-verification"),args.contains("-college-pro-verification") {
                         try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
-                        if (args.contains("-goal-special-verification") || args.contains("-observation-review-verification")),
+                        if (args.contains("-goal-special-verification") || args.contains("-observation-review-verification") || args.contains("-club-assignment-verification")),
                            let report=try ContractRegistrationStore.journal(player:p,calendar:calendar,in:c.mainContext).overseasReports?.last,
-                           let club=CareerTargetClub.catalog(report).first(where:{$0.roleID == (role == .batter ? "field":"starter")}) {
+                           let club=CareerTargetClub.catalog(report).first(where:{$0.roleID == (role == .batter ? "field":"starter") && (!args.contains("-club-assignment-verification") || $0.criterion != nil)}) {
                             try OverseasContractStore.selectTarget(player:p,calendar:calendar,reportID:report.id,clubID:club.id,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                            if args.contains("-club-assignment-report-verification") {
+                                try OverseasContractStore.startProject(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                                p.gameDate=try GameDate(p.gameDate).adding(days:28).description;calendar.actionDate=nil;try c.mainContext.save()
+                                try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
+                                try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                                guard try ContractRegistrationStore.journal(player:p,calendar:calendar,in:c.mainContext).developmentReviews?.isEmpty == false else {throw ContractRegistrationError.invalid}
+                            }
                             if args.contains("-observation-review-verification") {
                                 p.speed=min(100,p.speed+1)
                                 p.gameDate=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(p.gameDate)).next.description
