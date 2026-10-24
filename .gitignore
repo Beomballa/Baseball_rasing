@@ -4,6 +4,9 @@
 !/.gitattributes
 !/AGENTS.md
 !/README.md
+!/docs/
+/docs/**
+!/docs/implementation-history.md
 !/BM/
 /BM/**
 !/BM/**/

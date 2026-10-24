@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 EXACT_PATHS = {
-    ".gitignore", ".gitattributes", "AGENTS.md", "README.md",
+    ".gitignore", ".gitattributes", "AGENTS.md", "README.md", "docs/implementation-history.md",
     "BM/Resources/schools.json", "BM.xcodeproj/project.pbxproj",
     "BM.xcodeproj/xcshareddata/xcschemes/BM.xcscheme",
     ".githooks/pre-commit", ".githooks/commit-msg",

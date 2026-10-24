@@ -25,9 +25,10 @@ class GitPrivacyTests(unittest.TestCase):
     def test_required_source_paths_only(self):
         for path in ["BM/App/BMApp.swift", "BMTests/CareerStoreTests.swift", "BM/Resources/schools.json",
                      "BM.xcodeproj/project.pbxproj", ".githooks/pre-commit",
-                     "scripts/summarize_match_rendering.py", "scripts/test_match_rendering_summary.py"]:
+                     "scripts/summarize_match_rendering.py", "scripts/test_match_rendering_summary.py",
+                     "docs/implementation-history.md"]:
             self.assertTrue(allowed_path(path), path)
-        for path in ["qa/result.json", "scripts/private_export.py", "BM/Secrets/Credentials.swift", "BM/.env.swift", "BM/data.json",
+        for path in ["docs/private.md", "docs/screenshot.png", "qa/result.json", "scripts/private_export.py", "BM/Secrets/Credentials.swift", "BM/.env.swift", "BM/data.json",
                      "BM.xcodeproj/xcuserdata/user.xcuserdatad/UserInterfaceState.xcuserstate", "BM/avatar.png"]:
             self.assertFalse(allowed_path(path), path)
 
