@@ -1012,3 +1012,21 @@ QA는 `ios/qa/versions/2026-10-24/native-inplay-spritekit-v2/runs`에서 실행�
 최신 검증 소스의 타자·투수 각10상황×효과 일반/감소40개가 모두 foreground 완료했다. 네 그룹 중앙값은33.338ms, p95 최대33.411ms, update CPU p95 최대0.602ms/단일 최대1.876ms, 런타임 추가 텍스처0, 표본 메모리 최대159.38MiB였다. 첫 타자 일반 효과/1루 세이프 장면의 표시 시각0.021→0.108초 사이에87.424ms 호출 간격1회가 있었고, 그 전후 update CPU는0.084/0.123ms였다. 단순 update 처리 비용만으로 원인을 단정하지 않으며 GPU/초기 장면 프레임 인수는 열린 항목으로 유지한다. 나머지50ms 초과 간격은 없었다. 기존 시스템 동작 줄이기의 반복 정지 정책은 제거했으나 전 구간/전 기종 무지연으로 기록하지 않는다.
 
 근거는 `ios/qa/versions/2026-10-24/native-inplay-spritekit-v2/runs/08-final-device`의 physical-summary.json·outliers.json·원시40개 JSON/실기기 PNG다. 최종 회귀45/실제·통합 UI2/Python22/공유 일반 Release·실기기 QA 빌드 통과와689개 정리 무결성/색인 링크 오류0을 함께 확인했다. 새로운 PosterBoard 충돌은0이며 QA 시뮬레이터는 종료·보존했다. 다음 성능 인수의 우선순위는 초기 첫 장면 GPU/표시 간격 재현·다른 기기/저전력이다. 기존 BM 저장·개인 프로젝트 파일은 유지했다.
+
+## 첫 인플레이 시작 준비 보완 · 2026-10-24
+
+정책 `native-inplay-startup-v1`. preload와 실제 화면 연결 사이에 이동 시계가 먼저 시작되는 순서를 수정했다. 같은 handoff 초기 장면을 먼저 렌더링하고50ms 이내 프레임 간격 두 번 뒤 이동을 시작한다. 최대6프레임 대기/정적·preview 우회/취소 continuation 해제를 적용한다. 이 callback은 GPU fence가 아니며 첫 프레임 안정화 관찰 정책이다. 준비 지연만 handoff 두 시각에 보정하고 저장 플레이 시간표·Domain/Persistence·결과/XP1회 반영은 바꾸지 않는다.
+
+실기기 QA는 사용자 BM과 분리된 메모리 전용 앱에서 수행했다. 같은 iPhone/시스템 동작 줄이기ON/저전력OFF로 수정 전후 각8개 새 프로세스·24장면(타자·투수×효과 일반/감소×2회×3장면)을 수집했다. 최대 재생 callback 간격50.103→35.378ms, 수정 후24개 전부 ready→clock 순서, 추가 텍스처0이었다. 준비 시간 중앙값258.134→336.526ms이며 준비 비용을 재생에서 분리한 결과다. 과거87.424ms는 수정 전에도 재현되지 않아 해당 한 건의 정확한 원인을 확정하거나87→33 개선률을 주장하지 않는다.
+
+Instruments Game Performance의 전체31.091초 시작 trace에서 초기 텍스처/렌더 준비 스택과 대상 GPU channel 단일 최대1.618ms를 확인했다. 표본 스택/단일 구간은 전체 GPU frame 비용 또는87ms 인과 증명이 아니다. 첫 attach 실패와5초 window trace 제한 자료는 별도 보존하고 --window40s로 전체 시작을 재수집했다.
+
+집중 단위·저장 회귀49개/실제 경기·통합 UI2개/Python22개와 개인 Xcode 설정 제외 공유 Simulator Release·별도 실기기 QA 빌드가 통과했다. 버전별 로컬 QA 경로는 `ios/qa/versions/2026-10-24/native-inplay-startup-v1`이며 기기 정보/원시 로그는 Git에 넣지 않는다. 기존 BM 앱/선수 저장·개인 project.pbxproj는 변경하지 않았다. 다른 기종/iOS17·저전력·장기 발열·사용자 체감과 과거 단일 지연의 재현은 별도 인수다.
+
+최초 진입8회만 분리하면 재생 callback 최대50.103→34.015ms, 준비 중앙값305.224→397.157ms다. 나머지16개 warm 장면을 최초 진입으로 합산하지 않는다. 전체24개 통계와 구분해 보고한다.
+
+### 최종 실기기 QA 기록
+
+최종 별도 QA 재측정은 타자·투수 각10상황×효과 일반/감소40개가 전부 foreground 완료했다. 네 그룹 callback 중앙값33.338ms·p95 최대33.407ms·전체 최대35.594ms, update CPU 단일 최대1.122ms, 추가 텍스처0, 표본 메모리 최대157.439MiB였다. 전부 rendererReady.settled 뒤 clock을 시작했다. 이는 app callback/CPU 측정이며 GPU 표시 FPS·누수/발열 검증이 아니다.
+
+첫 전체 실행04에는 타자/효과 감소/악송구에서 앱 비활성화1건과1862.78ms 공백이 있었다. 39개 foreground/1개 interrupted로 보존하고 정상 성능 통과로 합산하지 않았다. 별도05 재측정40개는 중단0이었다. attach 실패와 초기 window 제한도 별도00a/00b에 보존했다. 최종 근거는 ios/qa/versions/2026-10-24/native-inplay-startup-v1의 notes/comparison.json·runs/05-device-recheck/reports/physical-summary.json 및 원시 자료다.

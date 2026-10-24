@@ -534,13 +534,22 @@ struct FieldPerformanceAutoplay:View {
         .onChange(of:phase) {_,value in if value != .active {interrupted=true}}
         .task {
             guard cases.isEmpty else {return}
-            for pitcher in [false,true] {for effects in [false,true] {
-                if let fixtures=try? MatchReplayFixture.make(pitcher:pitcher) {cases+=fixtures.map {Case(fixture:$0,pitcher:pitcher,effectsReduced:effects)}}
-            }}
+            let args=ProcessInfo.processInfo.arguments
+            if args.contains("-field-startup-probe") {
+                let pitcher=args.contains("-startup-pitcher"),effects=args.contains("-startup-effects-reduced")
+                do {try await Task.sleep(for:.seconds(8))} catch {return}
+                if let fixture=try? MatchReplayFixture.make(pitcher:pitcher).first {
+                    cases=(0..<3).map {_ in Case(fixture:fixture,pitcher:pitcher,effectsReduced:effects)}
+                }
+            } else {
+                for pitcher in [false,true] {for effects in [false,true] {
+                    if let fixtures=try? MatchReplayFixture.make(pitcher:pitcher) {cases+=fixtures.map {Case(fixture:$0,pitcher:pitcher,effectsReduced:effects)}}
+                }}
+            }
         }
     }
     private func advance(_ item:Case) {
-        MatchRenderMetrics.exportLive(role:"\(item.name)-\(interrupted ? "interrupted":"foreground")")
+        MatchRenderMetrics.exportLive(role:"\(ProcessInfo.processInfo.arguments.contains("-field-startup-probe") ? "startup":"unified")-\(item.name)-\(interrupted ? "interrupted":"foreground")")
         MatchRenderMetrics.enabled=false;index+=1
     }
 }

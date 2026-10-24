@@ -3,6 +3,7 @@ import UIKit
 import SpriteKit
 #if DEBUG
 import Darwin
+import os
 #endif
 
 // Presentation geometry never changes the saved pitch, timing window or RNG.
@@ -1378,13 +1379,36 @@ struct DetailedFieldReplayBoard:View {
         }
         .task(id:replay.eventID+(animated ? ":live":":still")) {
             let began=ProcessInfo.processInfo.systemUptime
-            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}),
-                  let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+            #if DEBUG
+            MatchRenderMetrics.mark("requestBegin")
+            #endif
+            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}) else {return}
+            #if DEBUG
+            MatchRenderMetrics.mark("requestsReady")
+            #endif
+            guard let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+            #if DEBUG
+            MatchRenderMetrics.mark("imagesReady")
+            #endif
             if usesSpriteKit {
                 let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText)
+                #if DEBUG
+                MatchRenderMetrics.mark("sceneCreated")
+                #endif
                 await next.preload()
+                #if DEBUG
+                MatchRenderMetrics.mark("texturesReady")
+                #endif
                 guard !Task.isCancelled else {return}
+                let initialTime=replay.time(elapsed:handoff?.elapsed(at:began) ?? 0,reduced:reduced)
+                next.display(time:initialTime,finished:false)
                 scene=next
+                #if DEBUG
+                MatchRenderMetrics.mark("scenePublished")
+                #endif
+                if animated,previewTime == nil {
+                    guard await next.waitForStartup(),!Task.isCancelled else {return}
+                }
             }
             prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
             #if DEBUG
@@ -1417,7 +1441,7 @@ struct DetailedFieldReplayBoard:View {
             #endif
             GeometryReader {geometry in
                 if usesSpriteKit {
-                    if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? play.duration:nil),showsContactPoints:showsContactPoints)}
+                    if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? play.duration:nil),preparing:animated && previewTime == nil && start == nil,showsContactPoints:showsContactPoints)}
                     else {InplayPreparationView()}
                 } else {
                     #if DEBUG
@@ -1758,13 +1782,36 @@ struct HomeRunReplayBoard:View {
         }
         .task(id:replay.eventID+(animated ? ":live":":still")) {
             let began=ProcessInfo.processInfo.systemUptime
-            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}),
-                  let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+            #if DEBUG
+            MatchRenderMetrics.mark("requestBegin")
+            #endif
+            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}) else {return}
+            #if DEBUG
+            MatchRenderMetrics.mark("requestsReady")
+            #endif
+            guard let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+            #if DEBUG
+            MatchRenderMetrics.mark("imagesReady")
+            #endif
             if usesSpriteKit {
                 let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText)
+                #if DEBUG
+                MatchRenderMetrics.mark("sceneCreated")
+                #endif
                 await next.preload()
+                #if DEBUG
+                MatchRenderMetrics.mark("texturesReady")
+                #endif
                 guard !Task.isCancelled else {return}
+                let initialTime=replay.time(elapsed:handoff?.elapsed(at:began) ?? 0,reduced:reduced)
+                next.display(time:initialTime,finished:false)
                 scene=next
+                #if DEBUG
+                MatchRenderMetrics.mark("scenePublished")
+                #endif
+                if animated,previewTime == nil {
+                    guard await next.waitForStartup(),!Task.isCancelled else {return}
+                }
             }
             prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
             #if DEBUG
@@ -1790,7 +1837,7 @@ struct HomeRunReplayBoard:View {
             Text(HomeRunPresentation.phase(event,time:time,finished:finished)).font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeRunPhase")
             GeometryReader {geometry in
                 if usesSpriteKit {
-                    if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? event.duration:nil))}
+                    if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? event.duration:nil),preparing:animated && previewTime == nil && start == nil)}
                     else {InplayPreparationView()}
                 } else {
                     #if DEBUG
@@ -1884,6 +1931,14 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
 }
 @MainActor enum MatchRenderMetrics {
     struct Frame:Codable {let kind:String;let at:Double;let milliseconds:Double;var playbackTime:Double?=nil}
+    struct Lifecycle:Codable {let name:String;let at:Double}
+    static var lifecycle:[Lifecycle]=[]
+    private static let startupLog=OSLog(subsystem:"dev.bm.career.rendering",category:"PointsOfInterest")
+    static func mark(_ name:String) {
+        guard enabled else {return}
+        if lifecycle.count<256 {lifecycle.append(Lifecycle(name:name,at:ProcessInfo.processInfo.systemUptime))}
+        os_signpost(.event,log:startupLog,name:"InplayStartup","%{public}@",name as NSString)
+    }
     struct Preparation:Codable {let endedAt:Double;let seconds:Double;let images:Int;let bytes:Int}
     struct Memory:Codable {let at:Double;let bytes:UInt64}
     static var memory:[Memory]=[]
@@ -1909,9 +1964,9 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     private static var exportIndex=0
     static func exportLive(role:String) {
         guard enabled else {return}
-        struct Report:Encodable {let role:String;let motionPolicy:MotionPolicy?;let preparations:[Preparation];let frames:[Frame];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int}
+        struct Report:Encodable {let role:String;let lifecycle:[Lifecycle];let motionPolicy:MotionPolicy?;let preparations:[Preparation];let frames:[Frame];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int}
         sampleMemory(force:true)
-        let report=Report(role:role,motionPolicy:motionPolicy,preparations:preparations,frames:frames,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks)
+        let report=Report(role:role,lifecycle:lifecycle,motionPolicy:motionPolicy,preparations:preparations,frames:frames,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks)
         exportIndex+=1
         if let data=try? JSONEncoder().encode(report) {
             try? data.write(to:FileManager.default.temporaryDirectory.appending(path:"match-live-\(role)-\(exportIndex).json"),options:.atomic)
@@ -1924,7 +1979,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000,playbackTime:playbackTime))
         sampleMemory()
     }
-    static func reset() {motionPolicy=nil;frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
+    static func reset() {lifecycle=[];motionPolicy=nil;frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
 }
 #endif
 
@@ -1957,6 +2012,22 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         case .field(let p):FieldBallPresentation.point(p,time:time,size:size,leftIndex:leftIndex)
         case .homeRun(let h):HomeRunPresentation.ballPoint(h,time:time,size:size)
         }
+    }
+}
+
+// Finish mounting/render setup before starting the saved movement clock.
+// Two settled frame intervals give initial rendering time to settle, not a GPU fence;
+// a six-frame budget prevents a slow device from holding the start indefinitely.
+struct InplayStartupReadiness {
+    private(set) var frameCount=0
+    private(set) var settledIntervals=0
+    private(set) var isReady=false
+    private var lastFrame:Double?
+    mutating func observe(at time:Double) {
+        guard !isReady else {return}
+        if let lastFrame {settledIntervals = time>lastFrame && time-lastFrame<=1.0/20+0.000001 ? settledIntervals+1:0}
+        lastFrame=time;frameCount+=1
+        isReady=settledIntervals>=2 || frameCount>=6
     }
 }
 
@@ -1995,8 +2066,37 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     private var started=0.0,handoff:FieldContactHandoff?
     private var reduced=false,effectsReduced=false,finished=false
     private var previewTime:Double?
+    private var startup=InplayStartupReadiness()
+    private var startupWaiter:CheckedContinuation<Bool,Never>?
+    func waitForStartup() async -> Bool {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {continuation.resume(returning:false)}
+                else if startup.isReady {continuation.resume(returning:true)}
+                else {startupWaiter=continuation}
+            }
+        } onCancel: {
+            Task {@MainActor [weak self] in self?.cancelStartup()}
+        }
+    }
+    private func cancelStartup() {startupWaiter?.resume(returning:false);startupWaiter=nil}
+    override func didFinishUpdate() {
+        #if DEBUG
+        if diagnosticUpdates<=4 {MatchRenderMetrics.mark("frameEnd.\(diagnosticUpdates)")}
+        #endif
+        guard started == 0,startupWaiter != nil else {return}
+        startup.observe(at:ProcessInfo.processInfo.systemUptime)
+        if startup.isReady {
+            #if DEBUG
+            MatchRenderMetrics.mark(startup.settledIntervals>=2 ? "rendererReady.settled":"rendererReady.frameBudget")
+            #endif
+            startupWaiter?.resume(returning:true);startupWaiter=nil
+        }
+    }
     #if DEBUG
     private var showsContactPoints=false
+    private var diagnosticUpdates=0
+    override func didMove(to view:SKView) {MatchRenderMetrics.mark("sceneAttached")}
     func setContactPoints(_ value:Bool) {showsContactPoints=value;display(time:displayedTime,finished:finished)}
     #endif
     var canvasFrame:CGRect = .zero
@@ -2062,7 +2162,12 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         await withCheckedContinuation {continuation in SKTexture.preload(values) {continuation.resume()}}
         display(time:displayedTime,finished:finished)
     }
-    func setClock(start:Double,handoff:FieldContactHandoff?,reduced:Bool) {started=start;self.handoff=handoff;self.reduced=reduced}
+    func setClock(start:Double,handoff:FieldContactHandoff?,reduced:Bool) {
+        started=start;self.handoff=handoff;self.reduced=reduced
+        #if DEBUG
+        MatchRenderMetrics.mark("clockStarted")
+        #endif
+    }
     func setReduced(_ value:Bool) {reduced=value}
     func setEffectsReduced(_ value:Bool) {
         guard effectsReduced != value else {return}
@@ -2078,6 +2183,10 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     }
     private func convertPoint(_ point:CGPoint) -> CGPoint {CGPoint(x:point.x,y:size.height-point.y)}
     override func update(_ currentTime:TimeInterval) {
+        #if DEBUG
+        diagnosticUpdates+=1
+        if diagnosticUpdates<=4 {MatchRenderMetrics.mark("update.\(diagnosticUpdates)")}
+        #endif
         guard started>0,!finished,previewTime == nil else {return}
         #if DEBUG
         let measured=MatchRenderMetrics.begin()
@@ -2180,11 +2289,15 @@ private struct InplayFieldSurface:View {
     let reduced:Bool
     let effectsReduced:Bool
     let previewTime:Double?
+    var preparing=false
     var showsContactPoints=false
     var body:some View {
         GeometryReader {geometry in
             SpriteView(scene:scene,preferredFramesPerSecond:frameRate,options:[.ignoresSiblingOrder])
                 .onAppear {
+                    #if DEBUG
+                    MatchRenderMetrics.mark("surfaceAppeared")
+                    #endif
                     scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText)
                     scene.setReduced(reduced);scene.setEffectsReduced(effectsReduced);scene.setPreviewTime(previewTime);scene.setFinished(finished)
                     #if DEBUG
@@ -2201,6 +2314,9 @@ private struct InplayFieldSurface:View {
                 .onChange(of:showsContactPoints) {_,value in scene.setContactPoints(value)}
                 #endif
                 .onDisappear {scene.isPaused=true}
+                .overlay {
+                    if preparing {Text("수비 화면 준비 중").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.paper).padding(8).background(GameTheme.navy).accessibilityIdentifier("inplayRendererPreparing")}
+                }
         }
     }
 }

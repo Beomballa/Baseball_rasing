@@ -180,3 +180,5 @@
 - QA는 qa/versions/YYYY-MM-DD/<정책-버전>/runs/NN-purpose/{reports,captures,notes}에 실행별 기록한다. run.json에 planned/running/passed/failed/interrupted와 실제 근거를 남기고 재실행으로 실패를 덮지 않는다. 과거 버전 미확정 자료는 versions/legacy/<작업명>과 manifest의 원본 경로/해시·분류 근거를 유지한다. raw JSON/이미지는 재작성하지 않고 경로 참조만 정리한다. 자료는 로컬 전용/Git 제외이며 새로운 QA는 새 run 폴더에서 시작한다. 정리 무결성은 qa/tools/verify_archive.py, 버전 색인은 qa/tools/update_version_index.py로 확인한다.
 
 - README는 프로젝트 소개/현재 기능·남은 범위/실행/구조·저장 원칙/최신 검증 요약/문서 길잡이를 유지한다. 긴 정책 설명·날짜별 구현/이전 검증은 docs/implementation-history.md에 남기고 README에 누적하지 않는다. 기능 변경 시 관련 현재 상태를 갱신하며 과거 테스트 수를 합산하거나 로컬 QA 링크를 공개 Git에 있는 자료처럼 표시하지 않는다. 상세 이력 문서만 .gitignore와 staged 검사에 명시 허용하며 다른 docs/개인 문서·캡처 허용을 넓히지 않는다.
+
+- native-inplay-startup-v1은 이미지·SKTexture preload 완료를 화면 렌더 준비 완료로 취급하지 않는다. 저장된 handoff 프레임을 먼저 표시하고 SpriteKit 프레임 간격 두 번(50ms 이내)을 확인한 뒤 이동 시계를 시작한다. 최대6프레임에서 대기를 끝내고 정적/preview는 대기를 생략하며 취소 시 continuation을 해제한다. 초기 대기는 준비 시간과 handoff 두 시각에만 보정하고 Domain/Persistence·타구/주루 시간표·판정/결과/XP를 변경하지 않는다. didFinishUpdate는 GPU fence가 아니며 프레임 안정화 관찰값이다. DEBUG startup probe/signpost는 별도 메모리 QA에만 사용한다. 과거87.424ms 한 건의 정확한 원인은 재현 증거 없이 확정하지 않고 준비 시간·첫 재생 간격·실제 표시/GPU 계측을 분리해 보고한다.

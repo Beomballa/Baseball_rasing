@@ -2257,6 +2257,9 @@ import SpriteKit
         XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
         let preparation=try XCTUnwrap(MatchRenderMetrics.preparations.first)
         XCTAssertGreaterThan(resolvedAt-preparation.endedAt,0.6)
+        let ready=try XCTUnwrap(MatchRenderMetrics.lifecycle.first {$0.name.hasPrefix("rendererReady.")})
+        let clock=try XCTUnwrap(MatchRenderMetrics.lifecycle.first {$0.name == "clockStarted"})
+        XCTAssertGreaterThanOrEqual(clock.at,ready.at)
         XCTAssertTrue(MatchRenderMetrics.frames.contains {$0.kind == "homeRunSprite"})
         XCTAssertEqual(MatchRenderMetrics.spriteFallbacks,0);XCTAssertEqual(MatchRenderMetrics.preparedMisses,0)
     }
@@ -2393,5 +2396,38 @@ import SpriteKit
         window.rootViewController=UIHostingController(rootView:DetailedFieldReplayBoard(play:play,appearance:PlayerAppearance(),preparesMotion:true,onResolved:{resolved+=1}) {completed+=1})
         try await Task.sleep(for:.seconds(0.1));window.rootViewController=nil
         try await Task.sleep(for:.seconds(0.2));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+    }
+}
+
+@MainActor final class InplayStartupReadinessTests:XCTestCase {
+    func testRequiresTwoSettledIntervalsBeforeMovementCanStart() {
+        var gate=InplayStartupReadiness()
+        gate.observe(at:10);XCTAssertFalse(gate.isReady)
+        gate.observe(at:10+1.0/30);XCTAssertFalse(gate.isReady)
+        gate.observe(at:10+2.0/30);XCTAssertTrue(gate.isReady)
+        XCTAssertEqual(gate.frameCount,3);XCTAssertEqual(gate.settledIntervals,2)
+    }
+    func testInitial87MillisecondGapIsPreparationRatherThanMovement() {
+        var gate=InplayStartupReadiness()
+        for time in [0.0,0.087424,0.120757] {gate.observe(at:time);XCTAssertFalse(gate.isReady)}
+        gate.observe(at:0.154090);XCTAssertTrue(gate.isReady)
+        XCTAssertEqual(gate.frameCount,4)
+    }
+    func testSlowFramesHaveABoundedPreparationBudgetAndReadinessIsStable() {
+        var gate=InplayStartupReadiness()
+        for i in 0..<5 {gate.observe(at:Double(i)*0.1);XCTAssertFalse(gate.isReady)}
+        gate.observe(at:0.5);XCTAssertTrue(gate.isReady);XCTAssertEqual(gate.settledIntervals,0)
+        gate.observe(at:0.6);XCTAssertEqual(gate.frameCount,6)
+    }
+    func testCancellingAnUnmountedSceneReleasesStartupWaitWithoutAClockOrResult() async throws {
+        let play=try FieldVerificationScenario.single.make(ownBatter:true)
+        let sprites=FieldReplaySprites(appearance:PlayerAppearance(),jerseyNumber:1,ownPosition:"CF",throwingHand:"right",ownTeamFielding:false)
+        let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false)})
+        let requests=try XCTUnwrap(planned),generated=await FieldRasterArt.prepare(requests)
+        let images=try XCTUnwrap(generated),scene=InplayFieldScene(play:play,sprites:sprites,prepared:images,scoreText:"H 0 : 0 A")
+        await scene.preload();scene.display(time:0.28,finished:false)
+        let task=Task {await scene.waitForStartup()};await Task.yield();task.cancel()
+        let ready=await task.value;XCTAssertFalse(ready)
+        XCTAssertEqual(scene.displayedTime,0.28);XCTAssertFalse(scene.resultVisible)
     }
 }
