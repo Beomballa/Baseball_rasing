@@ -595,7 +595,7 @@ struct DomesticOfferPacket: Codable, Equatable {
     let offers: [DomesticContractOffer]
     let emptyReasons: [String]
     static func make(evaluation:ContractEvaluationSnapshot,key:String,on date:GameDate) throws -> Self {
-        guard [2,4].contains(evaluation.version),
+        guard [2,4,5].contains(evaluation.version),
               key == evaluation.observation.playerID.uuidString+":"+evaluation.window.id,
               date >= (try GameDate(evaluation.evaluatedDate)),ContractEvaluationWindow.containing(date) == evaluation.window else {throw ContractOfferError.invalid}
         let expiry=min(date.adding(days:6),evaluation.window.end).description
@@ -607,7 +607,7 @@ struct DomesticOfferPacket: Codable, Equatable {
             var offer=DomesticContractOffer(id:key+"/"+row.id,resultID:row.id,route:row.route,name:row.name,roleID:row.role,
                 issuedDate:date.description,expiresDate:expiry,economicIndex:row.cost,years:1,h:h,c:row.c,p:row.p,f:f,
                 availableBudget:row.availableBudget,competition:row.competition)
-            offer.reentry=evaluation.version == 4 ? true:nil;offers.append(offer)
+            offer.reentry=[4,5].contains(evaluation.version) ? true:nil;offers.append(offer)
         }
         offers.sort {a,b in a.route == b.route ? a.id < b.id:a.route == .rookie}
         var reasons:[String]=[]
@@ -878,14 +878,22 @@ struct DomesticRenewalReview: Codable, Equatable {
 
 // Released players compete for adult development places; adult Vref remains uncalibrated (P=0).
 struct DomesticRetryReview:Codable,Equatable {
+    var version:Int? = nil
+    var certificate:CertifiedAssessment? = nil
     let release:DomesticRelease
     let results:[DomesticSelectionResult]
-    static func make(observation:ScoutingObservation,release:DomesticRelease,window:ContractEvaluationWindow) throws -> Self {
+    static func make(observation:ScoutingObservation,release:DomesticRelease,window:ContractEvaluationWindow,certificate:CertifiedAssessment?=nil,certificationEnabled:Bool=false) throws -> Self {
         let date=try GameDate(observation.observedDate)
         guard observation.age >= 20,[4,7].contains(window.month),window == ContractEvaluationWindow.containing(date),
               try GameDate(release.date)<date else {throw ContractEvaluationError.invalid}
         let groups=observation.groups.filter {$0.id.hasPrefix("domestic-development/") && $0.performance != nil}
-        let enough=groups.contains {observation.role == .batter ? $0.hasBatterMinimum:$0.hasPitcherMinimum}
+        if let certificate {
+            try certificate.validate()
+            guard certificationEnabled,certificate.playerID == observation.playerID,certificate.releaseOfferID == release.membershipOfferID,
+                  certificate.window == window,certificate.role == observation.role,certificate.date >= release.date,certificate.date <= observation.observedDate else {throw ContractEvaluationError.invalid}
+        }
+        let regular=groups.contains {observation.role == .batter ? $0.hasBatterMinimum:$0.hasPitcherMinimum}
+        let enough=regular || certificate?.passed == true
         let seed=observation.playerID.uuidString+"/reentry/"+window.id
         let roles=observation.role == .batter ? ["slugger","onBase","field"]:["starter"]
         var rows:[DomesticSelectionResult]=[]
@@ -896,7 +904,7 @@ struct DomesticRetryReview:Codable,Equatable {
                 let h=observation.grades.first {$0.id == role}?.score,f=h.map {ScoutingContractFit.round($0-c)}
                 let cost=DomesticSelection.cost(f ?? 0),budget=220+Int((bits/19)%101)
                 var reasons:[String]=[]
-                if !enough {reasons.append("동일 환경 육성 성적40타석/15이닝 필요 · 인증 평가전은 후속")}
+                if !enough {reasons.append(certificationEnabled ? (certificate == nil ? "육성 성적40타석/15이닝 또는 해당 창 인증 평가전 필요":"인증 평가전 성적 미달 · 다음 창 평가전을 준비하세요"):"동일 환경 육성 성적40타석/15이닝 필요 · 인증 평가전은 후속")}
                 if h == nil {reasons.append("역할 기량 자료 부족")}
                 reasons += DomesticSelection.fieldCondition(role,route:.rookie,observation:observation)
                 if let f,f < 0 {reasons.append("성인 역할/고정 후보 경쟁 기준 미달 · F 0 필요")}
@@ -907,10 +915,81 @@ struct DomesticRetryReview:Codable,Equatable {
             }
         }
         let winner=rows.filter {$0.reasons.isEmpty}.sorted {a,b in a.f == b.f ? a.id<b.id:a.f!>b.f!}.first?.id
-        return Self(release:release,results:rows.map {row in
+        var result=Self(release:release,results:rows.map {row in
             DomesticSelectionResult(id:row.id,name:row.name,route:row.route,role:row.role,h:row.h,c:row.c,p:0,f:row.f,
                 cost:row.cost,availableBudget:row.availableBudget,availableSeats:1,competition:1,selected:row.id == winner,
                 reasons:row.reasons.isEmpty && row.id != winner ? ["다른 재입단 자리 우선 배정"]:row.reasons)
         })
+        if certificationEnabled {result.version=2;result.certificate=certificate}
+        return result
     }
+}
+
+struct CertifiedAssessment:Codable,Equatable {
+    var version=1
+    let key:String
+    let playerID:UUID
+    let releaseOfferID:String
+    let window:ContractEvaluationWindow
+    let date:String
+    let role:PlayerRole
+    let totals:PersonalSeasonTotals
+    let battersFaced:Int
+    let homeRunsAllowed:Int
+    var score:Double {
+        let l=totals.line
+        if role == .batter {return l.plateAppearances == 0 ? 0: min(100,100*Double(l.hits+l.walks)/Double(l.plateAppearances))}
+        let faced=battersFaced
+        return faced == 0 ? 0:max(0,min(100,50+100*Double(l.pitchingStrikeouts-l.pitchingWalks-2*homeRunsAllowed)/Double(faced)))
+    }
+    var passed:Bool {role == .batter ? totals.line.plateAppearances >= 12 && score >= 25:battersFaced >= 12 && score >= 45}
+    func validate() throws {
+        guard version == 1,[4,7].contains(window.month),try GameDate(date)<window.start,
+              totals.games == (role == .batter ? 4:2),(0...1000).contains(battersFaced),(0...1000).contains(homeRunsAllowed),score.isFinite else {throw MatchError.invalidRecord}
+        var check=PersonalSeasonTotals()
+        try check.add(totals.line)
+    }
+}
+struct CareerCertification:Codable,Equatable {
+    var version=1
+    let playerID:UUID
+    let releaseOfferID:String
+    let window:ContractEvaluationWindow
+    let date:String
+    let role:PlayerRole
+    let position:String
+    let values:PlayerInitialValues
+    let seed:UInt64
+    var calendarRevision:Int
+    var games:[CareerMatch]=[]
+    var completed:Bool {games.count == (role == .batter ? 4:2)}
+    var key:String {playerID.uuidString+":"+releaseOfferID+":"+window.id}
+    var assessment:CertifiedAssessment? {
+        guard completed else {return nil}
+        var totals=PersonalSeasonTotals()
+        for game in games {guard (try? totals.add(game.line)) != nil else {return nil}}
+        return CertifiedAssessment(key:key,playerID:playerID,releaseOfferID:releaseOfferID,window:window,date:date,role:role,totals:totals,battersFaced:games.reduce(0){$0+($1.scoutingPerformance?.battersFaced ?? 0)},homeRunsAllowed:games.reduce(0){$0+($1.scoutingPerformance?.homersAllowed ?? 0)})
+    }
+    @MainActor mutating func advance() throws {
+        guard !completed else {throw MatchError.finished}
+        var match=ScoutingReferenceSimulation.fixture(role:role,position:position,values:values,seed:seed &+ UInt64(games.count),home:games.count%2 == 0,tracked:true,battedBallVersion:1)
+        try match.advance(.automatic);games.append(match)
+    }
+    func validate() throws {
+        guard version == 1,seed == DomesticSelection.hash(key),games.count <= (role == .batter ? 4:2),calendarRevision >= 0,try GameDate(date)<window.start,
+              [4,7].contains(window.month),[values.contact,values.power,values.discipline,values.speed,values.defense,values.arm,values.mental].allSatisfy({$0.isFinite && (0...100).contains($0)}),
+              values.pitches.values.allSatisfy({$0.isFinite && (0...100).contains($0)}) else {throw MatchError.invalidRecord}
+        for game in games {
+            guard game.completed,game.role == role.rawValue,game.appearance,game.abilityExperience == nil,game.positionExperience == nil,
+                  let performance=game.scoutingPerformance,performance.inputs?.direct == 0 else {throw MatchError.invalidRecord}
+            try performance.validate(line:game.line,role:role)
+            try game.validatePitching();try game.validateDetailedField()
+        }
+        if completed {guard let assessment else {throw MatchError.invalidRecord};try assessment.validate()}
+    }
+}
+
+enum CertificationError:LocalizedError {
+    case pending
+    var errorDescription:String? {"진행 중인 인증 평가전을 먼저 완료해 주세요. 저장된 경기부터 이어서 진행할 수 있습니다."}
 }

@@ -1969,7 +1969,7 @@ extension CareerCalendarTests {
             p.gameDate="2036-04-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
             let evaluation=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
             let snapshot=try evaluation.snapshot(player:p,calendar:s)
-            XCTAssertEqual(snapshot.version,4);XCTAssertGreaterThan(snapshot.observation.age,23)
+            XCTAssertEqual(snapshot.version,5);XCTAssertGreaterThan(snapshot.observation.age,23)
             let packet=try XCTUnwrap(ContractOfferStore.records(player:p,calendar:s,in:c).first).snapshot(evaluation:evaluation,player:p,calendar:s)
             let offer=try XCTUnwrap(packet.offers.first);XCTAssertEqual(offer.reentry,true)
             let frozen=evaluation.payload
@@ -2041,5 +2041,112 @@ extension CareerCalendarTests {
         q.gameDate="2036-04-01";try ctx.save()
         XCTAssertThrowsError(try ContractRegistrationStore.release(player:q,calendar:t,evaluationKey:key,date:q.gameDate,revision:t.revision,in:ctx))
         XCTAssertNotNil(try t.registration(for:q))
+    }
+}
+
+extension CareerCalendarTests {
+    private func certificationFixture(_ role:PlayerRole) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+        let (store,p,s,key)=try releaseFixture(role,games:false),c=store.mainContext
+        p.gameDate="2035-11-15";try c.save()
+        try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:s.revision,in:c)
+        return (store,p,s)
+    }
+    func testCertificationBothRolesResumeCompleteOnceAndSupplyFrozenReentryReview() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try certificationFixture(role),c=store.mainContext
+            let official=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            let journal=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            let profile=try XCTUnwrap(PlayerAbilityStore.profile(playerID:p.id,in:c))
+            let fatigue=p.fatigue,date=p.gameDate,abilities=[profile.mental,profile.velocity ?? 0,profile.control ?? 0,profile.stuff ?? 0,profile.stamina ?? 0]
+            let row=try CertificationStore.start(player:p,calendar:s,in:c)
+            XCTAssertEqual(try row.snapshot().window.id,"2036-04")
+            try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)
+            XCTAssertEqual(try CertificationStore.start(player:p,calendar:s,in:c).payload,row.payload)
+            XCTAssertThrowsError(try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c))
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c))
+            while !row.completed {try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)}
+            let certificate=try XCTUnwrap(row.snapshot().assessment),bytes=row.payload,revision=s.revision
+            XCTAssertEqual(p.fatigue,min(100,fatigue+8));XCTAssertEqual(p.gameDate,date);XCTAssertEqual(s.actionDate,date)
+            XCTAssertThrowsError(try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c))
+            XCTAssertEqual(try CertificationStore.start(player:p,calendar:s,in:c,save:{_ in XCTFail("repeated award")}).payload,bytes)
+            XCTAssertEqual(s.revision,revision)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),official)
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,journal)
+            XCTAssertEqual([profile.mental,profile.velocity ?? 0,profile.control ?? 0,profile.stuff ?? 0,profile.stamina ?? 0],abilities)
+            p.gameDate="2036-04-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+            let evaluation=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+            let snapshot=try evaluation.snapshot(player:p,calendar:s)
+            XCTAssertEqual(snapshot.version,5);XCTAssertEqual(snapshot.retry?.certificate,certificate)
+            let packet=try XCTUnwrap(ContractOfferStore.records(player:p,calendar:s,in:c).first).snapshot(evaluation:evaluation,player:p,calendar:s)
+            XCTAssertEqual(packet.offers.isEmpty,!certificate.passed)
+            let frozen=evaluation.payload
+            try ContractEvaluationStore.registerCurrent(in:c,save:{_ in XCTFail("same-window reevaluation")})
+            XCTAssertEqual(evaluation.payload,frozen)
+            if let offer=packet.offers.first {
+                try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+                XCTAssertNotNil(try s.registration(for:p));XCTAssertEqual(evaluation.payload,frozen);XCTAssertEqual(row.payload,bytes)
+                XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).memberships.count,2)
+            }
+        }
+    }
+    func testCertificationSaveFailureRollbackLocksAndFutureWindowAfterFrozenNoOffer() throws {
+        let (store,p,s)=try certificationFixture(.batter),c=store.mainContext
+        let revision=s.revision
+        XCTAssertThrowsError(try CertificationStore.start(player:p,calendar:s,in:c,save:{_ in throw CalendarError.invalidGroup}))
+        XCTAssertTrue(try CertificationStore.records(playerID:p.id,in:c).isEmpty);XCTAssertEqual(s.revision,revision)
+        p.gameDate="2036-04-01";try c.save();try ContractEvaluationStore.registerCurrent(in:c)
+        let evaluation=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first),frozen=evaluation.payload
+        let row=try CertificationStore.start(player:p,calendar:s,in:c)
+        XCTAssertEqual(try row.snapshot().window.id,"2036-07")
+        let bytes=row.payload,before=s.revision,fatigue=p.fatigue
+        XCTAssertThrowsError(try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision+1,in:c))
+        XCTAssertThrowsError(try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c,save:{_ in throw CalendarError.invalidGroup}))
+        XCTAssertEqual(row.payload,bytes);XCTAssertEqual(s.revision,before);XCTAssertEqual(p.fatigue,fatigue)
+        while !row.completed {try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)}
+        XCTAssertEqual(evaluation.payload,frozen)
+        XCTAssertNil(try evaluation.snapshot(player:p,calendar:s).retry?.certificate)
+    }
+    func testCertificationV12MigrationDiskReopenKeepsOriginalsAndPendingProgress() throws {
+        let url=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString+".sqlite")
+        defer {for suffix in ["","-wal","-shm"] {try? FileManager.default.removeItem(atPath:url.path+suffix)}}
+        var journal=Data(),official:[Data]=[],progress=Data()
+        do {
+            let (store,p,s,key)=try releaseFixture(.pitcher,games:false,url:url),c=store.mainContext
+            p.gameDate="2035-11-15";try c.save()
+            try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:s.revision,in:c)
+            journal=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            official=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+        }
+        do {
+            let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,journal)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),official)
+            let row=try CertificationStore.start(player:p,calendar:s,in:c)
+            try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c);progress=row.payload
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+        let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let row=try CertificationStore.start(player:p,calendar:s,in:c)
+        XCTAssertEqual(row.payload,progress);XCTAssertFalse(row.completed)
+        try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)
+        XCTAssertTrue(row.completed)
+        XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,journal)
+    }
+    func testCertificationThresholdsAndPreviousVersionFourReviewArePreserved() throws {
+        let (store,p,s)=try certificationFixture(.batter),c=store.mainContext
+        p.gameDate="2036-04-01";try c.save()
+        let observation=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        let release=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).releases?.last)
+        let window=ContractEvaluationWindow(year:2036,month:4)
+        let old=try DomesticRetryReview.make(observation:observation,release:release,window:window)
+        XCTAssertNil(old.version);XCTAssertTrue(old.results.allSatisfy {!$0.selected})
+        var totals=PersonalSeasonTotals();totals.games=4;totals.line.plateAppearances=12;totals.line.atBats=12;totals.line.hits=6
+        let passed=CertifiedAssessment(key:"policy-fixture",playerID:p.id,releaseOfferID:release.membershipOfferID,window:window,date:"2035-11-15",role:.batter,totals:totals,battersFaced:0,homeRunsAllowed:0)
+        let updated=try DomesticRetryReview.make(observation:observation,release:release,window:window,certificate:passed,certificationEnabled:true)
+        XCTAssertEqual(updated.version,2);XCTAssertTrue(updated.results.contains {$0.selected})
+        totals.line.hits=0
+        let failed=CertifiedAssessment(key:"policy-fixture",playerID:p.id,releaseOfferID:release.membershipOfferID,window:window,date:"2035-11-15",role:.batter,totals:totals,battersFaced:0,homeRunsAllowed:0)
+        XCTAssertTrue(try DomesticRetryReview.make(observation:observation,release:release,window:window,certificate:failed,certificationEnabled:true).results.allSatisfy {!$0.selected})
     }
 }

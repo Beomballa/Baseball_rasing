@@ -695,6 +695,10 @@ struct ContractEvaluationHomePanel: View {
                         DomesticRenewalSummary(player:player,calendar:calendar,value:renewal,evaluatedDate:value.evaluatedDate)
                     } else if let retry=value.retry {
                         Text("무소속 국내 육성팀 재입단 · 성인 경쟁 심사").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("retryReviewStatus")
+                        if let certificate=retry.certificate {
+                            Text("인증 평가전 · \(certificate.date) · \(String(format:"%.1f",certificate.score))점 · \(certificate.passed ? "기준 충족":"기준 미달")")
+                                .font(.caption).accessibilityIdentifier("retryCertificate")
+                        }
                         ForEach(retry.results.filter {$0.selected || !$0.reasons.isEmpty}.prefix(4)) {row in
                             Text(row.name+" · "+DomesticContractOffer.roleName(row.role)+" · "+(row.selected ? "재입단 제의 대상":row.reasons.joined(separator:" / "))).font(.caption)
                         }
@@ -985,7 +989,9 @@ struct DomesticReleasePanel:View {
                     GamePanel(title:"무소속 · 국내 육성팀 재도전",onBoard:true) {
                         Text("방출 확정 · "+released.date+" / 보유권리 해제").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("releasedUnsignedStatus")
                         Text("다음 4월·7월 평가 창에 재입단 심사 · 신인 지명과 별도").font(.subheadline)
-                        Text("현재 능력·동일 환경 육성 성적40타석/15이닝·구단 자리/예산·고정 후보 경쟁을 심사합니다. 인증 평가전은 후속입니다.").font(.caption)
+                        Text("육성 성적40타석/15이닝 또는 인증 평가전으로 심사합니다. 현재 능력·구단 자리/예산·고정 후보 경쟁을 함께 평가합니다.").font(.caption)
+                        NavigationLink {CertificationView(player:player,calendar:calendar)} label: {Text("인증 평가전 · 시작/이어하기")}
+                            .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openCertification")
                     }
                 }
             }
@@ -998,5 +1004,56 @@ struct DomesticReleasePanel:View {
             }.accessibilityIdentifier("commitClubRelease")
             Button("취소",role:.cancel) {command=nil}
         }
+    }
+}
+
+struct CertificationView:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var row:CareerCertificationRecord?
+    @State private var snapshot:CareerCertification?
+    @State private var failure:String?
+    var body:some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:16) {
+                GamePanel(title:"무소속 인증 평가전",onBoard:true) {
+                    Text(player.name+" · 동일 환경 자동 평가").font(.title3.bold()).foregroundStyle(GameTheme.gold)
+                    Text("시작 시 능력·구종 고정 / 표준 컨디션 / 특성 제외 / 야수 숙련60").font(.caption)
+                    Text("타자4경기 · 12타석/출루율25% 이상 / 투수2경기 · 12타자/평가지수45 이상").font(.caption)
+                    Text("공식 시즌·XP와 분리 · 완료 시 하루 행동/피로+8 한 번 · 다음4·7월 창당1회").font(.caption)
+                    if let value=snapshot {
+                        Text("제출 대상 · "+value.window.id+" 평가 창").font(.headline).accessibilityIdentifier("certificationWindow")
+                        Text("\(value.games.count) / \(value.role == .batter ? 4:2)경기 완료").font(.subheadline.monospaced()).accessibilityIdentifier("certificationProgress")
+                        ForEach(Array(value.games.enumerated()),id:\.offset) {index,game in
+                            Text(value.role == .batter ? "\(index+1)경기 · \(game.line.plateAppearances)타석 \(game.line.hits)안타 \(game.line.walks)볼넷":"\(index+1)경기 · \(game.line.pitchingOuts)아웃 \(game.line.pitchingStrikeouts)탈삼진 \(game.line.pitchingWalks)볼넷").font(.caption.monospaced())
+                        }
+                        if let assessment=value.assessment {
+                            Text("평가 완료 · \(assessment.score,specifier:"%.1f")점 · \(assessment.passed ? "기준 충족":"기준 미달")").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("certificationResult")
+                            Text("결과는 대상 창에서 자동 제출합니다. 이미 고정된 현재 창은 바꾸지 않습니다.").font(.caption)
+                        } else {
+                            Button("다음 평가 경기 자동 진행") {advance()}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("advanceCertification")
+                        }
+                    } else {
+                        Button("참가 신청 · 저장된 평가전 확인") {start()}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("startCertification")
+                    }
+                    if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("certificationError")}
+                }
+                GamePanel(title:"심사 기준",onBoard:true) {
+                    Text("타자 점수 = 출루(안타+볼넷)/타석 ×100").font(.caption)
+                    Text("투수 지수 = 50+100×(탈삼진−볼넷−2×피홈런)/상대 타자, 0~100 제한").font(.caption)
+                    Text("통과는 표본 자격을 보완합니다. 제의는 현재 역할 기량·구단 자리/예산·후보 경쟁 심사를 별도로 통과해야 합니다.").font(.caption)
+                }
+            }.padding(14)
+        }.background(GameTheme.navy).foregroundStyle(GameTheme.boardInk).navigationTitle("인증 평가전").navigationBarTitleDisplayMode(.inline)
+    }
+    private func start() {
+        do {let row=try CertificationStore.start(player:player,calendar:calendar,in:context);self.row=row;snapshot=try row.snapshot();failure=nil}
+        catch {failure=error.localizedDescription}
+    }
+    private func advance() {
+        guard let row else {return}
+        do {try CertificationStore.advance(player:player,calendar:calendar,row:row,revision:row.revision,in:context);snapshot=try row.snapshot();failure=nil}
+        catch {failure=error.localizedDescription}
     }
 }

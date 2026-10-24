@@ -117,7 +117,7 @@ struct ScoutingObservation: Codable {
     func validate() throws {
         let origin = try GameDate(origin), date = try GameDate(observedDate)
         let cycle = try ScoutingPeriod(origin: origin, today: date)
-        guard [1,2,3,4].contains(version), evaluationVersion == "contracts-role-v1", cycle.index == period,
+        guard [1,2,3,4,5].contains(version), evaluationVersion == "contracts-role-v1", cycle.index == period,
               cycle.start.description == periodStart, cycle.next.description == nextDate,
               try GameDate(sampleStart) == max(origin, date.adding(days: -364)),
               appearance.isValid, (0...99).contains(number), age >= 0, pending >= 0,
@@ -240,18 +240,18 @@ struct ContractEvaluationSnapshot: Codable {
     var retry:DomesticRetryReview?
     func validate(player:CareerPlayer,calendar:CareerCalendarState) throws {
         let date = try GameDate(evaluatedDate)
-        guard [1,2,3,4].contains(version), rule == "contracts-window-v1", [4,7,11].contains(window.month),
+        guard [1,2,3,4,5].contains(version), rule == "contracts-window-v1", [4,7,11].contains(window.month),
               (1...9998).contains(window.year), window == ContractEvaluationWindow.containing(date),
               observation.playerID == player.id, observation.origin == calendar.originDate,
               observation.role == player.role, observation.observedDate == evaluatedDate,
               observation.age == (try GameDate(calendar.originDate).age(startingAt:player.startAge,on:date)),
               date <= (try GameDate(player.gameDate)), calendarRevision >= 0,
-              !routes.isEmpty, routes == (version == 3 ? ["국내 육성팀 재계약"]:version == 4 ? ["무소속 국내 육성팀 재입단"]:window.routes(age:observation.age,affiliation:affiliation.stage)),
+              !routes.isEmpty, routes == (version == 3 ? ["국내 육성팀 재계약"]:[4,5].contains(version) ? ["무소속 국내 육성팀 재입단"]:window.routes(age:observation.age,affiliation:affiliation.stage)),
               !pending.isEmpty else { throw ContractEvaluationError.invalid }
         try observation.validate()
-        if version == 4 {
+        if [4,5].contains(version) {
             guard let retry,selection == nil,renewal == nil,
-                  retry == (try DomesticRetryReview.make(observation:observation,release:retry.release,window:window)) else {throw ContractEvaluationError.invalid}
+                  retry == (try DomesticRetryReview.make(observation:observation,release:retry.release,window:window,certificate:version == 5 ? retry.certificate:nil,certificationEnabled:version == 5)) else {throw ContractEvaluationError.invalid}
         } else if version == 3 {
             guard let renewal,retry == nil,selection == nil else {throw ContractEvaluationError.invalid}
             try renewal.validate(observation:observation,key:player.id.uuidString+":"+window.id,window:window)
@@ -302,11 +302,14 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
             guard let original=source.first(where:{$0.id == review.membership.offerID}),original.roleID == review.roleID,
                   journal.memberships.contains(try CareerMembership.make(offer:original,on:GameDate(review.membership.since),origin:GameDate(calendar.originDate),startAge:player.startAge)) else {throw ContractEvaluationError.invalid}
         }
-        for value in snapshots where value.version == 4 {
+        for value in snapshots where [4,5].contains(value.version) {
             guard let retry=value.retry,let row=try ContractRegistrationStore.row(player:player,in:context),
                   let journal=try? JSONDecoder().decode(CareerContractJournal.self,from:row.payload),
                   journal.releases?.contains(retry.release) == true,
                   try journal.current(on:GameDate(value.evaluatedDate),excludingMembership:value.retry?.results.first(where:{$0.selected}).map {value.observation.playerID.uuidString+":"+value.window.id+"/"+$0.id}) == nil else {throw ContractEvaluationError.invalid}
+            if let certificate=retry.certificate {
+                guard value.version == 5,let stored=try CertificationStore.assessment(player:player,releaseID:retry.release.membershipOfferID,window:value.window,in:context),stored == certificate else {throw ContractEvaluationError.invalid}
+            }
         }
         for value in snapshots where value.window.month == 7 {
             if let selection=value.selection {
@@ -347,10 +350,11 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         let journal=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
         if let release=journal.releases?.last,[4,7].contains(window.month),try calendar.age(of:player) >= 20 {
             let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
-            let retry=try DomesticRetryReview.make(observation:observation,release:release,window:window)
-            let value=ContractEvaluationSnapshot(version:4,rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
+            let certificate=try CertificationStore.assessment(player:player,releaseID:release.membershipOfferID,window:window,in:context)
+            let retry=try DomesticRetryReview.make(observation:observation,release:release,window:window,certificate:certificate,certificationEnabled:true)
+            let value=ContractEvaluationSnapshot(version:5,rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
                 calendarRevision:calendar.revision,affiliation:history.current,routes:["무소속 국내 육성팀 재입단"],observation:observation,
-                pending:["성인 Vref 미검증 · P=0 중립","기존 육성 표본 기준 · 무소속 인증 평가전은 후속"],retry:retry)
+                pending:["성인 Vref 미검증 · P=0 중립","육성 표본 또는 해당 창 인증 평가전 · 같은 창 재평가 없음"],retry:retry)
             try value.validate(player:player,calendar:calendar)
             context.insert(try CareerContractEvaluation(playerID:player.id,snapshot:value))
             _ = try ContractOfferStore.insertCurrent(player:player,calendar:calendar,in:context);return true
@@ -475,7 +479,7 @@ typealias CareerContractOffer = CareerSchemaV11.ContractOffer
         guard !rows.contains(where:{$0.key == key}),
               let evaluation=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context).first(where:{$0.key == key}) else {return false}
         let snapshot=try evaluation.snapshot(player:player,calendar:calendar)
-        guard [2,4].contains(snapshot.version) else {return false}
+        guard [2,4,5].contains(snapshot.version) else {return false}
         let value=try DomesticOfferPacket.make(evaluation:snapshot,key:key,on:date)
         try value.validate(evaluation:snapshot,key:key,today:date)
         context.insert(try CareerContractOffer(playerID:player.id,value:value));return true
