@@ -3251,3 +3251,40 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+
+extension CareerFlowTests {
+    @MainActor func testClubRoleAndSeasonGoalsBothRolesKeepDayAndReopen() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:120))
+        for role in ["batter","pitcher"] {
+            let pick=app.buttons["homeRole-"+role];revealFit(pick,in:app);pick.tap()
+            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+            let open=app.buttons["openClubRole"];revealFit(open,in:app);open.tap()
+            XCTAssertTrue(app.staticTexts["clubAcceptedRole"].waitForExistence(timeout:15))
+            XCTAssertFalse(app.staticTexts["clubRoleError"].exists)
+            XCTAssertTrue(app.staticTexts["clubNextAppearance"].exists)
+            Thread.sleep(forTimeInterval:1)
+            let file=XCTAttachment(screenshot:app.screenshot());file.name="club-role-"+role;file.lifetime = .keepAlways;add(file)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let goals=app.buttons["openClubSeasonGoals"];revealFit(goals,in:app);goals.tap()
+            let start=app.buttons["startClubSeasonGoal"];XCTAssertTrue(start.waitForExistence(timeout:10));revealFit(start,in:app)
+            Thread.sleep(forTimeInterval:1)
+            let preview=XCTAttachment(screenshot:app.screenshot());preview.name="club-goal-preview-"+role;preview.lifetime = .keepAlways;add(preview)
+            start.tap()
+            let status=app.staticTexts["clubSeasonGoalStatus"];XCTAssertTrue(status.waitForExistence(timeout:10));revealFit(status,in:app);XCTAssertTrue(status.label.contains("수행 중"))
+            XCTAssertFalse(app.staticTexts["clubSeasonGoalError"].exists)
+            Thread.sleep(forTimeInterval:1)
+            let saved=XCTAttachment(screenshot:app.screenshot());saved.name="club-goal-saved-"+role;saved.lifetime = .keepAlways;add(saved)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            revealFit(goals,in:app);goals.tap();XCTAssertTrue(app.staticTexts["clubSeasonGoalStatus"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["startClubSeasonGoal"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let day=app.staticTexts["calendarDate"];revealFit(day,in:app);XCTAssertEqual(day.label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+            let homeSummary=app.staticTexts["clubSeasonHomeSummary"];revealFit(homeSummary,in:app);XCTAssertTrue(homeSummary.label.contains("/"))
+            XCTAssertGreaterThan(homeSummary.frame.minX,goals.frame.minX,"summary should have inner padding")
+            Thread.sleep(forTimeInterval:1)
+            let home=XCTAttachment(screenshot:app.screenshot());home.name="club-goal-home-"+role;home.lifetime = .keepAlways;add(home)
+        }
+        app.terminate()
+    }
+}

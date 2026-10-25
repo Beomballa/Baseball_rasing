@@ -2723,9 +2723,16 @@ extension CareerCalendarTests {
             XCTAssertEqual(value.overseasCareer?.transitions,original.overseasCareer?.transitions)
             XCTAssertEqual(try s.competition(for:p,year:year).membership?.level,"mlb-development")
             XCTAssertEqual(try s.competition(for:p,year:year+1).membership?.level,"mlb-first-team")
+            XCTAssertEqual(try ClubSeasonStore.role(player:p,calendar:s,in:c)?.level,"mlb-development","promotion is not applied before its effective date")
             p.gameDate="\(year+1)-04-01";try c.save()
             let member=try XCTUnwrap(s.registration(for:p));XCTAssertEqual(member.offerID,offer.id);XCTAssertEqual(member.level,"mlb-first-team")
             XCTAssertEqual(member.economicIndex,100);XCTAssertEqual(member.economicEnd,"\(year+2)-03-31");XCTAssertEqual(p.fatigue,fatigue)
+            let promoted=try XCTUnwrap(ClubSeasonStore.role(player:p,calendar:s,in:c))
+            XCTAssertEqual(promoted.level,"mlb-first-team");XCTAssertEqual(promoted.sourceID,value.overseasCareer?.promotions?.last?.id)
+            try ClubSeasonStore.start(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let goal=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoals?.first)
+            XCTAssertEqual(goal.role,promoted);XCTAssertEqual(goal.appearances,role == .batter ? 30:6)
+
         }
     }
 }
@@ -3913,6 +3920,7 @@ extension CareerCalendarTests {
     }
 }
 
+
 extension CareerCalendarTests {
     func testPlanGuidanceUsesFrozenAnalysisAndLiveProgressDoesNotFinalize() throws {
         for role in PlayerRole.allCases {
@@ -3930,5 +3938,126 @@ extension CareerCalendarTests {
                 XCTAssertEqual(try JSONDecoder().decode(CareerMatch.self,from:before),match)
             }
         }
+    }
+}
+
+extension CareerCalendarTests {
+    func testClubRoleReadsAcceptedOfferAndKeepsScheduleAndOriginalSaves() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,packet)=try acceptance(role),c=store.mainContext
+            let offer=try XCTUnwrap(packet.offers.first {$0.route == .rookie})
+            XCTAssertNil(try ClubSeasonStore.role(player:p,calendar:s,in:c))
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            let date=p.gameDate,fatigue=p.fatigue,revision=s.revision
+            let payload=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            let value=try XCTUnwrap(ClubSeasonStore.role(player:p,calendar:s,in:c))
+            XCTAssertEqual(value.roleID,offer.roleID);XCTAssertEqual(value.sourceID,offer.id)
+            XCTAssertEqual(value.level,"domestic-development")
+            let games=try s.fixtures(for:p,year:GameDate(date).year)
+            XCTAssertEqual(games.filter {$0.isAppearance(for:role)}.count,role == .batter ? 30:6)
+            XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,payload)
+            var owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            let member=try XCTUnwrap(owner.current(on:GameDate(date)))
+            owner.decisions=[]
+            XCTAssertNil(CareerClubRole.make(member:member,owner:owner,offers:packet.offers,on:date).roleID,"unaccepted source cannot invent a role")
+        }
+    }
+}
+
+extension CareerCalendarTests {
+    func testClubSeasonGoalFreezesOnceProgressUsesOnlyNewOfficialGamesAndRollsBack() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,packet)=try acceptance(role),c=store.mainContext
+            let offer=try XCTUnwrap(packet.offers.first {$0.route == .rookie})
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            let payload=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            let date=p.gameDate,fatigue=p.fatigue,revision=s.revision
+            XCTAssertThrowsError(try ClubSeasonStore.start(player:p,calendar:s,date:date,revision:-1,in:c))
+            XCTAssertThrowsError(try ClubSeasonStore.start(player:p,calendar:s,date:date,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(s.revision,revision);XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,payload)
+            try ClubSeasonStore.start(player:p,calendar:s,date:date,revision:revision,in:c)
+            let goal=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoals?.first)
+            XCTAssertEqual(goal.appearances,role == .batter ? 30:6)
+            XCTAssertEqual(goal.role.roleID,offer.roleID)
+            XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(p.gameDate,date);XCTAssertNil(s.actionDate)
+            let fixed=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            try ClubSeasonStore.start(player:p,calendar:s,date:date,revision:-1,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,fixed)
+            XCTAssertEqual(try ClubSeasonStore.progress(goal,player:p,in:c).matchKeys.count,0)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let game=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertThrowsError(try ClubSeasonStore.settle(goal.id,player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c))
+            try CareerMatchStore.advance(player:p,state:s,record:game,revision:game.revision,input:.automatic,in:c)
+            let progress=try ClubSeasonStore.progress(goal,player:p,in:c)
+            XCTAssertEqual(progress.matchKeys,[game.key]);XCTAssertEqual(progress.values.first,role == .batter ? try game.snapshot().line.plateAppearances:try game.snapshot().line.pitchingOuts)
+            XCTAssertEqual(try ClubSeasonStore.progress(goal,player:p,in:c),progress)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoals?.first,goal)
+            XCTAssertThrowsError(try ClubSeasonStore.settle(goal.id,player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c),"unfinished 30-game league cannot be finalized")
+            let snapshot=try game.snapshot(),before=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:game,revision:game.revision,input:.automatic,in:c))
+            XCTAssertEqual(try game.snapshot(),snapshot);XCTAssertEqual(p.fatigue,before)
+        }
+    }
+    func testClubSeasonGoalLegacyDecodeAndRoleSpecificTargetsRemainStable() throws {
+        let owner=CareerContractJournal(playerID:UUID())
+        XCTAssertNil(try JSONDecoder().decode(CareerContractJournal.self,from:JSONEncoder().encode(owner)).seasonGoals)
+        let roles=["slugger","onBase","field","starter"]
+        for id in roles {
+            let role=CareerClubRole(membershipID:"source",teamID:"dev-harbors",level:"domestic-development",roleID:id,sourceID:"source")
+            let kind=id == "starter" ? "pitcher":"batter"
+            let targets=ClubSeasonGoal.targets(role:role,playerRole:kind,appearances:6)
+            XCTAssertEqual(targets.count,2);XCTAssertTrue(targets.allSatisfy {$0.target > 0})
+            XCTAssertEqual(targets,ClubSeasonGoal.targets(role:role,playerRole:kind,appearances:6))
+            var match=ScoutingReferenceSimulation.fixture(role:kind == "pitcher" ? .pitcher:.batter,position:kind == "pitcher" ? "P":"SS",values:PlayerArchetype.initial(for:kind == "pitcher" ? .pitcher:.batter).values,seed:11,home:true)
+            match.completed=true;match.line.plateAppearances=4;match.line.hits=2;match.line.homeRuns=1;match.line.pitchingOuts=12;match.line.pitchingStrikeouts=4
+            let goal=ClubSeasonGoal(id:"test",year:2030,started:"2030-04-01",role:role,playerRole:kind,fixtureIDs:[],excludedKeys:["old"],appearances:6,targets:targets)
+            let progress=goal.progress(matches:[("old",match),("new",match),("new",match)])
+            XCTAssertEqual(progress.matchKeys,["new"])
+            XCTAssertEqual(progress.values[0],kind == "pitcher" ? 12:4)
+        }
+    }
+}
+
+extension CareerCalendarTests {
+    func testClubSeasonGoalSettlementOnceDiskReopenAndNextYearKeepsOriginalRecords() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("club.store")
+        var playerID:UUID!,goal:ClubSeasonGoal!,matchPayload:Data!
+        do {
+            let (store,p,s,packet)=try acceptance(.pitcher,legacyURL:url),c=store.mainContext;playerID=p.id
+            let offer=try XCTUnwrap(packet.offers.first {$0.route == .rookie})
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            try ClubSeasonStore.start(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            goal=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoals?.first)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let row=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            matchPayload=row.payload
+            // Synthetic calendar fixture: unplayed past team games use the existing automatic league policy.
+            p.gameDate="2030-09-23";try c.save()
+            XCTAssertTrue(try CareerSeasonStore.load(player:p,state:s,year:2030,in:c).finalized)
+            let raw=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,revision=s.revision,fatigue=p.fatigue
+            XCTAssertThrowsError(try ClubSeasonStore.settle(goal.id,player:p,calendar:s,date:p.gameDate,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,raw);XCTAssertEqual(s.revision,revision)
+            try ClubSeasonStore.settle(goal.id,player:p,calendar:s,date:p.gameDate,revision:revision,in:c)
+            goal=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoals?.first)
+            XCTAssertNotNil(goal.result);XCTAssertEqual(goal.result?.matchKeys,[row.key])
+            let fixed=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,rev=s.revision
+            try ClubSeasonStore.settle(goal.id,player:p,calendar:s,date:"old",revision:-1,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,fixed);XCTAssertEqual(s.revision,rev);XCTAssertEqual(p.fatigue,fatigue)
+            p.gameDate="2031-04-01";s.actionDate=nil;try c.save()
+            try ClubSeasonStore.start(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoals?.count,2)
+            XCTAssertEqual(row.payload,matchPayload)
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+        let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == playerID})
+        let s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == playerID})
+        let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+        XCTAssertEqual(owner.seasonGoals?.first,goal);XCTAssertEqual(owner.seasonGoals?.count,2)
+        XCTAssertEqual(try ClubSeasonStore.progress(goal,player:p,in:c),goal.result)
+        XCTAssertTrue(try c.fetch(FetchDescriptor<CareerMatchRecord>()).contains {$0.payload == matchPayload})
     }
 }

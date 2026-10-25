@@ -552,6 +552,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             let earned=try FASeasonEvidence.collect(owner:value,role:player.role,on:GameDate(player.gameDate),rows:rows)
             guard service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
         }
+        try value.validateSeasonGoals(today:GameDate(player.gameDate),offers:offers)
         try value.validateDevelopment(today:GameDate(player.gameDate))
         if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil || value.specialTrainings != nil || value.specialAssessments != nil || value.specialReports != nil {
             var sources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
@@ -1262,5 +1263,70 @@ enum GoalSpecialError:LocalizedError {
         let reports=try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context).map {try $0.snapshot()}
         let period=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(player.gameDate)).index
         return ObservationPeriodReview.make(observations:reports,owner:owner,period:period)
+    }
+}
+
+@MainActor enum ClubSeasonStore {
+    static func role(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> CareerClubRole? {
+        let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        guard let member=try owner.current(on:GameDate(player.gameDate)) else {return nil}
+        let evaluations=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context)
+        let offers=try ContractOfferStore.records(player:player,calendar:calendar,in:context).flatMap {row in
+            guard let evaluation=evaluations.first(where:{$0.key == row.key}) else {throw ContractRegistrationError.invalid}
+            return try row.snapshot(evaluation:evaluation,player:player,calendar:calendar).offers
+        }
+        return CareerClubRole.make(member:member,owner:owner,offers:offers,on:player.gameDate)
+    }
+}
+
+@MainActor extension ClubSeasonStore {
+    static func progress(_ goal:ClubSeasonGoal,player:CareerPlayer,in context:ModelContext) throws -> ClubSeasonProgress {
+        if let result=goal.result {return result}
+        let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
+        let source=try rows.filter {$0.completed && goal.fixtureIDs.contains($0.fixtureID) && $0.gameDate >= goal.started}.map {row -> (key:String,match:CareerMatch) in
+            let match=try row.snapshot()
+            guard match.competition == goal.role.level,match.role == goal.playerRole else {throw ContractRegistrationError.invalid}
+            return (row.key,match)
+        }
+        return goal.progress(matches:source)
+    }
+    static func start(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        guard let role=try role(player:player,calendar:calendar,in:context),role.roleID != nil else {throw ClubSeasonGoalError.roleUnavailable}
+        let year=try GameDate(date).year,key=ClubSeasonGoal.key(role,year:year)
+        if (owner.seasonGoals ?? []).contains(where:{$0.id == key}) {return}
+        try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        let id=player.id,old=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id})).map(\.key).sorted()
+        let fixtures=try calendar.fixtures(for:player,year:year).filter {$0.date.description >= date && !old.contains(CareerMatchRecord.key(player.id,$0.id))}
+        let n=fixtures.filter {$0.isAppearance(for:player.role)}.count
+        guard n > 0 else {throw ClubSeasonGoalError.noGames}
+        let goal=ClubSeasonGoal(id:key,year:year,started:date,role:role,playerRole:player.roleRaw,fixtureIDs:fixtures.map(\.id),excludedKeys:old,appearances:n,targets:ClubSeasonGoal.targets(role:role,playerRole:player.roleRaw,appearances:n))
+        owner.seasonGoals=(owner.seasonGoals ?? [])+[goal]
+        try write(owner,player:player,calendar:calendar,in:context,save:save)
+    }
+    static func settle(_ goalID:String,player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        guard var goals=owner.seasonGoals,let i=goals.firstIndex(where:{$0.id == goalID}) else {throw ContractRegistrationError.invalid}
+        if goals[i].result != nil {return}
+        try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        let summary=try CareerSeasonStore.load(player:player,state:calendar,year:goals[i].year,in:context)
+        guard summary.finalized else {throw ClubSeasonGoalError.unfinished}
+        goals[i].result=try progress(goals[i],player:player,in:context);goals[i].settledOn=date;owner.seasonGoals=goals
+        try write(owner,player:player,calendar:calendar,in:context,save:save)
+    }
+    private static func requireIdle(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext) throws {
+        guard !context.hasChanges else {throw ContractRegistrationError.busy}
+        guard player.gameDate == date,calendar.revision == revision else {throw ContractRegistrationError.stale}
+        try CareerTrainingStore.requireNoPending(player:player,in:context)
+        let id=player.id
+        for row in try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id})) {guard try row.snapshot().completed else {throw ContractRegistrationError.busy}}
+    }
+    private static func write(_ owner:CareerContractJournal,player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext,save:CalendarProgression.Save) throws {
+        do {
+            var value=owner;value.revision += 1
+            if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(value)} else {context.insert(try CareerContractRegistration(value))}
+            _ = try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+            calendar.revision += 1;try save(context)
+        } catch {context.rollback();throw error}
     }
 }

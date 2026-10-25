@@ -737,6 +737,7 @@ struct CareerContractJournal:Codable,Equatable {
     var specialTrainings:[GoalSpecialTraining]? = nil
     var specialAssessments:[GoalSpecialAssessment]? = nil
     var specialReports:[GoalSpecialReport]? = nil
+    var seasonGoals:[ClubSeasonGoal]? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -2577,4 +2578,111 @@ struct CareerProjectTaskProgress:Codable,Equatable {
     let keys:[String]
     let trainingGoal:Int
     let qualityGoal:Int
+}
+
+// Accepted recruitment roles describe the club's purpose, not a starting guarantee.
+struct CareerClubRole:Codable,Equatable {
+    let membershipID:String
+    let teamID:String
+    let level:String
+    let roleID:String?
+    let sourceID:String?
+    var label:String {
+        switch roleID {case "slugger":return "장타 자원";case "onBase":return "출루 자원";case "field":return "수비 자원";case "starter":return "선발 자원";case .some(let id):return id;case nil:return "모집 역할 원본 미확인"}
+    }
+    var levelLabel:String {switch level {case "college":"대학";case "domestic-development":"국내 육성팀";case "domestic-first-team":"국내 1군";case "mlb-development":"미국 조직 육성";case "npb-first-team":"일본 전력팀";case "mlb-first-team":"메이저";default:"등록 수준 미확인"}}
+    static func make(member:CareerMembership,owner:CareerContractJournal,offers:[DomesticContractOffer],on date:String) -> Self {
+        let promoted=(owner.overseasCareer?.promotions ?? []).last {$0.sourceOfferID == member.offerID && $0.effective <= date && $0.toLevel == member.level && $0.roleID != nil}
+        let domestic=offers.first {offer in offer.id == member.offerID && owner.decisions.contains(where:{$0.offerID == offer.id && $0.kind == .accepted})}
+        let foreign=(owner.overseasCareer?.evaluations ?? []).flatMap(\.offers).first {$0.id == member.offerID}
+        return Self(membershipID:member.offerID,teamID:member.teamID,level:member.level,roleID:promoted?.roleID ?? domestic?.roleID ?? foreign?.roleID,sourceID:promoted?.id ?? domestic?.id ?? foreign?.id)
+    }
+}
+
+struct ClubSeasonTarget:Codable,Equatable,Identifiable {
+    let metric:String
+    let target:Int
+    var id:String {metric}
+    var label:String {switch metric {case "pa":"타석";case "outs":"투구 아웃";case "hr":"홈런";case "onBase":"안타+볼넷";case "defense":"본인 참여 수비";default:"탈삼진"}}
+}
+struct ClubSeasonProgress:Codable,Equatable {
+    let matchKeys:[String]
+    let values:[Int]
+}
+struct ClubSeasonGoal:Codable,Equatable,Identifiable {
+    var version=1
+    let id:String
+    let year:Int
+    let started:String
+    let role:CareerClubRole
+    let playerRole:String
+    let fixtureIDs:[String]
+    let excludedKeys:[String]
+    let appearances:Int
+    let targets:[ClubSeasonTarget]
+    var settledOn:String? = nil
+    var result:ClubSeasonProgress? = nil
+    static func key(_ role:CareerClubRole,year:Int) -> String {"club-season-v1/\(role.membershipID)/\(role.teamID)/\(role.level)/\(year)"}
+    static func targets(role:CareerClubRole,playerRole:String,appearances:Int) -> [ClubSeasonTarget] {
+        // Deterministic game balance: team emphasis and level, never a real club promise.
+        let emphasis=Double(MatchNPCFielders.hash(role.teamID)%3)*0.05
+        let level=["domestic-first-team","npb-first-team","mlb-first-team"].contains(role.level) ? 1.1:1.0
+        func count(_ rate:Double) -> Int {max(1,Int((Double(appearances)*rate*(level+emphasis)).rounded(.up)))}
+        if playerRole == "pitcher" {return [.init(metric:"outs",target:appearances*9),.init(metric:"k",target:count(2))]}
+        let extra:ClubSeasonTarget
+        switch role.roleID {case "slugger":extra = .init(metric:"hr",target:count(1.0/6));case "field":extra = .init(metric:"defense",target:count(0.5));default:extra = .init(metric:"onBase",target:count(0.9))}
+        return [.init(metric:"pa",target:appearances*2),extra]
+    }
+    func progress(matches:[(key:String,match:CareerMatch)]) -> ClubSeasonProgress {
+        var values=targets.map {_ in 0},keys:[String]=[]
+        for item in matches.sorted(by:{$0.key < $1.key}) where !keys.contains(item.key) && !excludedKeys.contains(item.key) && item.match.completed && item.match.appearance {
+            keys.append(item.key)
+            for (i,target) in targets.enumerated() {
+                let line=item.match.line
+                switch target.metric {
+                case "pa":values[i] += line.plateAppearances
+                case "outs":values[i] += line.pitchingOuts
+                case "hr":values[i] += line.homeRuns
+                case "onBase":values[i] += line.hits+line.walks
+                case "defense":values[i] += (item.match.fieldPlays ?? []).filter(\.ownParticipation).count
+                case "k":values[i] += line.pitchingStrikeouts
+                default:break
+                }
+            }
+        }
+        return ClubSeasonProgress(matchKeys:keys,values:values)
+    }
+}
+extension CareerContractJournal {
+    func validateSeasonGoals(today:GameDate,offers:[DomesticContractOffer]) throws {
+        let goals=seasonGoals ?? []
+        guard Set(goals.map(\.id)).count == goals.count else {throw ContractRegistrationError.invalid}
+        for goal in goals {
+            let date=try GameDate(goal.started)
+            guard goal.version == 1,goal.year == date.year,date <= today,
+                  let member=try current(on:date),member.teamID == goal.role.teamID,member.level == goal.role.level,
+                  CareerClubRole.make(member:member,owner:self,offers:offers,on:goal.started) == goal.role,
+                  goal.role.roleID != nil,goal.appearances > 0,goal.appearances <= 30,
+                  ["batter","pitcher"].contains(goal.playerRole),
+                  goal.id == ClubSeasonGoal.key(goal.role,year:goal.year),
+                  goal.targets == ClubSeasonGoal.targets(role:goal.role,playerRole:goal.playerRole,appearances:goal.appearances),
+                  Set(goal.fixtureIDs).count == goal.fixtureIDs.count,Set(goal.excludedKeys).count == goal.excludedKeys.count else {throw ContractRegistrationError.invalid}
+            let eligible=try SeasonSchedule.fixtures(year:goal.year,schoolIDs:CareerTeamDirectory.teams(level:goal.role.level)).filter {$0.includes(goal.role.teamID) && $0.date >= date}
+            let remaining=eligible.filter {!goal.excludedKeys.contains(CareerMatchRecord.key(playerID,$0.id))}
+            guard goal.fixtureIDs == remaining.map(\.id),goal.appearances == remaining.filter({$0.isAppearance(for:goal.playerRole == "batter" ? .batter:.pitcher)}).count else {throw ContractRegistrationError.invalid}
+            if let result=goal.result,let settled=goal.settledOn {
+                guard try GameDate(settled) >= date,try GameDate(settled) <= today,result.values.count == goal.targets.count,result.values.allSatisfy({$0 >= 0}),Set(result.matchKeys).count == result.matchKeys.count,
+                      result.matchKeys.allSatisfy({key in goal.fixtureIDs.contains(where:{CareerMatchRecord.key(playerID,$0) == key}) && !goal.excludedKeys.contains(key)}) else {throw ContractRegistrationError.invalid}
+            } else if goal.result != nil || goal.settledOn != nil {throw ContractRegistrationError.invalid}
+        }
+    }
+}
+
+enum ClubSeasonGoalError:LocalizedError {
+    case roleUnavailable,noGames,unfinished
+    var errorDescription:String? {switch self {
+    case .roleUnavailable:"발효된 소속과 수락한 모집 역할을 먼저 확인해 주세요. 기존 자료는 유지합니다."
+    case .noGames:"올해 남은 개인 출전 일정이 없습니다. 다음 시즌에 목표를 확정해 주세요."
+    case .unfinished:"리그 30경기를 마친 후 시즌 목표를 결산할 수 있습니다."
+    }}
 }

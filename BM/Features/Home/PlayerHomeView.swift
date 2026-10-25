@@ -69,6 +69,8 @@ struct PlayerHomeView: View {
                     NavigationLink {CareerObjectivesView(player:player,calendar:calendar)} label: {CareerObjectivesHomeLabel(player:player,calendar:calendar)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openCareerObjectives")
                     NavigationLink {ObservationReviewView(player:player,calendar:calendar)} label: {Text("28일 관찰 결산 · 다음 행동")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openObservationReview")
                     NavigationLink {GoalSpecialActivitiesView(player:player,calendar:calendar)} label: {Text("목표 구단 · 특별 훈련 / 평가전")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openGoalSpecial")
+                    NavigationLink {ClubSeasonGoalsScreen(player:player,calendar:calendar)} label: {ClubSeasonHomeLabel(player:player,calendar:calendar)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubSeasonGoals")
+                    NavigationLink {ClubRoleScreen(player:player,calendar:calendar)} label: {Text("구단 역할 · 출전 / 승격 준비")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubRole")
                     CareerContractStatusPanel(player:player,calendar:calendar).id(player.id)
                     ContractEvaluationHomePanel(player:player,calendar:calendar).id(player.id)
                     CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
@@ -461,6 +463,7 @@ struct CareerSeasonScreen: View {
                         Button("다음 연도 ▶") { selectedYear = league.year + 1 }
                             .disabled(league.year >= (try? GameDate(player.gameDate).year) ?? league.year).accessibilityIdentifier("seasonNextYear")
                     }.buttonStyle(MatchPixelButtonStyle())
+                    NavigationLink {ClubSeasonGoalsScreen(player:player,calendar:state,selectedYear:league.year)} label: {Text("이 시즌의 구단 목표 · 결산")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("seasonClubGoals")
                     GamePanel(title: summary.finalized ? "FINAL · 시즌 결산" : "LIVE · 시즌 진행 중", onBoard: true) {
                         if summary.finalized {
                             SeasonPixelTrophy().frame(width: 72, height: 72).frame(maxWidth: .infinity)
@@ -2072,5 +2075,166 @@ struct ObservationScheduleView:View {
             }.padding(12)
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("공식 경기 일정").toolbarColorScheme(.dark,for:.navigationBar)
             .task(id:calendar.revision) {do {schools=try SchoolCatalog.load();fixtures=try calendar.upcoming(for:player);failure=nil}catch{failure=error.localizedDescription}}
+    }
+}
+
+struct ClubRoleScreen:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var role:CareerClubRole?
+    @State private var upcoming:[SeasonFixture]=[]
+    @State private var owner:CareerContractJournal?
+    @State private var failure:String?
+    var body:some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:14) {
+                GamePanel(title:"CLUB FILE · 내 역할",onBoard:true,contentSpacing:12) {
+                    if let role {
+                        Text(CareerTeamDirectory.name(role.teamID)).font(.title3.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubRoleTeam")
+                        Text(role.label).font(.headline).accessibilityIdentifier("clubAcceptedRole")
+                        Text("현재 등록 수준 · "+role.levelLabel).font(.caption)
+                        Text("수락 제의 또는 발효된 승격 자료 기준 · 선발/주전 보장과 구분합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        if let next=upcoming.first {
+                            Text("다음 개인 출전 · "+next.date.description).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubNextAppearance")
+                            Text(CareerTeamDirectory.name(next.opponent(of:role.teamID))+" · 시즌 경기 \(next.number)").font(.caption)
+                        } else {Text("올해 남은 개인 출전 일정 없음").font(.subheadline)}
+                        Text(player.role == .batter ? "타자: 예정 경기마다 타석 진행 · 실제 완료 기록만 성과에 포함":"투수: 기존 5경기 간격 선발 로테이션 · 비등판일 훈련/휴식").font(.caption)
+                    } else if failure == nil {
+                        Text("입단 후 구단 역할과 출전 일정을 확인할 수 있습니다.").font(.subheadline).accessibilityIdentifier("clubRoleNoMembership")
+                    }
+                }
+                if let role,let owner {
+                    GamePanel(title:"NEXT LEVEL · 승격 준비",onBoard:true,contentSpacing:12) {
+                        let promotion=owner.overseasCareer?.promotions?.last {$0.sourceOfferID == role.membershipID && $0.effective > player.gameDate}
+                        if let promotion {
+                            Text("승격 확정 · "+promotion.effective+" 발효").font(.headline).foregroundStyle(GameTheme.growth)
+                            Text("발효 전까지 현재 수준의 경기와 목표를 유지합니다.").font(.caption)
+                        } else if ["domestic-development","mlb-development"].contains(role.level) {
+                            Text(role.level == "domestic-development" ? "11월 심사 · 역할 H65 / 동일 환경 40타석 또는 15이닝":"11월 심사 · 메이저 역할 기량 / 동일 환경 100타석 또는 25이닝").font(.subheadline)
+                            if let report=owner.overseasReports?.last(where:{$0.eligibility.evidence.current?.offerID == role.membershipID && $0.eligibility.evidence.current?.level == role.level}) {
+                                Text("고정 보고서 · "+report.observation.observedDate).font(.caption)
+                                if let sample=report.selected {Text(player.role == .batter ? "동일 환경 \(sample.totals.line.plateAppearances)타석":"동일 환경 \(sample.totals.line.pitchingOuts / 3).\(sample.totals.line.pitchingOuts % 3)이닝").font(.subheadline)}
+                                else {Text("동일 환경 표본 미확인 · 다음 관찰 보고서 확인").font(.caption)}
+                            } else {Text("현재 소속 수준의 관찰 보고서 필요").font(.caption)}
+                            Text("아래 기존 심사에서 자격·진행 잠금·발효일을 함께 확인합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        } else {Text("현재 수준에서 시즌 성과를 쌓습니다. 대학 프로 지원·이적·FA는 별도 심사를 따릅니다.").font(.subheadline)}
+                    }
+                    NavigationLink {
+                        ScrollView {ProCareerProgressPanel(player:player,calendar:calendar).padding(12)}.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("승격 · 경력 심사")
+                    } label: {Text("승격 심사 · 경력 근거 확인")}.buttonStyle(MatchPixelButtonStyle(primary:true))
+                }
+                if let failure {Text(failure).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubRoleError");Button("다시 확인") {load()}.buttonStyle(MatchPixelButtonStyle())}
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("구단 역할 · 출전").toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).navigationBarTitleDisplayMode(.inline).task(id:calendar.revision) {load()}
+    }
+    private func load() {
+        do {
+            role=try ClubSeasonStore.role(player:player,calendar:calendar,in:context)
+            owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+            let id=player.id,completed=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id})).filter(\.completed).map(\.fixtureID)
+            upcoming=try calendar.fixtures(for:player,year:GameDate(player.gameDate).year).filter {$0.date.description >= player.gameDate && $0.isAppearance(for:player.role) && !completed.contains($0.id)}
+            failure=nil
+        } catch {role=nil;owner=nil;upcoming=[];failure=error.localizedDescription}
+    }
+}
+
+struct ClubSeasonGoalsScreen:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    var selectedYear:Int? = nil
+    @Environment(\.modelContext) private var context
+    @State private var goals:[ClubSeasonGoal]=[]
+    @State private var progress:[String:ClubSeasonProgress]=[:]
+    @State private var preview:[ClubSeasonTarget]=[]
+    @State private var role:CareerClubRole?
+    @State private var canStart=false
+    @State private var readyToSettle:Set<String>=[]
+    @State private var failure:String?
+    var body:some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:14) {
+                GamePanel(title:"CLUB OBJECTIVE · 시즌 임무",onBoard:true,contentSpacing:12) {
+                    if let role {
+                        Text(CareerTeamDirectory.name(role.teamID)+" · "+role.label).font(.headline).foregroundStyle(GameTheme.gold)
+                        if canStart {
+                            Text("남은 예정 개인 출전 기준 · 확정 전 미리보기").font(.caption)
+                            ForEach(preview) {target in Text(target.label+" · \(target.target)").font(.subheadline.monospacedDigit())}
+                            Button("이번 시즌 목표 확정") {run {try ClubSeasonStore.start(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("startClubSeasonGoal")
+                        } else if goals.isEmpty {Text("남은 개인 경기 또는 확인된 모집 역할이 필요합니다.").font(.caption)}
+                    } else {Text("입단·승격 발효 후 목표를 확정할 수 있습니다.").font(.subheadline)}
+                    Text("구단별 고정 강조도와 등록 수준으로 정한 게임 목표입니다. 실제 구단의 요구 조건이나 계약 약속을 뜻하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }
+                ForEach(goals.reversed()) {goal in
+                    GamePanel(title:"\(goal.year) · "+CareerTeamDirectory.name(goal.role.teamID),onBoard:true,contentSpacing:12) {
+                        Text(goal.role.label+" · "+(goal.result != nil ? "결산 보존":readyToSettle.contains(goal.id) ? "시즌 종료 · 결산 대기":"수행 중")).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubSeasonGoalStatus")
+                        Text(goal.started+" 확정 · 예정 개인 \(goal.appearances)경기").font(.caption)
+                        if let result=progress[goal.id] {
+                            ForEach(Array(goal.targets.enumerated()),id:\.offset) {index,target in
+                                let value=result.values[index]
+                                VStack(alignment:.leading,spacing:6) {
+                                    Text(target.label+"  \(value) / \(target.target)").font(.subheadline.monospacedDigit()).accessibilityIdentifier("clubGoal-"+target.metric)
+                                    HStack(spacing:3) {
+                                        ForEach(0..<20,id:\.self) {index in
+                                            Rectangle().fill(Double(index) < 20*min(1,Double(value)/Double(target.target)) ? (value >= target.target ? GameTheme.growth:GameTheme.gold):GameTheme.boardLine)
+                                        }
+                                    }.frame(height:8).accessibilityHidden(true)
+                                }
+                            }
+                            Text("목표 확정 후 완료 개인 경기 \(result.matchKeys.count)개 · 기존 완료 경기/평가전 제외").font(.caption)
+                        }
+                        if readyToSettle.contains(goal.id),goal.result == nil {
+                            Button("시즌 목표 결산 저장") {run {try ClubSeasonStore.settle(goal.id,player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("settleClubSeasonGoal")
+                        }
+                        if let date=goal.settledOn {Text(date+" 결산 고정 · 다음 시즌에도 보존").font(.caption)}
+                        Text("달성은 추가 XP·연봉·승격 보너스를 지급하지 않습니다. 계약과 승격 심사는 실제 성적과 기존 평가 기준을 사용합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }.fixedSize(horizontal:false,vertical:true)
+                }
+                if let failure {Text(failure).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubSeasonGoalError");Button("다시 확인") {load()}.buttonStyle(MatchPixelButtonStyle())}
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("구단별 시즌 목표").toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).navigationBarTitleDisplayMode(.inline).task(id:calendar.revision) {load()}
+    }
+    private func run(_ action:() throws -> Void) {do {try action();load()}catch{failure=error.localizedDescription}}
+    private func load() {
+        do {
+            let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),year=try GameDate(player.gameDate).year
+            role=try ClubSeasonStore.role(player:player,calendar:calendar,in:context)
+            goals=(owner.seasonGoals ?? []).filter {selectedYear == nil || $0.year == selectedYear}
+            progress=[:];readyToSettle=[]
+            for goal in goals {
+                progress[goal.id]=try ClubSeasonStore.progress(goal,player:player,in:context)
+                if goal.result == nil,try CareerSeasonStore.load(player:player,state:calendar,year:goal.year,in:context).finalized {readyToSettle.insert(goal.id)}
+            }
+            canStart=false;preview=[]
+            if let role,role.roleID != nil,(selectedYear == nil || selectedYear == year),!(owner.seasonGoals ?? []).contains(where:{$0.id == ClubSeasonGoal.key(role,year:year)}) {
+                let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
+                let n=try calendar.fixtures(for:player,year:year).filter {fixture in fixture.date.description >= player.gameDate && fixture.isAppearance(for:player.role) && !rows.contains(where:{$0.fixtureID == fixture.id})}.count
+                canStart=n>0;preview=ClubSeasonGoal.targets(role:role,playerRole:player.roleRaw,appearances:n)
+            }
+            failure=nil
+        } catch {goals=[];progress=[:];canStart=false;role=nil;failure=error.localizedDescription}
+    }
+}
+
+struct ClubSeasonHomeLabel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var summary="입단 후 목표를 확인하세요"
+    var body:some View {
+        VStack(alignment:.leading,spacing:8) {
+            Text("구단별 시즌 목표 · 진척 확인").font(.headline)
+            Text(summary).font(.caption).multilineTextAlignment(.leading).accessibilityIdentifier("clubSeasonHomeSummary")
+        }.padding(12).frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true).task(id:calendar.revision) {
+            do {
+                let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+                guard let role=try ClubSeasonStore.role(player:player,calendar:calendar,in:context) else {summary="입단 후 목표를 확인하세요";return}
+                let year=try GameDate(player.gameDate).year
+                if let goal=owner.seasonGoals?.first(where:{$0.id == ClubSeasonGoal.key(role,year:year)}) {
+                    let progress=try ClubSeasonStore.progress(goal,player:player,in:context)
+                    summary=role.label+" · "+zip(goal.targets,progress.values).map {$0.label+" \($1)/\($0.target)"}.joined(separator:" · ")
+                } else {summary=role.label+" · 이번 시즌 목표 미확정"}
+            } catch {summary="목표 조회 오류 · 상세 화면에서 다시 확인"}
+        }
     }
 }

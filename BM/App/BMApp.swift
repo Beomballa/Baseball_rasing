@@ -199,6 +199,12 @@ struct CareerPathVerification: View {
                     _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:c.mainContext)
                     if args.contains("-offer-expired"),age == 20 {p.gameDate="2030-04-08"}
                     try c.mainContext.save()
+                    if args.contains("-club-season-verification"),age == 20,args.contains("-selection-qualified") {
+                        let evaluation=try ContractEvaluationStore.records(player:p,calendar:calendar,in:c.mainContext).first!
+                        let packet=try ContractOfferStore.records(player:p,calendar:calendar,in:c.mainContext).first!.snapshot(evaluation:evaluation,player:p,calendar:calendar)
+                        let offer=packet.offers.first {$0.route == .rookie}!
+                        try ContractRegistrationStore.decide(player:p,calendar:calendar,offerID:offer.id,accept:true,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                    }
                     if args.contains("-college-pro-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedCollegePro(player:p,calendar:calendar,in:c.mainContext)
                     }
