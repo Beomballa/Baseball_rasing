@@ -554,12 +554,17 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         }
         try value.validateSeasonGoals(today:GameDate(player.gameDate),offers:offers)
         try value.validateDevelopment(today:GameDate(player.gameDate))
-        if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil || value.specialTrainings != nil || value.specialAssessments != nil || value.specialReports != nil || value.seasonGoalReports != nil {
+        if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil || value.specialTrainings != nil || value.specialAssessments != nil || value.specialReports != nil || value.seasonGoalReports != nil || value.seasonReviews != nil {
             var sources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
-            for row in try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context) {let observation=try row.snapshot();sources[row.key]=(observation.period,observation.observedDate)}
+            var reviewSources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.observation,$0.comparisons))})
+            for row in try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context) {
+                let observation=try row.snapshot();sources[row.key]=(observation.period,observation.observedDate)
+                reviewSources[row.key]=(observation,observation.contractFit?.comparisons ?? [])
+            }
             try value.validateProjects(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
             try value.validateGamePlanReports(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
             try value.validateSeasonObservations(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
+            try value.validateSeasonReviews(today:GameDate(player.gameDate),sources:reviewSources)
             try value.validateSpecial(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
             try GoalSpecialStore.validateTrainings(owner:value,player:player,in:context)
         }
@@ -1315,6 +1320,8 @@ enum GoalSpecialError:LocalizedError {
         let summary=try CareerSeasonStore.load(player:player,state:calendar,year:goals[i].year,in:context)
         guard summary.finalized else {throw ClubSeasonGoalError.unfinished}
         goals[i].result=try progress(goals[i],player:player,in:context);goals[i].settledOn=date;owner.seasonGoals=goals
+        let review=try makeReview(goal:goals[i],owner:owner,player:player,calendar:calendar,date:date,in:context)
+        owner.seasonReviews=(owner.seasonReviews ?? [])+[review]
         try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
     private static func requireIdle(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext) throws {
@@ -1352,5 +1359,35 @@ enum GoalSpecialError:LocalizedError {
             items.append(.make(goal:goal,progress:progress,previous:previous,final:final))
         }
         owner.seasonGoalReports=(owner.seasonGoalReports ?? [])+[ClubSeasonObservation(reportID:reportID,period:observation.period,date:observation.observedDate,through:through,items:items)]
+    }
+}
+
+@MainActor extension ClubSeasonStore {
+    static func makeReview(goal:ClubSeasonGoal,owner:CareerContractJournal,player:CareerPlayer,calendar:CareerCalendarState,date:String,in context:ModelContext) throws -> ClubSeasonReview {
+        var candidates:[ClubSeasonReviewBasis]=[]
+        for report in owner.overseasReports ?? [] {
+            if let basis=try ClubSeasonReviewBasis.make(goal:goal,owner:owner,reportID:report.id,observation:report.observation,comparisons:report.comparisons,on:date) {candidates.append(basis)}
+        }
+        for row in try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context) {
+            let observation=try row.snapshot()
+            if let basis=try ClubSeasonReviewBasis.make(goal:goal,owner:owner,reportID:row.key,observation:observation,comparisons:observation.contractFit?.comparisons ?? [],on:date) {candidates.append(basis)}
+        }
+        // Pick the latest available evidence once. Later reports never replace an archived review.
+        let basis=candidates.sorted {a,b in
+            if a.date != b.date {return a.date > b.date}
+            let foreignA=a.reportID.contains(":overseas-report-"),foreignB=b.reportID.contains(":overseas-report-")
+            if foreignA != foreignB {return foreignA}
+            return a.reportID < b.reportID
+        }.first
+        return try ClubSeasonReview.make(goal:goal,on:date,basis:basis)
+    }
+    static func review(_ goalID:String,player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        if (owner.seasonReviews ?? []).contains(where:{$0.goalID == goalID}) {return}
+        try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
+        guard let goal=owner.seasonGoals?.first(where:{$0.id == goalID}),goal.result != nil else {throw ClubSeasonGoalError.unfinished}
+        let review=try makeReview(goal:goal,owner:owner,player:player,calendar:calendar,date:date,in:context)
+        owner.seasonReviews=(owner.seasonReviews ?? [])+[review]
+        try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
 }

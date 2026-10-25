@@ -739,6 +739,7 @@ struct CareerContractJournal:Codable,Equatable {
     var specialReports:[GoalSpecialReport]? = nil
     var seasonGoals:[ClubSeasonGoal]? = nil
     var seasonGoalReports:[ClubSeasonObservation]? = nil
+    var seasonReviews:[ClubSeasonReview]? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -2745,5 +2746,79 @@ extension CareerContractJournal {
                 if item.final {guard let result=goal.result,let settled=goal.settledOn,settled <= row.through,result == item.progress else {throw ContractRegistrationError.invalid}}
             }
         }
+    }
+}
+
+enum ClubNextRoleAdvice:String,Codable {
+    case sampleNeeded,rolePractice,evidenceNeeded,roleDiscussion
+    var label:String {switch self {case .sampleNeeded:"실전 표본 확보";case .rolePractice:"현재 역할 보완";case .evidenceNeeded:"관찰 근거 보강";case .roleDiscussion:"동일 역할 확대 협의"}}
+    var detail:String {switch self {
+    case .sampleNeeded:"목표의 타석·투구 아웃 표본이 부족합니다. 다음 시즌 공식 개인 출전으로 검증 자료를 쌓으세요."
+    case .rolePractice:"출전 표본은 확보했으나 역할 성과 목표가 남았습니다. 해당 능력 훈련과 실전 수행을 우선하세요."
+    case .evidenceNeeded:"시즌 목표를 충족했습니다. 역할 기량과 검증된 동일 환경 성적을 보고서에 확보한 뒤 역할을 협의하세요."
+    case .roleDiscussion:"목표 성과와 관찰 자료를 확보했습니다. 동일 역할의 책임 확대를 협의할 근거로 활용하세요."
+    }}
+}
+struct ClubSeasonReviewBasis:Codable,Equatable {
+    let reportID:String
+    let date:String
+    let period:Int
+    let h:Double?
+    let environment:String?
+    let sample:Int?
+    static func make(goal:ClubSeasonGoal,owner:CareerContractJournal,reportID:String,observation:ScoutingObservation,comparisons:[ScoutingPerformanceComparison],on date:String) throws -> Self? {
+        guard observation.observedDate >= goal.started,observation.observedDate <= date,
+              try GameDate(observation.observedDate).year == goal.year,observation.role.rawValue == goal.playerRole,
+              let member=try owner.current(on:GameDate(observation.observedDate)),member.offerID == goal.role.membershipID,
+              member.teamID == goal.role.teamID,member.level == goal.role.level,observation.school == member.name else {return nil}
+        let selected=ScoutingContractFit.selected(comparisons.filter {$0.id.hasPrefix(goal.role.level+"/")},role:observation.role)
+        return Self(reportID:reportID,date:observation.observedDate,period:observation.period,
+            h:observation.grades.first {$0.id == goal.role.roleID}?.score,
+            environment:selected?.id,sample:selected.map {goal.playerRole == "batter" ? $0.totals.line.plateAppearances:$0.totals.line.pitchingOuts})
+    }
+}
+struct ClubSeasonReview:Codable,Equatable,Identifiable {
+    var version=1
+    let id:String
+    let goalID:String
+    let date:String
+    let result:ClubSeasonProgress
+    let basis:ClubSeasonReviewBasis?
+    let advice:ClubNextRoleAdvice
+    static func make(goal:ClubSeasonGoal,on date:String,basis:ClubSeasonReviewBasis?) throws -> Self {
+        guard let result=goal.result,result.values.count == 2 else {throw ClubSeasonGoalError.unfinished}
+        let advice:ClubNextRoleAdvice
+        if result.values[0] < goal.targets[0].target {advice = .sampleNeeded}
+        else if result.values[1] < goal.targets[1].target {advice = .rolePractice}
+        else if basis?.h == nil || basis?.environment == nil || (basis?.sample ?? 0) < (goal.playerRole == "batter" ? 40:45) {advice = .evidenceNeeded}
+        else {advice = .roleDiscussion}
+        return Self(id:goal.id+"/review-v1",goalID:goal.id,date:date,result:result,basis:basis,advice:advice)
+    }
+}
+extension CareerContractJournal {
+    func validateSeasonReviews(today:GameDate,sources:[String:(ScoutingObservation,[ScoutingPerformanceComparison])]) throws {
+        let rows=seasonReviews ?? []
+        guard Set(rows.map(\.goalID)).count == rows.count else {throw ContractRegistrationError.invalid}
+        for row in rows {
+            guard row.version == 1,let goal=seasonGoals?.first(where:{$0.id == row.goalID}),let settled=goal.settledOn,
+                  row.date >= settled,try GameDate(row.date) <= today,
+                  row == (try ClubSeasonReview.make(goal:goal,on:row.date,basis:row.basis)) else {throw ContractRegistrationError.invalid}
+            if let basis=row.basis {
+                guard let source=sources[basis.reportID],basis == (try ClubSeasonReviewBasis.make(goal:goal,owner:self,reportID:basis.reportID,observation:source.0,comparisons:source.1,on:row.date)) else {throw ContractRegistrationError.invalid}
+            }
+        }
+    }
+}
+
+
+extension CareerContractJournal {
+    func latestSeasonReview(membershipID:String,through year:Int) -> (goal:ClubSeasonGoal,review:ClubSeasonReview)? {
+        (seasonReviews ?? []).compactMap {review in
+            seasonGoals?.first {$0.id == review.goalID && $0.role.membershipID == membershipID && $0.year <= year}.map {(goal:$0,review:review)}
+        }.sorted {a,b in
+            if a.goal.year != b.goal.year {return a.goal.year > b.goal.year}
+            if a.review.date != b.review.date {return a.review.date > b.review.date}
+            return a.review.id < b.review.id
+        }.first
     }
 }

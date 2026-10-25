@@ -217,6 +217,12 @@ struct CareerPathVerification: View {
                                 try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
                             }
                         }
+                        if args.contains("-club-review-verification") {
+                            // Synthetic end-of-season QA: unplayed team games use the existing automatic league policy.
+                            p.gameDate="2030-09-23";try c.mainContext.save()
+                            try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
+                            try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                        }
                     }
                     if args.contains("-college-pro-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedCollegePro(player:p,calendar:calendar,in:c.mainContext)

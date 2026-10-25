@@ -3315,3 +3315,39 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testClubSeasonReviewBothRolesSettlementFeedbackReopenAndHome() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-observation-verification","-club-review-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:120))
+        for role in ["batter","pitcher"] {
+            let pick=app.buttons["homeRole-"+role];revealFit(pick,in:app);pick.tap()
+            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
+            let goals=app.buttons["openClubSeasonGoals"];revealFit(goals,in:app);goals.tap()
+            let open=app.buttons["openClubSeasonReviews"];XCTAssertTrue(open.waitForExistence(timeout:10));open.tap()
+            XCTAssertTrue(app.staticTexts["clubReviewWaiting"].waitForExistence(timeout:10))
+            Thread.sleep(forTimeInterval:1)
+            let before=XCTAttachment(screenshot:app.screenshot());before.name="club-review-waiting-"+role;before.lifetime = .keepAlways;add(before)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let settle=app.buttons["settleClubSeasonGoal"];revealFit(settle,in:app);XCTAssertTrue(settle.exists);settle.tap()
+            let closed=app.staticTexts["clubSeasonGoalStatus"];XCTAssertTrue(closed.waitForExistence(timeout:10));XCTAssertTrue(closed.label.contains("결산 보존"))
+            revealFit(open,in:app);open.tap()
+            let advice=app.staticTexts["clubNextRoleAdvice"];XCTAssertTrue(advice.waitForExistence(timeout:15))
+            XCTAssertFalse(app.staticTexts["clubReviewError"].exists);XCTAssertTrue(app.staticTexts["clubReviewReportBasis"].exists)
+            let fixed=advice.label
+            Thread.sleep(forTimeInterval:1)
+            let result=XCTAttachment(screenshot:app.screenshot());result.name="club-review-summary-"+role;result.lifetime = .keepAlways;add(result)
+            let action=app.buttons["clubReviewNextAction"];revealFit(action,in:app);XCTAssertTrue(action.exists)
+            Thread.sleep(forTimeInterval:1)
+            let next=XCTAttachment(screenshot:app.screenshot());next.name="club-review-feedback-"+role;next.lifetime = .keepAlways;add(next)
+            app.navigationBars.buttons.element(boundBy:0).tap();revealFit(open,in:app);open.tap()
+            XCTAssertTrue(advice.waitForExistence(timeout:10));XCTAssertEqual(advice.label,fixed)
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+            let home=app.staticTexts["clubSeasonHomeFeedback"];revealFit(home,in:app);XCTAssertTrue(home.label.contains("2031"))
+            Thread.sleep(forTimeInterval:1)
+            let summary=XCTAttachment(screenshot:app.screenshot());summary.name="club-review-home-"+role;summary.lifetime = .keepAlways;add(summary)
+            let day=app.staticTexts["calendarDate"];revealFit(day,in:app);XCTAssertEqual(day.label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
+        }
+        app.terminate()
+    }
+}
