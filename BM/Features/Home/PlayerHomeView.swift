@@ -1821,6 +1821,7 @@ struct CareerProjectReportEvidence:View {
     @State private var failure:String?
     var body:some View {
         VStack(alignment:.leading,spacing:16) {
+            ClubSeasonReportEvidence(playerID:playerID,period:period)
             if !reviews.isEmpty {
                 GamePanel(title:"선수 프로젝트 · 확정 관찰 근거",onBoard:true,contentSpacing:12) {
                     ForEach(reviews) {review in
@@ -2154,6 +2155,7 @@ struct ClubSeasonGoalsScreen:View {
     var body:some View {
         ScrollView {
             VStack(alignment:.leading,spacing:14) {
+                NavigationLink {ClubSeasonObservationScreen(playerID:player.id)} label: {Text("시즌 목표 · 28일 관찰 기록")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubSeasonObservations")
                 GamePanel(title:"CLUB OBJECTIVE · 시즌 임무",onBoard:true,contentSpacing:12) {
                     if let role {
                         Text(CareerTeamDirectory.name(role.teamID)+" · "+role.label).font(.headline).foregroundStyle(GameTheme.gold)
@@ -2235,6 +2237,78 @@ struct ClubSeasonHomeLabel:View {
                     summary=role.label+" · "+zip(goal.targets,progress.values).map {$0.label+" \($1)/\($0.target)"}.joined(separator:" · ")
                 } else {summary=role.label+" · 이번 시즌 목표 미확정"}
             } catch {summary="목표 조회 오류 · 상세 화면에서 다시 확인"}
+        }
+    }
+}
+
+struct ClubSeasonObservationScreen:View {
+    let playerID:UUID
+    var body:some View {
+        ScrollView {ClubSeasonReportEvidence(playerID:playerID,period:nil).padding(12)}
+            .background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("시즌 목표 · 관찰 파일").navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar)
+    }
+}
+struct ClubSeasonReportEvidence:View {
+    let playerID:UUID
+    let period:Int?
+    @Environment(\.modelContext) private var context
+    @State private var rows:[ClubSeasonObservation]=[]
+    @State private var goals:[String:ClubSeasonGoal]=[:]
+    @State private var player:CareerPlayer?
+    @State private var calendar:CareerCalendarState?
+    @State private var hasGoals=false
+    @State private var failure:String?
+    var body:some View {
+        VStack(alignment:.leading,spacing:14) {
+            ForEach(rows.reversed()) {row in
+                GamePanel(title:"CLUB OBJECTIVE · 고정 관찰",onBoard:true,contentSpacing:12) {
+                    Text("\(row.period+1)차 · "+row.date+" 저장").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubObservationDate")
+                    Text(row.through+"까지 완료한 공식 개인 경기 기준").font(.caption)
+                    if row.items.isEmpty {Text("이 주기에는 확정할 이전 주기의 목표가 없습니다.").font(.subheadline)}
+                    ForEach(row.items) {item in
+                        if let goal=goals[item.goalID] {
+                            Text(CareerTeamDirectory.name(goal.role.teamID)+" · "+goal.role.label).font(.headline).foregroundStyle(GameTheme.gold)
+                            ForEach(Array(goal.targets.enumerated()),id:\.offset) {index,target in
+                                VStack(alignment:.leading,spacing:6) {
+                                    Text(target.label+" \(item.progress.values[index])/\(target.target)").font(.subheadline.monospacedDigit()).accessibilityIdentifier("clubObservationMetric-"+target.metric)
+                                    HStack(spacing:3) {ForEach(0..<20,id:\.self) {n in Rectangle().fill(Double(n+1)<=20*min(1,Double(item.progress.values[index])/Double(target.target)) ? GameTheme.gold:GameTheme.boardLine)}}.frame(height:7).accessibilityHidden(true)
+                                    Text(item.change.map {"이전 관찰 대비 +\($0[index])"} ?? "첫 관찰 · 목표 확정 후 누적").font(.caption).accessibilityIdentifier("clubObservationChange")
+                                }
+                            }
+                            Text("이번 관찰에 새로 포함 \(item.newMatchKeys.count)경기 · 누적 \(item.progress.matchKeys.count)경기"+(item.final ? " · 시즌 결산 고정":"")).font(.caption).accessibilityIdentifier("clubObservationGames")
+                            if let player,let calendar {
+                                Text("관찰 당시 추천 · "+item.action.label).font(.subheadline).foregroundStyle(GameTheme.gold)
+                                NavigationLink {destination(item.action,player:player,calendar:calendar)} label: {Text(item.action == .play ? "현재 출전 일정 확인":item.action == .review ? "현재 목표·결산 확인":"훈련 화면에서 추천 항목 선택")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("clubObservationAction-"+item.action.rawValue)
+                            }
+                        }
+                    }
+                    Text("보고서 생성 시 고정한 기록입니다. 현재 성장값으로 다시 계산하지 않으며 계약·승격 점수를 추가하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }.fixedSize(horizontal:false,vertical:true)
+            }
+            if rows.isEmpty,failure == nil,(period == nil || hasGoals) {
+                GamePanel(title:"시즌 목표 · 관찰 대기",onBoard:true,contentSpacing:12) {
+                    Text("기록된 시즌 목표 관찰이 없습니다. 목표 확정 후 다음 새28일 보고서부터 연결됩니다. 기존 보고서는 소급 변경하지 않습니다.").font(.subheadline).accessibilityIdentifier("clubObservationWaiting")
+                }
+            }
+            if let failure {Text(failure).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubObservationError")}
+        }.task(id:"\(playerID)-\(period.map(String.init) ?? "all")") {
+            do {
+                let id=playerID
+                guard let p=try context.fetch(FetchDescriptor<CareerPlayer>(predicate:#Predicate {$0.id == id})).first,
+                      let c=try context.fetch(FetchDescriptor<CareerCalendarState>(predicate:#Predicate {$0.playerID == id})).first else {throw ContractRegistrationError.invalid}
+                let owner=try ContractRegistrationStore.journal(player:p,calendar:c,in:context)
+                rows=(owner.seasonGoalReports ?? []).filter {period == nil || $0.period == period}
+                goals=Dictionary(uniqueKeysWithValues:(owner.seasonGoals ?? []).map {($0.id,$0)});hasGoals = !goals.isEmpty;player=p;calendar=c;failure=nil
+            } catch {rows=[];failure=error.localizedDescription}
+        }
+    }
+    @ViewBuilder private func destination(_ action:ClubGoalAction,player:CareerPlayer,calendar:CareerCalendarState) -> some View {
+        switch action {
+        case .play:ObservationScheduleView(player:player,calendar:calendar)
+        case .review:ClubSeasonGoalsScreen(player:player,calendar:calendar)
+        case .defense:PositionTrainingView(player:player,calendar:calendar)
+        default:CareerTrainingView(player:player,calendar:calendar)
         }
     }
 }

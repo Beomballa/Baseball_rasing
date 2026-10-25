@@ -554,11 +554,12 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         }
         try value.validateSeasonGoals(today:GameDate(player.gameDate),offers:offers)
         try value.validateDevelopment(today:GameDate(player.gameDate))
-        if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil || value.specialTrainings != nil || value.specialAssessments != nil || value.specialReports != nil {
+        if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil || value.specialTrainings != nil || value.specialAssessments != nil || value.specialReports != nil || value.seasonGoalReports != nil {
             var sources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
             for row in try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context) {let observation=try row.snapshot();sources[row.key]=(observation.period,observation.observedDate)}
             try value.validateProjects(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
             try value.validateGamePlanReports(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
+            try value.validateSeasonObservations(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
             try value.validateSpecial(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
             try GoalSpecialStore.validateTrainings(owner:value,player:player,in:context)
         }
@@ -767,6 +768,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         try CareerProjectStore.appendReview(owner:&journal,player:player,observation:observation,reportID:report.id,in:context)
         try MatchPlanReportStore.append(owner:&journal,player:player,calendar:calendar,observation:observation,reportID:report.id,in:context)
         try GoalSpecialStore.appendEvidence(owner:&journal,player:player,calendar:calendar,observation:observation,reportID:report.id,in:context)
+        try ClubSeasonReportStore.append(owner:&journal,player:player,calendar:calendar,observation:observation,reportID:report.id,in:context)
         do {
             if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(journal)}
             else {context.insert(try CareerContractRegistration(journal))}
@@ -1081,6 +1083,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         try appendReview(owner:&owner,player:player,observation:observation,reportID:reportID,in:context)
         try MatchPlanReportStore.append(owner:&owner,player:player,calendar:calendar,observation:observation,reportID:reportID,in:context)
         try GoalSpecialStore.appendEvidence(owner:&owner,player:player,calendar:calendar,observation:observation,reportID:reportID,in:context)
+        try ClubSeasonReportStore.append(owner:&owner,player:player,calendar:calendar,observation:observation,reportID:reportID,in:context)
         guard owner != before else {return}
         if let row {row.payload=try JSONEncoder().encode(owner)} else {context.insert(try CareerContractRegistration(owner))}
     }
@@ -1280,10 +1283,10 @@ enum GoalSpecialError:LocalizedError {
 }
 
 @MainActor extension ClubSeasonStore {
-    static func progress(_ goal:ClubSeasonGoal,player:CareerPlayer,in context:ModelContext) throws -> ClubSeasonProgress {
-        if let result=goal.result {return result}
+    static func progress(_ goal:ClubSeasonGoal,player:CareerPlayer,on date:String?=nil,in context:ModelContext) throws -> ClubSeasonProgress {
+        if let result=goal.result,date.map {cutoff in goal.settledOn.map {$0 <= cutoff} ?? false} ?? true {return result}
         let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
-        let source=try rows.filter {$0.completed && goal.fixtureIDs.contains($0.fixtureID) && $0.gameDate >= goal.started}.map {row -> (key:String,match:CareerMatch) in
+        let source=try rows.filter {row in row.completed && goal.fixtureIDs.contains(row.fixtureID) && row.gameDate >= goal.started && (date.map {row.gameDate <= $0} ?? true)}.map {row -> (key:String,match:CareerMatch) in
             let match=try row.snapshot()
             guard match.competition == goal.role.level,match.role == goal.playerRole else {throw ContractRegistrationError.invalid}
             return (row.key,match)
@@ -1328,5 +1331,26 @@ enum GoalSpecialError:LocalizedError {
             _ = try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
             calendar.revision += 1;try save(context)
         } catch {context.rollback();throw error}
+    }
+}
+
+@MainActor enum ClubSeasonReportStore {
+    // Both report paths call this before their atomic save. Older reports are never backfilled.
+    static func append(owner:inout CareerContractJournal,player:CareerPlayer,calendar:CareerCalendarState,observation:ScoutingObservation,reportID:String,in context:ModelContext) throws {
+        guard !(owner.seasonGoals ?? []).isEmpty,!(owner.seasonGoalReports ?? []).contains(where:{$0.period == observation.period}) else {return}
+        let general=try ScoutingObservationStore.reports(player:player,calendar:calendar,in:context)
+        guard !general.contains(where:{$0.period == observation.period && $0.key != reportID}),
+              !(owner.overseasReports ?? []).contains(where:{$0.period == observation.period && $0.id != reportID}) else {return}
+        let through=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(observation.observedDate)).start.adding(days:-1).description
+        var items:[ClubSeasonObservationItem]=[]
+        for goal in owner.seasonGoals ?? [] where goal.started <= through {
+            let previous=(owner.seasonGoalReports ?? []).filter {$0.period < observation.period}.sorted {$0.period > $1.period}.compactMap {r in r.items.first {$0.goalID == goal.id}.map {(reportID:r.reportID,item:$0)}}.first
+            if previous?.item.final == true {continue}
+            let final=goal.result != nil && (goal.settledOn.map {$0 <= through} ?? false)
+            if goal.year < (try GameDate(through)).year,previous != nil,!final {continue}
+            let progress=try ClubSeasonStore.progress(goal,player:player,on:through,in:context)
+            items.append(.make(goal:goal,progress:progress,previous:previous,final:final))
+        }
+        owner.seasonGoalReports=(owner.seasonGoalReports ?? [])+[ClubSeasonObservation(reportID:reportID,period:observation.period,date:observation.observedDate,through:through,items:items)]
     }
 }

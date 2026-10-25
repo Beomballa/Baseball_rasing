@@ -738,6 +738,7 @@ struct CareerContractJournal:Codable,Equatable {
     var specialAssessments:[GoalSpecialAssessment]? = nil
     var specialReports:[GoalSpecialReport]? = nil
     var seasonGoals:[ClubSeasonGoal]? = nil
+    var seasonGoalReports:[ClubSeasonObservation]? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -2685,4 +2686,64 @@ enum ClubSeasonGoalError:LocalizedError {
     case .noGames:"올해 남은 개인 출전 일정이 없습니다. 다음 시즌에 목표를 확정해 주세요."
     case .unfinished:"리그 30경기를 마친 후 시즌 목표를 결산할 수 있습니다."
     }}
+}
+
+enum ClubGoalAction:String,Codable {
+    case play,power,discipline,defense,pitch,review
+    var label:String {switch self {case .play:"다음 개인 출전 확인";case .power:"파워 훈련으로 장타 보완";case .discipline:"선구안 훈련으로 출루 보완";case .defense:"수비·포지션 훈련 확인";case .pitch:"구종·제구 훈련 확인";case .review:"시즌 목표·결산 확인"}}
+    static func make(goal:ClubSeasonGoal,progress:ClubSeasonProgress,final:Bool) -> Self {
+        if final {return .review}
+        if progress.values[0] < goal.targets[0].target {return .play}
+        if progress.values[1] >= goal.targets[1].target {return .review}
+        switch goal.targets[1].metric {case "hr":return .power;case "onBase":return .discipline;case "defense":return .defense;default:return .pitch}
+    }
+}
+struct ClubSeasonObservationItem:Codable,Equatable,Identifiable {
+    let goalID:String
+    let progress:ClubSeasonProgress
+    let previousReportID:String?
+    let change:[Int]?
+    let newMatchKeys:[String]
+    let final:Bool
+    let action:ClubGoalAction
+    var id:String {goalID}
+    static func make(goal:ClubSeasonGoal,progress:ClubSeasonProgress,previous:(reportID:String,item:Self)?,final:Bool) -> Self {
+        let old=previous?.item.progress
+        return Self(goalID:goal.id,progress:progress,previousReportID:previous?.reportID,
+            change:old.map {before in zip(progress.values,before.values).map(-)},
+            newMatchKeys:progress.matchKeys.filter {!(old?.matchKeys.contains($0) ?? false)},final:final,
+            action:ClubGoalAction.make(goal:goal,progress:progress,final:final))
+    }
+}
+struct ClubSeasonObservation:Codable,Equatable,Identifiable {
+    var version=1
+    let reportID:String
+    let period:Int
+    let date:String
+    let through:String
+    let items:[ClubSeasonObservationItem]
+    var id:String {reportID}
+}
+extension CareerContractJournal {
+    func validateSeasonObservations(origin:String,today:GameDate,reports:[String:(Int,String)]) throws {
+        let rows=seasonGoalReports ?? []
+        guard Set(rows.map(\.period)).count == rows.count else {throw ContractRegistrationError.invalid}
+        for row in rows {
+            let through=try ScoutingPeriod(origin:GameDate(origin),today:GameDate(row.date)).start.adding(days:-1)
+            guard row.version == 1,let source=reports[row.reportID],source.0 == row.period,source.1 == row.date,row.date <= today.description,
+                  row.through == through.description,Set(row.items.map(\.goalID)).count == row.items.count else {throw ContractRegistrationError.invalid}
+            for item in row.items {
+                guard let goal=seasonGoals?.first(where:{$0.id == item.goalID}),goal.started <= row.through,
+                      item.progress.values.count == goal.targets.count,item.progress.values.allSatisfy({$0 >= 0}),
+                      Set(item.progress.matchKeys).count == item.progress.matchKeys.count,
+                      item.progress.matchKeys.allSatisfy({key in goal.fixtureIDs.contains(where:{CareerMatchRecord.key(playerID,$0) == key}) && !goal.excludedKeys.contains(key)}) else {throw ContractRegistrationError.invalid}
+                let old=rows.filter {$0.period < row.period}.sorted {$0.period > $1.period}.compactMap {r in r.items.first {$0.goalID == item.goalID}.map {(reportID:r.reportID,item:$0)}}.first
+                guard item == ClubSeasonObservationItem.make(goal:goal,progress:item.progress,previous:old,final:item.final),
+                      item.change?.allSatisfy({$0 >= 0}) ?? true,old?.item.final != true,
+                      item.final == (goal.result != nil && (goal.settledOn.map {$0 <= row.through} ?? false)),
+                      old.map({Set($0.item.progress.matchKeys).isSubset(of:Set(item.progress.matchKeys))}) ?? true else {throw ContractRegistrationError.invalid}
+                if item.final {guard let result=goal.result,let settled=goal.settledOn,settled <= row.through,result == item.progress else {throw ContractRegistrationError.invalid}}
+            }
+        }
+    }
 }

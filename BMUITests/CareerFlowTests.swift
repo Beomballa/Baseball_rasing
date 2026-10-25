@@ -3288,3 +3288,30 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testClubSeasonObservationBothRolesShowsFrozenChangesAndAction() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-observation-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:120))
+        for role in ["batter","pitcher"] {
+            let pick=app.buttons["homeRole-"+role];revealFit(pick,in:app);pick.tap()
+            let goals=app.buttons["openClubSeasonGoals"];revealFit(goals,in:app);goals.tap()
+            let open=app.buttons["openClubSeasonObservations"];XCTAssertTrue(open.waitForExistence(timeout:10));open.tap()
+            XCTAssertTrue(app.staticTexts.matching(identifier:"clubObservationDate").firstMatch.waitForExistence(timeout:15))
+            let delta=app.staticTexts.matching(NSPredicate(format:"identifier == %@ AND label BEGINSWITH %@","clubObservationChange","이전 관찰 대비")).firstMatch
+            revealFit(delta,in:app);XCTAssertTrue(delta.exists)
+            XCTAssertFalse(app.staticTexts["clubObservationError"].exists)
+            Thread.sleep(forTimeInterval:1)
+            let picture=XCTAttachment(screenshot:app.screenshot());picture.name="club-observation-"+role;picture.lifetime = .keepAlways;add(picture)
+            let action=app.buttons.matching(identifier:"clubObservationAction-play").firstMatch;revealFit(action,in:app);XCTAssertTrue(action.exists)
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+            let review=app.buttons["openObservationReview"];revealFit(review,in:app);review.tap()
+            let proof=app.staticTexts.matching(identifier:"clubObservationGames").firstMatch
+            XCTAssertTrue(proof.waitForExistence(timeout:15));revealFit(proof,in:app)
+            Thread.sleep(forTimeInterval:1)
+            let actual=XCTAttachment(screenshot:app.screenshot());actual.name="report-club-goal-"+role;actual.lifetime = .keepAlways;add(actual)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

@@ -204,6 +204,19 @@ struct CareerPathVerification: View {
                         let packet=try ContractOfferStore.records(player:p,calendar:calendar,in:c.mainContext).first!.snapshot(evaluation:evaluation,player:p,calendar:calendar)
                         let offer=packet.offers.first {$0.route == .rookie}!
                         try ContractRegistrationStore.decide(player:p,calendar:calendar,offerID:offer.id,accept:true,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                        if args.contains("-club-observation-verification") {
+                            try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
+                            try ClubSeasonStore.start(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                            for _ in 0..<2 {
+                                let next=try calendar.fixtures(for:p,year:GameDate(p.gameDate).year).first {$0.date.description >= p.gameDate && $0.isAppearance(for:p.role)}!
+                                p.gameDate=next.date.description;calendar.actionDate=nil;try c.mainContext.save()
+                                try CalendarProgression.rest(player:p,state:calendar,revision:calendar.revision,in:c.mainContext)
+                                let game=try CareerMatchStore.start(player:p,state:calendar,in:c.mainContext)
+                                try CareerMatchStore.advance(player:p,state:calendar,record:game,revision:game.revision,input:.automatic,in:c.mainContext)
+                                p.gameDate=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(p.gameDate)).next.description;try c.mainContext.save()
+                                try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
+                            }
+                        }
                     }
                     if args.contains("-college-pro-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedCollegePro(player:p,calendar:calendar,in:c.mainContext)

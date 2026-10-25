@@ -4061,3 +4061,65 @@ extension CareerCalendarTests {
         XCTAssertTrue(try c.fetch(FetchDescriptor<CareerMatchRecord>()).contains {$0.payload == matchPayload})
     }
 }
+
+extension CareerCalendarTests {
+    private func goalObservationFixture(_ role:PlayerRole,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,ClubSeasonGoal,CareerMatchRecord) {
+        let (store,p,s,packet)=try acceptance(role,legacyURL:legacyURL),c=store.mainContext
+        let offer=try XCTUnwrap(packet.offers.first {$0.route == .rookie})
+        try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+        try ClubSeasonStore.start(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let goal=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoals?.first)
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let game=try CareerMatchStore.start(player:p,state:s,in:c)
+        try CareerMatchStore.advance(player:p,state:s,record:game,revision:game.revision,input:.automatic,in:c)
+        return (store,p,s,goal,game)
+    }
+    func testSeasonGoalObservationBothRolesFreezesRollsBackAndDeduplicatesReportPaths() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,goal,game)=try goalObservationFixture(role),c=store.mainContext,bytes=game.payload
+            let oldReports=try ScoutingObservationStore.reports(player:p,calendar:s,in:c).map(\.payload)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertNil(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoalReports,"existing same-period report is never backfilled")
+            XCTAssertEqual(try ScoutingObservationStore.reports(player:p,calendar:s,in:c).map(\.payload),oldReports)
+            p.gameDate=try ScoutingPeriod(origin:GameDate(s.originDate),today:GameDate(p.gameDate)).next.description;try c.save()
+            let raw=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,rev=s.revision,fatigue=p.fatigue
+            XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,raw);XCTAssertEqual(s.revision,rev)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let report=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoalReports?.first)
+            let item=try XCTUnwrap(report.items.first)
+            XCTAssertEqual(item.goalID,goal.id);XCTAssertEqual(item.progress.matchKeys,[game.key]);XCTAssertEqual(item.newMatchKeys,[game.key]);XCTAssertNil(item.change);XCTAssertFalse(item.final);XCTAssertEqual(p.fatigue,fatigue)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoalReports,[report])
+            let upcoming=try XCTUnwrap(s.fixtures(for:p,year:GameDate(p.gameDate).year).first {$0.date.description >= p.gameDate && $0.isAppearance(for:role)})
+            p.gameDate=upcoming.date.description;s.actionDate=nil;try c.save()
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let next=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:next,revision:next.revision,input:.automatic,in:c)
+            p.gameDate=try ScoutingPeriod(origin:GameDate(s.originDate),today:GameDate(p.gameDate)).next.description;try c.save()
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let rows=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoalReports)
+            XCTAssertEqual(rows.first,report)
+            let added=try XCTUnwrap(rows.last?.items.first)
+            XCTAssertEqual(added.previousReportID,report.reportID);XCTAssertEqual(added.newMatchKeys,[next.key]);XCTAssertEqual(added.progress.matchKeys.count,2)
+            XCTAssertEqual(added.change?.first,role == .batter ? try next.snapshot().line.plateAppearances:try next.snapshot().line.pitchingOuts)
+            XCTAssertEqual(game.payload,bytes)
+        }
+    }
+    func testSeasonGoalObservationForeignFirstAndCutoffExcludesLaterGame() throws {
+        let (store,p,s,goal,game)=try goalObservationFixture(.batter),c=store.mainContext
+        p.gameDate=try ScoutingPeriod(origin:GameDate(s.originDate),today:GameDate(p.gameDate)).next.description;try c.save()
+        try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let fixed=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoalReports?.first)
+        try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+        XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).seasonGoalReports,[fixed])
+        XCTAssertEqual(try ClubSeasonStore.progress(goal,player:p,on:"2030-03-31",in:c).matchKeys,[])
+        XCTAssertEqual(try ClubSeasonStore.progress(goal,player:p,on:game.gameDate,in:c).matchKeys,[game.key])
+        var owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+        owner.seasonGoalReports?.append(fixed)
+        var sources=Dictionary(uniqueKeysWithValues:(owner.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
+        for row in try ScoutingObservationStore.reports(player:p,calendar:s,in:c) {let v=try row.snapshot();sources[row.key]=(v.period,v.observedDate)}
+        XCTAssertThrowsError(try owner.validateSeasonObservations(origin:s.originDate,today:GameDate(p.gameDate),reports:sources))
+    }
+}
