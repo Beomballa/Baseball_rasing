@@ -2218,6 +2218,8 @@ struct GoalSpecialAssessment:Codable,Equatable,Identifiable {
     let fatigue:Int
     var calendarRevision:Int
     var games:[CareerMatch]=[]
+    var playVersion:Int? = nil
+    var currentGame:CareerMatch? = nil
     var completed:Bool {games.count == 2}
     var seed:UInt64 {DomesticSelection.hash(id+"/"+target.reportID+"/"+target.clubID)}
     var totals:PersonalSeasonTotals {
@@ -2229,21 +2231,60 @@ struct GoalSpecialAssessment:Codable,Equatable,Identifiable {
         let faced=games.reduce(0){$0+($1.scoutingPerformance?.battersFaced ?? 0)},homers=games.reduce(0){$0+($1.scoutingPerformance?.homersAllowed ?? 0)}
         return faced == 0 ? 0:ScoutingContractFit.round(max(0,min(100,50+100*Double(line.pitchingStrikeouts-line.pitchingWalks-2*homers)/Double(faced))))
     }
-    @MainActor mutating func advance() throws {
-        guard !completed else {throw MatchError.finished}
+    @MainActor private func nextGame() throws -> CareerMatch {
         let home=games.count.isMultiple(of:2),own="goal-evaluation-own"
         let roster=MatchNPCFielders.make(year:try GameDate(date).year,competition:level,homeID:home ? own:opponentID,awayID:home ? opponentID:own)
         var match=ScoutingReferenceSimulation.fixture(role:role,position:position,values:values,seed:seed &+ UInt64(games.count),home:home,tracked:true,battedBallVersion:1,fatigue:fatigue,assessmentRoster:roster)
-        match.competition=level;try match.advance(.automatic);games.append(match)
+        match.competition=level;return match
+    }
+    @MainActor mutating func advance() throws {
+        guard playVersion == nil else {throw MatchError.invalidInput}
+        guard !completed else {throw MatchError.finished}
+        var match=try nextGame();try match.advance(.automatic);games.append(match)
+    }
+    @MainActor mutating func preparePlay() throws {
+        guard playVersion == 1 else {throw MatchError.invalidInput}
+        guard !completed else {throw MatchError.finished}
+        if currentGame?.completed == false {return}
+        currentGame=try nextGame()
+    }
+    mutating func play(_ input:MatchInput,pitchCode:String?,control:ManualMatchInput?) throws {
+        guard playVersion == 1,let saved=currentGame else {throw MatchError.invalidInput}
+        guard !completed,!saved.completed else {throw MatchError.finished}
+        var game=saved;try game.advance(input,pitchCode:pitchCode,control:control)
+        currentGame=game;if game.completed {games.append(game)}
+    }
+    var inputSummary:String {
+        games.enumerated().map {"\($0.offset+1)경기 "+($0.element.scoutingPerformance?.inputs?.mode.label ?? "미확인")}.joined(separator:" · ")
+    }
+    var roleDiagnosis:[String] {
+        guard !games.isEmpty else {return ["완료한 평가 경기 후 역할별 진단을 확인합니다."]}
+        let roleID=target.clubID.components(separatedBy:"/").last ?? "",line=totals.line
+        switch roleID {
+        case "slugger":return ["장타 관찰 · 2루타 \(games.reduce(0){$0+($1.scoutingPerformance?.doubles ?? 0)}),홈런 \(line.homeRuns) / \(line.plateAppearances)타석"]
+        case "onBase":return ["출루 관찰 · 안타+볼넷 \(line.hits+line.walks),삼진 \(line.strikeouts) / \(line.plateAppearances)타석"]
+        case "field":
+            let plays=games.flatMap {$0.fieldPlays ?? []}.filter(\.ownParticipation)
+            guard !plays.isEmpty else {return ["본인 수비 참여 기회 없음 · 수비 진단 보류","타격 점수로 수비·송구·포지션 조건을 통과시키지 않습니다."]}
+            return ["본인 수비 참여 \(plays.count)회 · 본인 실책 \(plays.filter {$0.misplay?.ownError == true}.count)회","공격 참고 점수는 수비 등급이 아닙니다. 포지션/수비·송구의 정식 자격은 별도 심사합니다."]
+        default:return ["선발 관찰 · \(totals.innings)이닝 / 탈삼진 \(line.pitchingStrikeouts) / 볼넷 \(line.pitchingWalks)"]
+        }
     }
     func validate() throws {
         guard games.count <= 2,(0...100).contains(fatigue),calendarRevision >= 0,!opponentID.isEmpty,
               [values.contact,values.power,values.discipline,values.speed,values.defense,values.arm,values.mental].allSatisfy({$0.isFinite && (0...100).contains($0)}),
               [values.velocity,values.control,values.stuff,values.stamina].compactMap({$0}).allSatisfy({$0.isFinite && (0...100).contains($0)}),
               values.pitches.values.allSatisfy({$0.isFinite && (0...100).contains($0)}) else {throw MatchError.invalidRecord}
-        for game in games {
-            guard game.completed,game.appearance,game.role == role.rawValue,game.competition == level,game.abilityExperience == nil,game.positionExperience == nil,
-                  game.abilityStats?.fatigue == fatigue,let performance=game.scoutingPerformance,performance.inputs?.direct == 0,
+        guard playVersion == nil || playVersion == 1 else {throw MatchError.invalidRecord}
+        if playVersion == nil {guard currentGame == nil else {throw MatchError.invalidRecord}}
+        if let currentGame {
+            if currentGame.completed {guard currentGame == games.last else {throw MatchError.invalidRecord}}
+            else {guard !completed else {throw MatchError.invalidRecord}}
+        }
+        for game in games {guard game.completed else {throw MatchError.invalidRecord}}
+        for game in games + (currentGame?.completed == false ? [currentGame!]:[]) {
+            guard game.appearance,game.role == role.rawValue,game.competition == level,game.abilityExperience == nil,game.positionExperience == nil,
+                  game.abilityStats?.fatigue == fatigue,let performance=game.scoutingPerformance,playVersion == 1 || performance.inputs?.direct == 0,
                   let roster=game.npcFielders else {throw MatchError.invalidRecord}
             try roster.validate();try game.validatePitching();try game.validateDetailedField();try performance.validate(line:game.line,role:role)
             var checked=PersonalSeasonTotals();try checked.add(game.line)

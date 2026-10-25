@@ -3205,3 +3205,44 @@ extension CareerFlowTests {
         }
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testInteractiveAssessmentBothRolesManualInputResumeTwoGamesAndDiagnosis() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification","-goal-special-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:120))
+        for role in ["batter","pitcher"] {
+            let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
+            let open=app.buttons["openGoalSpecial"];revealFit(open,in:app);open.tap()
+            let start=app.buttons["startGoalInteractiveAssessment"];revealFit(start,in:app);start.tap()
+            let play=app.buttons["playGoalAssessment"];revealFit(play,in:app);play.tap()
+            XCTAssertTrue(app.staticTexts["interactiveAssessmentLabel"].waitForExistence(timeout:15))
+            let primary=app.buttons[role == "pitcher" ? "gamePitch":"requestGamePitch"]
+            revealFit(primary,in:app);XCTAssertTrue(primary.exists)
+            let live=XCTAttachment(screenshot:app.screenshot());live.name="interactive-assessment-"+role+"-live";live.lifetime = .keepAlways;add(live)
+            primary.tap()
+            if role == "pitcher" {app.buttons["gameRelease"].tap()}else{
+                let hit=app.buttons["gameHit"];XCTAssertTrue(hit.waitForExistence(timeout:2));hit.tap()
+            }
+            waitForEnabled(app.buttons["gameAutomatic"],timeout:30)
+            let count=app.otherElements["careerGameCount"].label
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let resume=app.buttons["playGoalAssessment"];revealFit(resume,in:app);XCTAssertTrue(resume.label.contains("이어하기"));resume.tap()
+            XCTAssertTrue(app.staticTexts["interactiveAssessmentLabel"].waitForExistence(timeout:15));XCTAssertEqual(app.otherElements["careerGameCount"].label,count)
+            for game in 1...2 {
+                let automatic=app.buttons["gameAutomatic"];waitForEnabled(automatic,timeout:30);automatic.tap();app.buttons["진행하고 결과 저장"].tap()
+                XCTAssertTrue(app.staticTexts["assessmentGameCompleted"].waitForExistence(timeout:20))
+                let back=app.buttons["assessmentReturn"];revealFit(back,in:app);back.tap()
+                let progress=app.staticTexts["goalAssessmentProgress"];revealFit(progress,in:app);XCTAssertTrue(progress.label.hasPrefix("\(game) / 2"))
+                if game == 1 {let next=app.buttons["playGoalAssessment"];revealFit(next,in:app);next.tap();XCTAssertTrue(app.staticTexts["interactiveAssessmentLabel"].waitForExistence(timeout:15))}
+            }
+            let diagnosis=app.staticTexts.matching(identifier:"goalAssessmentRoleDiagnosis").firstMatch;revealFit(diagnosis,in:app);XCTAssertTrue(diagnosis.exists)
+            let mode=app.staticTexts["goalAssessmentInputMode"];XCTAssertTrue(mode.label.contains("직접+자동"))
+            XCTAssertFalse(app.staticTexts["goalSpecialError"].exists)
+            Thread.sleep(forTimeInterval:1) // Capture after the native pop transition, not during its rounded-card animation.
+            let result=XCTAttachment(screenshot:app.screenshot());result.name="interactive-assessment-"+role+"-diagnosis";result.lifetime = .keepAlways;add(result)
+            let daily=app.staticTexts["specialDailyState"];revealFit(daily,in:app);XCTAssertTrue(daily.label.contains("오늘 행동 완료"))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

@@ -1168,7 +1168,7 @@ enum CareerProjectError:LocalizedError {
             try commit(owner,player:player,calendar:calendar,in:context,save:save);return row
         } catch {context.rollback();throw error}
     }
-    static func startAssessment(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+    static func startAssessment(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,interactive:Bool=false,save:CalendarProgression.Save = {try $0.save()}) throws {
         var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
         let period=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(date)).index
         if (owner.specialAssessments ?? []).contains(where:{$0.period == period}) {return}
@@ -1179,7 +1179,8 @@ enum CareerProjectError:LocalizedError {
         guard let mental=values["homeMental"] else {throw TrainingError.invalidRecord}
         let snapshot=PlayerInitialValues(contact:player.contact,power:player.power,discipline:player.discipline,speed:player.speed,defense:player.defense,arm:player.arm,mental:mental,velocity:values["homeVelocity"],control:values["homeControl"],stuff:values["homeStuff"],stamina:values["homeStamina"],pitches:Dictionary(uniqueKeysWithValues:player.pitches.map {($0.code,$0.mastery)}))
         guard let opponentID=club.assessmentTeamID else {throw GoalSpecialError.target}
-        let value=GoalSpecialAssessment(id:player.id.uuidString+":goal-assessment-v1:"+String(period),target:target,date:date,period:period,role:player.role,position:player.role == .pitcher ? "P":player.positionRaw,level:club.assessmentLevel,opponentID:opponentID,values:snapshot,fatigue:player.fatigue,calendarRevision:calendar.revision+1)
+        var value=GoalSpecialAssessment(id:player.id.uuidString+":goal-assessment-v1:"+String(period),target:target,date:date,period:period,role:player.role,position:player.role == .pitcher ? "P":player.positionRaw,level:club.assessmentLevel,opponentID:opponentID,values:snapshot,fatigue:player.fatigue,calendarRevision:calendar.revision+1)
+        if interactive {value.playVersion=1}
         owner.specialAssessments=(owner.specialAssessments ?? [])+[value];owner.revision += 1
         do {calendar.revision += 1;try commit(owner,player:player,calendar:calendar,in:context,save:save)}catch{context.rollback();throw error}
     }
@@ -1195,6 +1196,32 @@ enum CareerProjectError:LocalizedError {
             if value.completed {calendar.actionDate=player.gameDate;player.fatigue=min(100,player.fatigue+8)}
             calendar.revision += 1;try commit(owner,player:player,calendar:calendar,in:context,save:save)
         } catch {context.rollback();throw error}
+    }
+    @discardableResult static func preparePlay(player:CareerPlayer,calendar:CareerCalendarState,id:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws -> GoalSpecialAssessment {
+        try changePlay(player:player,calendar:calendar,id:id,revision:revision,in:context,save:save) {try $0.preparePlay()}
+    }
+    @discardableResult static func advancePlay(player:CareerPlayer,calendar:CareerCalendarState,id:String,revision:Int,input:MatchInput,pitchCode:String?=nil,control:ManualMatchInput?=nil,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws -> GoalSpecialAssessment {
+        try changePlay(player:player,calendar:calendar,id:id,revision:revision,in:context,save:save) {try $0.play(input,pitchCode:pitchCode,control:control)}
+    }
+    private static func changePlay(player:CareerPlayer,calendar:CareerCalendarState,id:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save,change:(inout GoalSpecialAssessment) throws -> Void) throws -> GoalSpecialAssessment {
+        guard !context.hasChanges,calendar.revision == revision else {throw ContractRegistrationError.stale}
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        guard let index=owner.specialAssessments?.firstIndex(where:{$0.id == id}),var value=owner.specialAssessments?[index],value.playVersion == 1 else {throw MatchError.invalidRecord}
+        guard !value.completed else {throw MatchError.finished}
+        guard value.calendarRevision == revision,value.date == player.gameDate,value.fatigue == player.fatigue,!calendar.hasAction(on:player.gameDate) else {throw ContractRegistrationError.stale}
+        let previous=value;try change(&value)
+        guard previous != value else {return value}
+        value.calendarRevision += 1;owner.specialAssessments?[index]=value;owner.revision += 1
+        do {
+            if value.completed {calendar.actionDate=player.gameDate;player.fatigue=min(100,player.fatigue+8)}
+            calendar.revision += 1;try commit(owner,player:player,calendar:calendar,in:context,save:save)
+        } catch {context.rollback();throw error}
+        return value
+    }
+    static func displayRecord(player:CareerPlayer,calendar:CareerCalendarState,id:String,in context:ModelContext) throws -> CareerMatchRecord {
+        let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        guard let assessment=owner.specialAssessments?.first(where:{$0.id == id}),assessment.playVersion == 1,let match=assessment.currentGame else {throw MatchError.invalidRecord}
+        return try CareerMatchRecord(assessment:assessment,match:match,playerID:player.id)
     }
     static func validateTrainings(owner:CareerContractJournal,player:CareerPlayer,in context:ModelContext) throws {
         guard owner.specialTrainings?.isEmpty == false else {return}
@@ -1218,7 +1245,7 @@ enum CareerProjectError:LocalizedError {
         }
         for assessment in owner.specialAssessments ?? [] where assessment.completed && !included.contains(assessment.id) {
             guard assessment.period < observation.period,assessment.date <= observation.observedDate else {continue}
-            evidence.append(GoalSpecialEvidence(id:assessment.id,kind:.assessment,target:assessment.target,date:assessment.date,score:assessment.score,growth:0,summary:"자동 평가전2경기 · "+(assessment.role == .batter ? "\(assessment.totals.line.plateAppearances)타석":"\(assessment.totals.innings)이닝")))
+            evidence.append(GoalSpecialEvidence(id:assessment.id,kind:.assessment,target:assessment.target,date:assessment.date,score:assessment.score,growth:0,summary:(assessment.playVersion == nil ? "자동 평가전2경기":"선택형 평가전2경기 · "+assessment.inputSummary)+" · "+(assessment.role == .batter ? "\(assessment.totals.line.plateAppearances)타석":"\(assessment.totals.innings)이닝")+(assessment.playVersion == 1 ? " · "+assessment.roleDiagnosis.joined(separator:" / "):"")))
         }
         guard !evidence.isEmpty else {return}
         evidence.sort {$0.id < $1.id};owner.specialReports=(owner.specialReports ?? [])+[GoalSpecialReport(reportID:reportID,period:observation.period,date:observation.observedDate,evidence:evidence)]

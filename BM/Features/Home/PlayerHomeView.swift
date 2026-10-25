@@ -1845,7 +1845,7 @@ struct CareerProjectReportEvidence:View {
                         Text(evidence.date+" · "+evidence.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reportGoalSpecialEvidence")
                         Text(String(format:"점수 %.1f · 실제 훈련 성장 +%.1f",evidence.score,evidence.growth)).font(.caption)
                     }
-                    Text("특별 훈련은 기존 훈련 기록,자동 평가전은 별도 진단 자료입니다. 공식 표본/인증 자격·H/P/F 보너스를 추가하지 않습니다.").font(.caption)
+                    Text("특별 훈련은 기존 훈련 기록,평가전은 별도 진단 자료입니다. 공식 표본/인증 자격·H/P/F 보너스를 추가하지 않습니다.").font(.caption)
                 }
             }
             if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold)}
@@ -1873,6 +1873,7 @@ struct GoalSpecialActivitiesView:View {
     @State private var live:ScoutingObservation?
     @State private var failure:String?
     @State private var showTraining=false
+    @State private var showAssessment=false
     private var todayTraining:GoalSpecialTraining? {owner?.specialTrainings?.first {$0.date == player.gameDate}}
     private var assessment:GoalSpecialAssessment? {owner?.specialAssessments?.last}
     private var pending:Bool {assessment?.completed == false}
@@ -1906,6 +1907,7 @@ struct GoalSpecialActivitiesView:View {
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("특별 훈련 · 평가전").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
             .task(id:calendar.revision) {load()}
             .navigationDestination(isPresented:$showTraining) {CareerTrainingView(player:player,calendar:calendar)}
+            .navigationDestination(isPresented:$showAssessment) {if let assessment {CareerGameView(player:player,calendar:calendar,schools:[],assessmentID:assessment.id)}}
     }
     @ViewBuilder private func trainingPanel(club:CareerTargetClub,live:ScoutingObservation) -> some View {
         GamePanel(title:"SPECIAL DRILL · 부족 능력 보완",onBoard:true,contentSpacing:12) {
@@ -1923,12 +1925,14 @@ struct GoalSpecialActivitiesView:View {
         }
     }
     @ViewBuilder private func assessmentPanel(owner:CareerContractJournal,club:CareerTargetClub) -> some View {
-        GamePanel(title:"SCOUT TEST · 목표 수준 자동 평가전",onBoard:true,contentSpacing:12) {
-            Text("실제 능력·보유 구종·시작 피로를 고정한 2경기 진단입니다. 경기마다 자동 진행하고 저장합니다.").font(.subheadline)
+        GamePanel(title:"SCOUT TEST · 목표 수준 평가전",onBoard:true,contentSpacing:12) {
+            Text("실제 능력·보유 구종·시작 피로를 고정한 2경기 진단입니다. 자동 또는 직접 조작을 선택하고 시작 후에는 방식을 재추첨하지 않습니다.").font(.subheadline)
             Text("완료 시 오늘 행동 소비 · 피로 +8 · 능력/XP·공식 성적·무소속 인증 자격 지급 없음").font(.caption).foregroundStyle(GameTheme.gold)
             if let assessment {
                 Text((owner.specialClub(assessment.target)?.name ?? club.name)+" · "+assessment.date).font(.subheadline.bold())
                 Text("\(assessment.games.count) / 2경기 · 시작 피로 \(assessment.fatigue)").font(.headline).accessibilityIdentifier("goalAssessmentProgress")
+                Text(assessment.playVersion == 1 ? "선택형 · "+assessment.inputSummary:"자동 평가전").font(.caption).accessibilityIdentifier("goalAssessmentInputMode")
+                ForEach(Array(assessment.roleDiagnosis.enumerated()),id:\.offset) {_,diagnosis in Text(diagnosis).font(.subheadline).accessibilityIdentifier("goalAssessmentRoleDiagnosis")}
                 if !assessment.games.isEmpty {
                     VStack(alignment:.leading,spacing:8) {
                         let totals=assessment.totals,line=totals.line
@@ -1937,17 +1941,24 @@ struct GoalSpecialActivitiesView:View {
                              : "평가 \(totals.games)경기 · \(totals.innings)이닝 · \(line.runsAllowed)실점\n\(line.pitchingStrikeouts)탈삼진 · \(line.pitchingWalks)볼넷 · 피홈런 \(assessment.games.reduce(0){$0+($1.scoutingPerformance?.homersAllowed ?? 0)})")
                             .font(.subheadline.monospaced()).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("goalAssessmentRecord")
                     }.frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true)
-                    Text(String(format:"%@ 진단 %.1f점",assessment.completed ? "최종":"중간",assessment.score)).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("goalAssessmentScore")
+                    Text(String(format:"%@ %@ %.1f점",assessment.completed ? "최종":"중간",club.roleID == "field" ? "공격 참고 진단":"진단",assessment.score)).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("goalAssessmentScore")
                 }
                 if !assessment.completed {
-                    Button("다음 평가 경기 자동 진행") {run {try GoalSpecialStore.advanceAssessment(player:player,calendar:calendar,id:assessment.id,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("advanceGoalAssessment")
+                    if assessment.playVersion == 1 {
+                        Button(assessment.currentGame?.completed == false ? "평가 경기 이어하기":"다음 평가 경기 시작") {run {
+                            try GoalSpecialStore.preparePlay(player:player,calendar:calendar,id:assessment.id,revision:calendar.revision,in:context);showAssessment=true
+                        }}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("playGoalAssessment")
+                    } else {
+                        Button("다음 평가 경기 자동 진행") {run {try GoalSpecialStore.advanceAssessment(player:player,calendar:calendar,id:assessment.id,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("advanceGoalAssessment")
+                    }
                     Text("진행 중에는 날짜·휴식·다른 훈련/경기 준비를 잠급니다. 재열면 저장한 경기부터 이어집니다.").font(.caption)
                 } else {Text("완료 저장 · 다음 관찰 보고서에1회 기록").font(.subheadline).foregroundStyle(GameTheme.growth)}
             }
             if assessment?.period != period {
                 Button("이번 주기 평가전 준비") {run {try GoalSpecialStore.startAssessment(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle()).disabled(calendar.hasAction(on:player.gameDate) || pending).accessibilityIdentifier("startGoalAssessment")
+                Button("직접 조작 평가전 준비") {run {try GoalSpecialStore.startAssessment(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context,interactive:true)}}.buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(calendar.hasAction(on:player.gameDate) || pending).accessibilityIdentifier("startGoalInteractiveAssessment")
             }
-            Text("타자는 출루 기여,투수는 탈삼진·볼넷·피홈런을 진단합니다. 수비 역할의 수비·송구·포지션 조건은 별도 확인하며 이 점수로 통과시키지 않습니다. 주기당1회로 같은 조건 재추첨을 막습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Text("표준 비교 조건 · 무특성/포지션 숙련60. 역할별 실적과 실제 조작 환경을 구분합니다. 수비 기회가 없으면 진단을 보류하고 타격 점수로 수비 자격을 통과시키지 않습니다. 주기당1회입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }.fixedSize(horizontal:false,vertical:true).id(assessment.map {"\($0.id)/\($0.games.count)"} ?? "new-assessment")
     }
     private func load() {do {owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context);live=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context);failure=nil}catch{failure=error.localizedDescription}}

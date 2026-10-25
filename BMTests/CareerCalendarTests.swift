@@ -3798,3 +3798,117 @@ extension CareerCalendarTests {
         }
     }
 }
+
+extension CareerCalendarTests {
+    private func interactiveAssessment(_ role:PlayerRole,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,String) {
+        let (store,p,s)=try goalSpecialFixture(role),c=store.mainContext
+        try GoalSpecialStore.startAssessment(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c,interactive:true)
+        let id=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialAssessments?.last?.id)
+        return (store,p,s,id)
+    }
+    private func assessmentInput(_ role:PlayerRole) -> (MatchInput,ManualMatchInput) {
+        role == .pitcher ? (.pitch,ManualMatchInput(release:0.68)):(.watch,ManualMatchInput())
+    }
+    func testInteractiveAssessmentPitchResumeRollbackDetachedDisplayAndCompletionOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,id)=try interactiveAssessment(role),c=store.mainContext,fatigue=p.fatigue,date=p.gameDate
+            let official=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            let original=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,revision=s.revision
+            XCTAssertThrowsError(try GoalSpecialStore.preparePlay(player:p,calendar:s,id:id,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,original);XCTAssertEqual(s.revision,revision)
+            try GoalSpecialStore.preparePlay(player:p,calendar:s,id:id,revision:s.revision,in:c)
+            let before=try GoalSpecialStore.displayRecord(player:p,calendar:s,id:id,in:c),initial=try before.snapshot()
+            XCTAssertNil(before.modelContext);XCTAssertTrue(before.key.hasPrefix("assessment-display/"));XCTAssertEqual(before.playerID,p.id)
+            let prepared=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,preparedRevision=s.revision
+            try GoalSpecialStore.preparePlay(player:p,calendar:s,id:id,revision:s.revision,in:c,save:{_ in XCTFail("duplicate prepare")})
+            XCTAssertEqual(s.revision,preparedRevision)
+            XCTAssertThrowsError(try GoalSpecialStore.advanceAssessment(player:p,calendar:s,id:id,revision:s.revision,in:c))
+            let (input,control)=assessmentInput(role),code=role == .pitcher ? p.pitches[0].code:nil
+            var expected=initial;try expected.advance(input,pitchCode:code,control:control)
+            XCTAssertThrowsError(try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:s.revision,input:input,pitchCode:code,control:control,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,prepared);XCTAssertEqual(s.revision,preparedRevision)
+            try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:s.revision,input:input,pitchCode:code,control:control,in:c)
+            let resumed=try GoalSpecialStore.displayRecord(player:p,calendar:s,id:id,in:c)
+            XCTAssertEqual(try resumed.snapshot(),expected);XCTAssertNotNil(expected.lastManual);XCTAssertGreaterThan(expected.scoutingPerformance?.inputs?.direct ?? 0,0)
+            XCTAssertThrowsError(try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:preparedRevision,input:input,pitchCode:code,control:control,in:c))
+            XCTAssertThrowsError(try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c))
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c))
+            try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:s.revision,input:.automatic,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialAssessments?.last?.games.count,1)
+            XCTAssertEqual(p.fatigue,fatigue);XCTAssertFalse(s.hasAction(on:date))
+            try GoalSpecialStore.preparePlay(player:p,calendar:s,id:id,revision:s.revision,in:c)
+            let partial=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,lastRevision=s.revision
+            XCTAssertThrowsError(try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:s.revision,input:.automatic,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,partial);XCTAssertEqual(s.revision,lastRevision);XCTAssertEqual(p.fatigue,fatigue)
+            try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:s.revision,input:.automatic,in:c)
+            let completed=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialAssessments?.last)
+            XCTAssertTrue(completed.completed);XCTAssertTrue(completed.inputSummary.contains("직접+자동"));XCTAssertTrue(completed.inputSummary.contains("2경기 자동"))
+            XCTAssertEqual(p.fatigue,min(100,fatigue+8));XCTAssertEqual(p.gameDate,date);XCTAssertTrue(s.hasAction(on:date))
+            let finished=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            XCTAssertThrowsError(try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:s.revision,input:.automatic,in:c))
+            try GoalSpecialStore.startAssessment(player:p,calendar:s,date:date,revision:-1,in:c,interactive:false)
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,finished)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),official);XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testInteractiveAssessmentRoleDiagnosisAndNextReportFreezeSeparateFromOfficialBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,id)=try interactiveAssessment(role),c=store.mainContext
+            for game in 0..<2 {
+                try GoalSpecialStore.preparePlay(player:p,calendar:s,id:id,revision:s.revision,in:c)
+                if game == 0 {
+                    let (input,control)=assessmentInput(role)
+                    try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:s.revision,input:input,pitchCode:role == .pitcher ? p.pitches[0].code:nil,control:control,in:c)
+                }
+                try GoalSpecialStore.advancePlay(player:p,calendar:s,id:id,revision:s.revision,input:.automatic,in:c)
+            }
+            let result=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialAssessments?.last)
+            XCTAssertFalse(result.roleDiagnosis.isEmpty)
+            if role == .batter {
+                var noChance=result
+                for index in noChance.games.indices {noChance.games[index].fieldPlays=[]}
+                XCTAssertTrue(noChance.roleDiagnosis.joined().contains("수비 진단 보류"))
+            } else {XCTAssertTrue(result.roleDiagnosis.joined().contains("선발 관찰"))}
+            p.gameDate=try ScoutingPeriod(origin:GameDate(s.originDate),today:GameDate(p.gameDate)).next.description;s.actionDate=nil;try c.save()
+            let raw=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload,fatigue=p.fatigue,revision=s.revision
+            XCTAssertThrowsError(try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,raw)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let proof=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialReports?.last)
+            XCTAssertEqual(proof.evidence.count,1);XCTAssertEqual(proof.evidence[0].growth,0);XCTAssertTrue(proof.evidence[0].summary.contains("선택형"));XCTAssertTrue(proof.evidence[0].summary.contains(result.inputSummary))
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialReports,[proof]);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+        }
+    }
+    func testInteractiveAssessmentV12DiskReopenKeepsUnfinishedBallAndLegacyAutomaticMode() throws {
+        for interactive in [false,true] {
+            let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+            let url=dir.appendingPathComponent("career.store");var id:UUID!,assessment:GoalSpecialAssessment!,raw:Data!,official:[Data]=[]
+            do {
+                let (store,p,s)=try goalSpecialFixture(.pitcher,legacyURL:url),c=store.mainContext
+                try GoalSpecialStore.startAssessment(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c,interactive:interactive)
+                if interactive {
+                    let key=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialAssessments?.last?.id)
+                    try GoalSpecialStore.preparePlay(player:p,calendar:s,id:key,revision:s.revision,in:c)
+                    try GoalSpecialStore.advancePlay(player:p,calendar:s,id:key,revision:s.revision,input:.pitch,pitchCode:p.pitches[0].code,control:ManualMatchInput(release:0.68),in:c)
+                }
+                id=p.id;assessment=try ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialAssessments?.last
+                raw=try ContractRegistrationStore.row(player:p,in:c)?.payload;official=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            }
+            let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+            let restored=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).specialAssessments?.last)
+            XCTAssertEqual(restored,assessment);XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,raw)
+            if interactive {
+                let record=try GoalSpecialStore.displayRecord(player:p,calendar:s,id:restored.id,in:c)
+                XCTAssertEqual(try record.snapshot(),assessment.currentGame);XCTAssertNil(record.modelContext)
+                try GoalSpecialStore.advancePlay(player:p,calendar:s,id:restored.id,revision:s.revision,input:.automatic,in:c)
+            } else {
+                XCTAssertNil(restored.playVersion);XCTAssertNil(restored.currentGame)
+                try GoalSpecialStore.advanceAssessment(player:p,calendar:s,id:restored.id,revision:s.revision,in:c)
+            }
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),official)
+        }
+    }
+}

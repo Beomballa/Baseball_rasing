@@ -30,6 +30,14 @@ enum CareerSchemaV3: VersionedSchema {
             revision = 0; completed = false; fatigueBefore = player.fatigue; fatigueAfter = player.fatigue
             rulesVersion = "native-match-v1"
         }
+        // Detached display projection; this record is never inserted into the official match context.
+        @MainActor init(assessment:GoalSpecialAssessment,match:CareerMatch,playerID:UUID) throws {
+            let number=assessment.games.count+(match.completed ? 0:1)
+            key="assessment-display/"+assessment.id+"/"+String(number);self.playerID=playerID
+            fixtureID=assessment.id+"/game/"+String(number);gameDate=assessment.date;opponentID=assessment.opponentID
+            appearance=true;payload=try JSONEncoder().encode(match);revision=assessment.calendarRevision;completed=match.completed
+            fatigueBefore=assessment.fatigue;fatigueAfter=assessment.fatigue;rulesVersion="native-match-v2"
+        }
         #if DEBUG
         // Historical QA fixtures are validated against registration/fixtures by the service ledger.
         init(verificationPlayerID:UUID,teamID:String,fixture:SeasonFixture,match:CareerMatch,fatigue:Int) throws {

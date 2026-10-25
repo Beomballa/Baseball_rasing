@@ -6,6 +6,7 @@ struct CareerGameView: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
     let schools: [School]
+    var assessmentID:String? = nil
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduced
@@ -58,7 +59,7 @@ struct CareerGameView: View {
         UIApplication.shared.applicationState == .active && UIApplication.shared.connectedScenes.contains {$0.activationState == .foregroundActive}
     }
     @MainActor private func runLiveCareerQA() async {
-        guard ProcessInfo.processInfo.arguments.contains("-live-career-autoplay"),livePerformanceQA else {return}
+        guard assessmentID == nil,ProcessInfo.processInfo.arguments.contains("-live-career-autoplay"),livePerformanceQA else {return}
         let holdsScreen=ProcessInfo.processInfo.arguments.contains("-qa-endurance-seconds")
         let idleBefore=UIApplication.shared.isIdleTimerDisabled
         if holdsScreen {UIApplication.shared.isIdleTimerDisabled=true}
@@ -175,7 +176,7 @@ struct CareerGameView: View {
     }
     private func load() {
         do {
-            let saved = try CareerMatchStore.start(player: player, state: calendar, in: context)
+            let saved = try assessmentID.map {try GoalSpecialStore.displayRecord(player:player,calendar:calendar,id:$0,in:context)} ?? CareerMatchStore.start(player: player, state: calendar, in: context)
             record = saved
             try displaySnapshot.refresh(saved)
             if pitchCode.isEmpty { pitchCode = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "" }
@@ -212,9 +213,7 @@ struct CareerGameView: View {
             if livePerformanceQA {MatchRenderMetrics.mark("career.commitBegin")}
             #endif
             let previous = try record.snapshot()
-            try CareerMatchStore.advance(player: player, state: calendar, record: record,
-                                         revision: pending.attempt.revision, input: pending.attempt.input,
-                                         pitchCode: pending.attempt.pitchCode, control: pending.control, in: context)
+            try persist(record,revision:pending.attempt.revision,input:pending.attempt.input,pitchCode:pending.attempt.pitchCode,control:pending.control)
             retrySave = nil
             let updated=try displaySnapshot.refresh(record)
             #if DEBUG
@@ -264,11 +263,29 @@ struct CareerGameView: View {
     private func cancelInput() {
         clock.stop(); attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;homeRunReplay=nil;homeRunResultPlaying=false;fieldHandoff=nil;fieldResolved=false;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
     }
+    private func persist(_ record:CareerMatchRecord,revision:Int,input:MatchInput,pitchCode:String?,control:ManualMatchInput?) throws {
+        if let assessmentID {
+            let updated=try GoalSpecialStore.advancePlay(player:player,calendar:calendar,id:assessmentID,revision:revision,input:input,pitchCode:pitchCode,control:control,in:context)
+            guard let game=updated.currentGame else {throw MatchError.invalidRecord}
+            record.payload=try JSONEncoder().encode(game);record.revision=updated.calendarRevision;record.completed=game.completed
+        } else {
+            try CareerMatchStore.advance(player:player,state:calendar,record:record,revision:revision,input:input,pitchCode:pitchCode,control:control,in:context)
+        }
+    }
+    private func assessmentResults(_ match:CareerMatch) -> some View {
+        GamePanel(title:"ASSESSMENT · 평가 경기 저장",onBoard:true,contentSpacing:12) {
+            Text("평가 경기 완료 · "+(match.scoutingPerformance?.inputs?.mode.label ?? "입력 미확인")).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("assessmentGameCompleted")
+            Text(player.role == .batter
+                 ? "\(match.line.plateAppearances)타석 · \(match.line.hits)안타 · \(match.line.homeRuns)홈런 · \(match.line.walks)볼넷"
+                 : "\(match.line.pitchingOuts/3).\(match.line.pitchingOuts%3)이닝 · \(match.line.pitchingStrikeouts)탈삼진 · \(match.line.pitchingWalks)볼넷").font(.subheadline)
+            Text("공식 경기/시즌 성적·XP·계약 표본에 합산하지 않습니다. 2경기 완료 시 하루 행동과 피로+8을 한 번 반영합니다.").font(.caption)
+            Button("평가전 결과·다음 경기로") {dismiss()}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("assessmentReturn")
+        }
+    }
     private func advance(_ input: MatchInput) {
         guard !presenting, attempt == nil, retrySave == nil, let record else { return }
         do {
-            try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: record.revision,
-                                         input: input, pitchCode: pitchCode, in: context)
+            try persist(record,revision:record.revision,input:input,pitchCode:pitchCode,control:nil)
             _ = try displaySnapshot.refresh(record)
             _ = scene.demonstrate(reduceMotion: reduced)
         } catch { self.error = error.localizedDescription }
@@ -332,7 +349,7 @@ struct CareerGameView: View {
         VStack(spacing: 4) {
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 3)) : AnyLayout(HStackLayout(spacing: 6))
             layout {
-                Text(CareerTeamDirectory.name((try? calendar.teamID(for:player,on:GameDate(record.gameDate))) ?? player.schoolID,schools:schools)).lineLimit(typeSize.isAccessibilitySize ? nil : 1).minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.65)
+                Text(assessmentID == nil ? CareerTeamDirectory.name((try? calendar.teamID(for:player,on:GameDate(record.gameDate))) ?? player.schoolID,schools:schools):"내 평가팀").lineLimit(typeSize.isAccessibilitySize ? nil : 1).minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.65)
                 Text("\(match.teamScore) : \(match.opponentScore)").font(.system(.title3, design: .monospaced, weight: .bold)).foregroundStyle(GameTheme.gold)
                 Text(CareerTeamDirectory.name(record.opponentID,schools:schools)).lineLimit(typeSize.isAccessibilitySize ? nil : 1).minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.65)
             }.font(.system(.subheadline, design: .monospaced, weight: .bold)).frame(maxWidth: .infinity).accessibilityElement(children: .combine)
@@ -601,6 +618,7 @@ struct CareerGameView: View {
                             let match = visualSnapshot ?? savedMatch
                             VStack(spacing: 6) {
                                 scoreHeader(arrivedSnapshot ?? match, record: record)
+                                if assessmentID != nil {Text("목표 수준 평가전 · 표준 조건 / 공식 기록 제외").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("interactiveAssessmentLabel")}
                                 if let plan=match.preparation {Text("경기 계획 · "+plan.choice.label).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("activeGamePlan")}
                                 if typeSize.isAccessibilitySize && !match.completed {
                                     Button("경기 조작부로 이동") { proxy.scrollTo("gameControls", anchor: .bottom) }
@@ -608,7 +626,9 @@ struct CareerGameView: View {
                                 }
                             }.background { measure("header") }
                             if match.completed {
-                                if !fieldCoversArena {results(match, record: record)}
+                                if !fieldCoversArena {
+                                    if assessmentID != nil {assessmentResults(match)} else {results(match, record: record)}
+                                }
                             } else {
                                 arena(match, field: MatchPresentation.fieldSize(
                                     available: CGSize(width: max(1, geometry.size.width - 16), height: geometry.size.height),
@@ -669,7 +689,7 @@ struct CareerGameView: View {
         }
         .toolbar((replay != nil || homeRunReplay != nil) ? .hidden:.visible,for:.navigationBar)
         .background(Color(hex: 0x18334b)).foregroundStyle(Color(hex: 0xeee9cd))
-        .navigationTitle(player.role == .batter ? "타자 경기" : "투수 경기").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(player.role.label+(assessmentID == nil ? " 경기":" 평가전")).navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color(hex: 0x18334b), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
@@ -737,7 +757,7 @@ struct CareerGameView: View {
         }
         .confirmationDialog("남은 경기를 자동으로 진행할까요?", isPresented: $confirmAutomatic, titleVisibility: .visible) {
             Button("진행하고 결과 저장") { advance(.automatic) }
-        } message: { Text("현재 카운트·주자에서 이어서 진행합니다. 실제 출전 성적과 피로를 반영하며 취소할 수 없습니다.") }
+        } message: { Text(assessmentID == nil ? "현재 카운트·주자에서 이어서 진행합니다. 실제 출전 성적과 피로를 반영하며 취소할 수 없습니다.":"현재 평가 경기의 카운트·주자에서 이어서 진행합니다. 자동 입력을 구분해 평가전 원장에 저장합니다.") }
         .alert("경기를 저장하지 못했습니다", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("확인") { error = nil }
         } message: { Text(error ?? "") }
