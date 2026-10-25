@@ -3351,3 +3351,50 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testOpponentAttackBothRolesPreviewLivePitchResumeAndResult() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:90))
+        func capture(_ name:String) {let shot=XCTAttachment(screenshot:app.screenshot());shot.name=name;shot.lifetime = .keepAlways;add(shot)}
+        for role in ["batter","pitcher"] {
+            let pick=app.buttons["homeRole-"+role];revealFit(pick,in:app);pick.tap()
+            let rest=app.buttons["restToday"];revealFit(rest,in:app);rest.tap()
+            let game=app.buttons["openCareerGame"];revealFit(game,in:app);game.tap()
+            let ratings=app.descendants(matching:.any)["opponentPitcherRatings"].firstMatch
+            XCTAssertTrue(ratings.waitForExistence(timeout:10));revealFit(ratings,in:app)
+            let fixed=ratings.label
+            XCTAssertTrue(fixed.contains("km/h"));XCTAssertTrue(fixed.contains("제구"))
+            XCTAssertTrue(app.staticTexts["opponentPitcherRole"].exists)
+            capture("opponent-pitcher-file-"+role)
+            let lineup=app.descendants(matching:.any)["opponentLineupRatings"].firstMatch
+            revealFit(lineup,in:app);XCTAssertTrue(lineup.label.contains("출루"));XCTAssertTrue(lineup.label.contains("장타"))
+            let details=app.buttons["opponentLineupDetails"];revealFit(details,in:app);XCTAssertTrue(details.exists);details.tap()
+            let first=app.descendants(matching:.any)["opponentBatter-1"].firstMatch
+            XCTAssertTrue(first.waitForExistence(timeout:3));guard first.exists else {return}
+            revealFit(first,in:app);capture("opponent-lineup-file-"+role)
+            let last=app.descendants(matching:.any)["opponentBatter-9"].firstMatch
+            revealFit(last,in:app);XCTAssertTrue(last.exists)
+            confirmPregameIfNeeded(in:app)
+            let primary=app.buttons[role == "pitcher" ? "gamePitch":"requestGamePitch"]
+            XCTAssertTrue(primary.waitForExistence(timeout:15))
+            assertArenaFits(app,button:role == "pitcher" ? "gamePitch":"requestGamePitch",ratio:role == "pitcher" ? CGFloat(1219)/1290:1)
+            if role == "pitcher" {primary.tap();XCTAssertTrue(app.buttons["gameRelease"].waitForExistence(timeout:3));app.buttons["gameRelease"].tap()}
+            else {app.buttons["gameInput-watch"].tap();primary.tap()}
+            waitForEnabled(primary,timeout:40)
+            let speed=app.descendants(matching:.any)["boardPitchSpeed"].firstMatch
+            XCTAssertTrue(speed.exists);XCTAssertFalse(speed.label.contains("–––"))
+            capture("opponent-live-pitch-"+role)
+            let plan=app.buttons["openLiveGamePlan"];revealFit(plan,in:app);plan.tap()
+            XCTAssertTrue(ratings.waitForExistence(timeout:10));revealFit(ratings,in:app);XCTAssertEqual(ratings.label,fixed)
+            capture("opponent-frozen-analysis-"+role)
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+            revealFit(game,in:app);game.tap()
+            XCTAssertTrue(plan.waitForExistence(timeout:15));XCTAssertFalse(app.buttons["confirmGamePlan"].exists)
+            let auto=app.buttons["gameAutomatic"];revealFit(auto,in:app);auto.tap();app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["gamePlanOutcome"].waitForExistence(timeout:90))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

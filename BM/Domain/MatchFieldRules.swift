@@ -925,3 +925,85 @@ enum FieldMisplayRules {
         }
     }
 }
+
+// Offensive ratings share the existing NPC identities. They are game-balance data, not real roster statistics.
+struct MatchNPCPitcher:Codable,Equatable {
+    let id:String
+    var velocity:Double
+    var control:Double
+    let pitches:[String]
+    func speed(_ code:String) -> Double {MatchAbilityStats(mental:60,velocity:velocity,control:control,stuff:nil,stamina:nil,fatigue:0).speedValue(code:code)}
+    var zoneChance:Double {0.5+control*0.0025}
+    var hitAdjustment:Double {-(control-60)*0.001-(velocity-60)*0.0007}
+    var fastball:Double {speed("four-seam")}
+    func validate() throws {
+        guard [velocity,control].allSatisfy({$0.isFinite && (0...100).contains($0)}),
+              (3...4).contains(pitches.count),pitches.first == "four-seam",Set(pitches).count == pitches.count,
+              pitches.allSatisfy({["four-seam","slider","changeup","fork"].contains($0)}) else {throw MatchError.invalidRecord}
+    }
+}
+struct MatchNPCBatter:Codable,Equatable,Identifiable {
+    let id:String
+    let position:String
+    var contact:Double
+    var power:Double
+    var discipline:Double
+    var onBase:Double {0.45*contact+0.55*discipline}
+    var slugging:Double {0.2*contact+0.8*power}
+    func swingChance(inZone:Bool) -> Double {inZone ? 0.92:max(0.05,min(0.4,0.38-discipline*0.003))}
+}
+struct MatchNPCAttackTeam:Codable,Equatable {
+    let teamID:String
+    let year:Int
+    let competition:String
+    var starter:MatchNPCPitcher
+    var relief:MatchNPCPitcher
+    var batters:[MatchNPCBatter]
+    static let lineup=[7,5,2,8,4,6,1,3,0]
+    var onBase:Double {batters.reduce(0){$0+$1.onBase}/Double(batters.count)}
+    var slugging:Double {batters.reduce(0){$0+$1.slugging}/Double(batters.count)}
+    var ordered:[MatchNPCBatter] {Self.lineup.map {batters[$0]}}
+    func validate() throws {
+        let prefix="npc-v1/\(competition)/\(year)/\(teamID)"
+        guard (1...9999).contains(year),!teamID.isEmpty,
+              ["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(competition),
+              batters.map(\.position) == DetailedFieldRules.names,
+              batters.allSatisfy({$0.id == prefix+"/"+$0.position && [$0.contact,$0.power,$0.discipline].allSatisfy {$0.isFinite && (0...100).contains($0)}}),
+              starter.id == prefix+"/P/starter",relief.id == prefix+"/P/relief" else {throw MatchError.invalidRecord}
+        try starter.validate();try relief.validate()
+    }
+}
+struct MatchNPCAttack:Codable,Equatable {
+    var version=1
+    let year:Int
+    let competition:String
+    var home:MatchNPCAttackTeam
+    var away:MatchNPCAttackTeam
+    func team(home isHome:Bool) -> MatchNPCAttackTeam {isHome ? home:away}
+    static func make(roster:MatchNPCFielders) -> Self {
+        let contactOffsets=[-18.0,-3,1,4,0,3,3,3,2],powerOffsets=[-22.0,-3,10,-5,8,-3,8,-1,6]
+        func team(_ field:MatchNPCTeam) -> MatchNPCAttackTeam {
+            let prefix="npc-v1/\(roster.competition)/\(roster.year)/\(field.teamID)"
+            func rating(_ id:String,_ stat:String,_ offset:Double) -> Double {
+                min(95,max(20,field.strength+offset+Double(Int(MatchNPCFielders.hash(id+"/attack-v1/"+stat)%19)-9)))
+            }
+            func pitcher(_ role:String) -> MatchNPCPitcher {
+                let id=prefix+"/P/"+role
+                let extras=["slider","changeup","fork"].sorted {MatchNPCFielders.hash(id+"/"+$0)<MatchNPCFielders.hash(id+"/"+$1)}
+                let count=2+Int(MatchNPCFielders.hash(id+"/repertoire")%2)
+                return MatchNPCPitcher(id:id,velocity:rating(id,"velocity",role == "starter" ? -4:0),control:rating(id,"control",0),pitches:["four-seam"]+Array(extras.prefix(count)))
+            }
+            let batters=field.players.enumerated().map {i,p in
+                MatchNPCBatter(id:p.id,position:p.position,contact:rating(p.id,"contact",contactOffsets[i]),power:rating(p.id,"power",powerOffsets[i]),discipline:rating(p.id,"discipline",i == 0 ? -12:0))
+            }
+            return MatchNPCAttackTeam(teamID:field.teamID,year:roster.year,competition:roster.competition,starter:pitcher("starter"),relief:pitcher("relief"),batters:batters)
+        }
+        return Self(year:roster.year,competition:roster.competition,home:team(roster.home),away:team(roster.away))
+    }
+    func validate(roster:MatchNPCFielders) throws {
+        guard version == 1,year == roster.year,competition == roster.competition,
+              home.teamID == roster.home.teamID,away.teamID == roster.away.teamID,
+              [home,away].allSatisfy({$0.year == year && $0.competition == competition}) else {throw MatchError.invalidRecord}
+        try home.validate();try away.validate()
+    }
+}

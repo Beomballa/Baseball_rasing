@@ -4198,3 +4198,122 @@ extension CareerCalendarTests {
         XCTAssertEqual(game.payload,saved);XCTAssertEqual(p.fatigue,after)
     }
 }
+
+extension CareerCalendarTests {
+    func testNPCAttackProfilesAreDeterministicRoleCompleteAndValidated() throws {
+        for level in ["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"] {
+            let roster=MatchNPCFielders.make(year:2030,competition:level,homeID:"A",awayID:"B"),attack=MatchNPCAttack.make(roster:roster)
+            XCTAssertEqual(attack,MatchNPCAttack.make(roster:roster));try attack.validate(roster:roster)
+            XCTAssertEqual(attack.home,MatchNPCAttack.make(roster:MatchNPCFielders.make(year:2030,competition:level,homeID:"B",awayID:"A")).away)
+            XCTAssertEqual(attack.home.ordered.count,9)
+            XCTAssertTrue((3...4).contains(attack.away.starter.pitches.count))
+            XCTAssertGreaterThan(attack.home.starter.fastball,attack.home.starter.speed("changeup"))
+            var bad=attack;bad.home.starter.control = .nan;XCTAssertThrowsError(try bad.validate(roster:roster))
+            bad=attack;bad.away.batters.removeLast();XCTAssertThrowsError(try bad.validate(roster:roster))
+            bad=attack;bad.version=2;XCTAssertThrowsError(try bad.validate(roster:roster))
+        }
+    }
+    func testNPCAttackPreviewFreezeBothRolesResumeAndResultOnce() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,packet)=try acceptance(role),c=store.mainContext
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:packet.offers[0].id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let analysis=try CareerMatchStore.opposition(player:p,state:s),revision=s.revision,fatigue=p.fatigue
+            let choice:MatchPlanChoice=role == .batter ? .contact:.control
+            XCTAssertThrowsError(try CareerMatchStore.startPrepared(player:p,state:s,choice:choice,date:p.gameDate,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+            let row=try CareerMatchStore.startPrepared(player:p,state:s,choice:choice,date:p.gameDate,revision:s.revision,in:c)
+            let before=try row.snapshot(),attack=try XCTUnwrap(before.npcAttack)
+            XCTAssertEqual(before.preparation?.version,2);XCTAssertEqual(before.preparation?.analysis,analysis)
+            let code=before.deliveryPitchCode(requested:p.pitches.first?.code),ball=before.delivery(pitchCode:code)
+            let control=role == .batter ? ManualMatchInput():ManualMatchInput(release:ManualMatchRules.releaseCenter)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:role == .batter ? .watch:.pitch,pitchCode:code,control:control,in:c)
+            let after=try row.snapshot();XCTAssertEqual(after.npcAttack,attack);XCTAssertEqual(after.lastManual?.pitchCode,code);XCTAssertEqual(after.lastManual?.speed,ball.speed)
+            let bytes=row.payload;XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,bytes)
+            var invalid=after
+            if after.isHome {invalid.npcAttack?.away.starter.control += 1} else {invalid.npcAttack?.home.starter.control += 1}
+            row.payload=try JSONEncoder().encode(invalid);XCTAssertThrowsError(try row.snapshot());c.rollback()
+            XCTAssertEqual(row.payload,bytes)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            let saved=row.payload,earned=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+            XCTAssertEqual(row.payload,saved);XCTAssertEqual(p.fatigue,earned)
+        }
+    }
+    func testNPCAttackChangesPitchFlightAndActualBattingOutcomesAndRelief() throws {
+        var game=ScoutingReferenceSimulation.fixture(role:.batter,position:"SS",values:PlayerArchetype.initial(for:.batter).values,seed:11,home:false,tracked:true,battedBallVersion:1,npcFieldersVersion:1,npcAttackVersion:1)
+        let chosen=game.deliveryPitchCode(requested:"unowned-code")
+        let pitcher=try XCTUnwrap(game.npcActivePitcher)
+        XCTAssertTrue(pitcher.pitches.contains(chosen));XCTAssertEqual(game.delivery().exactSpeed,pitcher.speed(chosen))
+        XCTAssertEqual(game.delivery(pitchCode:"slider"),game.delivery(pitchCode:"fork"),"batter cannot choose the opponent's pitch")
+        game.pitching?.homePitches=200;game.finishPitcherPlate(home:true,previousHalf:game.half)
+        XCTAssertEqual(game.npcActivePitcher?.id,game.npcAttack?.home.relief.id)
+        var lowHits=0,highHits=0,lowFaced=0,highFaced=0
+        for seed in 1...64 {
+            var low=ScoutingReferenceSimulation.fixture(role:.pitcher,position:"P",values:PlayerArchetype.initial(for:.pitcher).values,seed:UInt64(seed),home:true,tracked:true,battedBallVersion:1,npcFieldersVersion:1,npcAttackVersion:1)
+            var high=low
+            for i in 0..<9 {
+                low.npcAttack?.away.batters[i].contact=25;low.npcAttack?.away.batters[i].power=25;low.npcAttack?.away.batters[i].discipline=25
+                high.npcAttack?.away.batters[i].contact=90;high.npcAttack?.away.batters[i].power=90;high.npcAttack?.away.batters[i].discipline=90
+            }
+            XCTAssertLessThan(try XCTUnwrap(high.npcBatter).swingChance(inZone:false),try XCTUnwrap(low.npcBatter).swingChance(inZone:false))
+            try low.advance(.automatic);try high.advance(.automatic)
+            lowHits += low.line.hitsAllowed;highHits += high.line.hitsAllowed
+            lowFaced += low.scoutingPerformance!.battersFaced;highFaced += high.scoutingPerformance!.battersFaced
+        }
+        XCTAssertGreaterThan(Double(highHits)/Double(highFaced),Double(lowHits)/Double(lowFaced),"fixed paired seeds must show actual lineup impact")
+    }
+    func testNPCAttackLegacyDecodeRetainsOldRulesAndStandardRoutesRemainEquivalent() throws {
+        for role in PlayerRole.allCases {
+            let initial=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "SS":"P",values:PlayerArchetype.initial(for:role).values,seed:312,home:true,tracked:true,battedBallVersion:1,npcFieldersVersion:1)
+            var json=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(initial)) as? [String:Any]);json.removeValue(forKey:"npcAttack")
+            var old=try JSONDecoder().decode(CareerMatch.self,from:JSONSerialization.data(withJSONObject:json)),copy=initial
+            XCTAssertNil(old.npcAttack);XCTAssertFalse(old.scoutingEnvironment!.contains("-attack"))
+            try old.advance(.automatic);try copy.advance(.automatic);XCTAssertEqual(old,copy)
+            var modern=initial;modern.npcAttack=MatchNPCAttack.make(roster:try XCTUnwrap(modern.npcFielders))
+            var auto=modern,direct=modern,mixed=modern
+            try ScoutingReferenceSimulation.run(&auto,mode:.automatic);try ScoutingReferenceSimulation.run(&direct,mode:.direct);try ScoutingReferenceSimulation.run(&mixed,mode:.mixed)
+            XCTAssertEqual(auto.random,direct.random);XCTAssertEqual(auto.random,mixed.random)
+            XCTAssertEqual(auto.line,direct.line);XCTAssertEqual(auto.line,mixed.line);XCTAssertEqual(auto.fieldPlays,direct.fieldPlays)
+            XCTAssertTrue(auto.scoutingEnvironment!.contains("-attack1-"))
+            let reference=try XCTUnwrap(ScoutingReferenceSimulation.make(environment:auto.scoutingEnvironment!,role:role,position:role == .batter ? "SS":"P"));try reference.validate()
+            let roster=MatchNPCFielders.make(year:2026,competition:"domestic-development",homeID:"dev-harbors",awayID:"dev-comets")
+            let adult=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "SS":"P",values:PlayerArchetype.initial(for:role).values,seed:13,home:true,tracked:true,battedBallVersion:1,npcFieldersVersion:1,assessmentRoster:roster,npcAttackVersion:1,competition:"domestic-development")
+            let adultRef=try XCTUnwrap(ScoutingReferenceSimulation.adult(environment:adult.scoutingEnvironment!,role:role,position:role == .batter ? "SS":"P"));try adultRef.validate()
+        }
+    }
+}
+
+
+extension CareerCalendarTests {
+    func testNPCAttackDiskReopenAndLegacyStoredMatchNeverBackfills() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("opponent.store");var id:UUID!,bytes:Data!,saved:CareerMatch!
+        do {
+            let (store,p,s,packet)=try acceptance(.batter,legacyURL:url),c=store.mainContext;id=p.id
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:packet.offers[0].id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let row=try CareerMatchStore.startPrepared(player:p,state:s,choice:.contact,date:p.gameDate,revision:s.revision,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.watch,control:ManualMatchInput(),in:c)
+            bytes=row.payload;saved=try row.snapshot()
+        }
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        let row=try CareerMatchStore.start(player:p,state:s,in:c)
+        XCTAssertEqual(row.payload,bytes);XCTAssertEqual(try row.snapshot(),saved)
+        XCTAssertEqual(try row.snapshot().delivery(),saved.delivery())
+        // Existing pre-feature games are not rewritten when a player resumes them.
+        var legacy=saved!;legacy.npcAttack=nil
+        let prep=try XCTUnwrap(legacy.preparation)
+        legacy.preparation=MatchPreparation(version:1,fixtureID:prep.fixtureID,choice:prep.choice,analysis:MatchOppositionAnalysis.make(roster:try XCTUnwrap(legacy.npcFielders),isHome:legacy.isHome))
+        row.payload=try JSONEncoder().encode(legacy);try c.save();let raw=row.payload
+        XCTAssertEqual(try CareerMatchStore.startPrepared(player:p,state:s,choice:.contact,date:p.gameDate,revision:-1,in:c).payload,raw)
+        XCTAssertNil(try row.snapshot().npcAttack);XCTAssertEqual(try row.snapshot().preparation?.version,1)
+        // Restore the new saved snapshot and finish it only once after disk reopen.
+        row.payload=bytes;try c.save()
+        try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+        let complete=row.payload,fatigue=p.fatigue
+        XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+        XCTAssertEqual(row.payload,complete);XCTAssertEqual(p.fatigue,fatigue)
+    }
+}

@@ -188,11 +188,12 @@ struct CareerGameView: View {
         #endif
         guard !presenting, attempt == nil, retrySave == nil, let record, let match = try? record.snapshot(), !match.completed, player.role != .pitcher || match.ownPitcherActive else { return }
         let input: MatchInput = player.role == .pitcher ? .pitch : battingAction
-        attempt = Attempt(revision: record.revision, input: input, pitchCode: pitchCode)
-        let delivery = match.delivery(pitchCode: pitchCode)
+        let actualCode=match.deliveryPitchCode(requested:pitchCode)
+        attempt = Attempt(revision: record.revision, input: input, pitchCode: actualCode)
+        let delivery = match.delivery(pitchCode: actualCode)
         if player.role == .batter {
             scene.cancelDelivery()
-            _ = scene.demonstrate(reduceMotion: reduced, flightDuration: delivery.duration, x: delivery.x, y: delivery.y, pitchCode: pitchCode)
+            _ = scene.demonstrate(reduceMotion: reduced, flightDuration: delivery.duration, x: delivery.x, y: delivery.y, pitchCode: actualCode)
         }
         if player.role == .pitcher { scene.preparePitch(phase: 0, reduced: reduced) }
         clock.start(windup: player.role == .batter ? MatchDelivery.windup : 0,
@@ -622,6 +623,7 @@ struct CareerGameView: View {
                                 if let plan=match.preparation {
                                     NavigationLink {
                                         ScrollView {VStack(spacing:12) {
+                                            if let team=match.npcAttack?.team(home:!match.isHome) {MatchOpponentAttackPanel(team:team,activePitcher:match.opponentPitcher)}
                                             GamePanel(title:"PLAN FILE · 경기 중 점검",onBoard:true,contentSpacing:12) {
                                                 Text(plan.choice.label).font(.headline).foregroundStyle(GameTheme.gold)
                                                 Text(plan.analysis.reason(for:plan.choice)).font(.subheadline)
@@ -1006,8 +1008,9 @@ struct CareerGameEntryView:View {
                                 }
                                 ForEach(analysis.tendencies,id:\.self) {Text($0).font(.subheadline)}
                                 Text("상대 수비 내 최저 수비 포지션 · "+analysis.weakestPosition).font(.caption)
-                                Text("실제 경기의 가상 선수 능력값입니다. 구종·타격 성향은 자료가 없어 추정하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                                Text(analysis.attack == nil ? "기존 수비 분석 자료입니다. 투구·타격 프로필은 미기록입니다.":"팀·시즌별 가상 선수 능력입니다. 경기 시작 시 아래 자료를 함께 고정합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                             }
+                            if let attack=analysis.attack {MatchOpponentAttackPanel(team:attack)}
                             GamePanel(title:"GAME PLAN · 오늘의 계획",onBoard:true,contentSpacing:12) {
                                 Text("추천 · "+analysis.recommended(role:player.roleRaw).label).font(.headline).foregroundStyle(GameTheme.gold)
                                 if let choice {
@@ -1068,5 +1071,54 @@ struct MatchPlanOutcomePanel:View {
             }
             Text("다음28일 보고서에 실제 경기 근거로 기록합니다. 추가 XP나 계약 적합도 보너스는 없습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }
+    }
+}
+
+struct MatchOpponentAttackPanel:View {
+    let team:MatchNPCAttackTeam
+    var activePitcher:MatchNPCPitcher? = nil
+    @State private var expanded=false
+    private var pitcher:MatchNPCPitcher {activePitcher ?? team.starter}
+    private func name(_ code:String) -> String {switch code {case "four-seam":"포심";case "slider":"슬라이더";case "changeup":"체인지업";default:"포크"}}
+    private func number(_ n:Double) -> String {String(format:"%.1f",n)}
+    var body:some View {
+        GamePanel(title:"PITCHER FILE · 상대 투수",onBoard:true,contentSpacing:12) {
+            Text(pitcher.id == team.starter.id ? "선발 투수":"현재 구원 투수").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("opponentPitcherRole")
+            HStack {
+                value("포심 구속",String(format:"%.0f km/h",pitcher.fastball))
+                value("제구",number(pitcher.control)+" / 100")
+            }.accessibilityElement(children:.combine).accessibilityIdentifier("opponentPitcherRatings")
+            ForEach(pitcher.pitches,id:\.self) {code in
+                HStack {
+                    Rectangle().fill(code == "four-seam" ? GameTheme.gold:GameTheme.growth).frame(width:7,height:7).accessibilityHidden(true)
+                    Text(name(code)).font(.subheadline)
+                    Spacer()
+                    Text(String(format:"%.0f km/h",pitcher.speed(code))).font(.subheadline.monospacedDigit())
+                }.accessibilityIdentifier("opponentPitch-"+code)
+            }
+            if pitcher.id == team.starter.id {Text(String(format:"교체 시 구원 프로필 · 포심 %.0f km/h / 제구 %.1f",team.relief.fastball,team.relief.control)).font(.caption).foregroundStyle(GameTheme.boardMuted)}
+            Text("구종은 보유 구종 안에서 선택되며 구속·제구가 실제 공의 이동 시간과 코스/승부에 반영됩니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+        }.fixedSize(horizontal:false,vertical:true)
+        GamePanel(title:"LINEUP FILE · 상대 타선",onBoard:true,contentSpacing:12) {
+            HStack {value("출루 성향",number(team.onBase));value("장타 성향",number(team.slugging))}.accessibilityElement(children:.combine).accessibilityIdentifier("opponentLineupRatings")
+            let threat=team.ordered.max {($0.onBase+$0.slugging)<($1.onBase+$1.slugging)}!
+            Text("경계 타자 · \((team.ordered.firstIndex(of:threat) ?? 0)+1)번 \(threat.position)").font(.headline).foregroundStyle(GameTheme.gold)
+            Text("컨택·파워·선구안으로 정한 가상 성향 점수(0~100)이며 실제 출루율·장타율이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Button(expanded ? "타순별 능력 접기":"상대 9명 · 타순별 능력") {expanded.toggle()}
+                .buttonStyle(MatchPixelButtonStyle(selected:expanded)).accessibilityIdentifier("opponentLineupDetails")
+            if expanded {
+                VStack(alignment:.leading,spacing:12) {
+                    ForEach(Array(team.ordered.enumerated()),id:\.element.id) {index,batter in
+                        VStack(alignment:.leading,spacing:5) {
+                            Text("\(index+1)번 \(batter.position) · 출루 \(number(batter.onBase)) / 장타 \(number(batter.slugging))").font(.subheadline.bold())
+                            Text("컨택 \(number(batter.contact)) · 파워 \(number(batter.power)) · 선구안 \(number(batter.discipline))").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        }.accessibilityElement(children:.combine).accessibilityIdentifier("opponentBatter-\(index+1)")
+                    }
+                }.padding(.top,8)
+            }
+        }.fixedSize(horizontal:false,vertical:true)
+    }
+    private func value(_ label:String,_ text:String) -> some View {
+        VStack(alignment:.leading,spacing:6) {Text(label).font(.caption);Text(text).font(.headline.monospacedDigit()).foregroundStyle(GameTheme.gold)}.frame(maxWidth:.infinity,alignment:.leading)
     }
 }

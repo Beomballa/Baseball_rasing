@@ -131,7 +131,8 @@ extension CareerMatch {
               let position = fieldStats?.position else { return nil }
         let batted=battedBallVersion.map {"-batted\($0)"} ?? ""
         let npc=npcFielders.map {"-npc\($0.version)"} ?? ""
-        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1\(batted)\(npc)-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
+        let attack=npcAttack.map {"-attack\($0.version)"} ?? ""
+        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1\(batted)\(npc)\(attack)-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
     }
 }
 
@@ -169,13 +170,14 @@ struct ScoutingReference: Codable, Equatable {
         let tracked=mode != nil
         guard (tracked || environment.hasSuffix("/auto-v1")), role == .pitcher ? position == "P" : FieldPosition(rawValue:position) != nil else { return nil }
         if environment.contains("-npc1-") && !environment.contains("-batted1-") {return nil}
+        if environment.contains("-attack"),!environment.contains("-attack1-") || !environment.contains("-npc1-") {return nil}
         if let found = cache[environment] { return found }
         let profiles = PlayerArchetype.choices(for:role).map(\.values), count = role == .batter ? 20:6
         var totals = PersonalSeasonTotals(), performance = tracked ? MatchScoutingPerformance.tracked:MatchScoutingPerformance()
         for (index, profile) in profiles.enumerated() {
             for game in 0..<count {
                 var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0,tracked:tracked,
-                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil)
+                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,npcAttackVersion:environment.contains("-attack1-") ? 1:nil)
                 // Empty input counts initially identify automatic; match rules/position must still match exactly.
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
                 try run(&match,mode:mode ?? .automatic)
@@ -202,7 +204,7 @@ struct ScoutingReference: Codable, Equatable {
             pitches += 1
         }
     }
-    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil,fatigue:Int=24,assessmentRoster:MatchNPCFielders?=nil) -> CareerMatch {
+    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil,fatigue:Int=24,assessmentRoster:MatchNPCFielders?=nil,npcAttackVersion:Int?=nil,competition:String?=nil) -> CareerMatch {
         var match = CareerMatch(random:seed,isHome:home,role:role.rawValue,appearance:true,
             contact:values.contact,power:values.power,discipline:values.discipline,mastery:values.pitches)
         match.controlVersion=2;match.trainingEffectsVersion=1;match.detailedFieldVersion=5
@@ -213,6 +215,8 @@ struct ScoutingReference: Codable, Equatable {
             match.npcFielders=MatchNPCFielders.make(year:2026,competition:"highschool",homeID:home ? own:opponent,awayID:home ? opponent:own)
         }
         if let assessmentRoster {match.npcFielders=assessmentRoster}
+        match.competition=competition
+        if npcAttackVersion == 1,let roster=match.npcFielders {match.npcAttack=MatchNPCAttack.make(roster:roster)}
         match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.abilityStats=MatchAbilityStats(mental:values.mental,velocity:values.velocity,control:values.control,stuff:values.stuff,stamina:values.stamina,fatigue:fatigue)
         match.fieldStats=MatchFieldStats(speed:values.speed,defense:values.defense,arm:values.arm,position:position)
@@ -1248,6 +1252,7 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
         guard let level=environment.components(separatedBy:"/").first,["college","domestic-development","domestic-first-team","mlb-development","npb-first-team","mlb-first-team"].contains(level),
               let mode=ScoutingInputMode.allCases.first(where:{environment.hasSuffix("/"+$0.suffix)}),
               role == .pitcher ? position == "P":FieldPosition(rawValue:position) != nil else {return nil}
+        if environment.contains("-attack"),!environment.contains("-attack1-") || !environment.contains("-npc1-") || !environment.contains("-batted1-") {return nil}
         let key="adult-reference-v1/"+environment
         if let found=cache[key] {return found}
         let profiles=adultProfiles(level:level,role:role),count=role == .batter ? 20:6
@@ -1255,13 +1260,13 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
         for (index,profile) in profiles.enumerated() {
             for game in 0..<count {
                 let seed=UInt64(1_211_001+index*1_000+game),home=game%2 == 0
+                let modern=environment.contains("-attack1-"),ids=CareerTeamDirectory.teams(level:level)
+                let roster=MatchNPCFielders.make(year:2026,competition:level,homeID:home ? ids[0]:ids[1+Int(seed%5)],awayID:home ? ids[1+Int(seed%5)]:ids[0])
                 var match=fixture(role:role,position:position,values:profile,seed:seed,home:home,tracked:true,
-                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil)
+                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,
+                    assessmentRoster:modern ? roster:nil,npcAttackVersion:modern ? 1:nil,competition:modern ? level:nil)
                 match.competition=level
-                if match.npcFielders != nil {
-                    let ids=CareerTeamDirectory.teams(level:level)
-                    match.npcFielders=MatchNPCFielders.make(year:2026,competition:level,homeID:home ? ids[0]:ids[1+Int(seed%5)],awayID:home ? ids[1+Int(seed%5)]:ids[0])
-                }
+                if !modern,match.npcFielders != nil {match.npcFielders=roster}
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
                 try run(&match,mode:mode)
                 let perf=match.scoutingPerformance!;try perf.validate(line:match.line,role:role)
@@ -2190,11 +2195,15 @@ extension CareerContractJournal {
             guard let source=reports[row.reportID],source.0 == row.period,source.1 == row.date,row.date <= today.description,!row.results.isEmpty else {throw ContractRegistrationError.invalid}
             for item in row.results {
                 guard item.matchKey == playerID.uuidString+":"+item.preparation.fixtureID,
-                      item.preparation.version == 1,MatchPlanChoice.choices(item.role).contains(item.preparation.choice),
+                      item.preparation.version == (item.preparation.analysis.attack == nil ? 1:2),MatchPlanChoice.choices(item.role).contains(item.preparation.choice),
                       ["batter","pitcher"].contains(item.role),item.date <= row.date,
                       item.preparation.analysis.year == (try GameDate(item.date)).year,
                       (try ScoutingPeriod(origin:GameDate(origin),today:GameDate(item.date))).index < row.period,
                       item.outcome.checks.count == 2,item.outcome.checks.allSatisfy({$0.value >= 0 && $0.target >= 0}) else {throw ContractRegistrationError.invalid}
+                if let attack=item.preparation.analysis.attack {
+                    try attack.validate()
+                    guard attack.year == item.preparation.analysis.year,attack.teamID == item.preparation.analysis.teamID else {throw ContractRegistrationError.invalid}
+                }
             }
         }
     }
