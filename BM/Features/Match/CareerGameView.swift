@@ -622,18 +622,15 @@ struct CareerGameView: View {
                                 if assessmentID != nil {Text("목표 수준 평가전 · 표준 조건 / 공식 기록 제외").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("interactiveAssessmentLabel")}
                                 if let plan=match.preparation {
                                     NavigationLink {
-                                        ScrollView {VStack(spacing:12) {
-                                            if let team=match.npcAttack?.team(home:!match.isHome) {MatchOpponentAttackPanel(team:team,activePitcher:match.opponentPitcher)}
-                                            GamePanel(title:"PLAN FILE · 경기 중 점검",onBoard:true,contentSpacing:12) {
-                                                Text(plan.choice.label).font(.headline).foregroundStyle(GameTheme.gold)
-                                                Text(plan.analysis.reason(for:plan.choice)).font(.subheadline)
-                                                Text(plan.choice.executionHint).font(.subheadline)
-                                                if let progress=MatchPlanOutcome.make(match:match,includingLive:true) {
-                                                    Text("진행 중 · 최종 평가는 경기 종료 후").font(.caption).foregroundStyle(GameTheme.gold)
-                                                    ForEach(Array(progress.checks.enumerated()),id:\.offset) {_,check in Text(check.detail).font(.subheadline.monospacedDigit())}
-                                                }
-                                            }
-                                        }.padding(12)}.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("오늘의 경기 계획").toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar)
+                                        MatchOpponentCenter(analysis:plan.analysis,
+                                            fielders:match.npcFielders?.team(home:!match.isHome),
+                                            ownRole:match.role,ownRatings:MatchOpponentCenter.ratings(player:player,stats:match.abilityStats,match:match),
+                                            teamName:CareerTeamDirectory.name(plan.analysis.teamID,schools:schools),
+                                            ownTeamName:CareerTeamDirectory.name((try? calendar.teamID(for:player,on:GameDate(record.gameDate))) ?? player.schoolID,schools:schools),
+                                            date:record.gameDate,activePitcher:match.opponentPitcher,locked:true,
+                                            progress:MatchPlanOutcome.make(match:match,includingLive:true),choice:.constant(plan.choice))
+                                            .navigationTitle("상대 분석 · 경기 계획").navigationBarTitleDisplayMode(.inline)
+                                            .toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar)
                                     } label: {Text("경기 계획 · "+plan.choice.label+"  ›").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("activeGamePlan")}.accessibilityIdentifier("openLiveGamePlan")
                                 }
                                 if typeSize.isAccessibilitySize && !match.completed {
@@ -988,6 +985,9 @@ struct CareerGameEntryView:View {
     let schools:[School]
     @Environment(\.modelContext) private var context
     @State private var analysis:MatchOppositionAnalysis?
+    @State private var fielders:MatchNPCTeam?
+    @State private var ownRatings:[String:Double]=[:]
+    @State private var ownTeamName="내 팀"
     @State private var choice:MatchPlanChoice?
     @State private var date=""
     @State private var revision=0
@@ -997,60 +997,38 @@ struct CareerGameEntryView:View {
         Group {
             if enterGame {CareerGameView(player:player,calendar:calendar,schools:schools)}
             else {
-                ScrollView {
-                    VStack(alignment:.leading,spacing:14) {
-                        if let analysis {
-                            GamePanel(title:"OPPOSITION FILE · 상대 분석",onBoard:true,contentSpacing:12) {
-                                Text(CareerTeamDirectory.name(analysis.teamID,schools:schools)).font(.title3.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("oppositionTeam")
-                                Text(date+" · 시즌 고정 NPC 로스터 기준").font(.caption)
-                                HStack {
-                                    metric("주력",analysis.speed);metric("수비",analysis.defense);metric("송구",analysis.arm)
-                                }
-                                ForEach(analysis.tendencies,id:\.self) {Text($0).font(.subheadline)}
-                                Text("상대 수비 내 최저 수비 포지션 · "+analysis.weakestPosition).font(.caption)
-                                Text(analysis.attack == nil ? "기존 수비 분석 자료입니다. 투구·타격 프로필은 미기록입니다.":"팀·시즌별 가상 선수 능력입니다. 경기 시작 시 아래 자료를 함께 고정합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                            }
-                            if let attack=analysis.attack {MatchOpponentAttackPanel(team:attack)}
-                            GamePanel(title:"GAME PLAN · 오늘의 계획",onBoard:true,contentSpacing:12) {
-                                Text("추천 · "+analysis.recommended(role:player.roleRaw).label).font(.headline).foregroundStyle(GameTheme.gold)
-                                if let choice {
-                                    Text(analysis.reason(for:choice)).font(.subheadline).accessibilityIdentifier("planReason")
-                                    Text(choice.executionHint).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("planExecutionHint")
-                                }
-                                ForEach(MatchPlanChoice.choices(player.roleRaw)) {plan in
-                                    Button {choice=plan} label: {
-                                        VStack(alignment:.leading,spacing:6) {
-                                            HStack(spacing:8) {
-                                                Rectangle().fill(choice == plan ? GameTheme.gold:GameTheme.boardLine).frame(width:8,height:8)
-                                                Text(plan.label).font(.headline)
-                                            }
-                                            Text(plan.criteria).font(.caption).multilineTextAlignment(.leading)
-                                        }.padding(12).frame(maxWidth:.infinity,alignment:.leading)
-                                    }.buttonStyle(MatchPixelButtonStyle(selected:choice == plan)).accessibilityIdentifier("planChoice-"+plan.rawValue).accessibilityValue(choice == plan ? "선택됨":"선택 안 됨")
-                                }
-                                Text("계획은 경기 시작과 함께 저장·잠금됩니다. 조작은 기존 방식으로 진행하며,선택만으로 능력치나 판정 보너스가 붙지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                                Button("계획 확정 · 경기 시작") {start()}.buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(choice == nil).accessibilityIdentifier("confirmGamePlan")
-                            }
-                        } else if failure == nil {ProgressView("오늘 상대 자료 확인 중")}
-                        if let failure {
+                VStack(spacing:0) {
+                    if let analysis {
+                        MatchOpponentCenter(analysis:analysis,fielders:fielders,ownRole:player.roleRaw,ownRatings:ownRatings,
+                            teamName:CareerTeamDirectory.name(analysis.teamID,schools:schools),ownTeamName:ownTeamName,
+                            date:date,choice:$choice,onStart:start)
+                    } else if failure == nil {ProgressView("오늘 상대 자료 확인 중").frame(maxWidth:.infinity,maxHeight:.infinity)}
+                    if let failure {
+                        VStack(spacing:8) {
                             Text(failure).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gamePlanError")
                             Button("자료 다시 확인") {load()}.buttonStyle(MatchPixelButtonStyle())
-                        }
-                    }.padding(12)
-                }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("상대 분석 · 경기 준비").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
+                        }.padding(12)
+                    }
+                }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+                    .navigationTitle("상대 분석 · 경기 준비").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
             }
         }.task {load()}
-    }
-    private func metric(_ label:String,_ value:Double) -> some View {
-        VStack(alignment:.leading,spacing:6) {Text(label).font(.caption);Text(String(format:"%.1f",value)).font(.headline.monospaced()).foregroundStyle(GameTheme.gold)}.frame(maxWidth:.infinity,alignment:.leading)
     }
     private func load() {
         do {
             let fixture=try CareerMatchStore.today(player:player,state:calendar)
             if let _=try CareerMatchStore.record(player:player,fixture:fixture,in:context) {enterGame=true;return}
             if !fixture.isAppearance(for:player.role) {enterGame=true;return}
-            analysis=try CareerMatchStore.opposition(player:player,state:calendar);date=player.gameDate;revision=calendar.revision
-            choice=analysis?.recommended(role:player.roleRaw);failure=nil
+            let value=try CareerMatchStore.opposition(player:player,state:calendar)
+            if let attack=value.attack {
+                fielders=MatchNPCFielders.make(year:fixture.date.year,competition:attack.competition,homeID:fixture.homeID,awayID:fixture.awayID).team(home:fixture.homeID == value.teamID)
+            }
+            let profile=try PlayerAbilityStore.profile(playerID:player.id,in:context)
+            let stats=profile.map {MatchAbilityStats(mental:$0.mental,velocity:$0.velocity,control:$0.control,stuff:$0.stuff,stamina:$0.stamina,fatigue:player.fatigue)}
+            ownRatings=MatchOpponentCenter.ratings(player:player,stats:stats)
+            ownTeamName=CareerTeamDirectory.name(try calendar.teamID(for:player,on:fixture.date),schools:schools)
+            analysis=value;date=player.gameDate;revision=calendar.revision
+            choice=value.recommended(role:player.roleRaw);failure=nil
         } catch {failure=error.localizedDescription}
     }
     private func start() {
@@ -1059,6 +1037,7 @@ struct CareerGameEntryView:View {
         catch {failure=error.localizedDescription}
     }
 }
+
 struct MatchPlanOutcomePanel:View {
     let preparation:MatchPreparation
     let outcome:MatchPlanOutcome
@@ -1074,51 +1053,389 @@ struct MatchPlanOutcomePanel:View {
     }
 }
 
-struct MatchOpponentAttackPanel:View {
-    let team:MatchNPCAttackTeam
-    var activePitcher:MatchNPCPitcher? = nil
-    @State private var expanded=false
-    private var pitcher:MatchNPCPitcher {activePitcher ?? team.starter}
-    private func name(_ code:String) -> String {switch code {case "four-seam":"포심";case "slider":"슬라이더";case "changeup":"체인지업";default:"포크"}}
-    private func number(_ n:Double) -> String {String(format:"%.1f",n)}
-    var body:some View {
-        GamePanel(title:"PITCHER FILE · 상대 투수",onBoard:true,contentSpacing:12) {
-            Text(pitcher.id == team.starter.id ? "선발 투수":"현재 구원 투수").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("opponentPitcherRole")
-            HStack {
-                value("포심 구속",String(format:"%.0f km/h",pitcher.fastball))
-                value("제구",number(pitcher.control)+" / 100")
-            }.accessibilityElement(children:.combine).accessibilityIdentifier("opponentPitcherRatings")
-            ForEach(pitcher.pitches,id:\.self) {code in
-                HStack {
-                    Rectangle().fill(code == "four-seam" ? GameTheme.gold:GameTheme.growth).frame(width:7,height:7).accessibilityHidden(true)
-                    Text(name(code)).font(.subheadline)
-                    Spacer()
-                    Text(String(format:"%.0f km/h",pitcher.speed(code))).font(.subheadline.monospacedDigit())
-                }.accessibilityIdentifier("opponentPitch-"+code)
-            }
-            if pitcher.id == team.starter.id {Text(String(format:"교체 시 구원 프로필 · 포심 %.0f km/h / 제구 %.1f",team.relief.fastball,team.relief.control)).font(.caption).foregroundStyle(GameTheme.boardMuted)}
-            Text("구종은 보유 구종 안에서 선택되며 구속·제구가 실제 공의 이동 시간과 코스/승부에 반영됩니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-        }.fixedSize(horizontal:false,vertical:true)
-        GamePanel(title:"LINEUP FILE · 상대 타선",onBoard:true,contentSpacing:12) {
-            HStack {value("출루 성향",number(team.onBase));value("장타 성향",number(team.slugging))}.accessibilityElement(children:.combine).accessibilityIdentifier("opponentLineupRatings")
-            let threat=team.ordered.max {($0.onBase+$0.slugging)<($1.onBase+$1.slugging)}!
-            Text("경계 타자 · \((team.ordered.firstIndex(of:threat) ?? 0)+1)번 \(threat.position)").font(.headline).foregroundStyle(GameTheme.gold)
-            Text("컨택·파워·선구안으로 정한 가상 성향 점수(0~100)이며 실제 출루율·장타율이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-            Button(expanded ? "타순별 능력 접기":"상대 9명 · 타순별 능력") {expanded.toggle()}
-                .buttonStyle(MatchPixelButtonStyle(selected:expanded)).accessibilityIdentifier("opponentLineupDetails")
-            if expanded {
-                VStack(alignment:.leading,spacing:12) {
-                    ForEach(Array(team.ordered.enumerated()),id:\.element.id) {index,batter in
-                        VStack(alignment:.leading,spacing:5) {
-                            Text("\(index+1)번 \(batter.position) · 출루 \(number(batter.onBase)) / 장타 \(number(batter.slugging))").font(.subheadline.bold())
-                            Text("컨택 \(number(batter.contact)) · 파워 \(number(batter.power)) · 선구안 \(number(batter.discipline))").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        }.accessibilityElement(children:.combine).accessibilityIdentifier("opponentBatter-\(index+1)")
-                    }
-                }.padding(.top,8)
-            }
-        }.fixedSize(horizontal:false,vertical:true)
+
+// A read-only projection of the pregame/saved opponent. Only the existing start action writes a plan.
+struct MatchOpponentCenter:View {
+    enum Tab:String,CaseIterable {case pitcher,lineup,batter,plan
+        var label:String {switch self {case .pitcher:"상대 투수";case .lineup:"9명 타선";case .batter:"타자 상세";case .plan:"경기 준비"}}
     }
-    private func value(_ label:String,_ text:String) -> some View {
-        VStack(alignment:.leading,spacing:6) {Text(label).font(.caption);Text(text).font(.headline.monospacedDigit()).foregroundStyle(GameTheme.gold)}.frame(maxWidth:.infinity,alignment:.leading)
+    let analysis:MatchOppositionAnalysis
+    let fielders:MatchNPCTeam?
+    let ownRole:String
+    let ownRatings:[String:Double]
+    let teamName:String
+    let ownTeamName:String
+    let date:String
+    var activePitcher:MatchNPCPitcher? = nil
+    var locked=false
+    var progress:MatchPlanOutcome? = nil
+    @Binding var choice:MatchPlanChoice?
+    var onStart:(()->Void)? = nil
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var tab=Tab.pitcher
+    @State private var selected=2
+    @State private var showSeason=false
+    @State private var showStatsInfo=false
+    private var team:MatchNPCAttackTeam? {analysis.attack}
+    private var pitcher:MatchNPCPitcher? {activePitcher ?? team?.starter}
+    private var batter:MatchNPCBatter? {team.flatMap {$0.ordered.indices.contains(selected) ? $0.ordered[selected]:nil}}
+    private var ink:Color {GameTheme.boardInk}
+    private func n(_ value:Double) -> String {String(format:"%.1f",value)}
+    private func pitchName(_ code:String) -> String {switch code {case "four-seam":"포심";case "slider":"슬라이더";case "changeup":"체인지업";case "fork":"포크";default:code}}
+    @MainActor static func ratings(player:CareerPlayer,stats:MatchAbilityStats?,match:CareerMatch?=nil) -> [String:Double] {
+        var result=["컨택":match?.contact ?? player.contact,"파워":match?.power ?? player.power,"선구안":match?.discipline ?? player.discipline]
+        if let stats {result["멘탈"]=stats.mental;result["제구"]=stats.control;result["구위"]=stats.stuff}
+        return result
+    }
+    var body:some View {
+        VStack(spacing:0) {
+            tabBar
+            ScrollViewReader {proxy in
+                ScrollView {
+                    VStack(alignment:.leading,spacing:16) {
+                        VStack(alignment:.leading,spacing:5) {
+                            Text("BM · MATCH CENTER").font(.caption2.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                            Text(tab.label).font(.title2.bold()).accessibilityIdentifier("opponentCenterTitle")
+                            Text(teamName+" · "+date+(locked ? " · 저장된 경기 자료":" · 경기 시작 시 고정")).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("oppositionTeam")
+                        }.frame(maxWidth:.infinity,alignment:.leading).id("opponentTop")
+                        switch tab {
+                        case .pitcher:pitcherPage
+                        case .lineup:lineupPage
+                        case .batter:batterPage
+                        case .plan:planPage
+                        }
+                    }.padding(12)
+                }.onChange(of:tab) {_,_ in proxy.scrollTo("opponentTop",anchor:.top)}
+            }
+        }.background(GameTheme.board).foregroundStyle(ink)
+            .safeAreaInset(edge:.bottom,spacing:0) {
+                if !locked {
+                    Button(tab == .plan ? "계획 확정 · 경기 시작":"경기 준비 · 계획 선택") {
+                        if tab == .plan {onStart?()} else {tab = .plan}
+                    }.buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(choice == nil)
+                        .accessibilityIdentifier(tab == .plan ? "confirmGamePlan":"reviewOpponentPlan")
+                        .padding(.horizontal,12).padding(.vertical,8).background(GameTheme.board)
+                }
+            }
+            .alert("미집계 통계",isPresented:$showStatsInfo) {
+                Button("확인",role:.cancel) {}
+            } message: {
+                Text("상대 NPC의 개인 시즌 성적과 WAR 계산은 아직 연결되지 않았습니다. 능력 점수를 타율이나 WAR로 바꾸지 않으며, 실제 기록이 집계된 뒤 표시합니다. 코스별·최근 경기 기록도 같은 기준입니다.")
+            }
+    }
+    private var tabBar:some View {
+        let columns=Array(repeating:GridItem(.flexible(),spacing:4),count:typeSize.isAccessibilitySize ? 2:4)
+        return LazyVGrid(columns:columns,spacing:4) {
+            ForEach(Tab.allCases,id:\.self) {item in
+                Button {tab=item} label: {Text(item.label).font(.caption.bold()).frame(maxWidth:.infinity,minHeight:44)}
+                    .foregroundStyle(tab == item ? GameTheme.gold:GameTheme.boardMuted)
+                    .background(tab == item ? GameTheme.boardPanel:GameTheme.board,ignoresSafeAreaEdges:[])
+                    .overlay(alignment:.bottom) {Rectangle().fill(tab == item ? GameTheme.gold:GameTheme.boardLine.opacity(0.4)).frame(height:tab == item ? 3:1)}
+                    .accessibilityIdentifier("opponentTab-"+item.rawValue).accessibilityValue(tab == item ? "선택됨":"선택 안 됨")
+            }
+        }.padding(.horizontal,8).padding(.bottom,8)
+    }
+    private func identity(title:String,eyebrow:String,detail:String) -> some View {
+        HStack(alignment:.center,spacing:12) {
+            VStack(alignment:.leading,spacing:10) {
+                Text(eyebrow).font(.caption2.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                Text(title).font(.title2.bold()).accessibilityIdentifier("opponentIdentity")
+                Text(detail).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                Text(teamName).font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }.frame(maxWidth:.infinity,alignment:.leading)
+            VStack(spacing:4) {
+                if let image=MatchArt.opponentPortrait {Image(uiImage:image).resizable().interpolation(.none).scaledToFit().frame(width:typeSize.isAccessibilitySize ? 64:100,height:typeSize.isAccessibilitySize ? 84:124)}
+                Text("NPC 공용 도트").font(.caption2).foregroundStyle(GameTheme.boardMuted)
+            }.accessibilityElement(children:.ignore).accessibilityLabel("상대 선수 공용 도트 이미지").accessibilityIdentifier("opponentPortrait")
+        }.padding(16).frame(maxWidth:.infinity,alignment:.leading).background(Color(hex:0x203e52))
+    }
+    private func statisticStrip(_ labels:[String]) -> some View {
+        let columns=Array(repeating:GridItem(.flexible(),spacing:8),count:typeSize.isAccessibilitySize ? 2:labels.count)
+        return VStack(alignment:.leading,spacing:0) {
+            LazyVGrid(columns:columns,spacing:12) {
+                ForEach(labels,id:\.self) {label in
+                    VStack(alignment:.leading,spacing:6) {
+                        Text(label).font(.caption2)
+                        Text("미집계").font(.subheadline.monospaced().bold()).lineLimit(1).minimumScaleFactor(0.8)
+                    }.frame(maxWidth:.infinity,alignment:.leading).accessibilityElement(children:.combine)
+                }
+            }.padding(14).foregroundStyle(Color(hex:0x153345)).background(Color(hex:0xeae4cc))
+            HStack {
+                Text("실제 성적 집계 전").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Spacer()
+                Button("통계 안내") {showStatsInfo=true}.font(.caption.bold()).foregroundStyle(GameTheme.gold).frame(minWidth:56,minHeight:44).accessibilityIdentifier("opponentStatsInfo")
+            }.padding(.horizontal,12)
+        }.accessibilityElement(children:.contain).accessibilityIdentifier("opponentUnrecordedStats")
+    }
+    @ViewBuilder private var pitcherPage:some View {
+        if let pitcher {
+            let shares=pitcher.selectionShares
+            VStack(spacing:0) {
+                identity(title:pitcher.id == team?.starter.id ? "선발 투수":"현재 구원 투수",eyebrow:pitcher.id == team?.starter.id ? "STARTER · PITCHING":"RELIEF · PITCHING",detail:String(format:"포심 %.0f km/h · 제구 %.1f",pitcher.fastball,pitcher.control))
+                statisticStrip(["ERA","WHIP","K/9","WAR"])
+            }.overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
+            GamePanel(title:"무엇을 던지는 투수인가",onBoard:true,contentSpacing:14) {
+                Text(pitcher.id == team?.starter.id ? "선발 투수":"현재 구원 투수").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("opponentPitcherRole")
+                Text(String(format:"포심 %.0f km/h · 제구 %.1f / 100",pitcher.fastball,pitcher.control)).font(.subheadline.bold()).accessibilityIdentifier("opponentPitcherRatings")
+                let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:14)):AnyLayout(HStackLayout(spacing:14))
+                layout {
+                    OpponentPitchDonut(shares:shares).frame(width:110,height:110)
+                    VStack(spacing:10) {
+                        ForEach(Array(pitcher.pitches.enumerated()),id:\.element) {index,code in
+                            HStack(spacing:6) {
+                                Rectangle().fill(OpponentPitchDonut.colors[index%4]).frame(width:6,height:6).accessibilityHidden(true)
+                                Text(pitchName(code)).font(.caption)
+                                Spacer(minLength:4)
+                                Text("\(shares[index])%").font(.caption.monospaced().bold())
+                                Text(String(format:"%.0f km/h",pitcher.speed(code))).font(.caption2.monospacedDigit()).foregroundStyle(GameTheme.boardMuted)
+                            }.accessibilityElement(children:.combine).accessibilityIdentifier("opponentPitch-"+code)
+                        }
+                    }
+                }.accessibilityElement(children:.contain).accessibilityIdentifier("opponentArsenal")
+                Text("구종 선택 기준 비중 · 실제 사용률 아님").font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("opponentPitchShareMeaning")
+                if let slow=pitcher.pitches.map({pitcher.speed($0)}).min() {
+                    Text(String(format:"구종 간 최대 속도 차이 %.0f km/h",pitcher.fastball-slow)).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                }
+                if let relief=team?.relief,pitcher.id != relief.id {
+                    Text(String(format:"구원 대비 · 포심 %.0f km/h / 제구 %.1f",relief.fastball,relief.control)).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }
+            }
+            GamePanel(title:"투구 능력",onBoard:true,contentSpacing:14) {
+                OpponentAbilityBar(label:"구속 능력",value:pitcher.velocity)
+                OpponentAbilityBar(label:"제구",value:pitcher.control)
+                Text("0~100 능력 · 구속은 실제 비행 시간, 제구는 코스와 승부에 반영됩니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+            unrecordedZone
+        } else {legacyMissing}
+    }
+    @ViewBuilder private var lineupPage:some View {
+        if let team {
+            GamePanel(title:"상대 타선 · 능력 비교",onBoard:true,contentSpacing:14) {
+                VStack(spacing:12) {
+                    OpponentAbilityBar(label:"출루 성향",value:team.onBase)
+                    OpponentAbilityBar(label:"장타 성향",value:team.slugging,color:GameTheme.gold)
+                }.accessibilityElement(children:.combine).accessibilityIdentifier("opponentLineupRatings")
+                Text("능력 기반 0~100 · 실제 출루율·장타율과 구분").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                HStack(spacing:8) {
+                    Button("능력 보기") {showSeason=false}.buttonStyle(MatchPixelButtonStyle(selected:!showSeason)).accessibilityIdentifier("opponentLineupAbilities")
+                    Button("시즌 성적") {showSeason=true}.buttonStyle(MatchPixelButtonStyle(selected:showSeason)).accessibilityIdentifier("opponentLineupSeason")
+                }
+                if !typeSize.isAccessibilitySize {
+                    HStack {
+                        Text("타순 / 위치").frame(maxWidth:.infinity,alignment:.leading)
+                        ForEach(showSeason ? ["AVG","OPS","WAR"]:["컨택","파워","성향"],id:\.self) {Text($0).frame(width:48,alignment:.trailing)}
+                    }.font(.caption2).foregroundStyle(GameTheme.boardMuted)
+                }
+                ForEach(Array(team.ordered.enumerated()),id:\.element.id) {index,player in
+                    Button {selected=index;tab = .batter} label: {
+                        Group {
+                        if typeSize.isAccessibilitySize {
+                            VStack(alignment:.leading,spacing:8) {
+                                Text("\(index+1)번 \(player.position)").font(.headline).foregroundStyle(GameTheme.gold)
+                                Text(showSeason ? "타율·OPS·WAR 미집계":"컨택 \(n(player.contact)) · 파워 \(n(player.power))").font(.subheadline)
+                                if !showSeason {Text("출루 \(n(player.onBase)) · 장타 \(n(player.slugging))").font(.caption).foregroundStyle(GameTheme.boardMuted)}
+                            }.frame(maxWidth:.infinity,alignment:.leading)
+                        } else {
+                        HStack(spacing:6) {
+                            Text("\(index+1)").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).frame(width:20)
+                            Text(player.position).font(.subheadline.bold()).frame(maxWidth:.infinity,alignment:.leading)
+                            if showSeason {
+                                ForEach(0..<3) { _ in Text("–").font(.subheadline.monospaced()).frame(width:48,alignment:.trailing)}
+                            } else {
+                                Text(n(player.contact)).font(.caption.monospacedDigit()).frame(width:48,alignment:.trailing)
+                                Text(n(player.power)).font(.caption.monospacedDigit()).frame(width:48,alignment:.trailing)
+                                VStack(spacing:4) {
+                                    miniatureBar(player.onBase,GameTheme.growth)
+                                    miniatureBar(player.slugging,GameTheme.gold)
+                                }.frame(width:48).accessibilityLabel("출루 성향 \(n(player.onBase)), 장타 성향 \(n(player.slugging))")
+                            }
+                        }
+                        }
+                        }.frame(minHeight:48).padding(.horizontal,6).padding(.vertical,typeSize.isAccessibilitySize ? 8:0).foregroundStyle(ink)
+                            .background(index == selected ? Color(hex:0x28503f):GameTheme.boardPanel)
+                    }.buttonStyle(.plain).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton)
+                        .accessibilityLabel("\(index+1)번 \(player.position) · "+(showSeason ? "타율·OPS·WAR 미집계":"컨택 \(n(player.contact)) · 파워 \(n(player.power)) · 출루 성향 \(n(player.onBase)) · 장타 성향 \(n(player.slugging))"))
+                        .accessibilityIdentifier("opponentBatter-\(index+1)")
+                }
+                Text(showSeason ? "NPC 개인 시즌 성적·WAR은 아직 미집계입니다.":"녹색은 출루·금색은 장타 성향입니다. 선수를 누르면 상세가 열립니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+        } else {legacyMissing}
+    }
+    @ViewBuilder private var batterPage:some View {
+        if let batter {
+            VStack(spacing:0) {
+                identity(title:"\(selected+1)번 타자",eyebrow:"KEY BATTER · "+batter.position,detail:positionName(batter.position))
+                statisticStrip(["AVG","OPS","HR","WAR"])
+            }.overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
+            GamePanel(title:"선수의 강점",onBoard:true,contentSpacing:14) {
+                if !typeSize.isAccessibilitySize {
+                    OpponentRadar(values:batterAxes(batter)).frame(height:240).accessibilityIdentifier("opponentBatterRadar")
+                }
+                ForEach(Array(batterAxes(batter).enumerated()),id:\.offset) {_,axis in OpponentAbilityBar(label:axis.0,value:axis.1)}
+                Text("경기 시작 시 고정하는 실제 NPC 능력입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+            GamePanel(title:"타석 공략 참고",onBoard:true,contentSpacing:12) {
+                Text(batter.power >= 70 ? "장타 경계 · 가운데 실투 주의":batter.discipline >= 65 ? "선구안 경계 · 볼넷 억제":"컨택 경계 · 코스 변화 활용").font(.headline).foregroundStyle(GameTheme.gold)
+                Text("출루 성향 \(n(batter.onBase)) · 장타 성향 \(n(batter.slugging))").font(.subheadline.monospacedDigit())
+            }
+            unrecordedZone
+        } else {legacyMissing}
+    }
+    private func batterAxes(_ batter:MatchNPCBatter) -> [(String,Double)] {
+        var axes=[("컨택",batter.contact),("파워",batter.power),("선구안",batter.discipline)]
+        if let field=fielders?.players.first(where:{$0.id == batter.id}) {axes += [("스피드",field.speed),("수비",field.defense)]}
+        return axes
+    }
+    private func positionName(_ raw:String) -> String {FieldPosition(rawValue:raw)?.label ?? (raw == "P" ? "투수":raw)}
+    private func miniatureBar(_ value:Double,_ color:Color) -> some View {
+        GeometryReader {g in Rectangle().fill(color).frame(width:g.size.width*min(100,max(0,value))/100)}.frame(height:4).background(GameTheme.boardLine.opacity(0.2))
+    }
+    private var planPage:some View {
+        VStack(alignment:.leading,spacing:16) {
+            HStack(spacing:10) {
+                Text(ownTeamName).frame(maxWidth:.infinity)
+                Text("VS").font(.title3.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                Text(teamName).frame(maxWidth:.infinity)
+            }.font(.headline).padding(16).background(GameTheme.boardPanel)
+            if ownRole == "batter",let pitcher {
+                identity(title:pitcher.id == team?.starter.id ? "상대 선발":"현재 구원",eyebrow:"PITCHING MATCHUP",detail:String(format:"포심 %.0f km/h · 제구 %.1f",pitcher.fastball,pitcher.control))
+            } else if let team,let threat=team.ordered.max(by:{$0.onBase+$0.slugging<$1.onBase+$1.slugging}),let index=team.ordered.firstIndex(of:threat) {
+                identity(title:"\(index+1)번 타자 · "+threat.position,eyebrow:"BATTING MATCHUP",detail:"출루 \(n(threat.onBase)) · 장타 \(n(threat.slugging))")
+            }
+            GamePanel(title:"능력 맞대결",onBoard:true,contentSpacing:14) {
+                Text("내 선수 / 상대 · 같은 0~100 능력 비교, 승률 아님").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                if ownRole == "batter",let pitcher {
+                    comparison("컨택 / 제구",ownRatings["컨택"],pitcher.control)
+                    comparison("선구 / 제구",ownRatings["선구안"],pitcher.control)
+                } else if let team {
+                    comparison("제구 / 선구",ownRatings["제구"],team.batters.map(\.discipline).reduce(0,+)/9)
+                    comparison("구위 / 컨택",ownRatings["구위"],team.batters.map(\.contact).reduce(0,+)/9)
+                    comparison("멘탈 / 파워",ownRatings["멘탈"],team.batters.map(\.power).reduce(0,+)/9)
+                } else {Text("이전 경기 · 상대 공격 능력 미기록").font(.caption)}
+            }
+            GamePanel(title:locked ? "고정된 경기 계획":"내 경기 계획",onBoard:true,contentSpacing:14) {
+                Text("추천 · "+analysis.recommended(role:ownRole).label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                ForEach(MatchPlanChoice.choices(ownRole)) {plan in
+                    Button {if !locked {choice=plan}} label: {
+                        HStack(spacing:10) {
+                            VStack(alignment:.leading,spacing:8) {
+                                Text(plan.label).font(.headline)
+                                Text(plan.criteria).font(.caption).multilineTextAlignment(.leading)
+                            }.frame(maxWidth:.infinity,alignment:.leading)
+                            Rectangle().fill(choice == plan ? GameTheme.gold:GameTheme.boardLine.opacity(0.3)).frame(width:12,height:12)
+                        }.padding(12)
+                    }.buttonStyle(MatchPixelButtonStyle(selected:choice == plan)).disabled(locked)
+                        .accessibilityIdentifier("planChoice-"+plan.rawValue).accessibilityValue(choice == plan ? "선택됨":"선택 안 됨")
+                }
+                if let choice {
+                    Text(analysis.reason(for:choice)).font(.subheadline).accessibilityIdentifier("planReason")
+                    Text(choice.executionHint).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("planExecutionHint")
+                }
+                if locked,let progress {
+                    Text("진행 중 · 최종 평가는 경기 종료 후").font(.caption).foregroundStyle(GameTheme.gold)
+                    ForEach(Array(progress.checks.enumerated()),id:\.offset) {_,check in Text(check.detail).font(.subheadline.monospacedDigit())}
+                }
+                Text(locked ? "경기 시작 때 고정한 계획입니다. 변경할 수 없습니다.":"시작 시 상대 자료와 함께 저장·잠금됩니다. 선택 자체의 능력·계약 가산은 없습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+        }
+    }
+    private func comparison(_ label:String,_ own:Double?,_ other:Double) -> some View {
+        VStack(alignment:.leading,spacing:6) {
+            HStack {
+                Text(own.map(n) ?? "미기록").foregroundStyle(GameTheme.growth)
+                Spacer();Text(label).font(.caption).foregroundStyle(GameTheme.boardMuted);Spacer()
+                Text(n(other)).foregroundStyle(GameTheme.gold)
+            }.font(.subheadline.monospaced().bold())
+            HStack(spacing:12) {miniatureBar(own ?? 0,GameTheme.growth);miniatureBar(other,GameTheme.gold)}.accessibilityHidden(true)
+        }.accessibilityElement(children:.combine)
+    }
+    private var unrecordedZone:some View {
+        GamePanel(title:"코스별·최근 성적",onBoard:true,contentSpacing:12) {
+            ZStack {
+                VStack(spacing:3) {ForEach(0..<3) {_ in HStack(spacing:3) {ForEach(0..<3) {_ in Rectangle().fill(GameTheme.boardLine.opacity(0.12))}}}}.frame(height:90).accessibilityHidden(true)
+                Text("미집계").font(.headline).foregroundStyle(GameTheme.boardMuted)
+            }.accessibilityIdentifier("opponentZoneUnrecorded")
+            Text("실제 코스·개인 시즌 기록이 모인 뒤 표시합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+        }
+    }
+    private var legacyMissing:some View {
+        GamePanel(title:"기존 경기의 상대 자료",onBoard:true,contentSpacing:14) {
+            Text("투구·타격 프로필 미기록").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("legacyOpponentMissing")
+            Text("이전 경기 자료와 판정을 유지하며, 없는 능력이나 성적을 생성하지 않습니다.").font(.caption)
+            OpponentAbilityBar(label:"주력",value:analysis.speed)
+            OpponentAbilityBar(label:"수비",value:analysis.defense)
+            OpponentAbilityBar(label:"송구",value:analysis.arm)
+        }
+    }
+}
+
+private struct OpponentAbilityBar:View {
+    let label:String
+    let value:Double
+    var color=GameTheme.growth
+    var body:some View {
+        HStack(spacing:10) {
+            Text(label).font(.caption).frame(minWidth:52,alignment:.leading)
+            GeometryReader {g in
+                ZStack(alignment:.leading) {
+                    Rectangle().fill(GameTheme.boardLine.opacity(0.2))
+                    Rectangle().fill(color).frame(width:g.size.width*min(100,max(0,value))/100)
+                    Rectangle().fill(GameTheme.boardInk.opacity(0.5)).frame(width:1).offset(x:g.size.width*0.6)
+                }
+            }.frame(height:10).accessibilityHidden(true)
+            Text(String(format:"%.1f",value)).font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold).frame(minWidth:40,alignment:.trailing)
+        }.accessibilityElement(children:.ignore).accessibilityLabel(label+String(format:" %.1f / 100",value))
+    }
+}
+
+private struct OpponentPitchDonut:View {
+    let shares:[Int]
+    static let colors=[GameTheme.gold,GameTheme.growth,Color(hex:0x8bb8d0),GameTheme.boardLine]
+    var body:some View {
+        ZStack {
+            Canvas {context,size in
+                let center=CGPoint(x:size.width/2,y:size.height/2),radius=min(size.width,size.height)*0.39
+                var angle = -Double.pi/2
+                for (index,value) in shares.enumerated() {
+                    let end=angle+Double(value)/100*2*Double.pi
+                    var path=Path();path.addArc(center:center,radius:radius,startAngle:.radians(angle+0.025),endAngle:.radians(end-0.025),clockwise:false)
+                    context.stroke(path,with:.color(Self.colors[index%4]),lineWidth:14);angle=end
+                }
+            }
+            VStack(spacing:3) {Text("50%").font(.title3.monospaced().bold()).foregroundStyle(GameTheme.gold);Text("포심 기준").font(.caption2).foregroundStyle(GameTheme.boardMuted)}
+        }.accessibilityElement(children:.ignore).accessibilityLabel("구종 선택 기준 비중 "+shares.map {"\($0)%"}.joined(separator:", "))
+    }
+}
+
+private struct OpponentRadar:View {
+    let values:[(String,Double)]
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body:some View {
+        if typeSize.isAccessibilitySize {
+            VStack(spacing:10) {ForEach(Array(values.enumerated()),id:\.offset) {_,v in OpponentAbilityBar(label:v.0,value:v.1)}}
+        } else {
+            GeometryReader {g in
+                let center=CGPoint(x:g.size.width/2,y:g.size.height/2),radius=min(g.size.width,g.size.height)*0.32
+                ZStack {
+                    Canvas {context,_ in
+                        func point(_ i:Int,_ value:Double) -> CGPoint {
+                            let a=Double(i)*2*Double.pi/Double(values.count)-Double.pi/2,r=radius*min(100,max(0,value))/100
+                            return CGPoint(x:center.x+cos(a)*r,y:center.y+sin(a)*r)
+                        }
+                        func polygon(_ scores:[Double]) -> Path {
+                            Path {p in for (i,v) in scores.enumerated() {let at=point(i,v);if i == 0 {p.move(to:at)} else {p.addLine(to:at)}};p.closeSubpath()}
+                        }
+                        for level in [25.0,50,75,100] {context.stroke(polygon(Array(repeating:level,count:values.count)),with:.color(GameTheme.boardLine.opacity(0.45)),lineWidth:1)}
+                        let path=polygon(values.map(\.1));context.fill(path,with:.color(GameTheme.growth.opacity(0.2)));context.stroke(path,with:.color(GameTheme.growth),lineWidth:2)
+                        for (i,v) in values.enumerated() {let at=point(i,v.1);context.fill(Path(CGRect(x:at.x-2,y:at.y-2,width:4,height:4)),with:.color(GameTheme.gold))}
+                    }
+                    ForEach(Array(values.enumerated()),id:\.offset) {i,v in
+                        let a=Double(i)*2*Double.pi/Double(values.count)-Double.pi/2
+                        VStack(spacing:3) {Text(v.0).foregroundStyle(GameTheme.boardMuted);Text(String(format:"%.1f",v.1)).bold()}
+                            .font(.caption).frame(width:64).position(x:center.x+cos(a)*radius*1.3,y:center.y+sin(a)*radius*1.3)
+                    }
+                }
+            }.accessibilityElement(children:.ignore).accessibilityLabel(values.map {$0.0+String(format:" %.1f",$0.1)}.joined(separator:", "))
+        }
     }
 }

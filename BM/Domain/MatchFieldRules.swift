@@ -1007,3 +1007,14 @@ struct MatchNPCAttack:Codable,Equatable {
         try home.validate();try away.validate()
     }
 }
+
+
+extension MatchNPCPitcher {
+    // The current selection rule allocates 50 draws to the fastball and the remaining 50 by modulo.
+    // These are rule weights, not a historical pitch-usage sample.
+    var selectionShares:[Int] {
+        let secondary=pitches.count-1
+        guard secondary>0 else {return [100]}
+        return [50]+(0..<secondary).map {50/secondary+($0<50%secondary ? 1:0)}
+    }
+}

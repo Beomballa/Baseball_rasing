@@ -4317,3 +4317,19 @@ extension CareerCalendarTests {
         XCTAssertEqual(row.payload,complete);XCTAssertEqual(p.fatigue,fatigue)
     }
 }
+
+extension CareerCalendarTests {
+    func testOpponentVisualPitchSharesMatchSelectorWithoutChangingSavedProfile() throws {
+        var game=ScoutingReferenceSimulation.fixture(role:.batter,position:"SS",values:PlayerArchetype.initial(for:.batter).values,seed:11,home:false,tracked:true,battedBallVersion:1,npcFieldersVersion:1,npcAttackVersion:1)
+        for _ in 0..<2 {
+            let pitcher=try XCTUnwrap(game.npcActivePitcher),before=game
+            var observed=[String:Int]()
+            for draw in 0..<100 {var sample=game;sample.random=UInt64(draw)<<16;observed[sample.deliveryPitchCode(requested:nil),default:0] += 1}
+            XCTAssertEqual(pitcher.selectionShares.reduce(0,+),100)
+            XCTAssertEqual(pitcher.pitches.map {observed[$0,default:0]},pitcher.selectionShares)
+            XCTAssertEqual(game,before)
+            game.pitching?.homePitches=200;game.finishPitcherPlate(home:true,previousHalf:game.half)
+        }
+        XCTAssertNotNil(MatchArt.opponentPortrait,"approved portrait must be present in the native bundle")
+    }
+}

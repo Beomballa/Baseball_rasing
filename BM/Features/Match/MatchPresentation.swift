@@ -15,6 +15,11 @@ enum MatchArt {
               let image = UIImage(contentsOfFile: url.path) else { return nil }
         return (name, image)
     })
+    // Analysis needs only this portrait; opening it must not initialize the full match-art dictionary.
+    static let opponentPortrait:UIImage? = {
+        guard let url=Bundle.main.url(forResource:"opponent-avatar-v1",withExtension:"png",subdirectory:"MatchArt") else {return nil}
+        return UIImage(contentsOfFile:url.path)
+    }()
     static func image(_ name: String) -> UIImage? { images[name] }
     static func cell(_ name: String, column: Int, row: Int, columns: Int, rows: Int) -> UIImage? {
         guard let source = image(name)?.cgImage,

@@ -3071,6 +3071,8 @@ extension CareerFlowTests {
 
 extension CareerFlowTests {
     @MainActor private func confirmPregameIfNeeded(in app:XCUIApplication) {
+        let review=app.buttons["reviewOpponentPlan"]
+        if review.waitForExistence(timeout:3) {review.tap()}
         let confirm=app.buttons["confirmGamePlan"]
         if confirm.waitForExistence(timeout:3) {revealFit(confirm,in:app);confirm.tap()}
     }
@@ -3085,7 +3087,8 @@ extension CareerFlowTests {
             let rest=app.buttons["restToday"];revealFit(rest,in:app);rest.tap()
             let game=app.buttons["openCareerGame"];revealFit(game,in:app);game.tap()
             XCTAssertTrue(app.staticTexts["oppositionTeam"].waitForExistence(timeout:10))
-            XCTAssertTrue(app.staticTexts["planReason"].exists)
+            app.buttons["opponentTab-plan"].tap()
+            revealFit(app.staticTexts["planReason"],in:app);XCTAssertTrue(app.staticTexts["planReason"].exists)
             let chosen=role == "batter" ? "power":"innings"
             let choice=app.buttons["planChoice-"+chosen];revealFit(choice,in:app);choice.tap()
             let pre=XCTAttachment(screenshot:app.screenshot());pre.name="pregame-"+role;pre.lifetime = .keepAlways;add(pre)
@@ -3093,7 +3096,8 @@ extension CareerFlowTests {
             let active=app.buttons["openLiveGamePlan"];XCTAssertTrue(active.waitForExistence(timeout:15))
             let expected=role == "batter" ? "장타 공략":"이닝 소화"
             XCTAssertTrue(active.label.contains(expected))
-            active.tap()
+            active.tap();app.buttons["opponentTab-plan"].tap()
+            revealFit(app.staticTexts["진행 중 · 최종 평가는 경기 종료 후"],in:app)
             XCTAssertTrue(app.staticTexts["진행 중 · 최종 평가는 경기 종료 후"].waitForExistence(timeout:10))
             let live=XCTAttachment(screenshot:app.screenshot());live.name="game-plan-live-"+role;live.lifetime = .keepAlways;add(live)
             app.navigationBars.buttons.element(boundBy:0).tap()
@@ -3361,21 +3365,30 @@ extension CareerFlowTests {
             let pick=app.buttons["homeRole-"+role];revealFit(pick,in:app);pick.tap()
             let rest=app.buttons["restToday"];revealFit(rest,in:app);rest.tap()
             let game=app.buttons["openCareerGame"];revealFit(game,in:app);game.tap()
-            let ratings=app.descendants(matching:.any)["opponentPitcherRatings"].firstMatch
+            let ratings=app.staticTexts["opponentPitcherRatings"]
             XCTAssertTrue(ratings.waitForExistence(timeout:10));revealFit(ratings,in:app)
             let fixed=ratings.label
             XCTAssertTrue(fixed.contains("km/h"));XCTAssertTrue(fixed.contains("제구"))
-            XCTAssertTrue(app.staticTexts["opponentPitcherRole"].exists)
-            capture("opponent-pitcher-file-"+role)
-            let lineup=app.descendants(matching:.any)["opponentLineupRatings"].firstMatch
-            revealFit(lineup,in:app);XCTAssertTrue(lineup.label.contains("출루"));XCTAssertTrue(lineup.label.contains("장타"))
-            let details=app.buttons["opponentLineupDetails"];revealFit(details,in:app);XCTAssertTrue(details.exists);details.tap()
-            let first=app.descendants(matching:.any)["opponentBatter-1"].firstMatch
-            XCTAssertTrue(first.waitForExistence(timeout:3));guard first.exists else {return}
-            revealFit(first,in:app);capture("opponent-lineup-file-"+role)
-            let last=app.descendants(matching:.any)["opponentBatter-9"].firstMatch
-            revealFit(last,in:app);XCTAssertTrue(last.exists)
-            confirmPregameIfNeeded(in:app)
+            XCTAssertTrue(app.descendants(matching:.any)["opponentPortrait"].firstMatch.exists)
+            capture("native-opponent-pitcher-"+role)
+            let stats=app.buttons["opponentStatsInfo"];XCTAssertTrue(stats.waitForExistence(timeout:5));guard stats.exists else {return};revealFit(stats,in:app);stats.tap()
+            XCTAssertTrue(app.alerts["미집계 통계"].waitForExistence(timeout:5));app.alerts.buttons["확인"].tap()
+            app.buttons["opponentTab-lineup"].tap()
+            XCTAssertTrue(app.descendants(matching:.any)["opponentLineupRatings"].firstMatch.waitForExistence(timeout:5))
+            capture("native-opponent-lineup-"+role)
+            let season=app.buttons["opponentLineupSeason"];season.tap()
+            XCTAssertTrue(app.descendants(matching:.any)["opponentBatter-1"].firstMatch.label.contains("미집계"))
+            app.buttons["opponentLineupAbilities"].tap()
+            let ninth=app.descendants(matching:.any)["opponentBatter-9"].firstMatch;XCTAssertTrue(ninth.waitForExistence(timeout:5));guard ninth.exists else {return};revealFit(ninth,in:app);ninth.tap()
+            XCTAssertTrue(app.staticTexts["opponentIdentity"].waitForExistence(timeout:5));XCTAssertEqual(app.staticTexts["opponentIdentity"].label,"9번 타자")
+            XCTAssertTrue(app.descendants(matching:.any)["opponentBatterRadar"].firstMatch.exists)
+            capture("native-opponent-batter-"+role)
+            app.buttons["opponentTab-plan"].tap()
+            capture("native-opponent-matchup-"+role)
+            let selected=app.buttons["planChoice-"+(role == "batter" ? "power":"strikeout")]
+            revealFit(selected,in:app);selected.tap();XCTAssertEqual(selected.value as? String,"선택됨")
+            capture("native-opponent-plan-"+role)
+            let confirm=app.buttons["confirmGamePlan"];XCTAssertTrue(confirm.isHittable);confirm.tap()
             let primary=app.buttons[role == "pitcher" ? "gamePitch":"requestGamePitch"]
             XCTAssertTrue(primary.waitForExistence(timeout:15))
             assertArenaFits(app,button:role == "pitcher" ? "gamePitch":"requestGamePitch",ratio:role == "pitcher" ? CGFloat(1219)/1290:1)
@@ -3384,10 +3397,10 @@ extension CareerFlowTests {
             waitForEnabled(primary,timeout:40)
             let speed=app.descendants(matching:.any)["boardPitchSpeed"].firstMatch
             XCTAssertTrue(speed.exists);XCTAssertFalse(speed.label.contains("–––"))
-            capture("opponent-live-pitch-"+role)
             let plan=app.buttons["openLiveGamePlan"];revealFit(plan,in:app);plan.tap()
             XCTAssertTrue(ratings.waitForExistence(timeout:10));revealFit(ratings,in:app);XCTAssertEqual(ratings.label,fixed)
-            capture("opponent-frozen-analysis-"+role)
+            capture("native-opponent-frozen-"+role)
+            app.buttons["opponentTab-plan"].tap();revealFit(selected,in:app);XCTAssertFalse(selected.isEnabled);XCTAssertEqual(selected.value as? String,"선택됨")
             app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
             revealFit(game,in:app);game.tap()
             XCTAssertTrue(plan.waitForExistence(timeout:15));XCTAssertFalse(app.buttons["confirmGamePlan"].exists)
@@ -3395,6 +3408,27 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["gamePlanOutcome"].waitForExistence(timeout:90))
             app.navigationBars.buttons.element(boundBy:0).tap()
         }
+        app.terminate()
+    }
+}
+
+
+extension CareerFlowTests {
+    @MainActor func testOpponentVisualCenterLargeTextKeepsTabsPortraitAndStartAccessible() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-pitcher"].waitForExistence(timeout:90))
+        let role=app.buttons["homeRole-pitcher"];revealFit(role,in:app);role.tap()
+        let rest=app.buttons["restToday"];revealFit(rest,in:app);rest.tap()
+        let game=app.buttons["openCareerGame"];revealFit(game,in:app);game.tap()
+        XCTAssertTrue(app.buttons["opponentTab-lineup"].waitForExistence(timeout:15));app.buttons["opponentTab-lineup"].tap()
+        let ninth=app.descendants(matching:.any)["opponentBatter-9"].firstMatch;XCTAssertTrue(ninth.waitForExistence(timeout:5));guard ninth.exists else {return};revealFit(ninth,in:app);ninth.tap()
+        XCTAssertTrue(app.staticTexts["opponentIdentity"].waitForExistence(timeout:10))
+        let card=XCTAttachment(screenshot:app.screenshot());card.name="native-opponent-large-batter";card.lifetime = .keepAlways;add(card)
+        app.buttons["opponentTab-plan"].tap()
+        let chosen=app.buttons["planChoice-control"];revealFit(chosen,in:app);chosen.tap()
+        let confirm=app.buttons["confirmGamePlan"];XCTAssertTrue(confirm.isHittable)
+        XCTAssertLessThanOrEqual(confirm.frame.maxX,app.windows.firstMatch.frame.maxX);XCTAssertLessThanOrEqual(confirm.frame.maxY,app.windows.firstMatch.frame.maxY)
+        let shot=XCTAttachment(screenshot:app.screenshot());shot.name="native-opponent-large-plan";shot.lifetime = .keepAlways;add(shot)
         app.terminate()
     }
 }
