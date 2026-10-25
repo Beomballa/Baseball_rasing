@@ -173,7 +173,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             try match.abilityExperience?.validate(match: match)
         }
         match.scoutingPerformance = .tracked
-        if match.npcAttack != nil {match.playerRecords=MatchPlayerRecords.make(match:match,careerID:player.id,fixtureID:fixture.id)}
+        if match.npcAttack != nil {match.playerRecords=MatchPlayerRecords.make(match:match,careerID:player.id,fixtureID:fixture.id,trackEarnedRuns:true)}
         if match.appearance { match.settle() }
         try match.playerRecords?.validate(match:match)
         try match.validateDetailedField()
@@ -369,9 +369,9 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
 struct SeasonPlayerRecord:Equatable {
     let teamID:String
     let id:String
-    var battingGames=0,pitchingGames=0
+    var battingGames=0,pitchingGames=0,earnedRunGames=0,unscoredPitchingGames=0
     var batting=MatchBattingCounts()
-    var pitching=MatchPitchingCounts()
+    var pitching=MatchPitchingCounts(earnedRuns:0)
 }
 struct SeasonPlayerLedger:Equatable {
     let careerID:UUID
@@ -402,7 +402,10 @@ extension CareerMatchStore {
                 for line in team.pitching {
                     let key=team.teamID+"/"+line.id
                     var sum=totals[key] ?? SeasonPlayerRecord(teamID:team.teamID,id:line.id)
-                    if line.counts.pitches > 0 {sum.pitchingGames += 1}
+                    if line.counts.pitches > 0 {
+                        sum.pitchingGames += 1
+                        if line.counts.earnedRuns == nil {sum.unscoredPitchingGames += 1} else {sum.earnedRunGames += 1}
+                    }
                     sum.pitching.add(line.counts);totals[key]=sum
                 }
             }

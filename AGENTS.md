@@ -1,8 +1,10 @@
 # BM iOS 작업 기준
 
-- native-auto-league-records-v1은 V14에 LeagueGameRecord만 추가한다(V1~V13 모델/원문 보존). 날짜 전이에서 오늘의 다른 팀 대진을 독립seed/기존 엔진·NPC 능력으로 완료하고 같은 경기의 점수/playerRecords1을 하루 원자save에 고정한다. 실패 rollback·재시도/fixture1회·개인/자동 시즌 읽기 합산,기존 v1 과거 점수·보고서 고정/개인 판정·재개/XP·결과1회를 유지한다. 자동 원장은 개인 MatchRecord/최근5경기·계약 표본/보상에 섞지 않고 미사용 모션은 저장하지 않는다. 미래/소급 생성·개인 경기 RNG 소비 금지,새 지표/화면·자책점/WAR/구종·코스는 후속이며 V6 유지. 상세 gameplay-spec v0.113.
+- native-stat-rates-earned-v1은 V14 유지/새 경기만 선택 earned1·개인ER을 기록한다. 기존 실제 승부와 별도로 실책 없는 투수별 이닝을 재구성하며 PA토큰·책임 주자/야수 선택·구원 등판 당시 실제 아웃으로ER을 추적한다. 추가 RNG/실제 판정/XP 변경 금지,기존 공 단위 원자 저장/rollback·재개/결과1회·보고서 고정 유지. 과거nil은 소급0ER로 바꾸지 않고 혼합 시즌ER/ERA는미집계/경기 수 구분. AVG/OBP/SLG/OPS는 원 기록 분모·미반올림 합산,ERA=27ER/아웃. 현재HBP/SH 없음·개인ER합계≠팀ER,실제 성적판/팀ER/WAR는후속이며 V6 보존. 상세 gameplay-spec v0.114.
 
-- native-player-records-v1은 새 공식 경기의 선택 playerRecords1로 양 팀 타자/선발·구원/주자ID의 실제 결정만 수집한다. 초기 settle 전에 고정하고 공 단위 기존 payload와 원자save/rollback·재개를 공유한다. 완료 MatchRecord를 커리어/연도/수준·fixture키별1회 읽기 합산하며 별도 누적 캐시/보상·추가 RNG/판정 변경은 없다. V13/옛 nil 원문·보고서 고정·XP/결과1회 유지,미수집 경기 소급 생성 금지. 투수 P 타순은 현재 선발/구원 ID이며 기존 타격 능력은 유지한다. 책임 실점≠자책점,다른 팀 점수 자동 경기/지표·WAR·구종/코스/화면은 후속이다. 화면 수정 없음/V6 보존. 상세 gameplay-spec v0.112.
+- native-auto-league-records-v1은 V14에 LeagueGameRecord만 추가한다(V1~V13 모델/원문 보존). 날짜 전이에서 오늘의 다른 팀 대진을 독립seed/기존 엔진·NPC 능력으로 완료하고 같은 경기의 점수/playerRecords1을 하루 원자save에 고정한다. 실패 rollback·재시도/fixture1회·개인/자동 시즌 읽기 합산,기존 v1 과거 점수·보고서 고정/개인 판정·재개/XP·결과1회를 유지한다. 자동 원장은 개인 MatchRecord/최근5경기·계약 표본/보상에 섞지 않고 미사용 모션은 저장하지 않는다. 미래/소급 생성·개인 경기 RNG 소비 금지,기본 지표/개인ER은 상단 native-stat-rates-earned-v1에서 연결했고 실제 표시·팀ER/WAR/구종·코스는 후속이며 V6 유지. 상세 gameplay-spec v0.113.
+
+- native-player-records-v1은 새 공식 경기의 선택 playerRecords1로 양 팀 타자/선발·구원/주자ID의 실제 결정만 수집한다. 초기 settle 전에 고정하고 공 단위 기존 payload와 원자save/rollback·재개를 공유한다. 완료 MatchRecord를 커리어/연도/수준·fixture키별1회 읽기 합산하며 별도 누적 캐시/보상·추가 RNG/판정 변경은 없다. V13/옛 nil 원문·보고서 고정·XP/결과1회 유지,미수집 경기 소급 생성 금지. 투수 P 타순은 현재 선발/구원 ID이며 기존 타격 능력은 유지한다. 책임 실점≠자책점이며 다른 팀 자동 경기는 native-auto-league-records-v1,지표/개인ER은 상단 native-stat-rates-earned-v1에서 연결했다. 실제 표시·WAR·구종/코스는 후속이다. 화면 수정 없음/V6 보존. 상세 gameplay-spec v0.112.
 
 - native-opponent-visual-v1은 승인한 design_V5의4탭을 기존 상대 분석/경기 중 점검에 연결하는 읽기 전용 표시다. 저장된 능력/같은ID 수비 프로필·현재 선발/구원·실제 구종/속도를 막대/레이더로 읽고,도넛은100개 선택 구간의50/나머지 분배 기준이며 실제 사용률이 아니다. NPC 개인 성적/타율·OPS·ERA/WAR·코스/최근 기록은 미집계로 두고 예시/이름·나이/투타·등번호를 생성하지 않는다. 승인된 공용 도트는 별도 지연 로딩하고 조회에 DB 쓰기/프레임별 조회·타이머를 넣지 않는다. 큰 글자는2열 탭/세로 수치,중간 계획은 잠금이며 V13/기존 JSON·nil/보고서 고정·판정/RNG/재개·XP/결과1회를 유지한다. V5 HTML 보존/V6 실제 iOS 캡처·소스 해시,세부 gameplay-spec v0.111.
 

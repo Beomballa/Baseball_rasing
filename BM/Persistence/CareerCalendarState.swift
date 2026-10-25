@@ -278,7 +278,7 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         match.npcFielders=MatchNPCFielders.make(year:fixture.date.year,competition:competition,homeID:fixture.homeID,awayID:fixture.awayID)
         match.npcAttack=MatchNPCAttack.make(roster:match.npcFielders!)
         match.pitching=MatchPitching();match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
-        match.playerRecords=MatchPlayerRecords.make(match:match,careerID:playerID,fixtureID:fixture.id)
+        match.playerRecords=MatchPlayerRecords.make(match:match,careerID:playerID,fixtureID:fixture.id,trackEarnedRuns:true)
         try match.advance(.automatic)
         try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match)
         // Automatic games retain their result/rosters/counters, not unused replay geometry.

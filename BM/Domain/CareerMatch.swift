@@ -254,6 +254,7 @@ struct CareerMatch: Codable, Equatable {
         var result = initial
         let outsBefore=outs,positionOrder=isHome ? awayOrder:homeOrder
         var detailed: MatchDetailedPlay?
+        var cleanForEarned:MatchDetailedPlay?
         let newRunner = FieldRunnerProfile(speed:batter ? fieldStats?.speed ?? 60 : npcBatterSpeed,
             traits:batter ? (fieldStats?.activeTraits ?? []).filter { $0 == .cheetah } : [],own:batter, responsiblePitcher:pitching?.activeID(home:half % 2 == 0))
         if initial == "홈런" {
@@ -291,6 +292,7 @@ struct CareerMatch: Codable, Equatable {
                 play.ball=shot.nodes+play.ball.filter {$0.at>shot.flight}
                 play.battedBall=shot
             }
+            cleanForEarned=play
             if version == 5 {
                 let draws=(0..<7).map { _ in roll() }
                 play=FieldMisplayRules.applying(to:play,stats:fieldStats,defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),draws:draws,npc:npcDefenders)
@@ -383,11 +385,14 @@ struct CareerMatch: Codable, Equatable {
         }
         // A run on a force third-out is already excluded by the shared field timeline.
         if batter { line.rbi += detailed?.rbi ?? runs }
+        let earnedContext=playerRecords?.earned == nil ? nil:MatchEarnedPlay(half:half,order:half % 2 == 1 ? homeOrder:awayOrder,
+            initial:initial,outs:outsBefore,batter:newRunner,clean:cleanForEarned,stats:fieldStats,
+            defending:!offense && appearance && (role != "pitcher" || ownPitcherActive),npc:npcDefenders)
         playerRecords?.recordPlate(home:half % 2 == 1,order:half % 2 == 1 ? homeOrder:awayOrder,
             battingRelief:pitching?.change(home:half % 2 == 1) != nil,
             pitchingRelief:pitching?.change(home:half % 2 == 0) != nil,
             result:result,play:detailed,runs:runs,outsAdded:outs-outsBefore,
-            rbi:detailed?.rbi ?? runs,responsible:scoring)
+            rbi:detailed?.rbi ?? runs,responsible:scoring,earnedContext:earnedContext)
         if half % 2 == 0 { awayScore += runs; awayOrder += 1 }
         else { homeScore += runs; homeOrder += 1 }
         balls = 0; strikes = 0
@@ -395,6 +400,8 @@ struct CareerMatch: Codable, Equatable {
         if outs == 3 {
             half += 1; outs = 0; bases = [false, false, false];runnerProfiles=runnerProfiles.map { _ in [nil,nil,nil] }
             playerRecords?.runners=[nil,nil,nil]
+            let nextHalf=half
+            if playerRecords?.earned != nil {playerRecords?.earned=MatchEarnedState(half:nextHalf)}
             if half == 17 && homeScore > awayScore { completed = true }
             if half == 18 { completed = true }
         }
@@ -769,6 +776,12 @@ struct MatchBattingCounts:Codable,Equatable {
     var plateAppearances=0,atBats=0,singles=0,doubles=0,triples=0,homeRuns=0,walks=0,strikeouts=0
     var runs=0,rbi=0,sacrificeFlies=0,reachedOnError=0,fieldersChoices=0
     var hits:Int {singles+doubles+triples+homeRuns}
+    var totalBases:Int {singles+2*doubles+3*triples+4*homeRuns}
+    var average:Double? {atBats == 0 ? nil:Double(hits)/Double(atBats)}
+    // Current engine rules have no HBP or sacrifice-bunt event; their contributions are zero.
+    var onBasePercentage:Double? {let d=atBats+walks+sacrificeFlies;return d == 0 ? nil:Double(hits+walks)/Double(d)}
+    var sluggingPercentage:Double? {atBats == 0 ? nil:Double(totalBases)/Double(atBats)}
+    var ops:Double? {guard let obp=onBasePercentage,let slg=sluggingPercentage else {return nil};return obp+slg}
     static var keys:[WritableKeyPath<Self,Int>] {[\.plateAppearances,\.atBats,\.singles,\.doubles,\.triples,\.homeRuns,\.walks,\.strikeouts,\.runs,\.rbi,\.sacrificeFlies,\.reachedOnError,\.fieldersChoices]}
     mutating func add(_ other:Self) {for key in Self.keys {self[keyPath:key] += other[keyPath:key]}}
     func validate() throws {
@@ -779,10 +792,19 @@ struct MatchBattingCounts:Codable,Equatable {
 }
 struct MatchPitchingCounts:Codable,Equatable {
     var pitches=0,battersFaced=0,outs=0,hits=0,homeRuns=0,walks=0,strikeouts=0,runsAllowed=0
+    var earnedRuns:Int? = nil
+    var era:Double? {guard outs > 0,let earnedRuns else {return nil};return Double(earnedRuns)*27/Double(outs)}
+    var innings:String {"\(outs/3).\(outs%3)"}
     static var keys:[WritableKeyPath<Self,Int>] {[\.pitches,\.battersFaced,\.outs,\.hits,\.homeRuns,\.walks,\.strikeouts,\.runsAllowed]}
-    mutating func add(_ other:Self) {for key in Self.keys {self[keyPath:key] += other[keyPath:key]}}
+    mutating func add(_ other:Self) {
+        if other.pitches > 0 || other.battersFaced > 0 || other.runsAllowed > 0 {
+            earnedRuns=earnedRuns.flatMap {sum in other.earnedRuns.map {sum+$0}}
+        }
+        for key in Self.keys {self[keyPath:key] += other[keyPath:key]}
+    }
     func validate() throws {
-        guard Self.keys.allSatisfy({(0...100_000).contains(self[keyPath:$0])}),homeRuns <= hits,
+        guard earnedRuns.map({(0...runsAllowed).contains($0)}) ?? true,
+              Self.keys.allSatisfy({(0...100_000).contains(self[keyPath:$0])}),homeRuns <= hits,
               hits+walks+strikeouts <= battersFaced,strikeouts <= outs else {throw MatchError.invalidRecord}
     }
 }
@@ -803,7 +825,8 @@ struct MatchTeamRecords:Codable,Equatable {
     var batting:[MatchBattingRecord]
     var pitching:[MatchPitchingRecord]
     var battingTotal:MatchBattingCounts {batting.reduce(into:MatchBattingCounts()) {$0.add($1.counts)}}
-    var pitchingTotal:MatchPitchingCounts {pitching.reduce(into:MatchPitchingCounts()) {$0.add($1.counts)}}
+    // Individual ER charges can differ from reconstructed team ER after a relief change.
+    var pitchingTotal:MatchPitchingCounts {pitching.reduce(into:MatchPitchingCounts(earnedRuns:0)) {$0.add($1.counts)}}
     func batterID(order:Int,relief:Bool) -> String {
         let id=lineup[order % 9]
         return relief && id == pitching[0].id ? pitching[1].id:id
@@ -825,7 +848,8 @@ struct MatchPlayerRecords:Codable,Equatable {
     var away:MatchTeamRecords
     // Parallel runner identities observe base movement; existing runner profiles and judgments remain unchanged.
     var runners:[String?]=[nil,nil,nil]
-    static func make(match:CareerMatch,careerID:UUID,fixtureID:String) -> Self? {
+    var earned:MatchEarnedState? = nil
+    static func make(match:CareerMatch,careerID:UUID,fixtureID:String,trackEarnedRuns:Bool=false) -> Self? {
         guard let attack=match.npcAttack else {return nil}
         func team(_ isHome:Bool) -> MatchTeamRecords {
             let source=attack.team(home:isHome)
@@ -839,14 +863,19 @@ struct MatchPlayerRecords:Codable,Equatable {
             return MatchTeamRecords(teamID:source.teamID,lineup:batting.map(\.id),batting:batting,
                 pitching:[MatchPitchingRecord(id:starter,role:"starter"),MatchPitchingRecord(id:source.relief.id,role:"relief")])
         }
-        return Self(careerID:careerID,fixtureID:fixtureID,year:attack.year,competition:attack.competition,home:team(true),away:team(false))
+        var result=Self(careerID:careerID,fixtureID:fixtureID,year:attack.year,competition:attack.competition,home:team(true),away:team(false))
+        if trackEarnedRuns {
+            result.earned=MatchEarnedState(half:match.half)
+            for i in 0..<2 {result.home.pitching[i].counts.earnedRuns=0;result.away.pitching[i].counts.earnedRuns=0}
+        }
+        return result
     }
     mutating func recordPitch(home defendingHome:Bool,relief:Bool) {
         if defendingHome {home.pitching[relief ? 1:0].counts.pitches += 1}
         else {away.pitching[relief ? 1:0].counts.pitches += 1}
     }
     mutating func recordPlate(home battingHome:Bool,order:Int,battingRelief:Bool,pitchingRelief:Bool,
-                              result:String,play:MatchDetailedPlay?,runs:Int,outsAdded:Int,rbi:Int,responsible:[String]) {
+                              result:String,play:MatchDetailedPlay?,runs:Int,outsAdded:Int,rbi:Int,responsible:[String],earnedContext:MatchEarnedPlay?=nil) {
         var batters=battingHome ? home:away,pitchers=battingHome ? away:home
         let bi=batters.battingIndex(order:order,relief:battingRelief),pi=pitchingRelief ? 1:0
         let batterID=batters.batting[bi].id,before=runners
@@ -884,6 +913,11 @@ struct MatchPlayerRecords:Codable,Equatable {
         for tag in responsible {
             let relief=tag == MatchPitching.reliefID(home:!battingHome)
             pitchers.pitching[relief ? 1:0].counts.runsAllowed += 1
+        }
+        if var tracker=earned,let earnedContext {
+            let credits=tracker.observe(earnedContext,actual:play,result:result,runs:runs,relief:pitchingRelief)
+            for (tag,count) in credits {let i=tag == MatchPitching.reliefID(home:!battingHome) ? 1:0;pitchers.pitching[i].counts.earnedRuns=(pitchers.pitching[i].counts.earnedRuns ?? 0)+count}
+            earned=tracker
         }
         if battingHome {home=batters;away=pitchers} else {away=batters;home=pitchers}
     }
@@ -923,7 +957,142 @@ struct MatchPlayerRecords:Codable,Equatable {
                 }
             }
         }
+        if let earned {try earned.validate(match:match)}
+        guard (home.pitching+away.pitching).allSatisfy({(earned != nil) == ($0.counts.earnedRuns != nil)}) else {throw MatchError.invalidRecord}
         let offense=match.half % 2 == 1 ? home:away
         guard runners.compactMap({$0}).allSatisfy({id in offense.batting.contains {$0.id == id}}) else {throw MatchError.invalidRecord}
+    }
+}
+
+struct MatchEarnedPlay {
+    let half:Int,order:Int
+    let initial:String
+    let outs:Int
+    let batter:FieldRunnerProfile
+    let clean:MatchDetailedPlay?
+    let stats:MatchFieldStats?
+    let defending:Bool
+    let npc:[MatchNPCPlayer]?
+}
+struct EarnedRunner:Codable,Equatable {
+    let token:String
+    var profile:FieldRunnerProfile
+    var unearned=false
+}
+struct EarnedScore:Codable,Equatable {
+    let token:String
+    let pitcher:String
+    let unearned:Bool
+}
+struct EarnedView:Codable,Equatable {
+    let pitcher:String
+    var outs:Int
+    var runners:[EarnedRunner?]
+    var scored:[String]=[]
+    mutating func advance(_ context:MatchEarnedPlay,batter:EarnedRunner,actualBefore:[EarnedRunner?]) {
+        guard outs < 3 else {return}
+        func runner(_ from:Int) -> EarnedRunner? {from == 0 ? batter:(1...3).contains(from) ? runners[from-1]:nil}
+        if ["안타","범타"].contains(context.initial),let original=context.clean {
+            var play:MatchDetailedPlay
+            if outs == context.outs,runners == actualBefore {play=original}
+            else {
+                let profiles=runners.map {$0?.profile},airborne=original.battedBall?.kind.airborne ?? (original.fly != nil)
+                play=airborne ? DetailedFieldRules.resolveFly(half:context.half,order:context.order,landing:original.landing,flight:original.flight,
+                    runners:profiles,batter:batter.profile,outs:outs,stats:context.stats,defending:context.defending,ownBatter:batter.profile.own,relayEnabled:true,npc:context.npc)
+                    : DetailedFieldRules.resolve(half:context.half,order:context.order,landing:original.landing,flight:original.flight,
+                    runners:profiles,batter:batter.profile,outs:outs,stats:context.stats,defending:context.defending,ownBatter:batter.profile.own,
+                    doublePlayEnabled:true,groundBall:original.battedBall?.kind == .ground,relayEnabled:true,npc:context.npc)
+            }
+            MatchPitching.transferChoiceResponsibility(&play)
+            let goals=play.runners.filter {!$0.out && $0.destination == 4}.sorted {$0.arrival < $1.arrival}.prefix(play.runs)
+            scored += goals.compactMap {runner($0.from)?.token}
+            var after:[EarnedRunner?]=[nil,nil,nil]
+            for movement in play.runners where !movement.out && (1...3).contains(movement.destination) {
+                var value=runner(movement.from);value?.profile=movement.profile;after[movement.destination-1]=value
+            }
+            runners=after;outs=min(3,outs+play.outsAdded)
+        } else if context.initial == "홈런" {
+            scored += runners.compactMap {$0?.token}+[batter.token];runners=[nil,nil,nil]
+        } else if context.initial == "볼넷" {
+            if runners[0] != nil {
+                if runners[1] != nil {if let value=runners[2] {scored.append(value.token)};runners[2]=runners[1]}
+                runners[1]=runners[0]
+            }
+            runners[0]=batter
+        } else if context.initial == "안타" {
+            if let value=runners[2] {scored.append(value.token)};runners=[batter,runners[0],runners[1]]
+        } else {outs += 1}
+        if outs >= 3 {runners=[nil,nil,nil]}
+    }
+}
+struct MatchEarnedState:Codable,Equatable {
+    var version=1
+    let half:Int
+    var runners:[EarnedRunner?]=[nil,nil,nil]
+    var views:[EarnedView]=[]
+    var actual:[EarnedScore]=[]
+    var awarded:[String]=[]
+    var observedRuns=0
+    mutating func observe(_ context:MatchEarnedPlay,actual play:MatchDetailedPlay?,result:String,runs:Int,relief:Bool) -> [String:Int] {
+        let defendingHome=context.half % 2 == 0
+        let pitcher=relief ? MatchPitching.reliefID(home:defendingHome):MatchPitching.starterID(home:defendingHome)
+        // A new reliever starts with actual outs/bases, without earlier missed chances (OBR 9.16(i)).
+        if !views.contains(where:{$0.pitcher == pitcher}) {views.append(EarnedView(pitcher:pitcher,outs:context.outs,runners:runners))}
+        let token="\(context.half)/\(context.order)"
+        let before=runners
+        let batter=EarnedRunner(token:token,profile:context.batter)
+        for i in views.indices {views[i].advance(context,batter:batter,actualBefore:before)}
+        var entrant=batter;entrant.unearned=result == "실책 출루"
+        if let play,play.hitBases == 0,play.runners.contains(where:{$0.from == 0 && !$0.out}),
+           let replaced=play.runners.filter({$0.from > 0 && $0.out}).max(by:{$0.from < $1.from}) {
+            entrant.unearned = entrant.unearned || before[replaced.from-1]?.unearned == true
+        }
+        func runner(_ from:Int) -> EarnedRunner? {from == 0 ? entrant:(1...3).contains(from) ? before[from-1]:nil}
+        var goals:[EarnedRunner]=[]
+        if let play {
+            for movement in play.runners.filter({!$0.out && $0.destination == 4}).sorted(by:{$0.arrival < $1.arrival}).prefix(runs) {
+                if var value=runner(movement.from) {value.profile=movement.profile;goals.append(value)}
+            }
+            runners=[nil,nil,nil]
+            for movement in play.runners where !movement.out && (1...3).contains(movement.destination) {
+                var value=runner(movement.from);value?.profile=movement.profile;runners[movement.destination-1]=value
+            }
+        } else if result == "홈런" {goals=before.compactMap {$0}+[entrant];runners=[nil,nil,nil]}
+        else if result == "안타" {goals=[before[2]].compactMap {$0};runners=[entrant,before[0],before[1]]}
+        else if result == "볼넷" {
+            if runs == 1 {goals=[before[2]].compactMap {$0}}
+            if before[0] != nil {if before[1] != nil {runners[2]=before[1]};runners[1]=before[0]};runners[0]=entrant
+        }
+        observedRuns += runs
+        actual += goals.map {EarnedScore(token:$0.token,pitcher:$0.profile.responsiblePitcher ?? "",unearned:$0.unearned)}
+        var credits=[String:Int]()
+        for run in actual where !run.unearned && !awarded.contains(run.token) {
+            if views.first(where:{$0.pitcher == run.pitcher})?.scored.contains(run.token) == true {
+                credits[run.pitcher,default:0] += 1;awarded.append(run.token)
+            }
+        }
+        return credits
+    }
+    func validate(match:CareerMatch) throws {
+        let tags=[MatchPitching.starterID(home:half % 2 == 0),MatchPitching.reliefID(home:half % 2 == 0)]
+        let prefix="\(half)/"
+        guard version == 1,half == match.half,runners.count == 3,runners.map({$0 != nil}) == match.bases,
+              actual.count == observedRuns,(0...100_000).contains(observedRuns),views.count <= 2,
+              Set(views.map(\.pitcher)).count == views.count,Set(actual.map(\.token)).count == actual.count,
+              Set(awarded).count == awarded.count,
+              actual.allSatisfy({$0.token.hasPrefix(prefix) && tags.contains($0.pitcher)}),
+              awarded.allSatisfy({token in actual.contains {$0.token == token && !$0.unearned}}) else {throw MatchError.invalidRecord}
+        for view in views {
+            guard tags.contains(view.pitcher),(0...3).contains(view.outs),view.runners.count == 3,
+                  view.outs < 3 || view.runners.allSatisfy({$0 == nil}),
+                  Set(view.scored).count == view.scored.count,view.scored.allSatisfy({$0.hasPrefix(prefix)}) else {throw MatchError.invalidRecord}
+        }
+        for value in runners.compactMap({$0})+views.flatMap({$0.runners.compactMap {$0}}) {
+            guard value.token.hasPrefix(prefix),value.profile.speed.isFinite,(0...100).contains(value.profile.speed),
+                  TraitLoadout.valid(value.profile.traits),value.profile.responsiblePitcher.map({tags.contains($0)}) == true else {throw MatchError.invalidRecord}
+        }
+        for token in awarded {
+            guard let run=actual.first(where:{$0.token == token}),views.first(where:{$0.pitcher == run.pitcher})?.scored.contains(token) == true else {throw MatchError.invalidRecord}
+        }
     }
 }

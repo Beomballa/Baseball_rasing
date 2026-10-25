@@ -4718,3 +4718,170 @@ extension CareerCalendarTests {
         }
     }
 }
+
+extension CareerCalendarTests {
+    private func earnedContext(_ order:Int,_ initial:String,outs:Int=0,relief:Bool=false,clean:MatchDetailedPlay?=nil,speed:Double=60) -> MatchEarnedPlay {
+        MatchEarnedPlay(half:0,order:order,initial:initial,outs:outs,batter:FieldRunnerProfile(speed:speed,responsiblePitcher:relief ? "home-relief":"home-starter"),clean:clean,stats:nil,defending:false,npc:nil)
+    }
+    private func earnedError(outs:Int,runners:[FieldRunnerProfile?]=[nil,nil,nil]) throws -> (MatchDetailedPlay,MatchDetailedPlay) {
+        let clean=DetailedFieldRules.resolve(half:0,order:2,landing:FieldPoint(x:0,y:10),flight:0.6,runners:runners,
+            batter:FieldRunnerProfile(speed:60,responsiblePitcher:"home-starter"),outs:outs,stats:nil,defending:false,ownBatter:false,doublePlayEnabled:false,groundBall:true,relayEnabled:true)
+        let error=FieldMisplayRules.applying(to:clean,stats:nil,defending:false,draws:[0,0.999,0.999,0.999,0.999,0.999,0.999])
+        XCTAssertEqual(clean.outsAdded,1);XCTAssertEqual(error.outsAdded,0);XCTAssertEqual(error.misplay?.reachedOnError,true)
+        return (clean,error)
+    }
+    func testStatRatesUseWholeCountsCorrectDenominatorsAndNoPrematureRounding() throws {
+        let a=MatchBattingCounts(plateAppearances:12,atBats:8,singles:1,doubles:1,triples:1,homeRuns:1,walks:3,strikeouts:1,sacrificeFlies:1)
+        try a.validate();XCTAssertEqual(a.average!,0.5,accuracy:1e-12);XCTAssertEqual(a.onBasePercentage!,7.0/12,accuracy:1e-12)
+        XCTAssertEqual(a.totalBases,10);XCTAssertEqual(a.sluggingPercentage!,1.25,accuracy:1e-12);XCTAssertEqual(a.ops!,7.0/12+1.25,accuracy:1e-12)
+        var sum=MatchBattingCounts();sum.add(a);sum.add(MatchBattingCounts(plateAppearances:2,atBats:1,walks:1))
+        XCTAssertEqual(sum.average!,4.0/9,accuracy:1e-12);XCTAssertEqual(sum.onBasePercentage!,8.0/14,accuracy:1e-12)
+        XCTAssertNil(MatchBattingCounts().average);XCTAssertNil(MatchBattingCounts().ops)
+        let walks=MatchBattingCounts(plateAppearances:2,walks:2);XCTAssertEqual(walks.onBasePercentage,1);XCTAssertNil(walks.ops)
+        let p=MatchPitchingCounts(pitches:23,battersFaced:7,outs:5,runsAllowed:2,earnedRuns:1)
+        XCTAssertEqual(p.innings,"1.2");XCTAssertEqual(p.era!,5.4,accuracy:1e-12)
+        XCTAssertNil(MatchPitchingCounts(runsAllowed:1,earnedRuns:1).era)
+    }
+    func testEarnedRunsMissedThirdOutClosesStarterButRelieverGetsFreshActualOuts() throws {
+        for relief in [false,true] {
+            var state=MatchEarnedState(half:0)
+            _ = state.observe(earnedContext(0,"삼진"),actual:nil,result:"삼진",runs:0,relief:false)
+            _ = state.observe(earnedContext(1,"삼진",outs:1),actual:nil,result:"삼진",runs:0,relief:false)
+            let (clean,error)=try earnedError(outs:2)
+            _ = state.observe(earnedContext(2,"범타",outs:2,clean:clean),actual:error,result:"실책 출루",runs:0,relief:false)
+            XCTAssertEqual(state.views.first?.outs,3)
+            let bytes=try JSONEncoder().encode(state);var resumed=try JSONDecoder().decode(MatchEarnedState.self,from:bytes)
+            let ctx=earnedContext(3,"홈런",outs:2,relief:relief)
+            let credits=state.observe(ctx,actual:nil,result:"홈런",runs:2,relief:relief)
+            XCTAssertEqual(resumed.observe(ctx,actual:nil,result:"홈런",runs:2,relief:relief),credits);XCTAssertEqual(resumed,state)
+            XCTAssertEqual(state.observedRuns,2);XCTAssertEqual(credits,relief ? ["home-relief":1]:[:])
+            XCTAssertFalse(state.awarded.contains("0/2"),"error entrant is always unearned")
+        }
+    }
+    func testEarnedRunsInheritedRunnerAndFieldersChoiceStayWithOriginalPitcher() throws {
+        for choice in [false,true] {
+            var state=MatchEarnedState(half:0)
+            _ = state.observe(earnedContext(0,"볼넷",speed:0),actual:nil,result:"볼넷",runs:0,relief:false)
+            var outs=0
+            if choice {
+                var candidate:MatchDetailedPlay?
+                for x in [-15.0,0,15] {for y in [10.0,20,30,40] {for flight in [0.1,0.5,1.0] where candidate == nil {
+                    let play=DetailedFieldRules.resolve(half:0,order:1,landing:FieldPoint(x:x,y:y),flight:flight,runners:state.runners.map {$0?.profile},
+                        batter:earnedContext(1,"범타",relief:true,speed:100).batter,outs:0,stats:nil,defending:false,ownBatter:false,doublePlayEnabled:false,groundBall:true,relayEnabled:true)
+                    if play.runners.contains(where:{$0.from == 1 && $0.out}),play.runners.contains(where:{$0.from == 0 && !$0.out}) {candidate=play}
+                }}}
+                var clean=try XCTUnwrap(candidate);MatchPitching.transferChoiceResponsibility(&clean)
+                _ = state.observe(earnedContext(1,"범타",relief:true,clean:clean,speed:100),actual:clean,result:"야수 선택",runs:clean.runs,relief:true)
+                outs=clean.outsAdded
+            }
+            let credits=state.observe(earnedContext(2,"홈런",outs:outs,relief:true),actual:nil,result:"홈런",runs:2,relief:true)
+            XCTAssertEqual(credits,["home-starter":1,"home-relief":1])
+        }
+    }
+    func testEarnedRunsExtraAdvanceOnErrorCanBecomeEarnedOnLaterLegalHit() throws {
+        let profile=FieldRunnerProfile(speed:30,responsiblePitcher:"home-starter")
+        // Canonical scoring fixture: a single leaves the lead runner on third; the error sends him home.
+        func movement(_ destination:Int) -> MatchDetailedPlay {
+            let bases=DetailedFieldRules.bases
+            let batter=DetailedRunner(from:0,destination:1,profile:profile,nodes:[FieldNode(at:0,point:bases[0]),FieldNode(at:5,point:bases[1])])
+            let lead=DetailedRunner(from:2,destination:destination,profile:profile,nodes:[FieldNode(at:0,point:bases[2]),FieldNode(at:6,point:bases[destination])])
+            return MatchDetailedPlay(version:4,half:0,order:1,landing:FieldPoint(x:20,y:40),flight:1.5,fielder:8,receiver:2,
+                ownDefense:false,ownBatter:false,appliedTraits:[],positionDelay:0,pickupAt:3,releaseAt:4,ballAt:5,controlAt:5,
+                targetBase:1,targetRunner:0,force:false,out:false,runnerAt:5,runners:[batter,lead],ball:[],fielders:[],
+                afterRunners:[profile,nil,destination == 3 ? profile:nil],runs:destination == 4 ? 1:0,outsAdded:0,hitBases:1)
+        }
+        let clean=movement(3),error=movement(4)
+        let runner=EarnedRunner(token:"0/0",profile:profile)
+        var state=MatchEarnedState(half:0,runners:[nil,runner,nil])
+        let first=state.observe(earnedContext(1,"안타",clean:clean),actual:error,result:error.misplay?.reachedOnError == true ? "실책 출루":"안타",runs:1,relief:false)
+        XCTAssertNil(first["home-starter"]);XCTAssertFalse(state.awarded.contains("0/0"))
+        let count=state.runners.compactMap {$0}.count+1
+        let later=state.observe(earnedContext(2,"홈런",outs:error.outsAdded),actual:nil,result:"홈런",runs:count,relief:false)
+        XCTAssertEqual(later["home-starter"],3);XCTAssertTrue(state.awarded.contains("0/0"))
+    }
+    func testEarnedTrackingBothRolesPreservesJudgmentsRNGAndRatesStayBounded() throws {
+        var errors=0,unearned=0
+        for role in PlayerRole.allCases {for home in [false,true] {for seed in 1...8 {
+            var game=recordedGame(role,seed:UInt64(seed),home:home),old=game
+            let id=game.playerRecords!.careerID
+            game.playerRecords=MatchPlayerRecords.make(match:game,careerID:id,fixtureID:"records-test",trackEarnedRuns:true)
+            old.playerRecords=nil;game.settle();old.settle()
+            for _ in 0..<4 where !game.completed {
+                let code=game.mastery.keys.sorted().first,input:MatchInput=role == .batter ? .watch:.pitch
+                let control=role == .batter ? ManualMatchInput():ManualMatchInput(release:0.68)
+                try game.advance(input,pitchCode:code,control:control);try old.advance(input,pitchCode:code,control:control)
+                try game.playerRecords?.validate(match:game)
+            }
+            if !game.completed {try game.advance(.automatic);try old.advance(.automatic)}
+            let records=try XCTUnwrap(game.playerRecords);try records.validate(match:game)
+            errors += game.fieldPlays!.filter {$0.misplay != nil}.count
+            for team in [records.home,records.away] {for row in team.pitching {
+                let er=try XCTUnwrap(row.counts.earnedRuns);XCTAssertLessThanOrEqual(er,row.counts.runsAllowed)
+                unearned += row.counts.runsAllowed-er
+            }}
+            game.playerRecords=nil;XCTAssertEqual(game,old)
+        }}}
+        XCTAssertGreaterThan(errors,0);XCTAssertGreaterThan(unearned,0)
+    }
+    func testEarnedSeasonMixedLegacyCoverageDoesNotTreatUnknownRunsAsZero() throws {
+        var first=recordedGame(.pitcher,seed:41,home:true),second=first
+        let id=first.playerRecords!.careerID,roster=first.npcFielders!
+        let a=SeasonFixture(number:1,date:try GameDate("2026-04-01"),homeID:roster.home.teamID,awayID:roster.away.teamID)
+        let b=SeasonFixture(number:6,date:try GameDate("2026-05-01"),homeID:roster.home.teamID,awayID:roster.away.teamID)
+        first.playerRecords=MatchPlayerRecords.make(match:first,careerID:id,fixtureID:a.id)
+        second.playerRecords=MatchPlayerRecords.make(match:second,careerID:id,fixtureID:b.id,trackEarnedRuns:true)
+        try first.advance(.automatic);try second.advance(.automatic)
+        let r1=try CareerMatchRecord(verificationPlayerID:id,teamID:roster.home.teamID,fixture:a,match:first,fatigue:24)
+        let r2=try CareerMatchRecord(verificationPlayerID:id,teamID:roster.home.teamID,fixture:b,match:second,fatigue:24)
+        let sum=try CareerMatchStore.seasonPlayerRecords(playerID:id,year:2026,competition:"highschool",records:[r1,r2])
+        let own=try XCTUnwrap(sum.players.first {$0.id == id.uuidString})
+        XCTAssertEqual(own.pitchingGames,2);XCTAssertEqual(own.earnedRunGames,1);XCTAssertEqual(own.unscoredPitchingGames,1)
+        XCTAssertNil(own.pitching.earnedRuns);XCTAssertNil(own.pitching.era)
+        let only=try CareerMatchStore.seasonPlayerRecords(playerID:id,year:2026,competition:"highschool",records:[r2])
+        XCTAssertNotNil(only.players.first {$0.id == id.uuidString}?.pitching.era)
+    }
+    func testEarnedDiskResumeAtomicCompletionAndLegacyNilRemainUnchangedBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+            let url=dir.appendingPathComponent("earned.store");var id:UUID!,bytes:Data!
+            do {
+                let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+                var d=PlayerDraft();d.schoolID="hs-ref-001";d.name="자책점검증";d.role=role
+                let p=try CareerStore.create(d,schools:SchoolCatalog.load(),in:c),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                id=p.id;try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let row=try CareerMatchStore.start(player:p,state:s,in:c)
+                try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:role == .batter ? .watch:.pitch,pitchCode:p.pitches.first?.code,control:role == .batter ? ManualMatchInput():ManualMatchInput(release:0.68),in:c)
+                XCTAssertNotNil(try row.snapshot().playerRecords?.earned);bytes=row.payload
+            }
+            let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+            let row=try CareerMatchStore.start(player:p,state:s,in:c);XCTAssertEqual(row.payload,bytes)
+            let rev=row.revision,fatigue=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:rev,input:.automatic,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(row.payload,bytes);XCTAssertEqual(p.fatigue,fatigue)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:rev,input:.automatic,in:c)
+            let finished=row.payload,sum=try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c)
+            XCTAssertTrue(sum.players.filter {$0.pitchingGames > 0}.allSatisfy {$0.pitching.earnedRuns != nil})
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+            XCTAssertEqual(row.payload,finished)
+            let reopened=try CareerStore.makeContainer(url:url)
+            XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:id,year:2026,competition:"highschool",in:reopened.mainContext),sum)
+            var legacy=try row.snapshot();legacy.playerRecords?.earned=nil
+            for i in 0..<2 {legacy.playerRecords?.home.pitching[i].counts.earnedRuns=nil;legacy.playerRecords?.away.pitching[i].counts.earnedRuns=nil}
+            row.payload=try JSONEncoder().encode(legacy);try c.save();let raw=row.payload
+            XCTAssertNil(try CareerMatchStore.start(player:p,state:s,in:c).snapshot().playerRecords?.earned);XCTAssertEqual(row.payload,raw)
+        }
+    }
+    func testEarnedAutomaticCompactRecordPersistsKnownRatesAndOldOptionalDecode() throws {
+        let id=UUID(),f=SeasonFixture(number:1,date:try GameDate("2026-04-01"),homeID:"hs-ref-001",awayID:"hs-ref-002")
+        let match=try AutomaticLeagueStore.simulate(playerID:id,fixture:f,competition:"highschool")
+        let row=try CareerLeagueGameRecord(playerID:id,fixture:f,competition:"highschool",match:match)
+        let saved=try row.snapshot();XCTAssertNotNil(saved.playerRecords?.earned)
+        for team in [saved.playerRecords!.home,saved.playerRecords!.away] {
+            XCTAssertNotNil(team.battingTotal.ops)
+            for p in team.pitching where p.counts.outs > 0 {XCTAssertNotNil(p.counts.era)}
+        }
+        let old=try JSONDecoder().decode(MatchPitchingCounts.self,from:Data("{\"pitches\":1,\"battersFaced\":0,\"outs\":0,\"hits\":0,\"homeRuns\":0,\"walks\":0,\"strikeouts\":0,\"runsAllowed\":0}".utf8))
+        XCTAssertNil(old.earnedRuns)
+    }
+}
