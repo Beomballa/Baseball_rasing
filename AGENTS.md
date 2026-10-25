@@ -1,5 +1,7 @@
 # BM iOS 작업 기준
 
+- QA 실행 전 로컬 `qa/environment.json`의 preferredSimulator/quarantinedSimulators를 확인한다. PosterBoard/PosterKit 충돌이 확인된 기존 QA는 종료·데이터 보존 후 격리하며 다시 테스트 대상으로 쓰지 않는다. 새 전용 QA에도 같은 런타임 오류가 재현되면 해당 QA 안의 PosterBoard만 disable/bootout하는 임시 조치를 적용할 수 있다. macOS 알림 전역 차단·Apple 런타임 파일 패치·기존 앱/기기 초기화는 하지 않는다. 이 환경은 잠금화면/배경화면/AOD 인수에서 제외하고 조치·복구 명령과 재부팅 후 검증을 버전별 로컬 QA에 기록한다. 실제 iPhone/기존 보호 기기에 적용하지 않는다.
+
 - native-club-season-v1은 수락 제의/발효된 승격 원문 역할과 실제 달력 개인 출전을 읽고 선택 seasonGoals로 구단·수준·연도별 남은 미시작 경기 목표를1회 고정한다. 완료 공식 개인 경기/ownParticipation만 집계하고 과거 생성 경기·평가전을 제외한다. 최종90경기/팀30경기 확인 후 명시 결산1회·근거키/수치 보존, 다음 해 새 목표·V13/JSON1 old nil·소속/권리·경기 판정/이어하기/XP·결과1회를 유지한다. 날짜/피로/행동·보상·승격/계약 가산·주전 보장을 추가하지 않고 save 실패 원문/revision을 rollback한다. 게임 목표 수식/균형값과 후속 장기 검증은 로컬 gameplay-spec v0.107을 따른다.
 
 - native-plan-guidance-v1은 고정 NPC 수비/주력/송구에 따른 계획 이유·기존 조작 요령과 별도 경기 중 점검 화면이다. 경기장·게이지 영역을 늘리지 않고 진행 중 수치를 최종 평가와 구분한다. MatchPlanOutcome 기본값은 완료 경기만 허용하며 보고서 근거·계획 고정/원문·RNG/판정/이어하기/결과1회를 유지한다. 없는 구종/타격 성향을 추정하거나 확률/성장 보너스를 추가하지 않는다.
