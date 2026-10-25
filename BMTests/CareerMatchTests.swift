@@ -335,7 +335,8 @@ import SwiftUI
         let partial=try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (p,s)=try setup(role:.pitcher,in:c),r=try ready(p,s,in:c)
-            var m=try r.snapshot();m.line.pitches=93;m.pitching?.homePitches=m.isHome ? 93:0;m.pitching?.awayPitches=m.isHome ? 0:93
+            var m=try r.snapshot();let home=m.isHome;m.line.pitches=93;m.pitching?.homePitches=home ? 93:0;m.pitching?.awayPitches=home ? 0:93
+            if home {m.playerRecords?.home.pitching[0].counts.pitches=93} else {m.playerRecords?.away.pitching[0].counts.pitches=93}
             m.scoutingPerformance?.inputs?.automatic=93
             r.payload=try JSONEncoder().encode(m);try c.save()
             let fatigue=p.fatigue

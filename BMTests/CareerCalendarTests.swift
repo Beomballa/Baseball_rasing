@@ -4303,7 +4303,7 @@ extension CareerCalendarTests {
         XCTAssertEqual(row.payload,bytes);XCTAssertEqual(try row.snapshot(),saved)
         XCTAssertEqual(try row.snapshot().delivery(),saved.delivery())
         // Existing pre-feature games are not rewritten when a player resumes them.
-        var legacy=saved!;legacy.npcAttack=nil
+        var legacy=saved!;legacy.npcAttack=nil;legacy.playerRecords=nil
         let prep=try XCTUnwrap(legacy.preparation)
         legacy.preparation=MatchPreparation(version:1,fixtureID:prep.fixtureID,choice:prep.choice,analysis:MatchOppositionAnalysis.make(roster:try XCTUnwrap(legacy.npcFielders),isHome:legacy.isHome))
         row.payload=try JSONEncoder().encode(legacy);try c.save();let raw=row.payload
@@ -4331,5 +4331,186 @@ extension CareerCalendarTests {
             game.pitching?.homePitches=200;game.finishPitcherPlate(home:true,previousHalf:game.half)
         }
         XCTAssertNotNil(MatchArt.opponentPortrait,"approved portrait must be present in the native bundle")
+    }
+}
+
+extension CareerCalendarTests {
+    private func recordedGame(_ role:PlayerRole,seed:UInt64,home:Bool) -> CareerMatch {
+        let template=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "SS":"P",values:PlayerArchetype.initial(for:role).values,seed:seed,home:home,tracked:true,battedBallVersion:1,npcFieldersVersion:1)
+        var game=CareerMatch(random:seed,isHome:home,role:role.rawValue,appearance:true,contact:template.contact,power:template.power,discipline:template.discipline,mastery:template.mastery)
+        game.controlVersion=2;game.trainingEffectsVersion=1;game.detailedFieldVersion=5;game.battedBallVersion=1
+        game.fieldStats=template.fieldStats;game.abilityStats=template.abilityStats;game.npcFielders=template.npcFielders
+        game.npcAttack=MatchNPCAttack.make(roster:template.npcFielders!)
+        game.pitching=MatchPitching(startingFatigue:24);game.fieldPlays=[];game.runnerProfiles=[nil,nil,nil];game.scoutingPerformance = .tracked
+        game.playerRecords=MatchPlayerRecords.make(match:game,careerID:UUID(uuidString:"11111111-1111-4111-8111-111111111111")!,fixtureID:"records-test")
+        return game
+    }
+    func testPlayerRecordsObserveBothRolesHomeAwayWithoutChangingAnyJudgmentOrRNG() throws {
+        for role in PlayerRole.allCases {for home in [false,true] {for seed in 1...8 {
+            var game=recordedGame(role,seed:UInt64(seed),home:home),old=game
+            old.playerRecords=nil
+            game.settle();old.settle();try game.playerRecords?.validate(match:game)
+            for _ in 0..<7 where !game.completed {
+                let code=game.deliveryPitchCode(requested:game.mastery.keys.sorted().first)
+                let input:MatchInput=role == .pitcher ? .pitch:.swing
+                let delivery=game.delivery(pitchCode:code)
+                let control=role == .pitcher ? ManualMatchInput(release:0.68):ManualMatchInput(x:delivery.x,y:delivery.y,timing:0.82)
+                try game.advance(input,pitchCode:code,control:control);try old.advance(input,pitchCode:code,control:control)
+                try game.playerRecords?.validate(match:game)
+                var projected=game;projected.playerRecords=nil;XCTAssertEqual(projected,old)
+            }
+            if !game.completed {try game.advance(.automatic);try old.advance(.automatic)}
+            let ledger=try XCTUnwrap(game.playerRecords);try ledger.validate(match:game)
+            game.playerRecords=nil;XCTAssertEqual(game,old)
+            XCTAssertEqual(ledger.home.battingTotal.runs,game.homeScore);XCTAssertEqual(ledger.away.battingTotal.runs,game.awayScore)
+            XCTAssertTrue(ledger.home.batting.allSatisfy {$0.counts.plateAppearances > 0})
+            XCTAssertTrue(ledger.away.batting.allSatisfy {$0.counts.plateAppearances > 0})
+            let own=home ? ledger.home:ledger.away,id=ledger.careerID.uuidString
+            if role == .batter {
+                let b=try XCTUnwrap(own.batting.first {$0.id == id}).counts
+                XCTAssertEqual(b.plateAppearances,game.line.plateAppearances);XCTAssertEqual(b.atBats,game.line.atBats)
+                XCTAssertEqual(b.hits,game.line.hits);XCTAssertEqual(b.homeRuns,game.line.homeRuns);XCTAssertEqual(b.rbi,game.line.rbi)
+            } else {
+                let p=try XCTUnwrap(own.pitching.first {$0.id == id}).counts
+                XCTAssertEqual(p.pitches,game.line.pitches);XCTAssertEqual(p.outs,game.line.pitchingOuts)
+                XCTAssertEqual(p.runsAllowed,game.line.runsAllowed);XCTAssertEqual(p.hits,game.line.hitsAllowed)
+            }
+        }}}
+    }
+    func testPlayerRecordClassificationsKeepErrorsChoicesAndInheritedRunsSeparate() throws {
+        let game=recordedGame(.batter,seed:10,home:true)
+        var records=try XCTUnwrap(game.playerRecords)
+        records.recordPitch(home:false,relief:true)
+        for result in ["안타","2루타","3루타","실책 출루","야수 선택","삼진"] {
+            records.recordPlate(home:true,order:0,battingRelief:false,pitchingRelief:true,result:result,play:nil,runs:0,outsAdded:result == "삼진" ? 1:0,rbi:0,responsible:[])
+        }
+        let b=records.home.batting[0].counts,p=records.away.pitching[1].counts
+        XCTAssertEqual(b.hits,3);XCTAssertEqual(b.doubles,1);XCTAssertEqual(b.triples,1)
+        XCTAssertEqual(b.reachedOnError,1);XCTAssertEqual(b.fieldersChoices,1);XCTAssertEqual(p.hits,3)
+        records.runners=[records.home.batting[1].id,nil,nil]
+        records.recordPlate(home:true,order:0,battingRelief:false,pitchingRelief:true,result:"홈런",play:nil,runs:2,outsAdded:0,rbi:2,responsible:["away-starter","away-relief"])
+        XCTAssertEqual(records.home.batting[1].counts.runs,1);XCTAssertEqual(records.home.batting[0].counts.runs,1)
+        XCTAssertEqual(records.away.pitching[0].counts.runsAllowed,1);XCTAssertEqual(records.away.pitching[1].counts.runsAllowed,1)
+        XCTAssertEqual(records.away.pitching[1].counts.homeRuns,1)
+        // The P batting slot switches identity on relief without changing the existing P ability model.
+        let order=try XCTUnwrap(records.home.batting.first {$0.position == "P"}).order-1
+        records.recordPlate(home:true,order:order,battingRelief:true,pitchingRelief:true,result:"범타",play:nil,runs:0,outsAdded:2,rbi:0,responsible:[])
+        XCTAssertEqual(records.home.batting.last?.id,records.home.pitching[1].id)
+        XCTAssertEqual(records.away.pitching[1].counts.outs,3)
+    }
+    func testPlayerRecordsOfficialAtomicCompletionResumeAndSeasonReadCountOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try fixture(date:"2026-04-01",role:role),c=store.mainContext
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let rev=s.revision
+            XCTAssertThrowsError(try CareerMatchStore.start(player:p,state:s,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(s.revision,rev)
+            let row=try CareerMatchStore.start(player:p,state:s,in:c),start=try row.snapshot()
+            XCTAssertNotNil(start.playerRecords)
+            XCTAssertTrue(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c).players.isEmpty)
+            let code=p.pitches.first?.code
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:role == .batter ? .watch:.pitch,pitchCode:code,control:role == .batter ? ManualMatchInput():ManualMatchInput(release:0.68),in:c)
+            let partial=row.payload,revision=row.revision,fatigue=p.fatigue,calendar=s.revision
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,partial)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:revision,input:.automatic,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(row.payload,partial);XCTAssertEqual(row.revision,revision);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,calendar)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            let bytes=row.payload,reward=p.fatigue,ledger=try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c)
+            XCTAssertEqual(ledger.fixtureIDs,[row.fixtureID]);XCTAssertEqual(ledger.uncollectedGames,0);XCTAssertGreaterThanOrEqual(ledger.players.count,20)
+            XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",records:[row,row]),ledger)
+            XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c),ledger)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+            XCTAssertEqual(row.payload,bytes);XCTAssertEqual(p.fatigue,reward)
+            XCTAssertTrue(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2027,competition:"highschool",in:c).players.isEmpty)
+            XCTAssertTrue(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"college",in:c).players.isEmpty)
+            XCTAssertTrue(try CareerMatchStore.seasonPlayerRecords(playerID:UUID(),year:2026,competition:"highschool",records:[row]).players.isEmpty)
+            XCTAssertTrue(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",through:GameDate("2026-03-31"),in:c).players.isEmpty)
+        }
+    }
+    func testPlayerRecordsDiskReopenAndLegacyNilNeverBackfillsBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+            let url=dir.appendingPathComponent("player-records.store");var id:UUID!,bytes:Data!
+            do {
+                let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+                var d=PlayerDraft();d.name="원장검증";d.schoolID="hs-ref-001";d.role=role
+                let p=try CareerStore.create(d,schools:SchoolCatalog.load(),in:c),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                id=p.id;try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let row=try CareerMatchStore.start(player:p,state:s,in:c);bytes=row.payload
+            }
+            let store=try CareerStore.makeContainer(url:url),c=store.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+            let row=try CareerMatchStore.start(player:p,state:s,in:c);XCTAssertEqual(row.payload,bytes)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            let complete=row.payload,sum=try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c)
+            c.rollback();XCTAssertEqual(row.payload,complete);XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c),sum)
+            let reopened=try CareerStore.makeContainer(url:url),rc=reopened.mainContext
+            let rp=try XCTUnwrap(rc.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),rs=try XCTUnwrap(rc.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+            let rr=try CareerMatchStore.start(player:rp,state:rs,in:rc),fatigue=rp.fatigue
+            XCTAssertEqual(rr.payload,complete);XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:id,year:2026,competition:"highschool",in:rc),sum)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:rp,state:rs,record:rr,revision:rr.revision,input:.automatic,in:rc))
+            XCTAssertEqual(rp.fatigue,fatigue)
+            // Removing only the optional field simulates a pre-collector completed game. Do not invent its box score.
+            var old=try row.snapshot();old.playerRecords=nil;row.payload=try JSONEncoder().encode(old);try c.save();let original=row.payload
+            XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,original)
+            let missing=try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c)
+            XCTAssertEqual(missing.uncollectedGames,1);XCTAssertTrue(missing.players.isEmpty)
+        }
+    }
+    func testPlayerRecordsValidationRejectsMismatchedTotalsMetadataAndRunnerIdentity() throws {
+        var game=recordedGame(.pitcher,seed:27,home:true);game.settle()
+        let records=try XCTUnwrap(game.playerRecords);try records.validate(match:game)
+        game.playerRecords?.away.batting[0].counts.singles += 1
+        XCTAssertThrowsError(try game.playerRecords?.validate(match:game))
+        game.playerRecords=records;game.playerRecords?.home.pitching[0].counts.runsAllowed += 1
+        XCTAssertThrowsError(try game.playerRecords?.validate(match:game))
+        game.playerRecords=records;game.playerRecords?.runners=["not-a-player",nil,nil]
+        XCTAssertThrowsError(try game.playerRecords?.validate(match:game))
+        game.playerRecords=records;game.playerRecords?.version=2
+        XCTAssertThrowsError(try game.playerRecords?.validate(match:game))
+        let (store,p,s)=try fixture(date:"2026-04-01",role:.batter),c=store.mainContext
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let row=try CareerMatchStore.start(player:p,state:s,in:c)
+        row.fixtureID="mismatched-fixture";XCTAssertThrowsError(try row.snapshot());c.rollback()
+    }
+    func testPlayerRecordsNonAppearanceCollectsOnlyAfterExplicitTeamGameAndOldPendingRemainsNil() throws {
+        let (store,p,s)=try fixture(date:"2026-04-07",role:.pitcher),c=store.mainContext
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let row=try CareerMatchStore.start(player:p,state:s,in:c)
+        XCTAssertFalse(row.appearance);XCTAssertFalse(row.completed)
+        XCTAssertEqual(try row.snapshot().playerRecords?.home.battingTotal.plateAppearances,0)
+        var collected=try row.snapshot();try collected.advance(.automatic);try collected.playerRecords?.validate(match:collected)
+        XCTAssertGreaterThan(collected.playerRecords!.home.battingTotal.plateAppearances,0)
+        XCTAssertFalse([collected.playerRecords!.home,collected.playerRecords!.away].flatMap(\.batting).contains {$0.id == p.id.uuidString})
+        var old=try row.snapshot();old.playerRecords=nil;row.payload=try JSONEncoder().encode(old);try c.save()
+        XCTAssertNil(try CareerMatchStore.start(player:p,state:s,in:c).snapshot().playerRecords)
+        try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+        XCTAssertNil(try row.snapshot().playerRecords)
+        XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c).uncollectedGames,1)
+    }
+}
+
+extension CareerCalendarTests {
+    func testPlayerRecordsSeasonAddsTwoCompletedGamesAndRejectsConflictingDuplicate() throws {
+        var first=recordedGame(.batter,seed:41,home:false),second=first
+        let careerID=first.playerRecords!.careerID,roster=first.npcFielders!
+        let a=SeasonFixture(number:1,date:try GameDate("2026-04-01"),homeID:roster.home.teamID,awayID:roster.away.teamID)
+        let b=SeasonFixture(number:2,date:try GameDate("2026-04-07"),homeID:roster.home.teamID,awayID:roster.away.teamID)
+        first.playerRecords=MatchPlayerRecords.make(match:first,careerID:careerID,fixtureID:a.id)
+        second.random=42;second.playerRecords=MatchPlayerRecords.make(match:second,careerID:careerID,fixtureID:b.id)
+        try first.advance(.automatic);try second.advance(.automatic)
+        let r1=try CareerMatchRecord(verificationPlayerID:careerID,teamID:roster.away.teamID,fixture:a,match:first,fatigue:24)
+        let r2=try CareerMatchRecord(verificationPlayerID:careerID,teamID:roster.away.teamID,fixture:b,match:second,fatigue:24)
+        let total=try CareerMatchStore.seasonPlayerRecords(playerID:careerID,year:2026,competition:"highschool",records:[r1,r2,r1])
+        XCTAssertEqual(total.fixtureIDs,[a.id,b.id].sorted())
+        let own=try XCTUnwrap(total.players.first {$0.id == careerID.uuidString})
+        XCTAssertEqual(own.battingGames,2);XCTAssertEqual(own.batting.hits,first.line.hits+second.line.hits)
+        XCTAssertEqual(own.batting.atBats,first.line.atBats+second.line.atBats)
+        let earlier=try CareerMatchStore.seasonPlayerRecords(playerID:careerID,year:2026,competition:"highschool",through:a.date,records:[r1,r2])
+        XCTAssertEqual(earlier.fixtureIDs,[a.id])
+        var conflict=second
+        conflict.playerRecords=MatchPlayerRecords(version:1,careerID:careerID,fixtureID:a.id,year:2026,competition:"highschool",home:second.playerRecords!.home,away:second.playerRecords!.away,runners:second.playerRecords!.runners)
+        let r3=try CareerMatchRecord(verificationPlayerID:careerID,teamID:roster.away.teamID,fixture:a,match:conflict,fatigue:24)
+        XCTAssertThrowsError(try CareerMatchStore.seasonPlayerRecords(playerID:careerID,year:2026,competition:"highschool",records:[r1,r3]))
     }
 }

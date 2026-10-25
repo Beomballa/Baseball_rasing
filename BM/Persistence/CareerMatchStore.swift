@@ -75,6 +75,12 @@ enum CareerSchemaV3: VersionedSchema {
                 guard preparation.analysis == MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack) else {throw MatchError.invalidRecord}
             }
             try match.validatePitching()
+            try match.playerRecords?.validate(match:match)
+            if let records=match.playerRecords {
+                guard records.careerID == playerID,records.fixtureID == fixtureID,
+                      records.year == (try GameDate(gameDate)).year,
+                      key == Self.key(playerID,fixtureID) else {throw MatchError.invalidRecord}
+            }
             try match.validateDetailedField()
             if let roster=match.npcFielders {
                 guard roster.year == (try GameDate(gameDate)).year,roster.team(home:!match.isHome).teamID == opponentID else {throw MatchError.invalidRecord}
@@ -167,7 +173,9 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             try match.abilityExperience?.validate(match: match)
         }
         match.scoutingPerformance = .tracked
+        if match.npcAttack != nil {match.playerRecords=MatchPlayerRecords.make(match:match,careerID:player.id,fixtureID:fixture.id)}
         if match.appearance { match.settle() }
+        try match.playerRecords?.validate(match:match)
         try match.validateDetailedField()
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"
@@ -196,6 +204,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             if experience.after != experience.before { positionReward = (profile, loadout) }
         }
         try match.validatePitching()
+        try match.playerRecords?.validate(match:match)
         try match.validateDetailedField()
         try match.positionExperience?.validate(match: match)
         try match.abilityExperience?.validate(match: match)
@@ -354,5 +363,59 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
         let fixture=try today(player:player,state:state),competition=try state.competition(for:player,year:fixture.date.year)
         let roster=MatchNPCFielders.make(year:fixture.date.year,competition:competition.membership?.level ?? "highschool",homeID:fixture.homeID,awayID:fixture.awayID)
         return MatchOppositionAnalysis.make(roster:roster,isHome:fixture.homeID == competition.teamID,attack:MatchNPCAttack.make(roster:roster))
+    }
+}
+
+struct SeasonPlayerRecord:Equatable {
+    let teamID:String
+    let id:String
+    var battingGames=0,pitchingGames=0
+    var batting=MatchBattingCounts()
+    var pitching=MatchPitchingCounts()
+}
+struct SeasonPlayerLedger:Equatable {
+    let careerID:UUID
+    let year:Int
+    let competition:String
+    let fixtureIDs:[String]
+    let uncollectedGames:Int
+    let players:[SeasonPlayerRecord]
+}
+extension CareerMatchStore {
+    // Completed match payloads are the ledger. No independent total is incremented on read or result reopening.
+    static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,in context:ModelContext) throws -> SeasonPlayerLedger {
+        let rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == playerID && $0.completed}))
+        return try seasonPlayerRecords(playerID:playerID,year:year,competition:competition,through:through,records:rows)
+    }
+    static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,records:[CareerMatchRecord]) throws -> SeasonPlayerLedger {
+        guard (1...9999).contains(year),["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(competition) else {throw MatchError.invalidRecord}
+        var seen=[String:Data](),fixtures=[String](),missing=0,totals=[String:SeasonPlayerRecord]()
+        for row in records where row.playerID == playerID && row.completed {
+            let date=try GameDate(row.gameDate)
+            guard date.year == year,through.map({date <= $0}) ?? true else {continue}
+            let match=try row.snapshot()
+            guard (match.competition ?? "highschool") == competition else {continue}
+            guard row.key == CareerMatchRecord.key(playerID,row.fixtureID) else {throw MatchError.invalidRecord}
+            if let previous=seen[row.key] {guard previous == row.payload else {throw MatchError.invalidRecord};continue}
+            seen[row.key]=row.payload
+            guard let ledger=match.playerRecords else {missing += 1;continue}
+            fixtures.append(ledger.fixtureID)
+            for team in [ledger.home,ledger.away] {
+                for line in team.batting {
+                    let key=team.teamID+"/"+line.id
+                    var sum=totals[key] ?? SeasonPlayerRecord(teamID:team.teamID,id:line.id)
+                    if line.counts.plateAppearances > 0 {sum.battingGames += 1}
+                    sum.batting.add(line.counts);totals[key]=sum
+                }
+                for line in team.pitching {
+                    let key=team.teamID+"/"+line.id
+                    var sum=totals[key] ?? SeasonPlayerRecord(teamID:team.teamID,id:line.id)
+                    if line.counts.pitches > 0 {sum.pitchingGames += 1}
+                    sum.pitching.add(line.counts);totals[key]=sum
+                }
+            }
+        }
+        return SeasonPlayerLedger(careerID:playerID,year:year,competition:competition,fixtureIDs:fixtures.sorted(),uncollectedGames:missing,
+            players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID})
     }
 }
