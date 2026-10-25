@@ -611,6 +611,14 @@ enum MatchPlanChoice:String,Codable,CaseIterable,Identifiable {
     case onBase,contact,power,control,strikeout,innings
     var id:String {rawValue}
     var label:String {switch self {case .onBase:"출루 우선";case .contact:"컨택 집중";case .power:"장타 공략";case .control:"제구 우선";case .strikeout:"탈삼진 승부";case .innings:"이닝 소화"}}
+    var executionHint:String {switch self {
+    case .onBase:"볼을 끝까지 확인하세요. 무입력은 지켜보기로 처리됩니다."
+    case .contact:"타격 포인트를 공에 맞추고 도착 순간에 스윙하세요."
+    case .power:"좋은 코스를 기다려 정확한 스윙으로 장타를 노리세요."
+    case .control:"포수 추천 코스와 익숙한 구종으로 릴리스 정확도를 확보하세요."
+    case .strikeout:"보유 구종의 속도 차이로 승부하되 볼넷 누적에 주의하세요."
+    case .innings:"삼진만 노리기보다 정확한 투구로 투구 수와 실점을 관리하세요."
+    }}
     static func choices(_ role:String) -> [Self] {role == "batter" ? [.onBase,.contact,.power]:[.control,.strikeout,.innings]}
     var criteria:String {switch self {
     case .onBase:"3타석 이상 · 안타+볼넷1개 이상 / 삼진1개 이하"
@@ -639,6 +647,16 @@ struct MatchOppositionAnalysis:Codable,Equatable {
         defense >= 70 ? "안정적인 수비 · 범타 처리 능력 높음":"수비 경합 여지 · 타구 정확도 활용",
         arm >= 70 ? "강한 송구 · 무리한 추가 진루 주의":"송구 경합에서 주력 활용 가능"
     ]}
+    func reason(for choice:MatchPlanChoice) -> String {
+        switch choice {
+        case .onBase:return defense >= 70 ? "상대 수비가 안정적입니다. 무리한 타구보다 볼넷을 포함한 출루를 목표로 삼으세요.":"안타와 볼넷을 함께 확인해 출루 기회를 늘리는 계획입니다."
+        case .contact:return "상대 수비 최저 포지션은 \(weakestPosition)입니다. 타구 정확도를 우선하되 자동으로 해당 위치에 타구가 가는 것은 아닙니다."
+        case .power:return arm >= 70 ? "상대 송구가 강합니다. 추가 진루 경합보다 장타 기회를 노리는 계획입니다.":"장타가 필요한 계획입니다. 삼진 억제 조건도 함께 확인하세요."
+        case .control:return "상대 주력 \(String(format:"%.1f",speed)). 볼넷으로 주자를 내보내지 않는 승부를 우선합니다."
+        case .strikeout:return speed >= 70 ? "빠른 주자의 인플레이 경합을 줄이기 위한 탈삼진 계획입니다.":"탈삼진 목표와 볼넷 제한을 함께 지켜야 합니다."
+        case .innings:return "상대 타격 성향은 아직 자료가 없습니다. 실제 실점과 투구 아웃을 기준으로 이닝 소화를 확인합니다."
+        }
+    }
     func recommended(role:String) -> MatchPlanChoice {role == "batter" ? (arm >= 70 ? .power:defense >= 70 ? .onBase:.contact):(speed >= 70 ? .strikeout:.control)}
 }
 struct MatchPreparation:Codable,Equatable {
@@ -660,8 +678,8 @@ struct MatchPlanOutcome:Codable,Equatable {
     let checks:[MatchPlanCheck]
     var achieved:Int {checks.filter(\.met).count}
     var label:String {!enough ? "개인 표본 부족":achieved == checks.count ? "계획 달성":achieved > 0 ? "부분 달성":"보완 필요"}
-    static func make(match:CareerMatch) -> Self? {
-        guard match.completed,match.appearance,let preparation=match.preparation else {return nil}
+    static func make(match:CareerMatch,includingLive:Bool=false) -> Self? {
+        guard (match.completed || includingLive),match.appearance,let preparation=match.preparation else {return nil}
         let line=match.line
         func above(_ label:String,_ value:Int,_ target:Int) -> MatchPlanCheck {Self.check(label,value,target,true)}
         func below(_ label:String,_ value:Int,_ target:Int) -> MatchPlanCheck {Self.check(label,value,target,false)}

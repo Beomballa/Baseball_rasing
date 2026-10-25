@@ -619,7 +619,21 @@ struct CareerGameView: View {
                             VStack(spacing: 6) {
                                 scoreHeader(arrivedSnapshot ?? match, record: record)
                                 if assessmentID != nil {Text("목표 수준 평가전 · 표준 조건 / 공식 기록 제외").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("interactiveAssessmentLabel")}
-                                if let plan=match.preparation {Text("경기 계획 · "+plan.choice.label).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("activeGamePlan")}
+                                if let plan=match.preparation {
+                                    NavigationLink {
+                                        ScrollView {VStack(spacing:12) {
+                                            GamePanel(title:"PLAN FILE · 경기 중 점검",onBoard:true,contentSpacing:12) {
+                                                Text(plan.choice.label).font(.headline).foregroundStyle(GameTheme.gold)
+                                                Text(plan.analysis.reason(for:plan.choice)).font(.subheadline)
+                                                Text(plan.choice.executionHint).font(.subheadline)
+                                                if let progress=MatchPlanOutcome.make(match:match,includingLive:true) {
+                                                    Text("진행 중 · 최종 평가는 경기 종료 후").font(.caption).foregroundStyle(GameTheme.gold)
+                                                    ForEach(Array(progress.checks.enumerated()),id:\.offset) {_,check in Text(check.detail).font(.subheadline.monospacedDigit())}
+                                                }
+                                            }
+                                        }.padding(12)}.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("오늘의 경기 계획").toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar)
+                                    } label: {Text("경기 계획 · "+plan.choice.label+"  ›").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("activeGamePlan")}.accessibilityIdentifier("openLiveGamePlan")
+                                }
                                 if typeSize.isAccessibilitySize && !match.completed {
                                     Button("경기 조작부로 이동") { proxy.scrollTo("gameControls", anchor: .bottom) }
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("gameJumpControls")
@@ -996,6 +1010,10 @@ struct CareerGameEntryView:View {
                             }
                             GamePanel(title:"GAME PLAN · 오늘의 계획",onBoard:true,contentSpacing:12) {
                                 Text("추천 · "+analysis.recommended(role:player.roleRaw).label).font(.headline).foregroundStyle(GameTheme.gold)
+                                if let choice {
+                                    Text(analysis.reason(for:choice)).font(.subheadline).accessibilityIdentifier("planReason")
+                                    Text(choice.executionHint).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("planExecutionHint")
+                                }
                                 ForEach(MatchPlanChoice.choices(player.roleRaw)) {plan in
                                     Button {choice=plan} label: {
                                         VStack(alignment:.leading,spacing:6) {

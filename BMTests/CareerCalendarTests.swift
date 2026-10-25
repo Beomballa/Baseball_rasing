@@ -3912,3 +3912,23 @@ extension CareerCalendarTests {
         }
     }
 }
+
+extension CareerCalendarTests {
+    func testPlanGuidanceUsesFrozenAnalysisAndLiveProgressDoesNotFinalize() throws {
+        for role in PlayerRole.allCases {
+            var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "SS":"P",values:PlayerArchetype.initial(for:role).values,seed:101,home:true,tracked:true)
+            let analysis=MatchOppositionAnalysis.make(roster:MatchNPCFielders.make(year:2030,competition:"highschool",homeID:"home",awayID:"away"),isHome:true)
+            for choice in MatchPlanChoice.choices(role.rawValue) {
+                XCTAssertFalse(analysis.reason(for:choice).isEmpty);XCTAssertFalse(choice.executionHint.isEmpty)
+                match.preparation=MatchPreparation(version:1,fixtureID:"test",choice:choice,analysis:analysis)
+                match.completed=false
+                let before=try JSONEncoder().encode(match)
+                XCTAssertNotNil(MatchPlanOutcome.make(match:match,includingLive:true))
+                XCTAssertNil(MatchPlanOutcome.make(match:match))
+                XCTAssertEqual(try JSONEncoder().encode(match).count,before.count)
+                XCTAssertFalse(match.completed)
+                XCTAssertEqual(try JSONDecoder().decode(CareerMatch.self,from:before),match)
+            }
+        }
+    }
+}
