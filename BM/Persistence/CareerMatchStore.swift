@@ -385,20 +385,12 @@ extension CareerMatchStore {
     // Completed match payloads are the ledger. No independent total is incremented on read or result reopening.
     static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,in context:ModelContext) throws -> SeasonPlayerLedger {
         let rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == playerID && $0.completed}))
-        return try seasonPlayerRecords(playerID:playerID,year:year,competition:competition,through:through,records:rows)
+        return try seasonPlayerRecords(playerID:playerID,year:year,competition:competition,through:through,records:rows,automatic:AutomaticLeagueStore.records(playerID:playerID,year:year,in:context))
     }
-    static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,records:[CareerMatchRecord]) throws -> SeasonPlayerLedger {
+    static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,records:[CareerMatchRecord],automatic:[CareerLeagueGameRecord]=[]) throws -> SeasonPlayerLedger {
         guard (1...9999).contains(year),["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(competition) else {throw MatchError.invalidRecord}
         var seen=[String:Data](),fixtures=[String](),missing=0,totals=[String:SeasonPlayerRecord]()
-        for row in records where row.playerID == playerID && row.completed {
-            let date=try GameDate(row.gameDate)
-            guard date.year == year,through.map({date <= $0}) ?? true else {continue}
-            let match=try row.snapshot()
-            guard (match.competition ?? "highschool") == competition else {continue}
-            guard row.key == CareerMatchRecord.key(playerID,row.fixtureID) else {throw MatchError.invalidRecord}
-            if let previous=seen[row.key] {guard previous == row.payload else {throw MatchError.invalidRecord};continue}
-            seen[row.key]=row.payload
-            guard let ledger=match.playerRecords else {missing += 1;continue}
+        func add(_ ledger:MatchPlayerRecords) {
             fixtures.append(ledger.fixtureID)
             for team in [ledger.home,ledger.away] {
                 for line in team.batting {
@@ -414,6 +406,26 @@ extension CareerMatchStore {
                     sum.pitching.add(line.counts);totals[key]=sum
                 }
             }
+        }
+        for row in records where row.playerID == playerID && row.completed {
+            let date=try GameDate(row.gameDate)
+            guard date.year == year,through.map({date <= $0}) ?? true else {continue}
+            let match=try row.snapshot()
+            guard (match.competition ?? "highschool") == competition else {continue}
+            guard row.key == CareerMatchRecord.key(playerID,row.fixtureID) else {throw MatchError.invalidRecord}
+            if let previous=seen[row.key] {guard previous == row.payload else {throw MatchError.invalidRecord};continue}
+            seen[row.key]=row.payload
+            guard let ledger=match.playerRecords else {missing += 1;continue}
+            add(ledger)
+        }
+        for row in automatic where row.playerID == playerID {
+            let date=try GameDate(row.gameDate)
+            guard date.year == year,through.map({date <= $0}) ?? true else {continue}
+            let match=try row.snapshot()
+            guard row.competition == competition,let ledger=match.playerRecords else {continue}
+            let key=CareerMatchRecord.key(playerID,row.fixtureID)
+            if let previous=seen[key] {guard previous == row.payload else {throw MatchError.invalidRecord};continue}
+            seen[key]=row.payload;add(ledger)
         }
         return SeasonPlayerLedger(careerID:playerID,year:year,competition:competition,fixtureIDs:fixtures.sorted(),uncollectedGames:missing,
             players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID})

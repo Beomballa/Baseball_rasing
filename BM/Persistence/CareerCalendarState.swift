@@ -123,7 +123,8 @@ typealias CareerCalendarState = CareerSchemaV2.CalendarState
                 official.append(LeagueOfficialResult(fixtureID:fixture.id,homeScore:match.homeScore,awayScore:match.awayScore))
             } else {pending.insert(fixture.id)}
         }
-        return try AnnualLeague.make(playerID:player.id,schoolIDs:plan.teamIDs,origin:origin,startAge:player.startAge,today:today,year:year,official:official,pending:pending,competitionFixtures:fixtures)
+        let automatic=try state.modelContext.map {try AutomaticLeagueStore.scores(player:player,state:state,year:year,in:$0)} ?? []
+        return try AnnualLeague.make(playerID:player.id,schoolIDs:plan.teamIDs,origin:origin,startAge:player.startAge,today:today,year:year,official:official,pending:pending,competitionFixtures:fixtures,automatic:automatic)
     }
 }
 
@@ -219,5 +220,95 @@ typealias CareerAffiliationRecord = CareerSchemaV9.AffiliationRecord
             }
             if context.hasChanges { try context.save() }
         } catch { context.rollback(); throw error }
+    }
+}
+
+// Other-team games never enter MatchRecord, personal XP or the scouting evidence ledger.
+enum CareerSchemaV14:VersionedSchema {
+    static let versionIdentifier=Schema.Version(14,0,0)
+    static var models:[any PersistentModel.Type] {CareerSchemaV13.models+[LeagueGameRecord.self]}
+    @Model final class LeagueGameRecord {
+        @Attribute(.unique) var key:String
+        var playerID:UUID
+        var fixtureID:String
+        var gameDate:String
+        var competition:String
+        var rulesVersion:String
+        var payload:Data
+        init(playerID:UUID,fixture:SeasonFixture,competition:String,match:CareerMatch) throws {
+            key=Self.key(playerID,fixture.id);self.playerID=playerID;fixtureID=fixture.id;gameDate=fixture.date.description
+            self.competition=competition;rulesVersion="native-league-player-records-v1";payload=try JSONEncoder().encode(match)
+            _ = try snapshot()
+        }
+        static func key(_ playerID:UUID,_ fixtureID:String) -> String {"league/"+CareerMatchRecord.key(playerID,fixtureID)}
+        func snapshot() throws -> CareerMatch {
+            let match=try JSONDecoder().decode(CareerMatch.self,from:payload)
+            guard rulesVersion == "native-league-player-records-v1",key == Self.key(playerID,fixtureID),
+                  match.completed,match.role == "league",!match.appearance,match.isHome,
+                  match.half == 18 || match.half == 17 && match.homeScore > match.awayScore,
+                  match.line == MatchLine(),match.fatigueCost == 0,match.abilityExperience == nil,match.positionExperience == nil,
+                  match.abilityStats == nil,match.fieldStats == nil,match.preparation == nil,match.scoutingPerformance == nil,
+                  match.controlVersion == 2,match.trainingEffectsVersion == nil,
+                  let roster=match.npcFielders,let attack=match.npcAttack,let records=match.playerRecords,
+                  competition == (match.competition ?? "highschool"),competition == roster.competition,
+                  records.careerID == playerID,records.fixtureID == fixtureID,
+                  records.year == (try GameDate(gameDate)).year,roster.year == records.year,
+                  fixtureID == gameDate+"-"+roster.home.teamID+"-"+roster.away.teamID,
+                  match.fieldPlays?.isEmpty == true,match.homeRuns == nil else {throw LeagueError.invalidRecord}
+            try attack.validate(roster:roster);try match.validatePitching();try match.validateDetailedField();try records.validate(match:match)
+            return match
+        }
+    }
+}
+typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
+
+@MainActor enum AutomaticLeagueStore {
+    static func records(playerID:UUID,year:Int?=nil,in context:ModelContext) throws -> [CareerLeagueGameRecord] {
+        guard context.container.schema.entities.contains(where:{$0.name == "LeagueGameRecord"}) else {return []}
+        let first=year.map {String(format:"%04d-01-01",$0)} ?? "0001-01-01",last=year.map {String(format:"%04d-12-31",$0)} ?? "9999-12-31"
+        let rows=try context.fetch(FetchDescriptor<CareerLeagueGameRecord>(predicate:#Predicate {$0.playerID == playerID && $0.gameDate >= first && $0.gameDate <= last}))
+        guard Set(rows.map(\.key)).count == rows.count else {throw LeagueError.invalidRecord}
+        return rows
+    }
+    static func simulate(playerID:UUID,fixture:SeasonFixture,competition:String) throws -> CareerMatch {
+        let seed=("native-league-player-records-v1/"+playerID.uuidString+"/"+competition+"/"+fixture.id).utf8.reduce(UInt64(14695981039346656037)){($0 ^ UInt64($1)) &* 1099511628211}
+        var match=CareerMatch(random:seed,isHome:true,role:"league",appearance:false,contact:60,power:60,discipline:60,mastery:[:])
+        match.competition=competition == "highschool" ? nil:competition
+        match.controlVersion=2;match.detailedFieldVersion=5;match.battedBallVersion=1
+        match.npcFielders=MatchNPCFielders.make(year:fixture.date.year,competition:competition,homeID:fixture.homeID,awayID:fixture.awayID)
+        match.npcAttack=MatchNPCAttack.make(roster:match.npcFielders!)
+        match.pitching=MatchPitching();match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
+        match.playerRecords=MatchPlayerRecords.make(match:match,careerID:playerID,fixtureID:fixture.id)
+        try match.advance(.automatic)
+        try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match)
+        // Automatic games retain their result/rosters/counters, not unused replay geometry.
+        match.fieldPlays=[];match.homeRuns=nil
+        return match
+    }
+    // Stages only today's other-team games; the caller commits these with the date transition in one save.
+    static func completeDay(player:CareerPlayer,state:CareerCalendarState,date:GameDate,in context:ModelContext) throws {
+        guard context.container.schema.entities.contains(where:{$0.name == "LeagueGameRecord"}) else {return}
+        guard player.id == state.playerID,date.description == player.gameDate,date >= (try GameDate(state.originDate)) else {throw CalendarError.staleState}
+        let plan=try state.competition(for:player,year:date.year),level=plan.membership?.level ?? "highschool"
+        let existing=try records(playerID:player.id,year:date.year,in:context)
+        for fixture in plan.fixtures where fixture.date == date && !fixture.includes(plan.teamID) {
+            if let row=existing.first(where:{$0.fixtureID == fixture.id}) {
+                let saved=try row.snapshot()
+                guard row.competition == level,saved.npcFielders?.home.teamID == fixture.homeID,saved.npcFielders?.away.teamID == fixture.awayID else {throw LeagueError.invalidRecord}
+                continue
+            }
+            let match=try simulate(playerID:player.id,fixture:fixture,competition:level)
+            context.insert(try CareerLeagueGameRecord(playerID:player.id,fixture:fixture,competition:level,match:match))
+        }
+    }
+    static func scores(player:CareerPlayer,state:CareerCalendarState,year:Int,in context:ModelContext) throws -> [LeagueOfficialResult] {
+        let plan=try state.competition(for:player,year:year),today=try GameDate(player.gameDate),level=plan.membership?.level ?? "highschool"
+        let fixtures=Dictionary(uniqueKeysWithValues:plan.fixtures.map {($0.id,$0)})
+        return try records(playerID:player.id,year:year,in:context).map {row in
+            let match=try row.snapshot()
+            guard let fixture=fixtures[row.fixtureID],!fixture.includes(plan.teamID),fixture.date < today,
+                  row.competition == level,match.npcFielders?.home.teamID == fixture.homeID,match.npcFielders?.away.teamID == fixture.awayID else {throw LeagueError.invalidRecord}
+            return LeagueOfficialResult(fixtureID:row.fixtureID,homeScore:match.homeScore,awayScore:match.awayScore)
+        }
     }
 }

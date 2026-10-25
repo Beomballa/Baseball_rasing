@@ -3432,3 +3432,32 @@ extension CareerFlowTests {
         app.terminate()
     }
 }
+
+extension CareerFlowTests {
+    @MainActor func testAutomaticLeagueBothRolesCompletedGameThenDayShowsThreeResultsWithoutExtraPersonalGame() throws {
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification"];app.launch()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout:90))
+        for role in ["batter","pitcher"] {
+            let pick=app.buttons["homeRole-"+role];revealFit(pick,in:app);pick.tap()
+            let rest=app.buttons["restToday"];revealFit(rest,in:app);rest.tap()
+            revealFit(app.buttons["openCareerGame"],in:app);openCareerGame(in:app)
+            let auto=app.buttons["gameAutomatic"];XCTAssertTrue(auto.waitForExistence(timeout:10));revealFit(auto,in:app);auto.tap()
+            app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout:15))
+            let home=app.buttons["gameReturnHome"];revealFit(home,in:app);home.tap()
+            let personal=app.staticTexts["homeLeagueRecord"];revealFit(personal,in:app);let before=personal.label
+            let league=app.buttons["openAnnualLeague"];revealFit(league,in:app);league.tap()
+            XCTAssertTrue(app.staticTexts["leagueProgress"].waitForExistence(timeout:8));XCTAssertTrue(app.staticTexts["leagueProgress"].label.contains("완료 1 / 대상 90"))
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let next=app.buttons["advanceDay"];revealFit(next,in:app);next.tap()
+            let advanced=XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","2026-04-02"),object:app.staticTexts["calendarDate"])
+            XCTAssertEqual(XCTWaiter.wait(for:[advanced],timeout:10),.completed)
+            revealFit(personal,in:app);XCTAssertEqual(personal.label,before)
+            revealFit(league,in:app);league.tap()
+            XCTAssertTrue(app.staticTexts["leagueProgress"].waitForExistence(timeout:8));XCTAssertTrue(app.staticTexts["leagueProgress"].label.contains("완료 3 / 대상 90"))
+            let shot=XCTAttachment(screenshot:app.screenshot());shot.name="automatic-league-records-"+role;shot.lifetime = .keepAlways;add(shot)
+            app.navigationBars.buttons.element(boundBy:0).tap()
+        }
+        app.terminate()
+    }
+}

@@ -81,12 +81,13 @@ struct CalendarAdvanceFailure: LocalizedError {
         let nextDate = today.adding(days: 1).description
         let observationDue = try ScoutingPeriod(origin: GameDate(state.originDate), today: today).index
             != ScoutingPeriod(origin: GameDate(state.originDate), today: GameDate(nextDate)).index
-        if !prepared { player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest) }
-        player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.sleep)
-        player.gameDate = nextDate
-        state.actionDate = nil
-        state.revision += 1
         do {
+            try AutomaticLeagueStore.completeDay(player:player,state:state,date:today,in:context)
+            if !prepared { player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest) }
+            player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.sleep)
+            player.gameDate = nextDate
+            state.actionDate = nil
+            state.revision += 1
             try CareerPathStore.synchronize(player: player, calendar: state, in: context)
             _ = try ContractEvaluationStore.captureIfDue(player:player,calendar:state,in:context)
             if observationDue { _ = try ScoutingObservationStore.insertIfNeeded(player: player, calendar: state, in: context) }

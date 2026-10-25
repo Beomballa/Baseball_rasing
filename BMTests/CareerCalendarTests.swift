@@ -4514,3 +4514,207 @@ extension CareerCalendarTests {
         XCTAssertThrowsError(try CareerMatchStore.seasonPlayerRecords(playerID:careerID,year:2026,competition:"highschool",records:[r1,r3]))
     }
 }
+
+extension CareerCalendarTests {
+    private func completeLeagueOpening(_ role:PlayerRole) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,CareerMatchRecord) {
+        let (store,p,s)=try fixture(date:"2026-04-01",role:role),c=store.mainContext
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let row=try CareerMatchStore.start(player:p,state:s,in:c)
+        try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+        return (store,p,s,row)
+    }
+    func testAutomaticLeagueSimulatesDeterministicCompleteNPCBoxScoreAcrossLevels() throws {
+        let id=UUID(uuidString:"22222222-2222-4222-8222-222222222222")!
+        for level in ["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"] {
+            let teams=level == "highschool" ? ["hs-ref-001","hs-ref-002"]:CareerTeamDirectory.teams(level:level)
+            let f=SeasonFixture(number:1,date:try GameDate("2026-04-01"),homeID:teams[0],awayID:teams[1])
+            let a=try AutomaticLeagueStore.simulate(playerID:id,fixture:f,competition:level)
+            XCTAssertEqual(a,try AutomaticLeagueStore.simulate(playerID:id,fixture:f,competition:level))
+            XCTAssertTrue(a.completed);XCTAssertFalse(a.appearance);XCTAssertEqual(a.line,MatchLine());XCTAssertEqual(a.fatigueCost,0)
+            XCTAssertNil(a.abilityExperience);XCTAssertNil(a.positionExperience);XCTAssertNil(a.scoutingPerformance)
+            XCTAssertEqual(a.fieldPlays,[]);XCTAssertNil(a.homeRuns)
+            let box=try XCTUnwrap(a.playerRecords)
+            XCTAssertEqual(box.home.battingTotal.runs,a.homeScore);XCTAssertEqual(box.away.battingTotal.runs,a.awayScore)
+            XCTAssertGreaterThan(box.home.battingTotal.plateAppearances,0);XCTAssertGreaterThan(box.away.battingTotal.plateAppearances,0)
+            XCTAssertEqual(box.home.pitchingTotal.runsAllowed,a.awayScore)
+            XCTAssertFalse((box.home.batting+box.away.batting).contains {$0.id == id.uuidString})
+            let row=try CareerLeagueGameRecord(playerID:id,fixture:f,competition:level,match:a)
+            XCTAssertEqual(try row.snapshot(),a)
+        }
+    }
+    func testAutomaticLeagueDateSaveAddsTwoOtherGamesAndSeasonRecordsOnlyOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,own)=try completeLeagueOpening(role),c=store.mainContext
+            let original=own.payload,rev=s.revision,fatigue=p.fatigue
+            let reports=try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload)
+            XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c).results.count,1)
+            XCTAssertTrue(try AutomaticLeagueStore.records(playerID:p.id,in:c).isEmpty)
+            // A repeated staging call must not create duplicate fixtures or commit the date.
+            try AutomaticLeagueStore.completeDay(player:p,state:s,date:GameDate(p.gameDate),in:c)
+            try AutomaticLeagueStore.completeDay(player:p,state:s,date:GameDate(p.gameDate),in:c)
+            XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,in:c).count,2);c.rollback()
+            try CalendarProgression.advanceDay(player:p,state:s,revision:rev,in:c)
+            let rows=try AutomaticLeagueStore.records(playerID:p.id,in:c),payloads=Dictionary(uniqueKeysWithValues:rows.map {($0.key,$0.payload)})
+            XCTAssertEqual(rows.count,2);XCTAssertEqual(p.gameDate,"2026-04-02");XCTAssertEqual(p.fatigue,max(0,fatigue-4))
+            let league=try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c)
+            XCTAssertEqual(league.results.count,3);XCTAssertEqual(league.results.filter(\.automatic).count,2)
+            for row in rows {
+                let m=try row.snapshot(),score=try XCTUnwrap(league.results.first {$0.id == row.fixtureID})
+                XCTAssertEqual(score.homeScore,m.homeScore);XCTAssertEqual(score.awayScore,m.awayScore)
+                XCTAssertFalse(score.fixture.includes(p.schoolID))
+            }
+            let totals=try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c)
+            XCTAssertEqual(totals.fixtureIDs.count,3);XCTAssertEqual(totals.uncollectedGames,0)
+            XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",records:[own],automatic:rows+rows),totals)
+            for _ in 0..<2 {
+                XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),league)
+                XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c),totals)
+            }
+            XCTAssertEqual(own.payload,original);XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).count,1)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reports)
+            XCTAssertEqual(Dictionary(uniqueKeysWithValues:try AutomaticLeagueStore.records(playerID:p.id,in:c).map {($0.key,$0.payload)}),payloads)
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:rev,automaticRest:true,in:c))
+        }
+    }
+    func testAutomaticLeagueFailedDayRollsBackGamesCountersDateAndRetryIsDeterministic() throws {
+        let (store,p,s,own)=try completeLeagueOpening(.batter),c=store.mainContext
+        let original=own.payload,rev=s.revision,fatigue=p.fatigue,before=try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c)
+        var staged=[String:CareerMatch]()
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:rev,in:c,save:{context in
+            staged=try Dictionary(uniqueKeysWithValues:AutomaticLeagueStore.records(playerID:p.id,in:context).map {($0.fixtureID,try $0.snapshot())})
+            throw MatchError.invalidRecord
+        }))
+        XCTAssertEqual(staged.count,2);XCTAssertEqual(p.gameDate,"2026-04-01");XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,rev)
+        XCTAssertTrue(try AutomaticLeagueStore.records(playerID:p.id,in:c).isEmpty);XCTAssertEqual(own.payload,original)
+        XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),before)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:rev,in:c)
+        XCTAssertEqual(try Dictionary(uniqueKeysWithValues:AutomaticLeagueStore.records(playerID:p.id,in:c).map {($0.fixtureID,try $0.snapshot())}),staged)
+    }
+    func testAutomaticLeagueBulkStopsBeforeFutureFixtureAndPendingGameBlocksWithoutRows() async throws {
+        let (store,p,s,own)=try completeLeagueOpening(.batter),c=store.mainContext
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+        let rows=try AutomaticLeagueStore.records(playerID:p.id,in:c).map(\.payload)
+        let batch=try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
+        XCTAssertEqual(batch.stop,.fixture);XCTAssertEqual(p.gameDate,"2026-04-07")
+        XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,in:c).map(\.payload),rows)
+        XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c).fixtureIDs.count,3)
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let pending=try CareerMatchStore.start(player:p,state:s,in:c),raw=pending.payload
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c))
+        XCTAssertEqual(pending.payload,raw);XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,in:c).count,2)
+        try CareerMatchStore.advance(player:p,state:s,record:pending,revision:pending.revision,input:.automatic,in:c)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+        XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,in:c).count,4);XCTAssertTrue(own.completed)
+    }
+    func testAutomaticLeagueRejectsDamagedFutureAndOwnFixtureRowsWithoutResettingThem() throws {
+        let (store,p,s,own)=try completeLeagueOpening(.batter),c=store.mainContext
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+        let row=try XCTUnwrap(AutomaticLeagueStore.records(playerID:p.id,in:c).first),raw=row.payload
+        var m=try row.snapshot();m.homeScore += 1;row.payload=try JSONEncoder().encode(m)
+        XCTAssertThrowsError(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c))
+        XCTAssertThrowsError(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c));c.rollback()
+        XCTAssertEqual(row.payload,raw)
+        let plan=try s.competition(for:p,year:2026)
+        let f=try XCTUnwrap(plan.fixtures.first {$0.date > (try! GameDate(p.gameDate)) && !$0.includes(plan.teamID)})
+        c.insert(try CareerLeagueGameRecord(playerID:p.id,fixture:f,competition:"highschool",match:AutomaticLeagueStore.simulate(playerID:p.id,fixture:f,competition:"highschool")))
+        XCTAssertThrowsError(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c));c.rollback()
+        let ownFixture=try XCTUnwrap(plan.fixtures.first {$0.id == own.fixtureID})
+        c.insert(try CareerLeagueGameRecord(playerID:p.id,fixture:ownFixture,competition:"highschool",match:AutomaticLeagueStore.simulate(playerID:p.id,fixture:ownFixture,competition:"highschool")))
+        XCTAssertThrowsError(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c))
+        XCTAssertThrowsError(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c));c.rollback()
+        XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,in:c).count,2)
+    }
+    func testAutomaticLeagueFullThirtyGameSeasonKeepsNinetyUniqueScoresAndCounters() throws {
+        let (store,p,s)=try fixture(date:"2026-04-01",role:.pitcher),c=store.mainContext
+        let fixtures=try s.fixtures(for:p,year:2026)
+        for fixture in fixtures {
+            p.gameDate=fixture.date.description;try c.save()
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let own=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:own,revision:own.revision,input:.automatic,in:c)
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+        }
+        let league=try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c)
+        XCTAssertEqual(league.results.count,90);XCTAssertTrue(league.standings.allSatisfy {$0.games == 30})
+        XCTAssertEqual(league.standings.map(\.wins).reduce(0,+),league.standings.map(\.losses).reduce(0,+))
+        XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,in:c).count,60)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).count,30)
+        let stats=try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c)
+        XCTAssertEqual(stats.fixtureIDs.count,90);XCTAssertEqual(Set(stats.fixtureIDs).count,90)
+        let own=try XCTUnwrap(stats.players.first {$0.id == p.id.uuidString});XCTAssertEqual(own.pitchingGames,6)
+        p.gameDate="2027-04-01";try CareerPathStore.synchronize(player:p,calendar:s,in:c);try c.save()
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let next=try CareerMatchStore.start(player:p,state:s,in:c)
+        try CareerMatchStore.advance(player:p,state:s,record:next,revision:next.revision,input:.automatic,in:c)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+        XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,year:2026,in:c).count,60)
+        XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,year:2027,in:c).count,2)
+        XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c),stats)
+        XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),league)
+        XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2027,competition:"highschool",in:c).fixtureIDs.count,3)
+    }
+    func testAutomaticLeagueV13MigrationKeepsPastScoresPendingRecordsAndOtherCareer() async throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("auto-league-v13.store")
+        let original=try await {() async throws -> (UUID,UUID,[String:Data],AnnualLeague,[Data]) in
+            let schema=Schema(versionedSchema:CareerSchemaV13.self)
+            let store=try ModelContainer(for:schema,configurations:[ModelConfiguration("Career",schema:schema,url:url,cloudKitDatabase:.none)]),c=store.mainContext;c.autosaveEnabled=false
+            var d=PlayerDraft();d.schoolID="hs-ref-001";d.name="자동기록타자"
+            let p=try CareerStore.create(d,schools:SchoolCatalog.load(),in:c)
+            d.role = .pitcher;d.name="독립투수";let other=try CareerStore.create(d,schools:SchoolCatalog.load(),in:c)
+            let s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == p.id}),os=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == other.id})
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let first=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:first,revision:first.revision,input:.automatic,in:c)
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+            _ = try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c);_ = try CareerMatchStore.start(player:p,state:s,in:c)
+            try CalendarProgression.rest(player:other,state:os,revision:os.revision,in:c);_ = try CareerMatchStore.start(player:other,state:os,in:c)
+            let rows=try c.fetch(FetchDescriptor<CareerMatchRecord>())
+            return (p.id,other.id,Dictionary(uniqueKeysWithValues:rows.map {($0.key,$0.payload)}),try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload))
+        }()
+        let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+        let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == original.0}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == p.id})
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues:try c.fetch(FetchDescriptor<CareerMatchRecord>()).map {($0.key,$0.payload)}),original.2)
+        XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),original.3)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),original.4)
+        XCTAssertTrue(try AutomaticLeagueStore.records(playerID:p.id,in:c).isEmpty)
+        let pending=try CareerMatchStore.start(player:p,state:s,in:c)
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c))
+        try CareerMatchStore.advance(player:p,state:s,record:pending,revision:pending.revision,input:.automatic,in:c)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+        let saved=try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c)
+        for old in original.3.results {XCTAssertEqual(saved.results.first {$0.id == old.id},old)}
+        XCTAssertEqual(try AutomaticLeagueStore.records(playerID:p.id,in:c).count,2)
+        XCTAssertTrue(try AutomaticLeagueStore.records(playerID:original.1,in:c).isEmpty)
+        let again=try CareerStore.makeContainer(url:url),rc=again.mainContext
+        let rp=try XCTUnwrap(rc.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == original.0}),rs=try XCTUnwrap(rc.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == rp.id})
+        XCTAssertEqual(try AnnualLeagueStore.load(player:rp,state:rs,year:2026,in:rc),saved)
+        XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c),try CareerMatchStore.seasonPlayerRecords(playerID:rp.id,year:2026,competition:"highschool",in:rc))
+        let other=try XCTUnwrap(rc.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == original.1})
+        XCTAssertEqual(other.gameDate,"2026-04-01")
+        let otherRows=try rc.fetch(FetchDescriptor<CareerMatchRecord>()).filter {$0.playerID == other.id}
+        XCTAssertEqual(otherRows.count,1);XCTAssertEqual(otherRows[0].payload,original.2[otherRows[0].key])
+    }
+}
+
+extension CareerCalendarTests {
+    func testAutomaticLeagueAdultRegistrationUsesItsOwnCompetitionAndNoSchoolCounters() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s,offers)=try acceptance(role),c=store.mainContext
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offers.offers[0].id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let row=try CareerMatchStore.start(player:p,state:s,in:c)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            let year=try GameDate(p.gameDate).year,plan=try s.competition(for:p,year:year),level=try XCTUnwrap(plan.membership?.level)
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+            let automatic=try AutomaticLeagueStore.records(playerID:p.id,in:c)
+            XCTAssertEqual(automatic.count,2);XCTAssertTrue(automatic.allSatisfy {$0.competition == level})
+            XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:year,in:c).results.count,3)
+            XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:year,competition:level,in:c).fixtureIDs.count,3)
+            XCTAssertTrue(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:year,competition:"highschool",in:c).players.isEmpty)
+            XCTAssertFalse(try automatic.map {try $0.snapshot().playerRecords!.home.teamID}.contains(p.schoolID))
+        }
+    }
+}

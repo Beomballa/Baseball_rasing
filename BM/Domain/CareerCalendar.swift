@@ -153,7 +153,8 @@ struct AnnualLeague: Equatable {
         }
     }
     static func make(playerID:UUID,schoolIDs:[String],origin:GameDate,startAge:Int,today:GameDate,year:Int,
-                     official:[LeagueOfficialResult],pending:Set<String>=[],competitionFixtures:[SeasonFixture]?=nil) throws -> AnnualLeague {
+                     official:[LeagueOfficialResult],pending:Set<String>=[],competitionFixtures:[SeasonFixture]?=nil,
+                     automatic:[LeagueOfficialResult]=[]) throws -> AnnualLeague {
         guard today >= origin,(origin.year...today.year).contains(year) else {throw LeagueError.invalidRecord}
         let fixtures=try competitionFixtures ?? SeasonSchedule.fixtures(year:year,schoolIDs:schoolIDs).filter {
             $0.date >= origin && origin.age(startingAt:startAge,on:$0.date) <= 18
@@ -163,11 +164,18 @@ struct AnnualLeague: Equatable {
             eligible[$0.fixtureID].map {$0.date <= today} == true && $0.homeScore >= 0 && $0.awayScore >= 0
         }),pending.allSatisfy({eligible[$0] != nil}),Set(official.map(\.fixtureID)).isDisjoint(with:pending) else {throw LeagueError.invalidRecord}
         guard !pending.contains(where:{eligible[$0]!.date < today}) else {throw LeagueError.unfinishedPast}
+        guard Set(automatic.map(\.fixtureID)).count == automatic.count,automatic.allSatisfy({
+            eligible[$0.fixtureID].map {$0.date < today} == true && $0.homeScore >= 0 && $0.awayScore >= 0
+        }),Set(automatic.map(\.fixtureID)).isDisjoint(with:official.map(\.fixtureID)),
+          Set(automatic.map(\.fixtureID)).isDisjoint(with:pending) else {throw LeagueError.invalidRecord}
         let actual=Dictionary(uniqueKeysWithValues:official.map {($0.fixtureID,$0)})
+        let simulated=Dictionary(uniqueKeysWithValues:automatic.map {($0.fixtureID,$0)})
         var results:[LeagueResult]=[]
         for fixture in fixtures {
             if let saved=actual[fixture.id] {
                 results.append(LeagueResult(fixture:fixture,homeScore:saved.homeScore,awayScore:saved.awayScore,automatic:false))
+            } else if let saved=simulated[fixture.id] {
+                results.append(LeagueResult(fixture:fixture,homeScore:saved.homeScore,awayScore:saved.awayScore,automatic:true))
             } else if fixture.date < today {
                 let score=automaticScore(playerID:playerID,fixture:fixture)
                 results.append(LeagueResult(fixture:fixture,homeScore:score.0,awayScore:score.1,automatic:true))
