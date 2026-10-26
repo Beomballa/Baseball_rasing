@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run privacy-hook checks against disposable Git repositories, never user saves."""
 import os
+import json
+import struct
 from pathlib import Path
 import shutil
 import subprocess
@@ -21,6 +23,24 @@ class GitPrivacyTests(unittest.TestCase):
             self.assertEqual(blob_issues(path, b"unreviewed"), ["unreviewed-game-art"])
         self.assertFalse(allowed_path("BM/Resources/MatchArt/private.png"))
         self.assertFalse(allowed_path("qa/screenshot.png"))
+
+    def test_named_app_icons_are_opaque_square_and_only_reviewed_catalogs_are_allowed(self):
+        catalog = ROOT / "BM/Resources/Assets.xcassets"
+        for name in ["AppIcon", "AppIconQA"]:
+            icon = catalog / (name + ".appiconset")
+            spec = json.loads((icon / "Contents.json").read_text())
+            self.assertEqual(spec["images"], [{"filename": name + ".png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}])
+            path = str((icon / (name + ".png")).relative_to(ROOT))
+            blob = (ROOT / path).read_bytes()
+            self.assertEqual(blob[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(struct.unpack(">IIBB", blob[16:26]), (1024, 1024, 8, 2))
+            self.assertTrue(allowed_path(path))
+            self.assertEqual(blob_issues(path, blob), [])
+            self.assertTrue(allowed_path(str((icon / "Contents.json").relative_to(ROOT))))
+        self.assertTrue(allowed_path("BM/Resources/Assets.xcassets/Contents.json"))
+        self.assertTrue(allowed_path("BM.xcodeproj/xcshareddata/xcschemes/BM-QA.xcscheme"))
+        for path in ["BM/Resources/Assets.xcassets/private.png", "BM/Resources/Assets.xcassets/AppIcon.appiconset/private.png", "BM/Resources/Assets.xcassets/Unknown.appiconset/Contents.json", "BM.xcodeproj/xcshareddata/xcschemes/Private.xcscheme"]:
+            self.assertFalse(allowed_path(path), path)
 
     def test_required_source_paths_only(self):
         for path in ["BM/App/BMApp.swift", "BMTests/CareerStoreTests.swift", "BM/Resources/schools.json",

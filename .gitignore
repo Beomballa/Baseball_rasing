@@ -147,3 +147,11 @@
 
 # Approved V5 common NPC portrait, copied from the existing prototype.
 !/BM/Resources/MatchArt/opponent-avatar-v1.png
+
+# Reviewed normal/QA app icons and the shared QA scheme only.
+!/BM.xcodeproj/xcshareddata/xcschemes/BM-QA.xcscheme
+!/BM/Resources/Assets.xcassets/Contents.json
+!/BM/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json
+!/BM/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+!/BM/Resources/Assets.xcassets/AppIconQA.appiconset/Contents.json
+!/BM/Resources/Assets.xcassets/AppIconQA.appiconset/AppIconQA.png
