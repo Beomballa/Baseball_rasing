@@ -26,38 +26,41 @@ struct ScoutingObservationHomePanel: View {
         } catch { self.error = error.localizedDescription }
     }
     var body: some View {
-        GamePanel(title: archive ? "28일 관찰 · 저장한 보고서" : "스카우트 관찰 · 내 기록", onBoard: true, contentSpacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
+            ScoutDeskHeading(title: archive ? "관찰 파일 · 지난 이력" : "스카우트 데스크", subtitle: "28일마다 남기는 선수의 발자취")
             if let error {
-                Text(error).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutArchiveError")
+                Text(error).font(.body).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutArchiveError")
                 Button("보고서 저장 다시 확인", action: refresh).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutArchiveRetry")
             } else if let row = own.first, let value = try? row.snapshot() {
-                Text("\(value.period + 1)차 관찰 · \(value.observedDate) 확정").font(.subheadline.bold()).accessibilityIdentifier("scoutSavedPeriod")
-                Text("다음 관찰 \(value.nextDate) · 게임 날짜 기준").font(.caption.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutNextObservation")
-                Text("보고서 \(own.count)건 · 같은 주기의 자료는 다시 뽑지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("scoutSavedCount")
-                ScoutingInterestList(value:value,compact:true)
-                NavigationLink { SavedScoutingObservationView(value: value) } label: { Text("확정 보고서 보기") }
-                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openSavedScoutingReport")
+                ScoutPeriodRibbon(value: value, count: own.count)
+                ScoutingInterestList(value: value, compact: true)
+                NavigationLink { SavedScoutingObservationView(value: value) } label: {
+                    HStack { Text("확정 보고서 펼치기"); Spacer(); Text("›") }
+                }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("openSavedScoutingReport")
                 if archive && own.count > 1 {
                     HomeDetailButton(title: "지난 보고서 \(own.count - 1)건", expanded: $showHistory, identifier: "scoutHistoryDetails")
                     if showHistory {
                         ForEach(own.dropFirst()) { old in
                             if let snapshot = try? old.snapshot() {
                                 NavigationLink { SavedScoutingObservationView(value: snapshot) } label: {
-                                    Text("\(snapshot.period + 1)차 · \(snapshot.observedDate)")
+                                    HStack { Text("FILE \(snapshot.period + 1)").monospaced(); Spacer(); Text(ManagementDisplay.date(snapshot.observedDate)) }
                                 }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutHistory-\(snapshot.period)")
                             }
                         }
                     }
                 }
             } else {
-                Text("현재 주기 보고서 확인 중").font(.subheadline)
+                Text("현재 주기 보고서 확인 중").font(.body)
             }
             if !archive {
-                NavigationLink { ScoutingReportView(player: player, calendar: calendar) } label: { Text("내 관찰 보고서 · 현재 자료/이력") }
+                NavigationLink { ScoutingReportView(player: player, calendar: calendar) } label: { Text("현재 능력 · 출전 자료 보기") }
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openScoutingReport")
             }
-            Text("구단 관심은 확정 보고서에 고정합니다. 실제 제의와 심사 결과는 커리어의 계약 메뉴에서 확인하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-        }.task(id: "\(player.id)-\(player.gameDate)") { refresh() }
+            Text("관심 구단과 실제 제의는 별개입니다. 자격·심사·제의는 계약 메뉴에서 확인하세요.")
+                .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+        }.padding(16).background(ScoutDeskPalette.surface)
+            .overlay(ManagementStepFrame().stroke(GameTheme.boardLine, lineWidth: 2))
+            .task(id: "\(player.id)-\(player.gameDate)") { refresh() }
     }
 }
 
@@ -66,126 +69,183 @@ struct ScoutingInterestList: View {
     var compact = false
     @State private var showAll = false
     var body: some View {
-        VStack(alignment:.leading,spacing:16) {
-            if let interests=value.interests {
-                Text("관심 구단 \(interests.entries.count)곳").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutInterestCount")
-                if interests.entries.isEmpty {
-                    Text("이번 관찰에서 관심 구단이 없습니다.").font(.subheadline).accessibilityIdentifier("scoutInterestEmpty")
-                    ForEach(interests.pendingReasons,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
-                } else {
-                    ForEach(Array((compact && !showAll ? Array(interests.entries.prefix(2)):interests.entries))) { entry in
-                        VStack(alignment:.leading,spacing:8) {
-                            Text(entry.name + " · " + entry.level.label).font(.subheadline.bold()).accessibilityIdentifier("scoutInterest-\(entry.id)")
-                            Text(entry.roleLabel).font(.subheadline).foregroundStyle(GameTheme.gold)
-                            ForEach(entry.reasons,id:\.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
-                        }.padding(.vertical,4)
-                    }
-                    if compact && interests.entries.count > 2 {HomeDetailButton(title:"관심 구단 전체 \(interests.entries.count)곳",expanded:$showAll,identifier:"scoutInterestDetails")}
+        VStack(alignment: .leading, spacing: 16) {
+            if let interests = value.interests {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("관심 구단").font(.headline)
+                    Spacer()
+                    Text("\(interests.entries.count)곳").font(.title2.monospaced().bold()).foregroundStyle(GameTheme.gold).accessibilityLabel("관심 구단 \(interests.entries.count)곳").accessibilityIdentifier("scoutInterestCount")
                 }
-                Text("\(value.observedDate) 기준 · 다음 관찰 \(value.nextDate)").font(.caption.monospaced()).foregroundStyle(GameTheme.boardMuted)
+                if interests.entries.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("아직 도착하지 않은 관찰 카드").font(.headline).accessibilityIdentifier("scoutInterestEmpty")
+                        if let reason = interests.pendingReasons.first { Text(reason).font(.subheadline).foregroundStyle(GameTheme.boardMuted) }
+                        if interests.pendingReasons.count > 1 {
+                            DisclosureGroup("추가 확인 조건 \(interests.pendingReasons.count - 1)개") {
+                                ForEach(Array(interests.pendingReasons.dropFirst()), id: \.self) { Text($0).font(.subheadline).padding(.top, 8) }
+                            }.font(.subheadline).tint(GameTheme.gold)
+                        }
+                    }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(ScoutDeskPalette.ink).overlay(Rectangle().strokeBorder(GameTheme.boardLine, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+                } else {
+                    ForEach(compact && !showAll ? Array(interests.entries.prefix(2)) : interests.entries) { entry in
+                        ScoutInterestCard(entry: entry)
+                    }
+                    if compact && interests.entries.count > 2 {
+                        HomeDetailButton(title: "관심 구단 전체 \(interests.entries.count)곳", expanded: $showAll, identifier: "scoutInterestDetails")
+                    }
+                }
+                Text("\(ManagementDisplay.date(value.observedDate)) 확정 · 다음 \(ManagementDisplay.date(value.nextDate))")
+                    .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             } else {
-                Text("이전 보고서는 구단 관심을 기록하지 않았습니다. 다음 관찰부터 확인할 수 있습니다.").font(.caption).accessibilityIdentifier("scoutInterestLegacy")
+                Text("이전 보고서는 구단 관심을 기록하지 않았습니다. 다음 관찰부터 확인할 수 있습니다.")
+                    .font(.subheadline).accessibilityIdentifier("scoutInterestLegacy")
             }
-            Text(value.age < 20 ? "고교 관찰 관심 · 20세 전 정식 제의 없음" : "관심은 계약 제의가 아닙니다. 진로·권리·등록·예산 심사는 별도입니다.").font(.caption).foregroundStyle(GameTheme.gold)
+            ScoutStatusTag(text: value.age < 20 ? "진로 준비 · 정식 제의는 20세부터" : "관찰 관심 ≠ 정식 제의", color: GameTheme.gold)
         }
     }
 }
 
 struct SavedScoutingObservationView: View {
     let value: ScoutingObservation
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var showOriginals = false
     @State private var showClubs = false
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                CareerProjectReportEvidence(playerID:value.playerID,period:value.period)
-                GamePanel(title:"관심 구단 · 확정 관찰",onBoard:true,contentSpacing:16) {ScoutingInterestList(value:value)}
-                ScoutDossier(title: "\(value.period + 1)차 관찰 보고서", code: "OBSERVATION / FIXED RECORD", stamp: "관찰 확정", isPreview: false) {
-                    HStack(alignment: .top, spacing: 16) {
-                        PixelPlayer(appearance: value.appearance).frame(width: 38, height: 54).accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("\(value.name) #\(value.number)").font(.headline)
-                            Text("\(value.age)세 · \(value.role.label) · " + (value.role == .batter ? FieldPosition(rawValue: value.position)?.label ?? value.position : value.hand == "left" ? "좌투" : "우투")).font(.subheadline)
-                            Text(value.age <= 18 ? value.school : "등록 학교 · \(value.school)").font(.subheadline)
-                        }
-                    }
-                    Text("관찰일 \(value.observedDate)").font(.subheadline.bold()).accessibilityIdentifier("scoutFrozenDate")
-                    Text("주기 \(value.periodStart) ~ \((try? GameDate(value.nextDate).adding(days: -1).description) ?? "—")").font(.caption.monospaced())
-                    Text("당시 자료를 보존한 보고서입니다. 현재 능력·출전 기록과 다를 수 있습니다.").font(.caption).foregroundStyle(ScoutDossierInk.muted)
-                }
-                GamePanel(title: "역할별 기량 H · 당시 영구 능력", onBoard: true, contentSpacing: 16) {
-                    ForEach(value.grades) { grade in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(grade.label + "  " + (grade.score.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "평가 대기"))
-                                .font(.headline.monospaced()).accessibilityIdentifier("scoutGrade-\(grade.id)")
-                            Text(grade.detail).font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        }
-                    }
-                    Text("H = 역할 기초점수95% + 멘탈5% · 게임 내 기량 참고값이며 계약 합격을 뜻하지 않습니다.").font(.caption).foregroundStyle(GameTheme.gold)
-                    HomeRadarChart(values: value.abilities.axes)
-                    HomeDetailButton(title: "관찰 당시 원본 능력·구종", expanded: $showOriginals, identifier: "scoutFrozenAbilities")
-                    if showOriginals { ForEach(value.abilities.originals + value.abilities.pitches) { HomeGrowthRow(value: $0) } }
-                }
-                GamePanel(title: "관찰 당시 출전 표본", onBoard: true, contentSpacing: 16) {
-                    Text("\(value.sampleStart) ~ \(value.observedDate)").font(.caption.monospaced())
-                    SeasonPersonalRecord(totals: value.totals, role: value.role)
-                    Text("완료 개인 경기 \(value.totals.games)건 · 미완료 \(value.pending)건 제외").font(.subheadline).accessibilityIdentifier("scoutFrozenSample")
-                    ForEach(Array(value.groups.enumerated()), id: \.element.id) { index, group in
-                        Text("환경 \(index + 1) · " + (value.role == .batter ? "\(group.totals.line.plateAppearances)/40타석" : "\(group.totals.innings)/15.0이닝") + " · " + ((value.role == .batter ? group.hasBatterMinimum : group.hasPitcherMinimum) ? "최소 표본 참고 기준 도달" : "표본 부족"))
-                            .font(.caption).foregroundStyle(GameTheme.gold)
-                    }
-                    if value.groups.isEmpty { Text("자료 대기 · 완료한 개인 출전이 없습니다.").font(.caption) }
-                }
+            VStack(alignment: .leading, spacing: 24) {
+                frozenIdentity
+                ScoutingInterestList(value: value)
+                roleBoard
+                frozenSample
                 if let fit = value.contractFit {
-                    GamePanel(title: "동일 환경 성적 비교", onBoard: true, contentSpacing: 16) {
-                        Text("고교 원소속 수준 · 지원 사건 지표 v1 · 실제 리그 평균이 아닌 게임 엔진 NPC 기준").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        if fit.comparisons.isEmpty {Text("완료 개인 경기 자료가 없어 P=0 중립입니다.").font(.subheadline)}
-                        ForEach(Array(fit.comparisons.enumerated()), id: \.element.id) { index, row in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("환경 \(index+1) · 성적 보정 P \(row.correction.formatted(.number.precision(.fractionLength(1))))").font(.subheadline.bold()).accessibilityIdentifier("scoutComparison-\(index)")
-                                Text("내 지표 \(row.value.map { $0.formatted(.number.precision(.fractionLength(3))) } ?? "—") / NPC \(row.reference?.value.map { $0.formatted(.number.precision(.fractionLength(3))) } ?? "—")").font(.caption.monospaced())
-                                if let ref = row.reference {Text("NPC \(ref.totals.games)경기 · " + (value.role == .batter ? "\(ref.totals.line.plateAppearances)타석" : "\(ref.totals.innings)이닝 / \(ref.performance.battersFaced)BF")).font(.caption)}
-                                if let inputs=row.performance?.inputs {
-                                    Text("직접 \(inputs.direct)구 · 자동 \(inputs.automatic)구").font(.caption).accessibilityIdentifier("scoutInputUsage-\(index)")
-                                }
-                                Text(row.reason).font(.caption).foregroundStyle(row.verified ? GameTheme.growth:GameTheme.gold)
-                            }
-                        }
-                    }
-                    GamePanel(title: "구단별 모집 · 계약 적합도 참고", onBoard: true, contentSpacing: 16) {
-                        Text("가상 국내6구단의 초기 모집 자료입니다. F=H−C+P는 기량 참고값이며 정식 제의/출전을 보장하지 않습니다.").font(.caption).foregroundStyle(GameTheme.gold)
-                        Text("비교 검증된 환경 중 표본이 가장 큰1개만 사용합니다. 입력 구분이 없는 과거 직접 조작·구형 자료는 P=0 중립이며 서로 다른 환경을 합치지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        HomeDetailButton(title: "모집 역할·기준·적합도 \(fit.clubs.count)건", expanded: $showClubs, identifier: "scoutClubDetails")
-                        if showClubs {
-                            ForEach(fit.clubs) { club in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(club.recruitment.name + " · " + (value.grades.first{$0.id == club.recruitment.roleID}?.label ?? club.recruitment.roleID)).font(.headline)
-                                    Text(club.recruitment.demand.label + " · " + club.stage).font(.subheadline).foregroundStyle(GameTheme.gold)
-                                    Text("H \(number(club.h)) / C \(number(club.c)) / P \(number(club.p)) / F \(number(club.f))").font(.subheadline.monospaced()).accessibilityIdentifier("scoutClub-\(club.id)")
-                                    ForEach(club.blockers, id: \.self) {Text($0).font(.caption).foregroundStyle(GameTheme.boardMuted)}
-                                    Text(club.recruitment.demand == .none ? "모집이 없어 후보 판정을 보류합니다." : club.c == nil ? "경쟁자 자료 미확인 · 빈자리로 가정하지 않습니다." : club.recruitment.confirmedEmpty ? "확인된 공석 · 리그 역할 기준 사용" : "리그 기준과 같은 역할 경쟁자 기량+보강 여유 중 높은 값이 기준입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                                }.padding(.vertical,8)
-                            }
-                        }
-                        Text("수비 역할의 숙련/원본 수비 조건, 표본·20세/진로·권리/등록·예산/경쟁 심사는 별도입니다. 현재 고교 성적을 프로 즉시 전력 표본으로 대체하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    }
+                    comparisonBoard(fit)
+                    clubBoard(fit)
                 } else {
-                    GamePanel(title: "이전 버전 보고서", onBoard: true) {
-                        Text("이 보고서의 확정 당시에는 구단/비교 성적을 기록하지 않았습니다. 원문을 유지하며 다음28일 보고서부터 새 평가 자료를 저장합니다.").font(.subheadline).accessibilityIdentifier("scoutLegacyFit")
-                    }
+                    ScoutNote(title: "이전 버전 파일", message: "이 보고서는 확정 당시 구단/비교 성적을 기록하지 않았습니다. 원문을 유지하며 다음 관찰부터 새 자료를 확인합니다.", messageIdentifier: "scoutLegacyFit")
                 }
-                GamePanel(title: "평가 대기 사유", onBoard: true, contentSpacing: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("다음 검토를 위한 조건").font(.title3.bold())
                     ForEach(value.evaluationPending, id: \.self) { Text($0).font(.subheadline) }
-                    Text(value.contractFit == nil ? "구단 기준/비교 성적 미기록 · 당시 평가 대기 상태를 보존합니다." : "역할 기량과 성적 적합도는 참고 자료입니다. 육성 전망·진로/권리·등록/예산을 심사한 정식 제의는 아직 생성하지 않습니다.").font(.subheadline).accessibilityIdentifier("scoutFrozenPending")
-                    Text("28일 관찰과 계약 평가 창은 별개입니다. 재조회·시즌 결산으로 제의를 재추첨하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    Text(value.contractFit == nil ? "당시 평가 대기 상태를 보존한 파일입니다." : "역할 기량·성적 적합도는 참고값입니다. 실제 자격·선발 결과·제의는 계약 메뉴에서 확인하세요.")
+                        .font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutFrozenPending")
+                    DisclosureGroup("평가 자료와 계약 절차의 차이") {
+                        Text("28일 관찰과 계약 평가 창은 별개입니다. 재조회·시즌 결산으로 제의를 재추첨하지 않습니다.")
+                            .font(.subheadline).padding(.top, 8)
+                    }.font(.subheadline).tint(GameTheme.gold)
                 }
-            }.padding(12)
-        }.lineSpacing(3).background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+                DisclosureGroup("선수 프로젝트 · 관찰 근거") {
+                    CareerProjectReportEvidence(playerID: value.playerID, period: value.period).padding(.top, 12)
+                }.font(.headline).tint(GameTheme.gold)
+            }.padding(16)
+        }.lineSpacing(4).background(ScoutDeskPalette.ink).foregroundStyle(GameTheme.boardInk)
             .navigationTitle("확정 관찰 보고서").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar).tint(GameTheme.gold)
     }
-    private func number(_ value: Double?) -> String {value.map{$0.formatted(.number.precision(.fractionLength(1)))} ?? "—"}
+    private var frozenIdentity: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Image("NavCareerV1").resizable().interpolation(.none).frame(width: 28, height: 28).accessibilityHidden(true)
+                Text("SCOUT ARCHIVE").font(.subheadline.monospaced().bold())
+                Spacer(minLength: 0)
+                Text("FILE \(value.period + 1)").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
+            }.padding(14).background(ScoutDeskPalette.surface)
+            ScoutDossier(title: "\(value.period + 1)차 관찰 보고서", code: "OBSERVATION / FIXED RECORD", stamp: "관찰 확정", isPreview: false) {
+                HStack(alignment: .top, spacing: 18) {
+                    DetailGamePortrait(role: value.role, appearance: value.appearance, number: value.number, hand: value.hand).frame(width: 76, height: 100).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("\(value.name) #\(value.number)").font(.title3.bold())
+                        Text("\(value.age)세 · \(value.role.label) · " + (value.role == .batter ? FieldPosition(rawValue: value.position)?.label ?? value.position : value.hand == "left" ? "좌투" : "우투")).font(.subheadline)
+                        Text(value.age <= 18 ? value.school : "등록 학교 · \(value.school)").font(.subheadline)
+                    }
+                }
+                Text("관찰일 \(ManagementDisplay.date(value.observedDate))").font(.subheadline.bold()).accessibilityIdentifier("scoutFrozenDate")
+                Text("주기 \(ManagementDisplay.date(value.periodStart)) ~ \((try? GameDate(value.nextDate).adding(days: -1).description).map(ManagementDisplay.date) ?? "—")").font(.subheadline.monospaced())
+                Text("현재 값과 구분해 보관한 당시 자료").font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
+            }
+        }
+    }
+    private var roleBoard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ScoutDeskHeading(title: "어떤 역할에 가까운가", subtitle: "관찰 당시 역할 기량 H · 100점 기준")
+            ForEach(value.grades) { grade in
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(grade.label + "  " + (grade.score.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "평가 대기"))
+                        .font(.headline.monospacedDigit()).accessibilityIdentifier("scoutGrade-\(grade.id)")
+                    ScoutSegmentMeter(value: grade.score, maximum: 100, color: GameTheme.growth)
+                    DisclosureGroup("역할 기량 구성 보기") { Text(grade.detail).font(.subheadline).padding(.top, 8) }
+                        .font(.subheadline).tint(GameTheme.gold)
+                }.padding(14).background(ScoutDeskPalette.surface)
+            }
+            DisclosureGroup("당시 능력 그래프") { HomeRadarChart(values: value.abilities.axes).padding(.top, 16) }
+                .font(.headline).tint(GameTheme.gold)
+            HomeDetailButton(title: "관찰 당시 원본 능력·구종", expanded: $showOriginals, identifier: "scoutFrozenAbilities")
+            if showOriginals { ForEach(value.abilities.originals + value.abilities.pitches) { HomeGrowthRow(value: $0) } }
+            DisclosureGroup("H 점수 해석") {
+                Text("H는 역할 기초점수95%와 멘탈5%를 조합한 게임 내 기량 참고값입니다. 계약 합격선이나 성공 확률이 아닙니다.")
+                    .font(.subheadline).padding(.top, 8)
+            }.font(.subheadline).tint(GameTheme.gold)
+        }
+    }
+    private var frozenSample: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ScoutDeskHeading(title: "그라운드에서 쌓은 증거", subtitle: "\(ManagementDisplay.date(value.sampleStart)) ~ \(ManagementDisplay.date(value.observedDate))")
+            ScoutSeasonTiles(totals: value.totals, role: value.role)
+            Text("완료 개인 경기 \(value.totals.games)건 · 미완료 \(value.pending)건 제외")
+                .font(.subheadline).accessibilityIdentifier("scoutFrozenSample")
+            ForEach(Array(value.groups.enumerated()), id: \.element.id) { index, group in
+                ScoutSampleCard(group: group, role: value.role, number: index + 1)
+            }
+            if value.groups.isEmpty { ScoutNote(title: "출전 자료 대기", message: "완료한 개인 출전이 생기면 다음 관찰에서 표본을 확인합니다.") }
+        }
+    }
+    private func comparisonBoard(_ fit: ScoutingContractFit) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ScoutDeskHeading(title: "같은 경기 환경에서 비교", subtitle: "실제 리그 평균이 아닌 게임 엔진 NPC 기준")
+            if fit.comparisons.isEmpty { ScoutNote(title: "성적 보정 P · 중립", message: "완료 개인 경기 자료가 없어 P=0입니다. 성적이 나쁘다는 뜻은 아닙니다.") }
+            ForEach(Array(fit.comparisons.enumerated()), id: \.element.id) { index, row in
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top) {
+                        Text("환경 \(index + 1) · 성적 보정 P \(ScoutDeskFormat.signed(row.correction))")
+                            .font(.headline).accessibilityIdentifier("scoutComparison-\(index)")
+                        Spacer(minLength: 4)
+                        ScoutStatusTag(text: row.verified ? "비교 확인" : "근거 대기", color: row.verified ? GameTheme.growth : GameTheme.gold)
+                    }
+                    let metricLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 10))
+                    metricLayout {
+                        ScoutValueTile(title: "내 지표", value: ScoutDeskFormat.number(row.value, places: 3))
+                        ScoutValueTile(title: "NPC 지표", value: ScoutDeskFormat.number(row.reference?.value, places: 3))
+                    }
+                    if let inputs = row.performance?.inputs {
+                        Text("직접 \(inputs.direct)구 · 자동 \(inputs.automatic)구").font(.subheadline).accessibilityIdentifier("scoutInputUsage-\(index)")
+                    }
+                    Text(row.reason).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    if let ref = row.reference {
+                        DisclosureGroup("비교 표본 보기") {
+                            Text("NPC \(ref.totals.games)경기 · " + (value.role == .batter ? "\(ref.totals.line.plateAppearances)타석" : "\(ref.totals.innings)이닝 / \(ref.performance.battersFaced)BF"))
+                                .font(.subheadline).padding(.top, 8)
+                        }.font(.subheadline).tint(GameTheme.gold)
+                    }
+                }.padding(14).background(ScoutDeskPalette.surface)
+            }
+        }
+    }
+    private func clubBoard(_ fit: ScoutingContractFit) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ScoutDeskHeading(title: "구단의 기준과 나의 기량", subtitle: "기량 차이와 부족 조건 · 정식 제의는 계약 메뉴")
+            HomeDetailButton(title: "모집 역할·기준·적합도 \(fit.clubs.count)건", expanded: $showClubs, identifier: "scoutClubDetails")
+            if showClubs {
+                ForEach(fit.clubs) { club in
+                    ScoutClubComparisonCard(club: club, roleName: value.grades.first { $0.id == club.recruitment.roleID }?.label ?? club.recruitment.roleID)
+                }
+            }
+            DisclosureGroup("기량 비교를 읽는 방법") {
+                Text("F=H−C+P는 부호가 있는 기량 참고값입니다. 성공 확률이 아닙니다. 비교 검증된 환경 중 표본이 가장 큰1개를 사용하며 서로 다른 환경을 합치지 않습니다. 과거 입력 근거가 없으면 P=0 중립입니다. 위치 숙련·원본 수비,나이/진로/권리·등록·예산 심사는 별도입니다.")
+                    .font(.subheadline).padding(.top, 8)
+            }.font(.subheadline).tint(GameTheme.gold)
+        }
+    }
 }
 
 enum ScoutingReportError: LocalizedError {
@@ -273,87 +333,313 @@ struct ScoutingReportView: View {
     }
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: gap) {
+            VStack(alignment: .leading, spacing: 24) {
                 if let error {
-                    GamePanel(title: "관찰 보고서를 불러오지 못했습니다", onBoard: true) {
-                        Text(error).font(.subheadline).accessibilityIdentifier("scoutReportError")
-                        Button("다시 확인", action: load).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutReportRetry")
-                    }
+                    ScoutNote(title: "관찰 자료를 불러오지 못했습니다", message: error, messageIdentifier: "scoutReportError")
+                    Button("다시 확인", action: load).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutReportRetry")
                 } else if let report {
-                    ScoutingObservationHomePanel(player: player, calendar: calendar, archive: true)
                     identity(report)
-                    GamePanel(title: "현재 능력 · 개인 성장", onBoard: true, contentSpacing: gap) {
-                        HomeRadarChart(values: report.abilities.axes)
-                        Text("내 현재 능력입니다. 구단의 기량 종합점수나 합격선이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        HomeDetailButton(title: "원본 능력치·구종 보기", expanded: $showOriginals, identifier: "scoutAbilityDetails")
-                        if showOriginals {
-                            ForEach(report.abilities.originals) { HomeGrowthRow(value: $0) }
-                            ForEach(report.abilities.pitches) { HomeGrowthRow(value: $0) }
-                            if !report.abilities.hasInitialValues {
-                                Text("저장된 시작값이 없어 현재값만 표시합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                            }
-                        }
-                    }
-                    GamePanel(title: "실제 출전 표본 · 최근 365일", onBoard: true, contentSpacing: gap) {
-                        Text("\(report.start) ~ \(report.date) · 오늘 포함 / 생성일 이후").font(.caption.monospaced()).foregroundStyle(GameTheme.boardMuted)
-                        SeasonPersonalRecord(totals: report.totals, role: player.role)
-                        Text("진행 중 경기 \(report.pending)건은 완료 후 반영됩니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        Text("위 합계는 개인 기록 참고용입니다. 서로 다른 경기 환경의 표본을 합쳐 심사하지 않습니다.").font(.caption).foregroundStyle(GameTheme.gold)
-                        if report.groups.isEmpty {
-                            Text("평가 대기 · 완료한 개인 출전 표본이 없습니다.").font(.subheadline.bold()).accessibilityIdentifier("scoutSampleWaiting")
-                        }
-                        ForEach(Array(report.groups.enumerated()), id: \.element.id) { index, group in
-                            sample(group, number: index + 1)
-                        }
-                    }
-                    GamePanel(title: "평가 준비 · 연결할 조건", onBoard: true, contentSpacing: gap) {
-                        Text(report.age < 20 ? "나이 조건 대기 · 프로 계약 검토는 20세부터입니다." : "나이 조건 20세 이상 · 진로/권리 심사는 연결 전입니다.")
-                            .font(.subheadline).accessibilityIdentifier("scoutAgeCondition")
-                        Text("역할 H·구단 기준 C·성적 보정 P·적합도 F는 확정 보고서의 당시 버전 자료에서 확인합니다.").font(.subheadline).accessibilityIdentifier("scoutEvaluationPending")
-                        Text("같은 주기의 확정 보고서는 갱신하지 않습니다. 구형 보고서는 원문을 유지하며 다음 주기부터 새 비교 기준을 적용합니다. 관심은 확정 보고서 기준이며 정식 제의·진로 발효는 후속입니다.")
-                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        if report.age >= 19 {
-                            Text("졸업 시즌 성적 심사·대학/무소속 진로는 후속 단계입니다. 최근 365일 표본만으로 진로를 확정하지 않습니다.")
-                                .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        }
+                    currentAbilityBoard(report)
+                    currentSampleBoard(report)
+                    ScoutingObservationHomePanel(player: player, calendar: calendar, archive: true)
+                    VStack(alignment: .leading, spacing: 14) {
+                        ScoutDeskHeading(title: "계약 검토로 이어지는 길", subtitle: "현재 자료와 확정 관찰 파일은 구분합니다")
+                        ScoutStatusTag(text: report.age < 20 ? "20세 나이 조건 대기" : "20세 이상 · 경로별 자격 확인", color: GameTheme.gold)
+                        Text(report.age < 20 ? "나이 조건 대기 · 프로 계약 검토는 20세부터입니다." : "나이 조건 20세 이상 · 실제 진로/권리 자격은 계약 메뉴에서 확인하세요.")
+                            .font(.body).accessibilityIdentifier("scoutAgeCondition")
+                        Text("역할 H·구단 기준 C·성적 보정 P·적합도 F는 확정 보고서의 당시 버전 자료에서 확인합니다.")
+                            .font(.subheadline).accessibilityIdentifier("scoutEvaluationPending")
+                        DisclosureGroup("고정 보고서와 진로 절차 안내") {
+                            Text("같은 주기의 확정 보고서는 갱신하지 않습니다. 구형 보고서는 원문을 유지하며 다음 주기부터 새 기준을 확인합니다. 실제 선발 결과·제의·소속 발효와 대학/무소속 경로는 계약 메뉴에서 확인하세요. 최근365일 표본만으로 진로를 확정하지 않습니다.")
+                                .font(.subheadline).padding(.top, 8)
+                        }.font(.subheadline).tint(GameTheme.gold)
                     }
                     Button("현재 자료 다시 확인", action: load).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutReportRefresh")
                 }
-            }.padding(12)
-        }.lineSpacing(typeSize.isAccessibilitySize ? 5 : 3)
-            .background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+            }.padding(16)
+        }.lineSpacing(typeSize.isAccessibilitySize ? 5 : 4)
+            .background(ScoutDeskPalette.ink).foregroundStyle(GameTheme.boardInk)
             .navigationTitle("내 관찰 보고서").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar).tint(GameTheme.gold)
             .onAppear(perform: load)
     }
     private func identity(_ report: ScoutingReportSnapshot) -> some View {
-        ScoutDossier(title: "선수 관찰 파일", code: "PLAYER RECORD  /  READ ONLY", stamp: "평가 준비", isPreview: false) {
-            HStack(alignment: .top, spacing: 16) {
-                PixelPlayer(appearance: player.appearance).frame(width: 38, height: 54).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("\(player.name)  #\(player.jerseyNumber)").font(.headline).accessibilityIdentifier("scoutActualPlayer")
+        ScoutDossier(title: "선수 관찰 파일", code: "PLAYER RECORD / READ ONLY", stamp: "현재 자료", isPreview: false) {
+            HStack(alignment: .top, spacing: 18) {
+                DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw).frame(width: 76, height: 100).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("\(player.name)  #\(player.jerseyNumber)").font(.title3.bold()).accessibilityIdentifier("scoutActualPlayer")
                     Text("\(report.age)세 · " + (player.role == .batter ? "타자 / \(FieldPosition(rawValue: player.positionRaw)?.label ?? player.positionRaw)" : "투수 / \(player.throwingHandRaw == "left" ? "좌투" : "우투")"))
                         .font(.subheadline).accessibilityIdentifier("scoutActualRole")
                     Text(report.age <= 18 ? player.schoolName : SeasonSchedule.academicStatus(age: report.age)).font(.subheadline).accessibilityIdentifier("scoutActualAffiliation")
-                    if report.age > 18 { Text("등록 학교 · " + player.schoolName).font(.caption) }
+                    if report.age > 18 { Text("등록 학교 · " + player.schoolName).font(.subheadline) }
                 }
             }
-            Text("기준일 \(report.date) · 현재 저장 자료를 읽어 표시합니다.").font(.caption).foregroundStyle(ScoutDossierInk.muted)
-            Text("표시용 조회 · 보고서 평가/저장·선수 성장·날짜 진행 없음").font(.caption).foregroundStyle(ScoutDossierInk.muted)
+            Text("기준일 \(ManagementDisplay.date(report.date.description))").font(.subheadline.bold()).foregroundStyle(ScoutDossierInk.muted)
+            Text("현재 저장 자료 · 성장/날짜 변경 없는 조회").font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
         }
     }
-    private func sample(_ group: ScoutingSampleGroup, number: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("고교 공식 · 경기 환경 \(number)").font(.subheadline.bold())
-            if player.role == .batter {
-                Text("\(group.totals.games)경기 · \(group.totals.line.plateAppearances) / 40타석").font(.subheadline.monospaced()).accessibilityIdentifier("scoutSample-\(number)")
-            } else {
-                Text("\(group.totals.games)등판 · \(group.totals.innings) / 15.0이닝").font(.subheadline.monospaced()).accessibilityIdentifier("scoutSample-\(number)")
+    private func currentAbilityBoard(_ report: ScoutingReportSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ScoutDeskHeading(title: "지금의 선수 기량", subtitle: "내 실제 능력 · 구단 합격선과 별개")
+            HomeRadarChart(values: report.abilities.axes)
+            HomeDetailButton(title: "원본 능력치·구종 보기", expanded: $showOriginals, identifier: "scoutAbilityDetails")
+            if showOriginals {
+                ForEach(report.abilities.originals + report.abilities.pitches) { HomeGrowthRow(value: $0) }
+                if !report.abilities.hasInitialValues {
+                    Text("저장된 시작값이 없어 현재값만 표시합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                }
             }
-            let enough = player.role == .batter ? group.hasBatterMinimum : group.hasPitcherMinimum
-            Text(enough ? "육성 심사 최소 표본 참고 기준 도달 · 평가/합격 확정 아님" : "표본 부족 · 같은 경기 환경의 실제 출전 기록을 더 쌓아 주세요.")
-                .font(.caption).foregroundStyle(enough ? GameTheme.growth : GameTheme.gold)
-        }.padding(.vertical,8)
+        }.padding(16).background(ScoutDeskPalette.surface)
+    }
+    private func currentSampleBoard(_ report: ScoutingReportSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ScoutDeskHeading(title: "실전에서 남긴 기록", subtitle: "최근365일 · \(report.start) ~ \(report.date)")
+            ScoutSeasonTiles(totals: report.totals, role: player.role)
+            Text("진행 중 경기 \(report.pending)건은 완료 후 반영됩니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            if report.groups.isEmpty {
+                ScoutNote(title: "평가 자료 대기", message: "완료한 개인 출전 표본이 없습니다.", messageIdentifier: "scoutSampleWaiting")
+            }
+            ForEach(Array(report.groups.enumerated()), id: \.element.id) { index, group in
+                ScoutSampleCard(group: group, role: player.role, number: index + 1)
+            }
+            Text("환경별 표본을 따로 비교합니다. 서로 다른 경기 환경의 표본을 합쳐 심사하지 않습니다.")
+                .font(.subheadline).foregroundStyle(GameTheme.gold)
+        }
+    }
+}
+
+private enum ScoutDeskPalette {
+    static let ink = Color(hex: 0x102633)
+    static let surface = Color(hex: 0x1a3c4c)
+    static let inset = Color(hex: 0x0b202c)
+}
+
+private enum ScoutDeskFormat {
+    static func number(_ value: Double?, places: Int = 1) -> String {
+        value.map { $0.formatted(.number.precision(.fractionLength(places))) } ?? "대기"
+    }
+    static func signed(_ value: Double) -> String {
+        (value > 0 ? "+" : "") + number(value)
+    }
+}
+
+private struct ScoutDeskHeading: View {
+    let title: String
+    let subtitle: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image("NavCareerV1").resizable().interpolation(.none).frame(width: 24, height: 24).accessibilityHidden(true)
+                Text(title).font(.title3.bold())
+            }
+            Text(subtitle).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ScoutPeriodRibbon: View {
+    let value: ScoutingObservation
+    let count: Int
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 14)) : AnyLayout(HStackLayout(alignment: .center, spacing: 14))
+        layout {
+            VStack(spacing: 4) {
+                Text("FILE").font(.subheadline.monospaced().bold())
+                Text(String(format: "%02d", value.period + 1)).font(.system(.largeTitle, design: .monospaced, weight: .black))
+            }.foregroundStyle(GameTheme.navy).padding(14).background(GameTheme.gold, in: ManagementStepFrame())
+            VStack(alignment: .leading, spacing: 10) {
+                Text("\(value.period + 1)차 관찰 · \(ManagementDisplay.date(value.observedDate)) 확정").font(.headline).accessibilityIdentifier("scoutSavedPeriod")
+                Text("다음 관찰 \(ManagementDisplay.date(value.nextDate))").font(.subheadline.monospacedDigit()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutNextObservation")
+                Text("보고서 \(count)건 · 확정 자료 보관").font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("scoutSavedCount")
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(14).background(ScoutDeskPalette.inset)
+    }
+}
+
+private struct ScoutStatusTag: View {
+    let text: String
+    let color: Color
+    var body: some View {
+        Text(text).font(.subheadline.bold()).foregroundStyle(color)
+            .padding(.horizontal, 9).padding(.vertical, 6)
+            .background(ScoutDeskPalette.inset)
+            .overlay(Rectangle().strokeBorder(color.opacity(0.8), lineWidth: 1))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct ScoutInterestCard: View {
+    let entry: ScoutingClubInterest
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var level: Int { switch entry.level { case .observing: 0; case .focused: 1; case .priority: 2 } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
+            layout {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(entry.name + " · " + entry.level.label).font(.headline).accessibilityIdentifier("scoutInterest-\(entry.id)")
+                    Text(entry.roleLabel).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                ScoutStatusTag(text: "F " + ScoutDeskFormat.signed(entry.fit), color: entry.fit >= 0 ? GameTheme.growth : GameTheme.gold)
+            }
+            HStack(spacing: 5) {
+                ForEach(0..<3) { index in
+                    Rectangle().fill(index <= level ? GameTheme.gold : GameTheme.boardLine.opacity(0.35)).frame(height: 6)
+                }
+            }.accessibilityHidden(true)
+            Text("관찰 관심 → 집중 관찰 → 우선 관찰").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            DisclosureGroup("관심 이유 · \(entry.reasons.count)개") {
+                ForEach(entry.reasons, id: \.self) { Text($0).font(.subheadline).padding(.top, 8) }
+            }.font(.subheadline).tint(GameTheme.gold)
+        }.padding(14).background(ScoutDeskPalette.surface)
+            .overlay(alignment: .leading) { Rectangle().fill(GameTheme.gold).frame(width: 3).accessibilityHidden(true) }
+    }
+}
+
+private struct ScoutSegmentMeter: View {
+    let value: Double?
+    let maximum: Double
+    let color: Color
+    private var ratio: Double? { value.flatMap { $0.isFinite && maximum > 0 ? min(1, max(0, $0 / maximum)) : nil } }
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<10) { segment in
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(GameTheme.boardLine.opacity(0.25))
+                        if let ratio {
+                            Rectangle().fill(color).frame(width: geometry.size.width * min(1, max(0, ratio * 10 - Double(segment))))
+                        }
+                    }
+                }
+            }
+        }.frame(height: 12).accessibilityHidden(true)
+    }
+}
+
+private struct ScoutValueTile: View {
+    let title: String
+    let value: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            Text(value).font(.title3.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                .fixedSize(horizontal: false, vertical: true)
+        }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(ScoutDeskPalette.inset)
+            .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ScoutSeasonTiles: View {
+    let totals: PersonalSeasonTotals
+    let role: PlayerRole
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var values: [(String, String)] {
+        role == .batter ? [("출전", "\(totals.games)경기"), ("타율", totals.average), ("홈런", "\(totals.line.homeRuns)개"), ("타점", "\(totals.line.rbi)점")]
+            : [("등판", "\(totals.games)경기"), ("이닝", totals.innings), ("탈삼진", "\(totals.line.pitchingStrikeouts)개"), ("WHIP", totals.whip)]
+    }
+    private var detail: [(String, Int)] {
+        let line = totals.line
+        return role == .batter ? [("타석", line.plateAppearances), ("타수", line.atBats), ("안타", line.hits), ("볼넷", line.walks), ("삼진", line.strikeouts)]
+            : [("투구 수", line.pitches), ("피안타", line.hitsAllowed), ("볼넷", line.pitchingWalks), ("실점", line.runsAllowed)]
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 10) {
+                ForEach(values.indices, id: \.self) { index in ScoutValueTile(title: values[index].0, value: values[index].1) }
+            }
+            DisclosureGroup("세부 경기 기록") {
+                VStack(spacing: 12) {
+                    ForEach(detail.indices, id: \.self) { index in
+                        HStack {
+                            Text(detail[index].0).font(.subheadline)
+                            Spacer(minLength: 8)
+                            Text(String(detail[index].1)).font(.headline.monospacedDigit()).foregroundStyle(GameTheme.gold)
+                        }
+                    }
+                }.padding(.top, 12).accessibilityElement(children: .combine).accessibilityIdentifier("seasonRecordDetails")
+            }.font(.subheadline).tint(GameTheme.gold)
+        }
+    }
+}
+
+private struct ScoutSampleCard: View {
+    let group: ScoutingSampleGroup
+    let role: PlayerRole
+    let number: Int
+    private var enough: Bool { role == .batter ? group.hasBatterMinimum : group.hasPitcherMinimum }
+    private var amount: Double { Double(role == .batter ? group.totals.line.plateAppearances : group.totals.line.pitchingOuts) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                Text("경기 환경 \(number)").font(.headline)
+                Spacer(minLength: 4)
+                ScoutStatusTag(text: enough ? "표본 도달" : "표본 수집 중", color: enough ? GameTheme.growth : GameTheme.gold)
+            }
+            Text(role == .batter ? "\(group.totals.games)경기 · \(group.totals.line.plateAppearances) / 40타석" : "\(group.totals.games)등판 · \(group.totals.innings) / 15.0이닝")
+                .font(.body.monospacedDigit()).accessibilityIdentifier("scoutSample-\(number)")
+            ScoutSegmentMeter(value: amount, maximum: role == .batter ? 40 : 45, color: enough ? GameTheme.growth : GameTheme.gold)
+            Text(enough ? "같은 환경의 최소 표본 참고 기준 도달 · 합격 확정 아님" : "같은 환경의 실제 출전 기록이 더 필요합니다.")
+                .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+        }.padding(14).background(ScoutDeskPalette.surface)
+    }
+}
+
+private struct ScoutClubComparisonCard: View {
+    let club: ScoutingClubFit
+    let roleName: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(club.recruitment.name).font(.title3.bold())
+            Text(roleName + " · " + club.recruitment.demand.label).font(.subheadline).foregroundStyle(GameTheme.gold)
+            Text(club.stage).font(.headline).foregroundStyle(GameTheme.boardInk)
+            VStack(alignment: .leading, spacing: 12) {
+                comparisonRow("내 역할 기량 H", value: club.h, color: GameTheme.growth)
+                comparisonRow("구단 기준 C", value: club.c, color: GameTheme.gold)
+            }
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 10))
+            layout {
+                ScoutValueTile(title: "성적 보정 P", value: ScoutDeskFormat.signed(club.p))
+                ScoutValueTile(title: "기량 차 F", value: club.f.map(ScoutDeskFormat.signed) ?? "평가 대기")
+            }
+            Text("H \(ScoutDeskFormat.number(club.h)) / C \(ScoutDeskFormat.number(club.c)) / P \(ScoutDeskFormat.number(club.p)) / F \(ScoutDeskFormat.number(club.f))")
+                .font(.subheadline.monospacedDigit()).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("scoutClub-\(club.id)")
+            if !club.blockers.isEmpty {
+                DisclosureGroup("보완할 조건 \(club.blockers.count)개") {
+                    ForEach(club.blockers, id: \.self) { Text($0).font(.subheadline).padding(.top, 8) }
+                }.font(.subheadline).tint(GameTheme.gold)
+            }
+            if club.c == nil { Text("경쟁자 자료 대기 · 공석으로 가정하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.gold) }
+        }.padding(16).background(ScoutDeskPalette.surface)
+            .overlay(ManagementStepFrame().stroke(GameTheme.boardLine, lineWidth: 1))
+    }
+    private func comparisonRow(_ label: String, value: Double?, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(label).font(.subheadline)
+                Spacer(minLength: 4)
+                Text(ScoutDeskFormat.number(value)).font(.headline.monospacedDigit()).foregroundStyle(color)
+            }
+            ScoutSegmentMeter(value: value, maximum: 100, color: color)
+        }
+    }
+}
+
+private struct ScoutNote: View {
+    let title: String
+    let message: String
+    var messageIdentifier: String? = nil
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline).foregroundStyle(GameTheme.gold)
+            if let messageIdentifier { Text(message).font(.body).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier(messageIdentifier) }
+            else { Text(message).font(.body).foregroundStyle(GameTheme.boardMuted) }
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            .background(ScoutDeskPalette.surface)
+            .overlay(Rectangle().strokeBorder(GameTheme.boardLine.opacity(0.7), lineWidth: 1))
     }
 }

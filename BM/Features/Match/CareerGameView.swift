@@ -1099,7 +1099,7 @@ struct MatchOpponentCenter:View {
                         VStack(alignment:.leading,spacing:5) {
                             Text("BM · MATCH CENTER").font(.caption2.monospaced().bold()).foregroundStyle(GameTheme.gold)
                             Text(tab.label).font(.title2.bold()).accessibilityIdentifier("opponentCenterTitle")
-                            Text(teamName+" · "+date+(locked ? " · 저장된 경기 자료":" · 경기 시작 시 고정")).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("oppositionTeam")
+                            Text(teamName+" · "+ManagementDisplay.date(date)+(locked ? " · 저장된 경기 자료":" · 경기 시작 시 고정")).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("oppositionTeam")
                         }.frame(maxWidth:.infinity,alignment:.leading).id("opponentTop")
                         switch tab {
                         case .pitcher:pitcherPage
@@ -1222,54 +1222,53 @@ struct MatchOpponentCenter:View {
     }
     @ViewBuilder private var lineupPage:some View {
         if let team {
-            GamePanel(title:"상대 타선 · 능력 비교",onBoard:true,contentSpacing:14) {
-                VStack(spacing:12) {
-                    OpponentAbilityBar(label:"출루 성향",value:team.onBase)
-                    OpponentAbilityBar(label:"장타 성향",value:team.slugging,color:GameTheme.gold)
-                }.accessibilityElement(children:.combine).accessibilityIdentifier("opponentLineupRatings")
-                Text("능력 기반 0~100 · 실제 출루율·장타율과 구분").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            VStack(alignment:.leading,spacing:16) {
+                VStack(alignment:.leading,spacing:14) {
+                    HStack(alignment:.firstTextBaseline) {
+                        VStack(alignment:.leading,spacing:4) {
+                            Text("BATTING ORDER").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                            Text("상대 9명 타순").font(.title3.bold())
+                        }
+                        Spacer(minLength:8)
+                        Text("능력 점수 / 100").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
+                    let overviewLayout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:14)):AnyLayout(HStackLayout(alignment:.top,spacing:16))
+                    overviewLayout {
+                        OpponentLineupMeter(label:"출루 성향",value:team.onBase,color:GameTheme.growth)
+                        OpponentLineupMeter(label:"장타 성향",value:team.slugging,color:GameTheme.gold)
+                    }.accessibilityElement(children:.combine).accessibilityIdentifier("opponentLineupRatings")
+                    Text("능력에서 계산한 성향 점수 · 실제 출루율·장타율과 구분").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                }.padding(14).foregroundStyle(ink).background(GameTheme.boardPanel,in:ManagementStepFrame())
+                    .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine,lineWidth:2))
                 HStack(spacing:8) {
                     Button("능력 보기") {showSeason=false}.buttonStyle(MatchPixelButtonStyle(selected:!showSeason)).accessibilityIdentifier("opponentLineupAbilities")
                     Button("시즌 성적") {showSeason=true}.buttonStyle(MatchPixelButtonStyle(selected:showSeason)).accessibilityIdentifier("opponentLineupSeason")
                 }
-                if !typeSize.isAccessibilitySize {
-                    HStack {
-                        Text("타순 / 위치").frame(maxWidth:.infinity,alignment:.leading)
-                        ForEach(showSeason ? ["AVG","OPS","WAR"]:["컨택","파워","성향"],id:\.self) {Text($0).frame(width:48,alignment:.trailing)}
-                    }.font(.caption2).foregroundStyle(GameTheme.boardMuted)
+                HStack(spacing:8) {
+                    Text(showSeason ? "경기 전 확정 성적":"타순별 기량 · 파워와 성향").font(.subheadline.bold())
+                    Spacer(minLength:4)
+                    Text("선택하면 상세 ›").font(.caption).foregroundStyle(GameTheme.gold)
+                }.foregroundStyle(ink)
+                LazyVStack(spacing:10) {
+                    ForEach(Array(team.ordered.enumerated()),id:\.element.id) {index,player in
+                        let seasonID=player.position == "P" ? team.starter.id:player.id
+                        let seasonRow=season?.player(seasonID)
+                        let values=seasonValues(seasonID,["AVG","OPS"])
+                        Button {selected=index;tab = .batter} label: {
+                            OpponentLineupTile(order:index+1,position:player.position,positionLabel:positionName(player.position),
+                                               contact:player.contact,power:player.power,discipline:player.discipline,
+                                               onBase:player.onBase,slugging:player.slugging,selected:index == selected,
+                                               seasonMode:showSeason,average:values[0],ops:values[1],
+                                               sample:seasonRow.map {"\($0.battingGames)경기 · \($0.batting.plateAppearances)타석"} ?? "표본 미집계")
+                        }.buttonStyle(OpponentLineupTileStyle(selected:index == selected))
+                            .accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton)
+                            .accessibilityLabel("\(index+1)번 \(player.position) · "+(showSeason ? "타율 \(values[0]) · OPS \(values[1]) · "+(seasonRow.map {"\($0.battingGames)경기 \($0.batting.plateAppearances)타석"} ?? "표본 미집계") : "컨택 \(n(player.contact)) · 파워 \(n(player.power)) · 선구안 \(n(player.discipline)) · 출루 성향 \(n(player.onBase)) · 장타 성향 \(n(player.slugging))"))
+                            .accessibilityHint("타자 상세 열기")
+                            .accessibilityIdentifier("opponentBatter-\(index+1)")
+                    }
                 }
-                ForEach(Array(team.ordered.enumerated()),id:\.element.id) {index,player in
-                    Button {selected=index;tab = .batter} label: {
-                        Group {
-                        if typeSize.isAccessibilitySize {
-                            VStack(alignment:.leading,spacing:8) {
-                                Text("\(index+1)번 \(player.position)").font(.headline).foregroundStyle(GameTheme.gold)
-                                Text(showSeason ? "AVG · OPS · WAR " + seasonValues(player.position == "P" ? team.starter.id : player.id, ["AVG","OPS","WAR"]).joined(separator:" / ") : "컨택 \(n(player.contact)) · 파워 \(n(player.power))").font(.subheadline)
-                                if !showSeason {Text("출루 \(n(player.onBase)) · 장타 \(n(player.slugging))").font(.caption).foregroundStyle(GameTheme.boardMuted)}
-                            }.frame(maxWidth:.infinity,alignment:.leading)
-                        } else {
-                        HStack(spacing:6) {
-                            Text("\(index+1)").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).frame(width:20)
-                            Text(player.position).font(.subheadline.bold()).frame(maxWidth:.infinity,alignment:.leading)
-                            if showSeason {
-                                ForEach(["AVG","OPS","WAR"], id: \.self) { stat in Text(seasonValues(player.position == "P" ? team.starter.id : player.id, [stat])[0]).font(.caption2.monospaced()).lineLimit(1).minimumScaleFactor(0.7).frame(width:48,alignment:.trailing)}
-                            } else {
-                                Text(n(player.contact)).font(.caption.monospacedDigit()).frame(width:48,alignment:.trailing)
-                                Text(n(player.power)).font(.caption.monospacedDigit()).frame(width:48,alignment:.trailing)
-                                VStack(spacing:4) {
-                                    miniatureBar(player.onBase,GameTheme.growth)
-                                    miniatureBar(player.slugging,GameTheme.gold)
-                                }.frame(width:48).accessibilityLabel("출루 성향 \(n(player.onBase)), 장타 성향 \(n(player.slugging))")
-                            }
-                        }
-                        }
-                        }.frame(minHeight:48).padding(.horizontal,6).padding(.vertical,typeSize.isAccessibilitySize ? 8:0).foregroundStyle(ink)
-                            .background(index == selected ? Color(hex:0x28503f):GameTheme.boardPanel)
-                    }.buttonStyle(.plain).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton)
-                        .accessibilityLabel("\(index+1)번 \(player.position) · "+(showSeason ? seasonValues(player.position == "P" ? team.starter.id : player.id, ["AVG","OPS","WAR"]).joined(separator:" / ") : "컨택 \(n(player.contact)) · 파워 \(n(player.power)) · 출루 성향 \(n(player.onBase)) · 장타 성향 \(n(player.slugging))"))
-                        .accessibilityIdentifier("opponentBatter-\(index+1)")
-                }
-                Text(showSeason ? "경기 전날까지 완료 원장 · 상세에서 표본 확인 · WAR은 후속입니다.":"녹색은 출루·금색은 장타 성향입니다. 선수를 누르면 상세가 열립니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Text(showSeason ? "경기 전날까지 완료된 원장만 표시합니다. 없는 성적은 미집계이며 WAR과 표본 범위는 타자 상세에서 확인합니다.":"초상화는 NPC 공용 도트입니다. 타순·포지션·능력은 경기 시작 자료를 사용합니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
             }
         } else {legacyMissing}
     }
@@ -1378,6 +1377,122 @@ struct MatchOpponentCenter:View {
             OpponentAbilityBar(label:"수비",value:analysis.defense)
             OpponentAbilityBar(label:"송구",value:analysis.arm)
         }
+    }
+}
+
+private struct OpponentLineupTileStyle:ButtonStyle {
+    let selected:Bool
+    func makeBody(configuration:Configuration) -> some View {
+        configuration.label.padding(12).frame(maxWidth:.infinity,alignment:.leading)
+            .foregroundStyle(GameTheme.boardInk)
+            .background(selected ? Color(hex:0x203f3d):GameTheme.boardPanel,in:ManagementStepFrame())
+            .overlay(ManagementStepFrame().strokeBorder(selected ? GameTheme.gold:GameTheme.boardLine.opacity(0.7),lineWidth:2))
+            .offset(y:configuration.isPressed ? 2:0)
+    }
+}
+
+private struct OpponentLineupTile:View {
+    let order:Int
+    let position:String
+    let positionLabel:String
+    let contact:Double
+    let power:Double
+    let discipline:Double
+    let onBase:Double
+    let slugging:Double
+    let selected:Bool
+    let seasonMode:Bool
+    let average:String
+    let ops:String
+    let sample:String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body:some View {
+        let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:12)):AnyLayout(HStackLayout(alignment:.top,spacing:12))
+        layout {
+            identity
+            VStack(alignment:.leading,spacing:6) {
+                HStack(alignment:.firstTextBaseline,spacing:8) {
+                    Text(positionLabel).font(.subheadline.bold())
+                    Spacer(minLength:0)
+                    if selected {Text("선택").font(.caption.bold()).foregroundStyle(GameTheme.gold)}
+                    Text("›").font(.headline).foregroundStyle(GameTheme.boardMuted)
+                }
+                if seasonMode {
+                    let statsLayout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:10)):AnyLayout(HStackLayout(spacing:16))
+                    statsLayout {
+                        seasonMetric("AVG · 타율",average)
+                        seasonMetric("OPS",ops)
+                    }
+                    Text(sample).font(.caption.monospacedDigit()).foregroundStyle(GameTheme.boardMuted)
+                } else {
+                    let numbersLayout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:4)):AnyLayout(HStackLayout(spacing:14))
+                    numbersLayout {
+                        rating("컨택",contact)
+                        rating("선구안",discipline)
+                    }
+                    OpponentLineupMeter(label:"파워",value:power,color:GameTheme.gold)
+                    let tendencyLayout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:10)):AnyLayout(HStackLayout(alignment:.top,spacing:12))
+                    tendencyLayout {
+                        OpponentLineupMeter(label:"출루 성향",value:onBase,color:GameTheme.growth,compact:true)
+                        OpponentLineupMeter(label:"장타 성향",value:slugging,color:Color(hex:0x8bb8d0),compact:true)
+                    }
+                }
+            }.frame(maxWidth:.infinity,alignment:.leading)
+        }
+    }
+    private var identity:some View {
+        let layout=typeSize.isAccessibilitySize ? AnyLayout(HStackLayout(spacing:10)):AnyLayout(VStackLayout(spacing:4))
+        return layout {
+            Text(String(order)).font(.title2.monospaced().bold()).foregroundStyle(GameTheme.navy)
+                .frame(minWidth:44,minHeight:32).background(GameTheme.gold,in:ManagementStepFrame())
+            if let image=MatchArt.opponentPortrait {
+                Image(uiImage:image).resizable().interpolation(.none).scaledToFit().frame(width:44,height:54).accessibilityHidden(true)
+            }
+            Text(position).font(.caption.monospaced().bold()).foregroundStyle(GameTheme.boardMuted)
+        }
+    }
+    private func rating(_ label:String,_ value:Double) -> some View {
+        HStack(spacing:4) {
+            Text(label).foregroundStyle(GameTheme.boardMuted)
+            Text(String(format:"%.1f",value)).monospacedDigit().bold()
+        }.font(.caption).fixedSize(horizontal:false,vertical:true)
+    }
+    private func seasonMetric(_ label:String,_ value:String) -> some View {
+        VStack(alignment:.leading,spacing:3) {
+            Text(label).font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Text(value).font(.title3.monospaced().bold()).fixedSize(horizontal:false,vertical:true)
+        }.frame(maxWidth:.infinity,alignment:.leading)
+    }
+}
+
+/// Each lit segment is an ability-score interval, never a measured event probability.
+private struct OpponentLineupMeter:View {
+    let label:String
+    let value:Double
+    let color:Color
+    var compact=false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body:some View {
+        VStack(alignment:.leading,spacing:4) {
+            let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:3)):AnyLayout(HStackLayout(alignment:.firstTextBaseline,spacing:4))
+            layout {
+                Text(label).font(.caption).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal:false,vertical:true)
+                if !typeSize.isAccessibilitySize {Spacer(minLength:0)}
+                Text(String(format:"%.1f",value)).font(compact ? .caption.monospaced().bold():.subheadline.monospaced().bold()).foregroundStyle(color).layoutPriority(1)
+            }
+            HStack(spacing:2) {
+                ForEach(0..<10) {segment in
+                    GeometryReader {geometry in
+                        let fill=min(1,max(0,min(100,max(0,value))/10-Double(segment)))
+                        ZStack(alignment:.leading) {
+                            Rectangle().fill(GameTheme.boardLine.opacity(0.22))
+                            Rectangle().fill(color).frame(width:geometry.size.width*fill)
+                        }
+                    }
+                }
+            }.frame(height:compact ? 6:9).accessibilityHidden(true)
+        }.frame(maxWidth:.infinity,alignment:.leading)
+            .accessibilityElement(children:.ignore).accessibilityLabel(label+String(format:" %.1f / 100",value))
     }
 }
 

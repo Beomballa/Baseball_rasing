@@ -267,24 +267,27 @@ struct PlayerHomeView: View {
         let summary = HomeAbilitySummary(player: player, abilities: abilities)
         rolePicker
         ManagementSectionTabs(options: ManagementPlayerSection.allCases.filter { player.role == .batter || $0 != .positions }, selection: Binding(get: { section }, set: { playerSection = $0; roomDetail = .player($0) }), title: { $0.title }, identifier: "playerSection", horizontal: true)
+        PlayerNotebookIdentity(player: player, affiliation: affiliationLabel, age: age)
         switch section {
         case .abilities:
-            ManagementPanel("주요 능력 · 성장", surface: .paper) {
+            PlayerNotebookHighlights(values: summary.originals)
+            ManagementPanel("기량 분포 · 현재와 시작", surface: .paper) {
                 if let abilities { Text(abilities.label).managementFont(.helper).foregroundStyle(Color(hex: 0x237459)).accessibilityIdentifier("homeArchetype") }
                 let chart = player.role == .batter ? summary.originals : summary.axes
                 if chart.count == (player.role == .batter ? 7 : 6) { HomeRadarChart(values: chart, onPaper: true) }
                 else { Text("능력 자료를 확인할 수 없습니다.").managementFont(.helper) }
-                HomeDetailButton(title: "원본 능력치 상세", expanded: $showOriginals, identifier: "homeAbilityDetails", onPaper: true)
-                if showOriginals {
-                    ForEach(summary.originals) { HomeGrowthRow(value: $0, onPaper: true) }
-                }
             }
+            DisclosureGroup("능력별 성장 기록", isExpanded: $showOriginals) {
+                ForEach(summary.originals) { NotebookAbilityStrip(value: $0) }
+            }.font(.subheadline.bold()).tint(GameTheme.gold).foregroundStyle(GameTheme.boardInk)
+                .padding(14).background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(GameTheme.boardLine))
+                .accessibilityIdentifier("homeAbilityDetails")
             if player.role == .pitcher {
                 ManagementPanel("보유 구종 · 숙련도") {
                     ForEach(summary.pitches) { value in
                         HStack(spacing: 12) {
                             MatchGrip(code: value.id, hand: player.throwingHandRaw).frame(width: 34, height: 42).accessibilityHidden(true)
-                            HomeGrowthRow(value: value)
+                            NotebookAbilityStrip(value: value)
                         }
                     }
                     Text("구속은 능력 점수 · 변화구 종합과 개별 구종 숙련은 구분합니다.").managementFont(.helper).foregroundStyle(GameTheme.boardMuted)
@@ -518,165 +521,6 @@ struct PlayerHomeView: View {
                 else { Text("\(record.gameDate) 기록을 읽을 수 없습니다. 기존 저장은 유지합니다.").font(.caption).foregroundStyle(GameTheme.gold) }
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("homeGameResults")
-    }
-}
-
-struct AnnualLeagueHomePanel: View {
-    let player: CareerPlayer
-    let state: CareerCalendarState
-    let schools: [School]
-    let transition: CareerTransition
-    @Environment(\.modelContext) private var context
-    @State private var season: CareerSeasonSummary?
-    private var league: AnnualLeague? { season?.league }
-    @State private var error: String?
-    private func reload() {
-        do {
-            season=try CareerSeasonStore.load(player:player,state:state,year:GameDate(player.gameDate).year,in:context);error=nil
-        } catch {season=nil;self.error=error.localizedDescription}
-    }
-    private var ownTeamID:String {(try? state.competition(for:player,year:(try? GameDate(player.gameDate).year) ?? 2026).teamID) ?? player.schoolID}
-    var body: some View {
-        GamePanel(title:"연간 리그",onBoard:true) {
-            if let row=league?.standings.first(where:{$0.id == ownTeamID}) {
-                Text(row.rank.map {"\($0)위 · 내 팀"} ?? "순위 집계 전 · 내 팀").font(.headline).foregroundStyle(GameTheme.gold)
-                Text("\(row.games)경기 · \(row.wins)승 \(row.losses)패 \(row.draws)무 · 승률 \(row.percentage)")
-                    .font(.subheadline.monospaced()).accessibilityIdentifier("homeLeagueRecord")
-            } else if let error {
-                Text(error).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeLeagueError")
-                Button("순위 다시 확인",action:reload).buttonStyle(MatchPixelButtonStyle())
-            } else {Text("순위 불러오는 중").font(.caption)}
-            if let season {
-                Text("SEASON · 내 시즌 성적").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.boardMuted)
-                SeasonPersonalRecord(totals: season.totals, role: player.role, compact: true)
-                NavigationLink { CareerSeasonScreen(player: player, state: state, schools: schools, transition: transition) } label: {
-                    Text(season.finalized ? "시즌 결산 · 최종 성적" : "시즌 성적 · 결산 보기")
-                }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openSeasonSummary")
-            }
-            NavigationLink {AnnualLeagueScreen(player:player,state:state,schools:schools)} label: {
-                HStack {LeaguePixelFlag().frame(width:20,height:22);Text("리그 순위 보기")}
-            }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openAnnualLeague")
-        }.task(id:"\(player.gameDate):\(state.revision):\(transition.display == nil)") {
-            if transition.display == nil { reload() }
-        }
-    }
-}
-
-struct LeaguePixelFlag: View {
-    var body: some View {
-        Canvas { c,s in
-            let u=min(s.width/8,s.height/9)
-            c.fill(Path(CGRect(x:u,y:u,width:u,height:u*8)),with:.color(GameTheme.boardMuted))
-            c.fill(Path(CGRect(x:u*2,y:u,width:u*5,height:u*3)),with:.color(GameTheme.gold))
-            c.fill(Path(CGRect(x:u*2,y:u*4,width:u*3,height:u)),with:.color(GameTheme.growth))
-        }.accessibilityHidden(true)
-    }
-}
-
-struct AnnualLeagueScreen: View {
-    let player: CareerPlayer
-    let state: CareerCalendarState
-    let schools: [School]
-    @Environment(\.modelContext) private var context
-    @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var selectedYear: Int?
-    @State private var league: AnnualLeague?
-    @State private var error: String?
-    private func name(_ id:String) -> String {CareerTeamDirectory.name(id,schools:schools)}
-    private func reload() {
-        do {
-            let year=try selectedYear ?? GameDate(player.gameDate).year
-            league=try AnnualLeagueStore.load(player:player,state:state,year:year,in:context);error=nil
-        } catch {league=nil;self.error=error.localizedDescription}
-    }
-    private var ownTeamID:String {(try? state.competition(for:player,year:league?.year ?? (try? GameDate(player.gameDate).year) ?? 2026).teamID) ?? player.schoolID}
-    var body: some View {
-        ScrollView {
-            VStack(spacing:12) {
-                if let league {
-                    HStack {
-                        Button("이전 연도") {selectedYear=league.year-1}
-                            .disabled(league.year <= (try? GameDate(state.originDate).year) ?? league.year)
-                            .accessibilityIdentifier("leaguePreviousYear")
-                        Spacer();Text("\(String(league.year)) SEASON").font(.headline.monospaced()).foregroundStyle(GameTheme.gold);Spacer()
-                        Button("다음 연도") {selectedYear=league.year+1}
-                            .disabled(league.year >= (try? GameDate(player.gameDate).year) ?? league.year)
-                            .accessibilityIdentifier("leagueNextYear")
-                    }.buttonStyle(MatchPixelButtonStyle())
-                    Text("가상 6교 조별리그 · 연 30경기").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    GamePanel(title:"LEAGUE · 순위표",onBoard:true) {
-                        Text("완료 \(league.results.count) / 대상 \(league.fixtures.count)경기 · \(player.gameDate) 기준")
-                            .font(.caption.monospaced()).accessibilityIdentifier("leagueProgress")
-                        if !typeSize.isAccessibilitySize {tableHeader}
-                        ForEach(league.standings) {row in standingRow(row)}
-                        Text("승률 = 승 ÷ (승+패) · 무승부 제외\n같은 승률은 공동 순위 · 승패가 없으면 순위/승률 —")
-                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        if league.fixtures.count < 90 {
-                            Text("경력 시작 전 일정과 고교 출전 연령 밖 일정은 집계하지 않습니다.")
-                                .font(.caption).foregroundStyle(GameTheme.gold)
-                        }
-                    }
-                    let today=league.fixtures.filter {$0.date.description == player.gameDate}
-                    if !today.isEmpty {
-                        GamePanel(title:"TODAY · 오늘 대진",onBoard:true) {
-                            ForEach(today) {fixture in gameRow(fixture,result:league.results.first {$0.id == fixture.id},pending:league.pendingIDs.contains(fixture.id))}
-                        }
-                    }
-                    if let last=league.results.map({$0.fixture.date}).max() {
-                        GamePanel(title:"RECENT · \(last)",onBoard:true) {
-                            ForEach(league.results.filter {$0.fixture.date == last}) {result in gameRow(result.fixture,result:result,pending:false)}
-                        }
-                    } else {Text("아직 완료한 리그 경기가 없습니다.").font(.caption).accessibilityIdentifier("leagueEmpty")}
-                    Text("실제 완료 점수 우선 · 지난 날짜의 남은 경기만 자동\n자동 리그 결과는 개인 성적·피로·XP에 반영되지 않습니다.")
-                        .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                } else if let error {
-                    GamePanel(title:"리그 기록 확인 필요",onBoard:true) {
-                        Text(error).font(.subheadline).accessibilityIdentifier("leagueLoadError")
-                        Button("다시 확인",action:reload).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("retryAnnualLeague")
-                    }
-                } else {ProgressView("리그 불러오는 중").tint(GameTheme.gold)}
-            }.padding(12)
-        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
-            .navigationTitle("연간 리그 순위").navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar)
-            .task(id:"\(selectedYear ?? 0):\(player.gameDate):\(state.revision)"){reload()}
-    }
-    private var tableHeader: some View {
-        HStack(spacing:4) {
-            Text("위").frame(width:20);Text("팀").frame(maxWidth:.infinity,alignment:.leading)
-            ForEach(["경기","승","패","무"],id:\.self){Text($0).frame(width:25)}
-            Text("승률").frame(width:48)
-        }.font(.caption2.bold()).foregroundStyle(GameTheme.boardMuted).accessibilityHidden(true)
-    }
-    private func standingRow(_ row:LeagueStanding) -> some View {
-        VStack(alignment:.leading,spacing:6) {
-            if typeSize.isAccessibilitySize {
-                Text("\(row.rank.map {"\($0)위"} ?? "—") · \(name(row.id))\(row.id == ownTeamID ? " · 내 팀":"")").font(.headline)
-                Text("\(row.games)경기 · \(row.wins)승 \(row.losses)패 \(row.draws)무\n승률 \(row.percentage)").font(.body.monospaced())
-            } else {
-                HStack(spacing:4) {
-                    Text(row.rank.map(String.init) ?? "—").frame(width:20)
-                    Text(name(row.id)).frame(maxWidth:.infinity,alignment:.leading).lineLimit(1).minimumScaleFactor(0.75)
-                    ForEach([row.games,row.wins,row.losses,row.draws].indices,id:\.self){i in Text(String([row.games,row.wins,row.losses,row.draws][i])).frame(width:25)}
-                    Text(row.percentage).frame(width:48)
-                }.font(.caption.monospaced().bold())
-            }
-        }.padding(.vertical,10).padding(.horizontal,4).frame(maxWidth:.infinity,alignment:.leading)
-            .background(row.id == ownTeamID ? Color(hex:0x244e48):GameTheme.board)
-            .overlay(Rectangle().strokeBorder(row.id == ownTeamID ? GameTheme.gold:GameTheme.boardLine,lineWidth:row.id == ownTeamID ? 2:1))
-            .accessibilityElement(children:.ignore)
-            .accessibilityLabel("\(name(row.id))\(row.id == ownTeamID ? " 내 팀":"") · 순위 \(row.rank.map(String.init) ?? "미정") · \(row.games)경기 \(row.wins)승 \(row.losses)패 \(row.draws)무 · 승률 \(row.percentage)")
-            .accessibilityIdentifier(row.id == ownTeamID ? "leagueOwnStanding":"leagueStanding-\(row.id)")
-    }
-    private func gameRow(_ fixture:SeasonFixture,result:LeagueResult?,pending:Bool) -> some View {
-        VStack(alignment:.leading,spacing:4) {
-            Text("\(name(fixture.awayID))  @  \(name(fixture.homeID))").font(.subheadline.bold())
-            if let result {
-                Text("\(result.awayScore) : \(result.homeScore) · \(result.automatic ? "자동 결과":"실제 경기")")
-                    .font(.caption.monospaced()).foregroundStyle(GameTheme.gold)
-            } else {Text(pending ? "경기 진행 중":"경기 대기").font(.caption).foregroundStyle(GameTheme.boardMuted)}
-        }.padding(.vertical,4).frame(maxWidth:.infinity,alignment:.leading)
-            .accessibilityElement(children:.combine).accessibilityIdentifier("leagueFixture-\(fixture.id)")
     }
 }
 
