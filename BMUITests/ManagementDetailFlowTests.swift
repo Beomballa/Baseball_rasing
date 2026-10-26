@@ -415,6 +415,40 @@ final class ManagementDetailFlowTests: XCTestCase {
         }
     }
 
+    @MainActor func testV22TimingColorsAndCompactPixelPitches() {
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if pitcher { pickPitcher(app) }
+            app.buttons["clubhouse-rest"].tap(); app.buttons["confirmRest"].tap(); app.buttons["restDone"].tap()
+            app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 8)); app.buttons["opponentTab-plan"].tap()
+            reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+            XCTAssertTrue(app.otherElements["careerMatchField"].waitForExistence(timeout: 10))
+            if pitcher {
+                let pitches = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "gamePitchChoice-"))
+                XCTAssertTrue((3...5).contains(pitches.count))
+                let gauge = app.descendants(matching: .any).matching(identifier: "releaseGauge").firstMatch
+                for i in 0..<pitches.count {
+                    let pitch = pitches.element(boundBy: i)
+                    XCTAssertLessThanOrEqual(pitch.frame.width, 108)
+                    XCTAssertGreaterThanOrEqual(pitch.frame.height, 44)
+                    XCTAssertLessThanOrEqual(pitch.frame.maxY, gauge.frame.minY)
+                    XCTAssertTrue(pitch.isHittable)
+                }
+                pitches.element(boundBy: 1).tap(); XCTAssertTrue(pitches.element(boundBy: 1).isSelected)
+                XCTAssertTrue(app.buttons["gamePitch"].isHittable)
+                capture(app, "v22-pitcher-pixel-choices")
+            } else {
+                let gauge = app.descendants(matching: .any).matching(identifier: "battingTimingGauge").firstMatch
+                XCTAssertTrue(gauge.label.contains("파랑 빠름")); XCTAssertTrue(gauge.label.contains("금색 정타")); XCTAssertTrue(gauge.label.contains("주황 늦음"))
+                XCTAssertTrue(app.frame.contains(gauge.frame))
+                capture(app, "v22-batter-timing-colors")
+            }
+        }
+    }
+
     @MainActor private func launch(large: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-stats-verification"]
         if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }

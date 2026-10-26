@@ -6,12 +6,19 @@ struct MatchTimingGauge: View {
     let good: Double
     let perfect: Double
     let label: String
+    var batting = false
+    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label).font(.caption.bold())
             GeometryReader { size in
                 ZStack(alignment: .leading) {
-                    Rectangle().fill(Color(hex: 0x5b5034))
+                    Rectangle().fill(Color(hex: batting ? 0x4b8fca : 0x5b5034))
+                    if batting {
+                        Rectangle().fill(Color(hex: 0xd88454))
+                            .frame(width: size.size.width * max(0, 1 - center - good))
+                            .offset(x: size.size.width * min(1, center + good))
+                    }
                     Rectangle().fill(Color(hex: 0x73b890))
                         .frame(width: size.size.width * good * 2).offset(x: size.size.width * (center - good))
                     Rectangle().fill(GameTheme.gold)
@@ -19,11 +26,27 @@ struct MatchTimingGauge: View {
                     Rectangle().fill(Color(hex: 0xfff4ce)).frame(width: 4)
                         .offset(x: max(0, size.size.width - 4) * phase)
                 }
-            }.frame(height: 22)
+            }.frame(height: 22).clipped()
                 .overlay(Rectangle().strokeBorder(Color(hex: 0x9fb7bf), lineWidth: 2))
+            if batting {
+                if typeSize.isAccessibilitySize {
+                    HStack {
+                        Text("빠름").foregroundStyle(Color(hex: 0x8cc6f2))
+                        Spacer(minLength: 4)
+                        Text("정타").foregroundStyle(GameTheme.gold)
+                        Text("늦음").foregroundStyle(Color(hex: 0xf3a97a))
+                    }.font(.caption2.bold()).accessibilityHidden(true)
+                } else {
+                    GeometryReader { size in
+                        Text("빠름").foregroundStyle(Color(hex: 0x8cc6f2)).position(x: 16, y: 7)
+                        Text("정타").foregroundStyle(GameTheme.gold).position(x: size.size.width * center, y: 7)
+                        Text("늦음").foregroundStyle(Color(hex: 0xf3a97a)).position(x: size.size.width - 16, y: 7)
+                    }.font(.caption2.bold()).frame(height: 14).accessibilityHidden(true)
+                }
+            }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label + " · 초록 구간 GOOD, 노란 구간 PERFECT")
+        .accessibilityLabel(label + (batting ? " · 파랑 빠름, 초록 정타 근처, 금색 정타 타이밍, 주황 늦음" : " · 초록 구간 GOOD, 노란 구간 PERFECT"))
     }
 }
 
@@ -230,5 +253,38 @@ struct MatchBroadcastBoard: View {
         }.frame(width: 36, height: 27)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(match.bases.contains(true) ? "주자 \(match.bases.enumerated().filter { $0.element }.map { String($0.offset + 1) }.joined(separator: ","))루" : "주자 없음")
+    }
+}
+
+
+/// A compact visual plate inside the full 44-point button target.
+struct MatchPitchChip: View {
+    let name: String
+    let mastery: Double
+    let selected: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 3) {
+                Text(name).font(typeSize.isAccessibilitySize ? .headline : .system(size: 12, weight: .heavy, design: .monospaced))
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                Spacer(minLength: 0)
+                Text(mastery.formatted(.number.precision(.fractionLength(1))))
+                    .font(typeSize.isAccessibilitySize ? .body.monospaced().bold() : .system(size: 10, weight: .bold, design: .monospaced))
+            }
+            HStack(spacing: 2) {
+                ForEach(0..<8, id: \.self) { index in
+                    Rectangle().fill(Double(index) < min(100, max(0, mastery)) / 12.5 ? GameTheme.gold : Color(hex: 0x345365))
+                        .frame(width: 6, height: 3)
+                }
+            }.accessibilityHidden(true)
+        }.padding(.leading, 12).padding(.trailing, 7).padding(.vertical, typeSize.isAccessibilitySize ? 10 : 0)
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .foregroundStyle(selected ? GameTheme.gold : GameTheme.paper)
+            .background(ManagementStepFrame().fill(Color(hex: 0x102a3f)))
+            .overlay(ManagementStepFrame().strokeBorder(selected ? GameTheme.gold : Color(hex: 0x66818f), lineWidth: 2))
+            .overlay(alignment: .leading) {
+                if selected { Rectangle().fill(GameTheme.gold).frame(width: 3, height: 14).padding(.leading, 5) }
+            }
     }
 }

@@ -316,7 +316,7 @@ struct CareerGameView: View {
             } else {
                 MatchTimingGauge(phase: clock.phase, center: MatchDelivery.contactPhase,
                                  good: ManualMatchRules.timingWidth(contact: match.contact) * match.executionFactor,
-                                 perfect: 0.025, label: presenting ? "공·수비 진행 중" : clock.running ? (battingAction == .watch ? "공을 지켜보는 중" : "화면 탭 · 지금 " + battingAction.label) : "스와이프 조준 · 화면 탭으로 투구 요청")
+                                 perfect: 0.025, label: presenting ? "공·수비 진행 중" : clock.running ? (battingAction == .watch ? "공을 지켜보는 중" : "화면 탭 · 지금 " + battingAction.label) : "스와이프 조준 · 화면 탭으로 투구 요청", batting: true)
                     .accessibilityIdentifier("battingTimingGauge")
 
             }
@@ -384,23 +384,13 @@ struct CareerGameView: View {
         }
     }
     private func pitcherChoices(_ match: CareerMatch) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 0) {
             ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
                 let mastery = match.mastery[pitch.code] ?? 60
                 Button { pitchCode = pitch.code } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 3) {
-                            Text(pitch.name).font(typeSize.isAccessibilitySize ? .headline : .system(size: 13, weight: .heavy, design: .monospaced)).lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                            Spacer(minLength: 0)
-                            Text(mastery.formatted(.number.precision(.fractionLength(1)))).font(.system(size: 11, weight: .bold, design: .monospaced))
-                        }
-                        GeometryReader { g in
-                            Rectangle().fill(GameTheme.gold).frame(width: g.size.width * min(100, max(0, mastery)) / 100)
-                        }.frame(height: 3).background(GameTheme.boardLine.opacity(0.4))
-                    }.padding(.horizontal, 8).frame(minHeight: 44).contentShape(Rectangle())
-                }.buttonStyle(.plain).foregroundStyle(pitchCode == pitch.code ? GameTheme.gold : GameTheme.paper)
-                    .background(Color(hex: 0x102a3f).opacity(0.96))
-                    .overlay(Rectangle().strokeBorder(pitchCode == pitch.code ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
+                    MatchPitchChip(name: pitch.name, mastery: mastery, selected: pitchCode == pitch.code)
+                        .frame(minHeight: 44).contentShape(Rectangle())
+                }.buttonStyle(.plain)
                     .disabled(inputLocked).accessibilityLabel(pitch.name + " · 숙련도 " + mastery.formatted(.number.precision(.fractionLength(1))))
                     .accessibilityAddTraits(pitchCode == pitch.code ? .isSelected : [])
                     .accessibilityIdentifier("gamePitchChoice-" + pitch.code)
@@ -427,7 +417,7 @@ struct CareerGameView: View {
                         .overlay(alignment: player.role == .batter ? .bottomTrailing : .bottomLeading) {
                             if record.appearance && match.ownPitcherChange == nil {
                                 if player.role == .batter { batterChoices.frame(width: 106).padding(.trailing, 10).padding(.bottom, 26) }
-                                else { pitcherChoices(match).frame(width: 125).padding(.leading, 10)
+                                else { pitcherChoices(match).frame(width: 104).padding(.leading, 10)
                                     .padding(.bottom, max(12, liveControlsHeight - (available.height - field.height) / 2 + 8)) }
                             }
                         }
