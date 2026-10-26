@@ -42,6 +42,24 @@ class GitPrivacyTests(unittest.TestCase):
         for path in ["BM/Resources/Assets.xcassets/private.png", "BM/Resources/Assets.xcassets/AppIcon.appiconset/private.png", "BM/Resources/Assets.xcassets/Unknown.appiconset/Contents.json", "BM.xcodeproj/xcshareddata/xcschemes/Private.xcscheme"]:
             self.assertFalse(allowed_path(path), path)
 
+    def test_management_assets_are_individually_reviewed_and_exported_at_two_scales(self):
+        catalog = ROOT / "BM/Resources/Assets.xcassets"
+        for name in ["Home", "Player", "Training", "Game", "Career"]:
+            folder = catalog / ("Nav" + name + "V1.imageset")
+            spec = json.loads((folder / "Contents.json").read_text())
+            self.assertEqual({v["scale"] for v in spec["images"]}, {"2x", "3x"})
+            for entry in spec["images"]:
+                path = str((folder / entry["filename"]).relative_to(ROOT))
+                blob = (ROOT / path).read_bytes()
+                size = 28 * int(entry["scale"][0])
+                self.assertEqual(struct.unpack(">IIBB", blob[16:26]), (size, size, 8, 6))
+                self.assertEqual(blob_issues(path, blob), [])
+            self.assertTrue(allowed_path(str((folder / "Contents.json").relative_to(ROOT))))
+        backdrop = "BM/Resources/Assets.xcassets/ClubhouseV1.imageset/bg-clubhouse-v1.png"
+        self.assertEqual(blob_issues(backdrop, (ROOT / backdrop).read_bytes()), [])
+        self.assertFalse(allowed_path("BM/Resources/Assets.xcassets/ClubhouseV1.imageset/private.png"))
+        self.assertFalse(allowed_path("BM/Resources/Assets.xcassets/Private.imageset/Contents.json"))
+
     def test_required_source_paths_only(self):
         for path in ["BM/App/BMApp.swift", "BMTests/CareerStoreTests.swift", "BM/Resources/schools.json",
                      "BM.xcodeproj/project.pbxproj", ".githooks/pre-commit",

@@ -1,0 +1,115 @@
+import SwiftUI
+
+enum ManagementTab: String, CaseIterable, Identifiable {
+    case home, player, training, game, career
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .home: "홈"
+        case .player: "선수"
+        case .training: "훈련"
+        case .game: "경기"
+        case .career: "커리어"
+        }
+    }
+    var asset: String { "Nav" + rawValue.prefix(1).uppercased() + rawValue.dropFirst() + "V1" }
+}
+
+struct ManagementMenuIcon: View {
+    let tab: ManagementTab
+    var size = ManagementTheme.Control.tabIcon
+    var body: some View {
+        Image(tab.asset).resizable().interpolation(.none).scaledToFit()
+            .frame(width: size, height: size).accessibilityHidden(true)
+    }
+}
+
+struct ManagementTabBar: View {
+    @Binding var selection: ManagementTab
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                HStack(spacing: ManagementTheme.Space.compact) {
+                    ManagementMenuIcon(tab: selection)
+                    Text(selection.title).managementFont(.label).foregroundStyle(ManagementTheme.Palette.gold)
+                    Spacer(minLength: 0)
+                    Menu {
+                        ForEach(ManagementTab.allCases) { tab in
+                            Button(tab.title) { selection = tab }
+                                .accessibilityIdentifier("managementMenu-" + tab.rawValue)
+                        }
+                    } label: {
+                        Text("메뉴 선택").managementFont(.label)
+                            .padding(.horizontal, ManagementTheme.Space.compact)
+                            .frame(minWidth: ManagementTheme.Control.hit, minHeight: ManagementTheme.Control.hit)
+                            .background(ManagementTheme.Palette.control, in: ManagementStepFrame())
+                    }.accessibilityIdentifier("managementLargeMenu")
+                }
+                .padding(.horizontal, ManagementTheme.Space.screen)
+            } else {
+                HStack(spacing: 0) {
+                    ForEach(ManagementTab.allCases) { tab in
+                        Button { selection = tab } label: {
+                            VStack(spacing: ManagementTheme.Space.micro) {
+                                ManagementMenuIcon(tab: tab)
+                                Text(tab.title).managementFont(.label).fixedSize()
+                                Rectangle().fill(selection == tab ? ManagementTheme.Palette.gold : .clear)
+                                    .frame(height: ManagementTheme.Control.border).accessibilityHidden(true)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: ManagementTheme.Control.tabHeight)
+                            .foregroundStyle(selection == tab ? ManagementTheme.Palette.gold : ManagementTheme.Palette.onDark)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(tab.title)
+                        .accessibilityAddTraits(selection == tab ? .isSelected : [])
+                        .accessibilityIdentifier("managementTab-" + tab.rawValue)
+                    }
+                }
+                .padding(.horizontal, ManagementTheme.Space.inline)
+            }
+        }
+        .frame(minHeight: ManagementTheme.Control.tabHeight)
+        .padding(.top, ManagementTheme.Space.inline)
+        .foregroundStyle(ManagementTheme.Palette.onDark)
+        .background(ManagementTheme.Palette.canvas)
+        .overlay(alignment: .top) { Rectangle().fill(ManagementTheme.Palette.border).frame(height: ManagementTheme.Control.border) }
+    }
+}
+
+struct ManagementShell<Header: View, Content: View>: View {
+    @Binding var selection: ManagementTab
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ViewBuilder let header: Header
+    @ViewBuilder let content: Content
+    init(selection: Binding<ManagementTab>, @ViewBuilder header: () -> Header, @ViewBuilder content: () -> Content) {
+        _selection = selection; self.header = header(); self.content = content()
+    }
+    var body: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                ScrollView {
+                    VStack(spacing: 0) { header; paddedContent }
+                }.accessibilityIdentifier("managementContent")
+            } else {
+                VStack(spacing: 0) {
+                    header
+                    ScrollView { paddedContent }.accessibilityIdentifier("managementContent")
+                }
+            }
+        }
+        .background(ManagementTheme.Palette.canvas.ignoresSafeArea())
+        .foregroundStyle(ManagementTheme.Palette.onDark)
+        .safeAreaInset(edge: .bottom, spacing: 0) { ManagementTabBar(selection: $selection) }
+    }
+    private var paddedContent: some View {
+        content.padding(ManagementTheme.Space.screen).frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct ManagementClubhouseBackdrop: View {
+    var body: some View {
+        Image("ClubhouseV1").resizable().interpolation(.none).scaledToFit().accessibilityHidden(true)
+    }
+}

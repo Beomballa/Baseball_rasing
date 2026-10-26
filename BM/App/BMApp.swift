@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-live-career-autoplay") {
+            if ProcessInfo.processInfo.arguments.contains("-management-components-preview") {
+                ManagementFoundationPreview()
+            } else if ProcessInfo.processInfo.arguments.contains("-live-career-autoplay") {
                 LiveCareerPerformanceRun()
             } else if ProcessInfo.processInfo.arguments.contains("-field-performance-autoplay") {
                 FieldPerformanceAutoplay()

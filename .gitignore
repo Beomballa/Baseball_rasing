@@ -155,3 +155,22 @@
 !/BM/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 !/BM/Resources/Assets.xcassets/AppIconQA.appiconset/Contents.json
 !/BM/Resources/Assets.xcassets/AppIconQA.appiconset/AppIconQA.png
+
+# Reviewed management foundation scenery/menu artwork only.
+!/BM/Resources/Assets.xcassets/ClubhouseV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/ClubhouseV1.imageset/bg-clubhouse-v1.png
+!/BM/Resources/Assets.xcassets/NavCareerV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/NavCareerV1.imageset/icon-nav-career-v1-2x.png
+!/BM/Resources/Assets.xcassets/NavCareerV1.imageset/icon-nav-career-v1-3x.png
+!/BM/Resources/Assets.xcassets/NavGameV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/NavGameV1.imageset/icon-nav-game-v1-2x.png
+!/BM/Resources/Assets.xcassets/NavGameV1.imageset/icon-nav-game-v1-3x.png
+!/BM/Resources/Assets.xcassets/NavHomeV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/NavHomeV1.imageset/icon-nav-home-v1-2x.png
+!/BM/Resources/Assets.xcassets/NavHomeV1.imageset/icon-nav-home-v1-3x.png
+!/BM/Resources/Assets.xcassets/NavPlayerV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/NavPlayerV1.imageset/icon-nav-player-v1-2x.png
+!/BM/Resources/Assets.xcassets/NavPlayerV1.imageset/icon-nav-player-v1-3x.png
+!/BM/Resources/Assets.xcassets/NavTrainingV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/NavTrainingV1.imageset/icon-nav-training-v1-2x.png
+!/BM/Resources/Assets.xcassets/NavTrainingV1.imageset/icon-nav-training-v1-3x.png
