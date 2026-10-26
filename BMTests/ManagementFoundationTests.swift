@@ -35,4 +35,20 @@ final class ManagementFoundationTests: XCTestCase {
         let scene = try XCTUnwrap(UIImage(named: "ClubhouseV1"))
         XCTAssertGreaterThan(scene.size.height, scene.size.width)
     }
+    func testSpatialDateAndFatigueDisplayBoundaries() {
+        XCTAssertEqual(ManagementDisplay.date("2026-04-01"), "4월 1일 (수)")
+        XCTAssertEqual(ManagementDisplay.date("2027-01-01"), "1월 1일 (금)")
+        XCTAssertEqual(ManagementDisplay.date("unavailable"), "unavailable")
+        XCTAssertEqual(ManagementDisplay.fatigueLabel(40), "양호")
+        XCTAssertEqual(ManagementDisplay.fatigueLabel(41), "주의")
+        XCTAssertEqual(ManagementDisplay.fatigueLabel(59), "주의")
+        XCTAssertEqual(ManagementDisplay.fatigueLabel(60), "높음")
+    }
+    @MainActor func testApprovedPortraitRoomsAreBundledSeparatelyFromLegacyArt() throws {
+        for name in ["ClubhouseRoomV2", "LockerRoomV2", "BattingRoomV2", "BullpenRoomV2", "StadiumRoomV2", "ScoutRoomV2", "RestRoomV2"] {
+            let image = try XCTUnwrap(UIImage(named: name), name)
+            XCTAssertGreaterThan(image.size.height, image.size.width)
+            XCTAssertEqual(image.size.height / image.size.width, 1.75, accuracy: 0.02)
+        }
+    }
 }

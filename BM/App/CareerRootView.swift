@@ -34,7 +34,7 @@ struct CareerRootView: View {
             }
             .navigationDestination(for: UUID.self) { id in
                 if let player = players.first(where: { $0.id == id }) {
-                    MatchView(player: player)
+                    MatchView(player: player).toolbar(.visible, for: .navigationBar)
                 } else { ContentUnavailableView("선수를 찾을 수 없습니다", systemImage: "person.crop.square") }
             }
             .sheet(isPresented: $showCreation) {

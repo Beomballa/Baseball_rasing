@@ -29,7 +29,7 @@ struct CareerCalendarPanel: View {
     private var evaluationUnread: Bool {evaluations.contains {$0.playerID == player.id && !$0.acknowledged}}
     private func detail(_ fixture: SeasonFixture) -> String {
         let id=(try? state.teamID(for:player,on:fixture.date)) ?? player.schoolID
-        return "\(fixture.date) · \(teamName(fixture.opponent(of:id))) · \(fixture.homeID == id ? "홈" : "원정")"
+        return "\(ManagementDisplay.date(fixture.date.description)) · \(teamName(fixture.opponent(of:id))) · \(fixture.homeID == id ? "홈" : "원정")"
     }
     private func run(_ action: () throws -> Void) {
         do { try action() } catch { errorMessage = error.localizedDescription }
@@ -76,7 +76,7 @@ struct CareerCalendarPanel: View {
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
             if !compact {
             layout {
-                Text(player.gameDate).monospacedDigit().bold().accessibilityIdentifier("calendarDate")
+                Text(ManagementDisplay.date(player.gameDate)).monospacedDigit().bold().accessibilityIdentifier("calendarDate")
                 if !typeSize.isAccessibilitySize { Spacer() }
                 Text(trainingPending ? "훈련 진행 중 · 이어하기" : hasAction ? (trainedToday ? "오늘 행동 완료 · 훈련" : "오늘 행동 완료 · 휴식") : "오늘 행동 미사용")
                     .font(.caption).accessibilityIdentifier("calendarAction")
@@ -84,7 +84,7 @@ struct CareerCalendarPanel: View {
             HStack {
                 Text("피로 \(player.fatigue) / 100").font(.subheadline.monospaced().bold()).accessibilityIdentifier("homeFatigue")
                 Spacer()
-                Text(player.fatigue >= 70 ? "회복 필요" : player.fatigue >= 40 ? "피로 주의" : "양호").font(.caption).foregroundStyle(GameTheme.gold)
+                Text(ManagementDisplay.fatigueLabel(player.fatigue)).font(.caption).foregroundStyle(ManagementDisplay.fatigueColor(player.fatigue))
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {

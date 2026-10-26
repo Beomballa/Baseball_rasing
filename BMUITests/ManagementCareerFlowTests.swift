@@ -1,187 +1,201 @@
 import XCTest
 
+/// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
-    @MainActor func testActualGameAfterRestCompletesAndNextDayBothRoles() {
-        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
-        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+    private let captureSession = UUID().uuidString
+    @MainActor func testSpatialRoomsAndDetailsBothRolesAreReadOnly() {
+        let app = launch()
         for pitcher in [false, true] {
-            if pitcher { app.buttons["managementTab-player"].tap(); reveal(app.buttons["homeRole-pitcher"], app); app.buttons["homeRole-pitcher"].tap(); app.buttons["managementTab-home"].tap() }
-            reveal(app.buttons["clubhouse-rest"], app); app.buttons["clubhouse-rest"].tap()
-            reveal(app.buttons["confirmRest"], app); app.buttons["confirmRest"].tap(); app.buttons["restDone"].tap()
-            reveal(app.buttons["homeTodayGame"], app); app.buttons["homeTodayGame"].tap()
-            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 8)); app.buttons["opponentTab-plan"].tap()
-            app.buttons["confirmGamePlan"].tap()
-            let automatic = app.buttons["gameAutomatic"]; XCTAssertTrue(automatic.waitForExistence(timeout: 10))
-            XCTAssertFalse(app.buttons["managementTab-home"].exists)
-            reveal(automatic, app); automatic.tap(); app.buttons["진행하고 결과 저장"].tap()
-            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 15))
-            let returnHome = app.buttons["gameReturnHome"]; reveal(returnHome, app); returnHome.tap()
-            app.buttons["managementTab-game"].tap(); app.buttons["gameSection-records"].tap()
-            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeGameResults").firstMatch.exists)
-            capture(app, pitcher ? "Game pitcher recorded result" : "Game batter recorded result")
-            app.buttons["managementTab-home"].tap()
-            XCTAssertTrue(app.buttons["homeTodayGame"].label.contains("결과"))
-            reveal(app.buttons["advanceDay"], app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled); app.buttons["advanceDay"].tap()
-            let advanced = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "2026-04-02"), object: app.staticTexts["calendarDate"])
-            XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 10), .completed)
-        }
-    }
-    @MainActor func testCareerMenusAndRestConfirmationBothRolesUseExistingCommands() {
-        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
-        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
-        for pitcher in [false, true] {
-            if pitcher { app.buttons["managementTab-player"].tap(); reveal(app.buttons["homeRole-pitcher"], app); app.buttons["homeRole-pitcher"].tap() }
-            app.buttons["managementTab-career"].tap()
+            if pitcher { switchToPitcher(app) }
             let before = labels(app)
-            XCTAssertTrue(app.buttons["openScoutingReport"].waitForExistence(timeout: 8))
-            capture(app, pitcher ? "Career pitcher observation" : "Career batter observation")
-            app.buttons["careerSection-goals"].tap(); XCTAssertTrue(app.buttons["openCareerObjectives"].exists)
-            capture(app, pitcher ? "Career pitcher goals" : "Career batter goals")
-            app.buttons["careerSection-contracts"].tap(); XCTAssertTrue(app.buttons["openContractMarket"].exists)
-            capture(app, pitcher ? "Career pitcher contracts" : "Career batter contracts")
-            app.buttons["openContractMarket"].tap(); XCTAssertFalse(app.buttons["managementTab-home"].exists)
-            app.navigationBars.buttons.element(boundBy: 0).tap(); XCTAssertEqual(labels(app), before)
-            app.buttons["managementTab-home"].tap(); reveal(app.buttons["clubhouse-rest"], app); app.buttons["clubhouse-rest"].tap()
-            XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.staticTexts["restFatigueForecast"].label.contains(pitcher ? "52 → 34" : "24 → 6"))
-            capture(app, pitcher ? "Rest pitcher confirmation" : "Rest batter confirmation")
-            app.buttons["닫기"].tap(); XCTAssertEqual(labels(app), before)
-            app.buttons["clubhouse-rest"].tap(); reveal(app.buttons["confirmRest"], app); app.buttons["confirmRest"].tap()
-            XCTAssertTrue(app.staticTexts["restSaved"].exists); capture(app, pitcher ? "Rest pitcher saved" : "Rest batter saved")
-            app.buttons["restDone"].tap()
-            XCTAssertEqual(app.staticTexts["calendarDate"].label, before[0])
-            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeFatigue").firstMatch.label.contains(pitcher ? "34" : "6"))
-            app.buttons["clubhouse-rest"].tap(); XCTAssertFalse(app.buttons["confirmRest"].isEnabled); app.buttons["닫기"].tap()
-        }
-    }
-    @MainActor func testGameMenuAndActualOpponentSeasonBothRolesStayReadOnly() {
-        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-stats-verification"]; app.launch()
-        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
-        for pitcher in [false, true] {
-            if pitcher { app.buttons["managementTab-player"].tap(); reveal(app.buttons["homeRole-pitcher"], app); app.buttons["homeRole-pitcher"].tap() }
-            app.buttons["managementTab-game"].tap()
-            let before = labels(app)
-            capture(app, pitcher ? "Game pitcher schedule" : "Game batter schedule")
-            app.buttons["gameSection-records"].tap(); XCTAssertTrue(app.buttons["gameOpenSeason"].exists)
-            app.buttons["gameSection-standings"].tap(); XCTAssertTrue(app.buttons["openAnnualLeague"].exists)
-            app.buttons["gameSection-analysis"].tap(); app.buttons["hubOpponentAnalysis"].tap()
-            XCTAssertTrue(app.staticTexts["opponentCenterTitle"].waitForExistence(timeout: 8))
-            let era = app.descendants(matching: .any).matching(identifier: "opponentStat-ERA").firstMatch
-            XCTAssertTrue(era.exists); XCTAssertNotEqual(era.value as? String, "미집계")
-            capture(app, pitcher ? "Opponent pitcher season for pitcher" : "Opponent pitcher season for batter")
-            app.buttons["opponentTab-batter"].tap()
-            XCTAssertNotEqual(app.descendants(matching: .any).matching(identifier: "opponentStat-AVG").firstMatch.value as? String, "미집계")
-            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "opponentStat-OBP").firstMatch.exists); XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "opponentStat-SLG").firstMatch.exists)
-            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "opponentStat-WAR").firstMatch.value as? String, "미집계")
-            capture(app, pitcher ? "Opponent batting season for pitcher" : "Opponent batting season for batter")
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-            XCTAssertEqual(labels(app), before)
-        }
-    }
-    @MainActor func testPlayerAndTrainingMenusBothRolesKeepChosenKindAndResumeSavedRound() {
-        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
-        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
-        for pitcher in [false, true] {
-            app.buttons["managementTab-player"].tap()
-            if pitcher { reveal(app.buttons["homeRole-pitcher"], app); app.buttons["homeRole-pitcher"].tap() }
-            let date = app.staticTexts["calendarDate"].label
-            let fatigue = app.descendants(matching: .any).matching(identifier: "homeFatigue").firstMatch.label
-            let chart = app.descendants(matching: .any).matching(identifier: "homeAbilityRadar").firstMatch
-            XCTAssertTrue(chart.exists)
-            if !pitcher { XCTAssertTrue(chart.label.contains("수비")); XCTAssertTrue(chart.label.contains("송구")); XCTAssertFalse(chart.label.contains("수비 종합")) }
-            reveal(chart, app)
-            capture(app, pitcher ? "Player pitcher abilities" : "Player batter seven abilities")
-            reveal(app.buttons["playerSection-traits"], app); app.buttons["playerSection-traits"].tap()
-            XCTAssertTrue(app.staticTexts["traitActiveCount"].exists)
-            capture(app, pitcher ? "Player pitcher traits" : "Player batter traits")
-            app.buttons["playerSection-records"].tap()
-            XCTAssertTrue(app.buttons["playerOpenSeason"].exists)
-            app.buttons["managementTab-training"].tap()
-            let kind = pitcher ? "control" : "power"
-            reveal(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
-            XCTAssertEqual(app.staticTexts["trainingHubMethod"].label, pitcher ? "목표 코스 조준" : "힘과 발사각 조절")
-            reveal(app.staticTexts["trainingHubMethod"], app)
-            capture(app, pitcher ? "Training pitcher control hub" : "Training batter power hub")
-            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
-            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
-            XCTAssertTrue(app.buttons["trainingKind-" + kind].isSelected)
-            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
-            XCTAssertFalse(app.buttons["startTraining"].exists)
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-            XCTAssertTrue(app.buttons["openTraining"].label.contains("이어하기"))
-            XCTAssertEqual(app.staticTexts["calendarDate"].label, date)
-            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "homeFatigue").firstMatch.label, fatigue)
-            app.buttons["openTraining"].tap()
-            XCTAssertTrue(app.otherElements["trainingProgress"].exists || app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch.exists)
-            XCTAssertFalse(app.buttons["startTraining"].exists)
-            capture(app, pitcher ? "Training pitcher saved round" : "Training batter saved round")
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-        }
-    }
-    @MainActor func testHomeTabsSpatialEntriesBothRolesPreserveDateFatigueAndAction() {
-        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
-        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
-        for pitcher in [false, true] {
-            if pitcher {
-                app.buttons["managementTab-player"].tap()
-                reveal(app.buttons["homeRole-pitcher"], app); app.buttons["homeRole-pitcher"].tap()
-                app.buttons["managementTab-home"].tap()
+            XCTAssertTrue(app.frame.contains(app.staticTexts["homePlayerName"].frame))
+            XCTAssertTrue(app.frame.contains(app.staticTexts["calendarDate"].frame))
+            for tab in ["home", "player", "training", "game", "career"] {
+                XCTAssertTrue(app.frame.contains(app.buttons["managementTab-" + tab].frame))
             }
-            let before = labels(app)
-            XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains(pitcher ? "CareerPitch" : "CareerBat"))
-            capture(app, pitcher ? "Home pitcher clubhouse" : "Home batter clubhouse")
-            reveal(app.buttons["clubhouse-training"], app); app.buttons["clubhouse-training"].tap()
-            XCTAssertTrue(app.buttons["openTraining"].exists)
-            XCTAssertEqual(labels(app), before)
-            app.buttons["openTraining"].tap()
-            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
-            XCTAssertFalse(app.buttons["managementTab-home"].exists)
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-            for tab in ["game", "career", "player", "home"] {
+            capture(app, pitcher ? "pitcher-home" : "batter-home")
+            let cases = [("player", "facility-abilities", "homeAbilityRadar"),
+                         ("training", "facility-training", "trainingHubMethod"),
+                         ("game", "facility-game", "hubCalendar"),
+                         ("career", "facility-goals", "openCareerObjectives")]
+            for (tab, facility, detail) in cases {
                 app.buttons["managementTab-" + tab].tap()
-                XCTAssertTrue(app.buttons["managementTab-" + tab].isSelected)
+                XCTAssertTrue(app.buttons[facility].isHittable, facility)
+                XCTAssertTrue(app.buttons["roomPrimary"].isHittable)
+                XCTAssertTrue(app.frame.contains(app.buttons["roomPrimary"].frame))
+                capture(app, (pitcher ? "pitcher-" : "batter-") + tab)
+                app.buttons[facility].tap()
+                let element = app.descendants(matching: .any).matching(identifier: detail).firstMatch
+                XCTAssertTrue(element.waitForExistence(timeout: 6), detail)
+                capture(app, (pitcher ? "pitcher-" : "batter-") + tab + "-detail")
+                closeDetail(app)
                 XCTAssertEqual(labels(app), before)
             }
-            reveal(app.buttons["clubhouse-rest"], app); app.buttons["clubhouse-rest"].tap()
-            XCTAssertTrue(app.buttons["닫기"].waitForExistence(timeout: 5))
+            app.buttons["managementTab-home"].tap()
+            app.buttons["clubhouse-rest"].tap()
+            XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 5))
+            capture(app, pitcher ? "pitcher-rest" : "batter-rest")
             app.buttons["닫기"].tap()
             XCTAssertEqual(labels(app), before)
         }
     }
 
-    @MainActor func testHomeLargeTextMenuAndSpatialListRemainReachable() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
-        app.launch()
-        let menu = app.buttons["managementLargeMenu"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 15))
-        reveal(app.buttons["clubhouse-career"], app); XCTAssertTrue(app.buttons["clubhouse-career"].isHittable)
-        app.buttons["clubhouse-career"].tap()
-        reveal(app.buttons["careerSection-contracts"], app)
-        XCTAssertTrue(app.buttons["careerSection-contracts"].exists)
-        app.buttons["careerSection-contracts"].tap()
-        reveal(app.buttons["openContractMarket"], app)
-        XCTAssertTrue(app.buttons["openContractMarket"].isHittable)
-        capture(app, "Home large text career entry")
-        menu.tap(); app.buttons["홈"].tap()
-        reveal(app.buttons["clubhouse-training"], app); XCTAssertTrue(app.buttons["clubhouse-training"].isHittable)
-        capture(app, "Home large text spatial list")
-    }
-
-    @MainActor private func labels(_ app: XCUIApplication) -> [String] {
-        ["calendarDate", "homeFatigue", "calendarAction"].map {
-            app.descendants(matching: .any).matching(identifier: $0).firstMatch.label
+    @MainActor func testTrainingSelectionAndPendingResumeBothRoles() {
+        let app = launch()
+        for pitcher in [false, true] {
+            if pitcher { switchToPitcher(app) }
+            let before = labels(app)
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+            let kind = pitcher ? "control" : "power"
+            reveal(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
+            XCTAssertEqual(app.staticTexts["trainingHubMethod"].label, pitcher ? "목표 코스 조준" : "힘과 발사각 조절")
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 6))
+            XCTAssertTrue(app.buttons["trainingKind-" + kind].isSelected)
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            XCTAssertFalse(app.buttons["startTraining"].exists)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            reveal(app.buttons["openTraining"], app)
+            XCTAssertTrue(app.buttons["openTraining"].label.contains("이어하기"))
+            app.buttons["openTraining"].tap()
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch.exists)
+            XCTAssertFalse(app.buttons["startTraining"].exists)
+            capture(app, pitcher ? "pitcher-training-resume" : "batter-training-resume")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
+            app.buttons["managementTab-home"].tap()
+            XCTAssertTrue(app.buttons["homeResumeTraining"].exists)
+            XCTAssertEqual(Array(labels(app).prefix(2)), Array(before.prefix(2)))
+            app.buttons["clubhouse-rest"].tap()
+            XCTAssertFalse(app.buttons["confirmRest"].isEnabled)
+            app.buttons["닫기"].tap()
         }
     }
+
+    @MainActor func testRestGameCompletionAndNextDayBothRoles() {
+        let app = launch()
+        for pitcher in [false, true] {
+            if pitcher { switchToPitcher(app) }
+            let originalDate = app.staticTexts["calendarDate"].label
+            app.buttons["clubhouse-rest"].tap()
+            XCTAssertTrue(app.staticTexts["restFatigueForecast"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["restFatigueForecast"].label.contains(pitcher ? "52 → 34" : "24 → 6"))
+            app.buttons["confirmRest"].tap(); XCTAssertTrue(app.staticTexts["restSaved"].exists)
+            app.buttons["restDone"].tap()
+            XCTAssertEqual(app.staticTexts["calendarDate"].label, originalDate)
+            XCTAssertTrue(app.staticTexts["calendarAction"].label.contains("0/1"))
+            app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 8)); app.buttons["opponentTab-plan"].tap()
+            reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+            let automatic = app.buttons["gameAutomatic"]; XCTAssertTrue(automatic.waitForExistence(timeout: 10))
+            reveal(automatic, app); automatic.tap(); app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 15))
+            capture(app, pitcher ? "pitcher-completed" : "batter-completed")
+            reveal(app.buttons["gameReturnHome"], app); app.buttons["gameReturnHome"].tap()
+            if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
+            XCTAssertTrue(app.buttons["homeTodayGame"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["homeTodayGame"].label.contains("결과"))
+            app.buttons["managementTab-game"].tap(); app.buttons["facility-gameRecords"].tap()
+            XCTAssertTrue(app.buttons["gameOpenSeason"].exists)
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeGameResults").firstMatch.exists)
+            closeDetail(app)
+            app.buttons["facility-calendar"].tap()
+            reveal(app.buttons["advanceDay"], app); XCTAssertTrue(app.buttons["advanceDay"].isEnabled)
+            app.buttons["advanceDay"].tap()
+            let next = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "4월 2일 (목)"), object: app.scrollViews["calendarDetailScroll"].staticTexts["calendarDate"])
+            XCTAssertEqual(XCTWaiter.wait(for: [next], timeout: 10), .completed)
+            app.buttons["닫기"].tap(); app.buttons["managementTab-home"].tap()
+            XCTAssertEqual(app.staticTexts["calendarDate"].label, "4월 2일 (목)")
+        }
+    }
+
+    @MainActor func testLargeTextFacilitiesKeepStatusesAndSheetCloseReachable() {
+        let app = launch(large: true)
+        let before = labels(app)
+        XCTAssertTrue(app.buttons["managementLargeMenu"].isHittable)
+        XCTAssertTrue(app.frame.contains(app.buttons["managementLargeMenu"].frame))
+        XCTAssertTrue(app.frame.contains(app.staticTexts["homePlayerName"].frame))
+        XCTAssertTrue(app.scrollViews["roomFacilityList"].exists)
+        reveal(app.buttons["clubhouse-career"], app); app.buttons["clubhouse-career"].tap()
+        reveal(app.buttons["facility-contracts"], app); app.buttons["facility-contracts"].tap()
+        XCTAssertTrue(app.buttons["careerSection-contracts"].waitForExistence(timeout: 5)); XCTAssertTrue(app.buttons["careerSection-contracts"].isSelected)
+        reveal(app.buttons["openContractMarket"], app); XCTAssertTrue(app.buttons["openContractMarket"].isHittable)
+        capture(app, "large-contracts")
+        closeDetail(app)
+        app.buttons["managementLargeMenu"].tap(); app.buttons["홈"].tap()
+        XCTAssertEqual(labels(app), before)
+        reveal(app.buttons["clubhouse-rest"], app); XCTAssertTrue(app.buttons["clubhouse-rest"].isHittable)
+        capture(app, "large-home")
+    }
+
+    @MainActor func testFacilityDetailTabsUpdateWithoutClosingSheet() {
+        let app = launch()
+        let before = labels(app)
+        let cases = [("player", "facility-abilities", "playerSection-traits", "traitActiveCount"),
+                     ("game", "facility-game", "gameSection-records", "gameOpenSeason"),
+                     ("career", "facility-goals", "careerSection-contracts", "openContractMarket")]
+        for (tab, facility, choice, content) in cases {
+            app.buttons["managementTab-" + tab].tap(); app.buttons[facility].tap()
+            reveal(app.buttons[choice], app); app.buttons[choice].tap()
+            let result = app.descendants(matching: .any).matching(identifier: content).firstMatch
+            XCTAssertTrue(result.waitForExistence(timeout: 5), content)
+            closeDetail(app); XCTAssertEqual(labels(app), before)
+        }
+    }
+
+    @MainActor func testRootCreationAndPracticeWaitForRoomSheetDismissal() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-management-single-role-verification"]
+        app.launch(); XCTAssertTrue(app.buttons["managementTab-player"].waitForExistence(timeout: 15))
+        app.buttons["managementTab-player"].tap(); app.buttons["facility-abilities"].tap()
+        reveal(app.buttons["createOtherRole"], app); app.buttons["createOtherRole"].tap()
+        XCTAssertTrue(app.buttons["createPlayer"].waitForExistence(timeout: 6))
+        XCTAssertFalse(app.buttons["closeRoomDetail"].exists)
+        app.buttons["닫기"].tap()
+        app.buttons["managementTab-training"].tap(); app.buttons["facility-practice"].tap()
+        app.buttons["openMatch"].tap()
+        XCTAssertTrue(app.buttons["demoPitch"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["closeRoomDetail"].exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["managementTab-home"].waitForExistence(timeout: 6))
+    }
+
+    @MainActor private func launch(large: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]
+        if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        return app
+    }
+    @MainActor private func switchToPitcher(_ app: XCUIApplication) {
+        app.buttons["roomProfile"].tap(); XCTAssertTrue(app.buttons["homeRole-pitcher"].waitForExistence(timeout: 5))
+        app.buttons["homeRole-pitcher"].tap()
+        if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
+        app.buttons["managementTab-home"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("CareerPitch"))
+    }
+    @MainActor private func closeDetail(_ app: XCUIApplication) {
+        app.buttons["closeRoomDetail"].tap()
+        XCTAssertTrue(app.buttons["roomProfile"].waitForExistence(timeout: 5))
+    }
+    @MainActor private func labels(_ app: XCUIApplication) -> [String] {
+        ["calendarDate", "homeFatigue", "calendarAction"].map { app.descendants(matching: .any).matching(identifier: $0).firstMatch.label }
+    }
     @MainActor private func reveal(_ element: XCUIElement, _ app: XCUIApplication) {
-        for _ in 0..<16 {
+        for _ in 0..<12 {
             if element.isHittable { return }
-            let scroll = app.scrollViews.firstMatch
+            let detail = app.scrollViews["roomDetailScroll"]
+            let calendar = app.scrollViews["calendarDetailScroll"]
+            let scroll = detail.exists ? detail : calendar.exists ? calendar : app.scrollViews.firstMatch
             if element.exists && element.frame.minY < scroll.frame.minY { scroll.swipeDown() }
             else { scroll.swipeUp() }
         }
     }
     @MainActor private func capture(_ app: XCUIApplication, _ title: String) {
-        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = title; shot.lifetime = .keepAlways; add(shot)
+        let screenshot = app.screenshot()
+        let shot = XCTAttachment(screenshot: screenshot); shot.name = title; shot.lifetime = .keepAlways; add(shot)
+        let folder = URL.documentsDirectory.appending(path: "ManagementSpatialCaptures/" + captureSession)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try screenshot.pngRepresentation.write(to: folder.appending(path: title + ".png"))
+        } catch { XCTFail("QA screenshot could not be retained: " + error.localizedDescription) }
     }
 }

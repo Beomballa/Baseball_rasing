@@ -191,3 +191,26 @@
 
 !/BM/Resources/Assets.xcassets/RestRoomV1.imageset/Contents.json
 !/BM/Resources/Assets.xcassets/RestRoomV1.imageset/bg-rest-room-v1.png
+
+# Individually reviewed spatial management rooms v2.
+!/BM/Resources/Assets.xcassets/ClubhouseRoomV2.imageset/
+!/BM/Resources/Assets.xcassets/ClubhouseRoomV2.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/ClubhouseRoomV2.imageset/room.png
+!/BM/Resources/Assets.xcassets/LockerRoomV2.imageset/
+!/BM/Resources/Assets.xcassets/LockerRoomV2.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/LockerRoomV2.imageset/room.png
+!/BM/Resources/Assets.xcassets/BattingRoomV2.imageset/
+!/BM/Resources/Assets.xcassets/BattingRoomV2.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/BattingRoomV2.imageset/room.png
+!/BM/Resources/Assets.xcassets/BullpenRoomV2.imageset/
+!/BM/Resources/Assets.xcassets/BullpenRoomV2.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/BullpenRoomV2.imageset/room.png
+!/BM/Resources/Assets.xcassets/StadiumRoomV2.imageset/
+!/BM/Resources/Assets.xcassets/StadiumRoomV2.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/StadiumRoomV2.imageset/room.png
+!/BM/Resources/Assets.xcassets/ScoutRoomV2.imageset/
+!/BM/Resources/Assets.xcassets/ScoutRoomV2.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/ScoutRoomV2.imageset/room.png
+!/BM/Resources/Assets.xcassets/RestRoomV2.imageset/
+!/BM/Resources/Assets.xcassets/RestRoomV2.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/RestRoomV2.imageset/room.png

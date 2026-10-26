@@ -2,12 +2,17 @@ import SwiftUI
 
 struct HomeRadarChart: View {
     let values: [HomeAbilityValue]
+    var onPaper = false
+    private var chartGrowth: Color { onPaper ? Color(hex: 0x237459) : GameTheme.growth }
+    private var weakestID: String? { values.min { $0.current < $1.current }?.id }
     @Environment(\.dynamicTypeSize) private var typeSize
     private var hasBaseline: Bool { values.allSatisfy { $0.initial != nil } }
     var body: some View {
         VStack(spacing: 8) {
             if typeSize.isAccessibilitySize {
-                ForEach(values) { HomeGrowthRow(value: $0) }
+                ForEach(values) { value in
+                    HomeGrowthRow(value: value, onPaper: onPaper)
+                }
             } else {
                 GeometryReader { geometry in
                     let size = geometry.size
@@ -37,21 +42,21 @@ struct HomeRadarChart: View {
                                 context.stroke(line, with: .color(GameTheme.boardLine.opacity(0.4)), lineWidth: 1)
                             }
                             let current = polygon(values.map(\.current))
-                            context.fill(current, with: .color(GameTheme.growth.opacity(0.16)))
-                            context.stroke(current, with: .color(GameTheme.growth), lineWidth: 2)
+                            context.fill(current, with: .color(chartGrowth.opacity(0.16)))
+                            context.stroke(current, with: .color(chartGrowth), lineWidth: 2)
                             if hasBaseline {
-                                context.stroke(polygon(values.compactMap(\.initial)), with: .color(GameTheme.gold), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                                context.stroke(polygon(values.compactMap(\.initial)), with: .color(onPaper ? Color(hex: 0x8b431b) : GameTheme.gold), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                             }
                             for (index, value) in values.enumerated() {
                                 let p = point(index, value.current)
-                                context.fill(Path(CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)), with: .color(GameTheme.growth))
+                                context.fill(Path(CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)), with: .color(chartGrowth))
                             }
                         }
                         ForEach(Array(values.enumerated()), id: \.element.id) { index, value in
                             let angle = Double(index) * 2 * .pi / Double(max(1, values.count)) - .pi / 2
                             VStack(spacing: 2) {
-                                Text(value.label).foregroundStyle(GameTheme.boardMuted)
-                                Text(value.current.formatted(.number.precision(.fractionLength(1)))).bold().foregroundStyle(GameTheme.boardInk)
+                                Text(value.label + (value.id == weakestID ? " · 보완" : "")).foregroundStyle(value.id == weakestID ? Color(hex: onPaper ? 0x8b431b : 0xecc66b) : onPaper ? GameTheme.navy : GameTheme.boardMuted)
+                                Text(value.current.formatted(.number.precision(.fractionLength(1)))).bold().foregroundStyle(onPaper ? GameTheme.navy : GameTheme.boardInk)
                             }.font(.caption).monospacedDigit().frame(width: 88)
                                 .position(x: center.x + cos(angle) * radius * 1.38, y: center.y + sin(angle) * radius * 1.38)
                         }
@@ -62,9 +67,9 @@ struct HomeRadarChart: View {
                     .accessibilityIdentifier("homeAbilityRadar")
             }
             HStack(spacing: 16) {
-                Text("■ 현재").foregroundStyle(GameTheme.growth)
-                if hasBaseline { Text("┄ 시작").foregroundStyle(GameTheme.gold) }
-                Spacer(); Text("MAX 100").foregroundStyle(GameTheme.boardMuted)
+                Text("■ 현재").foregroundStyle(chartGrowth)
+                if hasBaseline { Text("┄ 시작").foregroundStyle(onPaper ? Color(hex: 0x8b431b) : GameTheme.gold) }
+                Spacer(); Text("MAX 100").foregroundStyle(onPaper ? GameTheme.navy : GameTheme.boardMuted)
             }.font(.caption.monospaced())
         }
     }
@@ -72,6 +77,11 @@ struct HomeRadarChart: View {
 
 struct HomeGrowthRow: View {
     let value: HomeAbilityValue
+    var onPaper = false
+    private var ink: Color { onPaper ? GameTheme.navy : GameTheme.boardInk }
+    private var muted: Color { onPaper ? GameTheme.muted : GameTheme.boardMuted }
+    private var growthColor: Color { onPaper ? Color(hex: 0x237459) : GameTheme.growth }
+    private var startColor: Color { onPaper ? Color(hex: 0x8b431b) : GameTheme.gold }
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
@@ -81,10 +91,10 @@ struct HomeGrowthRow: View {
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Rectangle().fill(GameTheme.board)
-                    Rectangle().fill(GameTheme.growth.opacity(0.8)).frame(width: max(0, geometry.size.width) * min(100, max(0, value.current)) / 100)
+                    Rectangle().fill(onPaper ? GameTheme.navy.opacity(0.12) : GameTheme.board)
+                    Rectangle().fill(growthColor.opacity(0.8)).frame(width: max(0, geometry.size.width) * min(100, max(0, value.current)) / 100)
                     if let initial = value.initial {
-                        Rectangle().fill(GameTheme.gold).frame(width: 2).offset(x: max(0, geometry.size.width - 2) * min(100, max(0, initial)) / 100)
+                        Rectangle().fill(startColor).frame(width: 2).offset(x: max(0, geometry.size.width - 2) * min(100, max(0, initial)) / 100)
                     }
                 }.overlay(Rectangle().strokeBorder(GameTheme.boardLine.opacity(0.6)))
             }.frame(height: 7).accessibilityHidden(true)
@@ -93,10 +103,10 @@ struct HomeGrowthRow: View {
                     Text("시작 \(initial, specifier: "%.1f")")
                     Spacer()
                     Text(gain == 0 ? "변화 없음" : "\(gain > 0 ? "+" : "")\(gain.formatted(.number.precision(.fractionLength(1))))")
-                        .foregroundStyle(gain > 0 ? GameTheme.growth : GameTheme.boardMuted)
-                }.font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        .foregroundStyle(gain > 0 ? growthColor : muted)
+                }.font(.caption).foregroundStyle(muted)
             }
-        }.foregroundStyle(GameTheme.boardInk)
+        }.foregroundStyle(ink)
             .accessibilityElement(children: .combine).accessibilityIdentifier(value.id)
     }
 }
@@ -105,13 +115,14 @@ struct HomeDetailButton: View {
     let title: String
     @Binding var expanded: Bool
     var identifier: String
+    var onPaper = false
     var body: some View {
         Button { expanded.toggle() } label: {
             HStack {
                 Text(title).font(.subheadline.bold())
                 Spacer(); Text(expanded ? "−" : "+").font(.title3.monospaced().bold())
             }.frame(minHeight: 44).contentShape(Rectangle())
-        }.buttonStyle(.plain).foregroundStyle(GameTheme.gold)
+        }.buttonStyle(.plain).foregroundStyle(onPaper ? GameTheme.navy : GameTheme.gold)
             .accessibilityIdentifier(identifier).accessibilityValue(expanded ? "펼침" : "접힘")
     }
 }
