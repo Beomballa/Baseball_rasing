@@ -56,7 +56,7 @@ struct ScoutingObservationHomePanel: View {
                 NavigationLink { ScoutingReportView(player: player, calendar: calendar) } label: { Text("내 관찰 보고서 · 현재 자료/이력") }
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openScoutingReport")
             }
-            Text("구단 관심은 확정 보고서에 고정합니다. 정식 계약 제의는 후속 단계입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Text("구단 관심은 확정 보고서에 고정합니다. 실제 제의와 심사 결과는 커리어의 계약 메뉴에서 확인하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }.task(id: "\(player.id)-\(player.gameDate)") { refresh() }
     }
 }

@@ -4,7 +4,7 @@ import UIKit
 
 final class ManagementFoundationTests: XCTestCase {
     @MainActor func testAddedPlayerAndTrainingRoomAssetsAreBundled() throws {
-        for name in ["LockerV1", "BattingRoomV1", "BullpenRoomV1", "StadiumGateV1"] {
+        for name in ["LockerV1", "BattingRoomV1", "BullpenRoomV1", "StadiumGateV1", "ScoutRoomV1", "RestRoomV1"] {
             let image = try XCTUnwrap(UIImage(named: name), name)
             XCTAssertGreaterThan(image.size.width, image.size.height)
             XCTAssertLessThan(image.size.width / image.size.height, 2)

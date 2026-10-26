@@ -50,6 +50,8 @@ struct PlayerHomeView: View {
     }
     @State private var selectedTab = ManagementTab.home
     @State private var showCalendar = false
+    @State private var showRest = false
+    @State private var careerSection = ManagementCareerSection.observation
     @Query private var contractEvaluations: [CareerContractEvaluation]
     private var actionLabel: String {
         if let todayTraining, !todayTraining.completed { return "훈련 진행 중 · 이어하기" }
@@ -83,12 +85,15 @@ struct PlayerHomeView: View {
             if let calendar {
                 NavigationStack {
                     ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }
-                        .background(GameTheme.board).navigationTitle("휴식 · 일정 관리")
+                        .background(GameTheme.board).navigationTitle("일정 · 날짜 관리")
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showCalendar = false } } }
                 }.preferredColorScheme(.dark)
             }
         }
-            .onChange(of: player.id) { _, _ in showOriginals = false; playerSection = .abilities; trainingSection = .abilities; gameSection = .schedule; trainingKind = player.role == .pitcher ? .pitch : .contact }
+        .sheet(isPresented: $showRest) {
+            if let calendar { CareerRestConfirmation(player: player, state: calendar, revision: calendar.revision) }
+        }
+            .onChange(of: player.id) { _, _ in showOriginals = false; playerSection = .abilities; trainingSection = .abilities; gameSection = .schedule; careerSection = .observation; trainingKind = player.role == .pitcher ? .pitch : .contact }
             .onChange(of: recentRecords.map(MatchDisplaySnapshot.Token.init), initial: true) { _, _ in
                 var next: [String: MatchDisplaySnapshot] = [:]
                 for record in recentRecords {
@@ -127,11 +132,11 @@ struct PlayerHomeView: View {
                 }
             }
             if contractEvaluations.contains(where: { $0.playerID == player.id && !$0.acknowledged }) {
-                Button("새 계약 평가 · 자료 확인") { selectedTab = .career }
+                Button("새 계약 평가 · 자료 확인") { careerSection = .contracts; selectedTab = .career }
                     .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("homeUnreadEvaluation")
             }
         }
-        ManagementClubhouseScene(appearance: player.appearance, selection: { selectedTab = $0 }, rest: { showCalendar = true })
+        ManagementClubhouseScene(appearance: player.appearance, selection: { selectedTab = $0 }, rest: { showRest = true })
         if let calendar {
             CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition, compact: true).id(player.id)
         } else { Text("달력 정보를 불러오지 못했습니다. 기존 저장은 유지합니다.").managementFont(.body) }
@@ -318,19 +323,30 @@ struct PlayerHomeView: View {
         }
     }
     @ViewBuilder private var careerContent: some View {
+        HStack(spacing: 12) { ManagementRoomScene(asset: "ScoutRoomV1").frame(width: 96); Text("스카우트실 · 나의 진로").managementFont(.sectionTitle) }
+        ManagementSectionTabs(options: ManagementCareerSection.allCases, selection: $careerSection, title: { $0.title }, identifier: "careerSection", horizontal: true)
         if let calendar {
-                    NavigationLink {ContractMarketView(player:player,calendar:calendar)} label: {Text("계약 시장 · 잔류 / 외부 비교")}
-                        .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openContractMarket")
-                    NavigationLink {CareerObjectivesView(player:player,calendar:calendar)} label: {CareerObjectivesHomeLabel(player:player,calendar:calendar)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openCareerObjectives")
-                    NavigationLink {ObservationReviewView(player:player,calendar:calendar)} label: {Text("28일 관찰 결산 · 다음 행동")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openObservationReview")
-                    NavigationLink {GoalSpecialActivitiesView(player:player,calendar:calendar)} label: {Text("목표 구단 · 특별 훈련 / 평가전")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openGoalSpecial")
-                    NavigationLink {ClubSeasonGoalsScreen(player:player,calendar:calendar)} label: {ClubSeasonHomeLabel(player:player,calendar:calendar)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubSeasonGoals")
-                    NavigationLink {ClubRoleScreen(player:player,calendar:calendar)} label: {Text("구단 역할 · 출전 / 승격 준비")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubRole")
-                    CareerContractStatusPanel(player:player,calendar:calendar).id(player.id)
-                    ContractEvaluationHomePanel(player:player,calendar:calendar).id(player.id)
-                    CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
-                    ScoutingObservationHomePanel(player: player, calendar: calendar)
-
+            switch careerSection {
+            case .observation:
+                ScoutingObservationHomePanel(player: player, calendar: calendar)
+                NavigationLink { ObservationReviewView(player: player, calendar: calendar) } label: { Text("28일 관찰 결산 · 다음 행동") }
+                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openObservationReview")
+            case .goals:
+                NavigationLink { CareerObjectivesView(player: player, calendar: calendar) } label: { CareerObjectivesHomeLabel(player: player, calendar: calendar) }
+                    .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("openCareerObjectives")
+                NavigationLink { GoalSpecialActivitiesView(player: player, calendar: calendar) } label: { Text("목표 구단 · 특별 훈련 / 평가전") }
+                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openGoalSpecial")
+                NavigationLink { ClubSeasonGoalsScreen(player: player, calendar: calendar) } label: { ClubSeasonHomeLabel(player: player, calendar: calendar) }
+                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openClubSeasonGoals")
+                NavigationLink { ClubRoleScreen(player: player, calendar: calendar) } label: { Text("구단 역할 · 출전 / 승격 준비") }
+                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openClubRole")
+            case .contracts:
+                NavigationLink { ContractMarketView(player: player, calendar: calendar) } label: { Text("계약 시장 · 잔류 / 외부 비교") }
+                    .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("openContractMarket")
+                ContractEvaluationHomePanel(player: player, calendar: calendar).id(player.id)
+                CareerContractStatusPanel(player: player, calendar: calendar).id(player.id)
+                CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
+            }
         }
     }
 

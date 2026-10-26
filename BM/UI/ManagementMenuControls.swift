@@ -75,3 +75,8 @@ extension TrainingKind {
 enum ManagementGameSection: CaseIterable { case schedule, analysis, records, standings
     var title: String { switch self { case .schedule: "일정"; case .analysis: "분석"; case .records: "기록"; case .standings: "순위" } }
 }
+
+
+enum ManagementCareerSection: CaseIterable { case observation, goals, contracts
+    var title: String { switch self { case .observation: "관찰"; case .goals: "목표"; case .contracts: "계약" } }
+}

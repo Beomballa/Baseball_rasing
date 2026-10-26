@@ -11,6 +11,7 @@ struct CareerCalendarPanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var showSchedule = false
+    @State private var showRest = false
     @State private var showHelp = false
     @State private var confirmBirthday = false
     @State private var errorMessage: String?
@@ -119,10 +120,7 @@ struct CareerCalendarPanel: View {
 
             layout {
                 Button(hasAction ? (trainedToday ? "오늘 행동 완료" : "휴식 완료") : "오늘 휴식 −\(DailyRecovery.rest)") {
-                    run {
-                        try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context)
-                        summary = "오늘 휴식 저장 · 다음 날 수면 회복 −\(DailyRecovery.sleep)"
-                    }
+                    showRest = true
                 }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).disabled(hasAction || trainingPending || advancing || schedule == nil)
                     .accessibilityIdentifier("restToday")
                 Button("다음 날") { nextDay() }.buttonStyle(GameButtonStyle(onBoard: true))
@@ -175,6 +173,11 @@ struct CareerCalendarPanel: View {
         .alert("날짜 진행을 완료하지 못했습니다", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("확인") { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
+        .sheet(isPresented: $showRest) {
+            CareerRestConfirmation(player: player, state: state, revision: state.revision) {
+                summary = "오늘 휴식 저장 · 다음 날 수면 회복 −\(DailyRecovery.sleep)"
+            }
+        }
         .sheet(isPresented: $showSchedule) {
             NavigationStack {
                 List {

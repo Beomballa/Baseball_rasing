@@ -50,6 +50,9 @@ PATTERNS = [
 EXACT_PATHS.update({"BM/Resources/Assets.xcassets/StadiumGateV1.imageset/Contents.json"})
 ART_HASHES.update({"BM/Resources/Assets.xcassets/StadiumGateV1.imageset/bg-stadium-gate-v1.png":"e6c1be9d916a59e9c40e4f3b10f33612589bfd4d40e98afe186c54ce78c288b8"})
 
+EXACT_PATHS.update({'BM/Resources/Assets.xcassets/RestRoomV1.imageset/Contents.json', 'BM/Resources/Assets.xcassets/ScoutRoomV1.imageset/Contents.json'})
+ART_HASHES.update({'BM/Resources/Assets.xcassets/ScoutRoomV1.imageset/bg-scout-room-v1.png': 'dc0c5b15e2882e714be8fcce4c6c159d1f4ad7c9dbb9d0ed6874afbbb42d42e2', 'BM/Resources/Assets.xcassets/RestRoomV1.imageset/bg-rest-room-v1.png': '2ba4fb3d9192e59d28339286be05e4809fe6059bd4333de5bdd356c67e122d66'})
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):
