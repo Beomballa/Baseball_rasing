@@ -3,6 +3,13 @@ import UIKit
 @testable import BM
 
 final class ManagementFoundationTests: XCTestCase {
+    @MainActor func testAddedPlayerAndTrainingRoomAssetsAreBundled() throws {
+        for name in ["LockerV1", "BattingRoomV1", "BullpenRoomV1"] {
+            let image = try XCTUnwrap(UIImage(named: name), name)
+            XCTAssertGreaterThan(image.size.width, image.size.height)
+            XCTAssertLessThan(image.size.width / image.size.height, 2)
+        }
+    }
     func testProgressKeepsUnknownDistinctFromZeroAndClampsOnlyTheBar() {
         XCTAssertNil(ManagementProgressValue(current: nil, target: 100).ratio)
         XCTAssertEqual(ManagementProgressValue(current: nil, target: 100).display, "미집계")

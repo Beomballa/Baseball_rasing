@@ -155,7 +155,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
                 default: player.contact = training.after
                 }
             }
-            player.fatigue = min(100, player.fatigue + 6)
+            player.fatigue = min(100, player.fatigue + TrainingRules.fatigueCost)
             state.actionDate = player.gameDate
             record.completed = true
         }

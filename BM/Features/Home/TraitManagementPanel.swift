@@ -286,6 +286,7 @@ struct TraitAcquisitionPreview: View {
 struct CareerTrainingDestination: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
+    var initialKind: TrainingKind? = nil
     @Query private var records: [CareerTrainingRecord]
     var body: some View {
         if let record = records.first(where: { $0.playerID == player.id && $0.gameDate == player.gameDate }),
@@ -294,7 +295,7 @@ struct CareerTrainingDestination: View {
         } else if let record = records.first(where: { $0.playerID == player.id && $0.gameDate == player.gameDate }),
            let training = try? record.snapshot(), let trait = training.trait {
             TraitTrainingLiveView(player: player, calendar: calendar, initialTrait: trait)
-        } else { CareerTrainingView(player: player, calendar: calendar) }
+        } else { CareerTrainingView(player: player, calendar: calendar, initialKind: initialKind) }
     }
 }
 

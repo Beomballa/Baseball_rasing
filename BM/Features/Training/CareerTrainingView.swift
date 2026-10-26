@@ -12,6 +12,8 @@ struct CareerTrainingView: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
     var practice = false
+    var initialKind: TrainingKind? = nil
+    @State private var initialSelectionApplied = false
     @State private var record: CareerTrainingRecord?
     @State private var training: CareerTraining?
     @State private var code = ""
@@ -55,6 +57,11 @@ struct CareerTrainingView: View {
     private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? "구종") : selectedKind.label }
     private func load() {
         do {
+            if !initialSelectionApplied, let initialKind, initialKind.allows(player.roleRaw) {
+                kind = initialKind
+                category = initialKind.isRaw ? 2 : initialKind.isField ? 1 : 0
+                initialSelectionApplied = true
+            }
             if isPitcher { pitchVelocity = try CareerTrainingStore.value(player: player, code: nil, kind: .velocity, in: context) }
             if !practice {
                 record = try CareerTrainingStore.record(player: player, in: context)

@@ -89,13 +89,18 @@ struct ManagementShell<Header: View, Content: View>: View {
     var body: some View {
         Group {
             if typeSize.isAccessibilitySize {
-                ScrollView {
-                    VStack(spacing: 0) { header; paddedContent }
-                }.accessibilityIdentifier("managementContent")
+                ScrollViewReader { proxy in
+                    ScrollView { VStack(spacing: 0) { header; paddedContent }.id("managementContentTop") }
+                        .accessibilityIdentifier("managementContent")
+                        .onChange(of: selection) { _, _ in proxy.scrollTo("managementContentTop", anchor: .top) }
+                }
             } else {
                 VStack(spacing: 0) {
                     header
-                    ScrollView { paddedContent }.accessibilityIdentifier("managementContent")
+                    ScrollViewReader { proxy in
+                        ScrollView { paddedContent.id("managementContentTop") }.accessibilityIdentifier("managementContent")
+                            .onChange(of: selection) { _, _ in proxy.scrollTo("managementContentTop", anchor: .top) }
+                    }
                 }
             }
         }

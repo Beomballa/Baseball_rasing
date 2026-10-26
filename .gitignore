@@ -174,3 +174,11 @@
 !/BM/Resources/Assets.xcassets/NavTrainingV1.imageset/Contents.json
 !/BM/Resources/Assets.xcassets/NavTrainingV1.imageset/icon-nav-training-v1-2x.png
 !/BM/Resources/Assets.xcassets/NavTrainingV1.imageset/icon-nav-training-v1-3x.png
+
+# Reviewed player/training room backgrounds only.
+!/BM/Resources/Assets.xcassets/BattingRoomV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/BattingRoomV1.imageset/bg-batting-room-v1.png
+!/BM/Resources/Assets.xcassets/BullpenRoomV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/BullpenRoomV1.imageset/bg-bullpen-room-v1.png
+!/BM/Resources/Assets.xcassets/LockerV1.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/LockerV1.imageset/bg-locker-v1.png

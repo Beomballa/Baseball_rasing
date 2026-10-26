@@ -164,6 +164,7 @@ struct CareerTraining: Codable, Equatable {
 }
 
 enum TrainingRules {
+    static let fatigueCost = 6
     static func traitGrowth(before: Double, score: Double, fatigue: Int, age: Int) -> Double {
         let performance = score >= 90 ? 1.3 : score >= 75 ? 1.2 : score >= 50 ? 1.1 : 1
         let level = before < 50 ? 1.0 : before < 80 ? 0.65 : 0.35

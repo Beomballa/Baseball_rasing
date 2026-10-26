@@ -16,7 +16,7 @@ struct HomeRadarChart: View {
                     ZStack {
                         Canvas { context, _ in
                             func point(_ index: Int, _ value: Double) -> CGPoint {
-                                let angle = Double(index) * .pi / 3 - .pi / 2
+                                let angle = Double(index) * 2 * .pi / Double(max(1, values.count)) - .pi / 2
                                 let distance = radius * min(100, max(0, value)) / 100
                                 return CGPoint(x: center.x + cos(angle) * distance, y: center.y + sin(angle) * distance)
                             }
@@ -30,9 +30,9 @@ struct HomeRadarChart: View {
                                 }
                             }
                             for level in [25.0, 50, 75, 100] {
-                                context.stroke(polygon(Array(repeating: level, count: 6)), with: .color(GameTheme.boardLine.opacity(0.5)), lineWidth: 1)
+                                context.stroke(polygon(Array(repeating: level, count: values.count)), with: .color(GameTheme.boardLine.opacity(0.5)), lineWidth: 1)
                             }
-                            for index in 0..<6 {
+                            for index in values.indices {
                                 var line = Path(); line.move(to: center); line.addLine(to: point(index, 100))
                                 context.stroke(line, with: .color(GameTheme.boardLine.opacity(0.4)), lineWidth: 1)
                             }
@@ -48,7 +48,7 @@ struct HomeRadarChart: View {
                             }
                         }
                         ForEach(Array(values.enumerated()), id: \.element.id) { index, value in
-                            let angle = Double(index) * .pi / 3 - .pi / 2
+                            let angle = Double(index) * 2 * .pi / Double(max(1, values.count)) - .pi / 2
                             VStack(spacing: 2) {
                                 Text(value.label).foregroundStyle(GameTheme.boardMuted)
                                 Text(value.current.formatted(.number.precision(.fractionLength(1)))).bold().foregroundStyle(GameTheme.boardInk)
