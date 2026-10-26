@@ -88,7 +88,7 @@ struct PlayerHomeView: View {
                 }.preferredColorScheme(.dark)
             }
         }
-            .onChange(of: player.id) { _, _ in showOriginals = false; playerSection = .abilities; trainingSection = .abilities; trainingKind = player.role == .pitcher ? .pitch : .contact }
+            .onChange(of: player.id) { _, _ in showOriginals = false; playerSection = .abilities; trainingSection = .abilities; gameSection = .schedule; trainingKind = player.role == .pitcher ? .pitch : .contact }
             .onChange(of: recentRecords.map(MatchDisplaySnapshot.Token.init), initial: true) { _, _ in
                 var next: [String: MatchDisplaySnapshot] = [:]
                 for record in recentRecords {
@@ -139,6 +139,7 @@ struct PlayerHomeView: View {
 
     @State private var playerSection = ManagementPlayerSection.abilities
     @State private var trainingSection = ManagementTrainingSection.abilities
+    @State private var gameSection = ManagementGameSection.schedule
     @State private var trainingKind = TrainingKind.contact
     private var activeTrainingKind: TrainingKind { trainingKind.allows(player.roleRaw) ? trainingKind : player.role == .pitcher ? .pitch : .contact }
     @ViewBuilder private var playerContent: some View {
@@ -286,14 +287,35 @@ struct PlayerHomeView: View {
             .disabled(status.schedule == nil || calendar.hasAction(on: player.gameDate) && todayTraining == nil)
     }
     @ViewBuilder private var gameContent: some View {
+        HStack(spacing: 12) { ManagementRoomScene(asset: "StadiumGateV1").frame(width: 96); Text("경기장 · 시즌 " + String((try? GameDate(player.gameDate).year) ?? 2026)).managementFont(.sectionTitle) }
+        ManagementSectionTabs(options: ManagementGameSection.allCases, selection: $gameSection, title: { $0.title }, identifier: "gameSection", horizontal: true)
         if let calendar {
             let status = CalendarScheduleStatus(player: player, state: calendar)
-            if status.schedule?.today != nil { playActions(calendar, training: false) }
-            else { Text("오늘은 비경기일입니다. 홈에서 다음 일정을 확인하세요.").managementFont(.body) }
-            Button("연간 일정 · 날짜 진행") { showCalendar = true }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
-            AnnualLeagueHomePanel(player: player, state: calendar, schools: schools, transition: transition)
+            switch gameSection {
+            case .schedule:
+                ManagementPanel("오늘 경기 · 출전") {
+                    if let message = status.errorMessage { Text(message).managementFont(.body).accessibilityIdentifier("gameHubScheduleError") }
+                    else if let fixture = status.schedule?.today {
+                        Text("\(fixture.number)/30차전 · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools))").managementFont(.label)
+                        playActions(calendar, training: false)
+                    } else { Text("오늘은 비경기일입니다.").managementFont(.body) }
+                    Button("연간 일정 · 날짜 진행") { showCalendar = true }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
+                    ForEach(Array((status.schedule?.upcoming ?? []).prefix(3)), id: \.id) { fixture in
+                        Text("\(fixture.date) · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools)) · \(fixture.isAppearance(for: player.role) ? "출전" : "팀 경기")").managementFont(.helper)
+                    }
+                }
+            case .analysis:
+                if status.schedule?.today != nil {
+                    NavigationLink { CareerGameEntryView(player: player, calendar: calendar, schools: schools) } label: { Text("상대 투수 · 타선 · 경기 준비") }
+                        .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("hubOpponentAnalysis")
+                    Text("완료 원장의 시즌 성적과 구종·능력을 확인합니다. 저장된 경기는 해당 경기 자료를 유지합니다.").managementFont(.helper)
+                } else { Text("상대 분석은 경기일에 열립니다. 홈에서 다음 일정까지 진행하세요.").managementFont(.body) }
+            case .records:
+                recentGames
+                NavigationLink { CareerSeasonScreen(player: player, state: calendar, schools: schools, transition: transition) } label: { Text("내 시즌 누적 · 결산") }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("gameOpenSeason")
+            case .standings: AnnualLeagueHomePanel(player: player, state: calendar, schools: schools, transition: transition)
+            }
         }
-        recentGames
     }
     @ViewBuilder private var careerContent: some View {
         if let calendar {

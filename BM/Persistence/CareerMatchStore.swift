@@ -71,6 +71,7 @@ enum CareerSchemaV3: VersionedSchema {
             if let preparation=match.preparation {
                 guard preparation.version == (match.npcAttack == nil ? 1:2),preparation.fixtureID == fixtureID,match.appearance,
                       MatchPlanChoice.choices(match.role).contains(preparation.choice),let roster=match.npcFielders else {throw MatchError.invalidRecord}
+                try preparation.season?.validate(analysis: preparation.analysis, date: GameDate(gameDate))
                 try roster.validate()
                 guard preparation.analysis == MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack) else {throw MatchError.invalidRecord}
             }
@@ -162,6 +163,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         if let planChoice {
             guard match.appearance,MatchPlanChoice.choices(match.role).contains(planChoice),let roster=match.npcFielders else {throw MatchError.invalidInput}
             match.preparation=MatchPreparation(version:2,fixtureID:fixture.id,choice:planChoice,analysis:MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack))
+            if let analysis = match.preparation?.analysis { match.preparation?.season = try opponentSeason(player: player, state: state, analysis: analysis, in: context) }
         }
         if match.appearance, match.abilityStats != nil {
             let values = try Dictionary(uniqueKeysWithValues: MatchAbilityExperience.kinds(role: player.roleRaw).map {
@@ -432,5 +434,22 @@ extension CareerMatchStore {
         }
         return SeasonPlayerLedger(careerID:playerID,year:year,competition:competition,fixtureIDs:fixtures.sorted(),uncollectedGames:missing,
             players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID})
+    }
+}
+
+extension CareerMatchStore {
+    static func opponentSeason(player: CareerPlayer, state: CareerCalendarState, analysis: MatchOppositionAnalysis, in context: ModelContext) throws -> MatchOpponentSeason {
+        let fixture = try today(player: player, state: state)
+        guard let attack = analysis.attack else { throw MatchError.invalidRecord }
+        let cutoff = try fixture.date.adding(days: -1)
+        let ledger = try seasonPlayerRecords(playerID: player.id, year: fixture.date.year, competition: attack.competition, through: cutoff, in: context)
+        let rows = ledger.players.filter { $0.teamID == analysis.teamID }.map {
+            MatchOpponentSeasonPlayer(id: $0.id, battingGames: $0.battingGames, pitchingGames: $0.pitchingGames,
+                earnedRunGames: $0.earnedRunGames, unscoredPitchingGames: $0.unscoredPitchingGames, batting: $0.batting, pitching: $0.pitching)
+        }
+        let snapshot = MatchOpponentSeason(version: 1, year: fixture.date.year, competition: attack.competition, teamID: analysis.teamID,
+            through: cutoff.description, uncollectedGames: ledger.uncollectedGames, players: rows)
+        try snapshot.validate(analysis: analysis, date: fixture.date)
+        return snapshot
     }
 }

@@ -70,3 +70,8 @@ extension TrainingKind {
         }
     }
 }
+
+
+enum ManagementGameSection: CaseIterable { case schedule, analysis, records, standings
+    var title: String { switch self { case .schedule: "일정"; case .analysis: "분석"; case .records: "기록"; case .standings: "순위" } }
+}

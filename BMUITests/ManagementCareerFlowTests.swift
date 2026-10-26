@@ -1,6 +1,30 @@
 import XCTest
 
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testGameMenuAndActualOpponentSeasonBothRolesStayReadOnly() {
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-stats-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        for pitcher in [false, true] {
+            if pitcher { app.buttons["managementTab-player"].tap(); reveal(app.buttons["homeRole-pitcher"], app); app.buttons["homeRole-pitcher"].tap() }
+            app.buttons["managementTab-game"].tap()
+            let before = labels(app)
+            capture(app, pitcher ? "Game pitcher schedule" : "Game batter schedule")
+            app.buttons["gameSection-records"].tap(); XCTAssertTrue(app.buttons["gameOpenSeason"].exists)
+            app.buttons["gameSection-standings"].tap(); XCTAssertTrue(app.buttons["openAnnualLeague"].exists)
+            app.buttons["gameSection-analysis"].tap(); app.buttons["hubOpponentAnalysis"].tap()
+            XCTAssertTrue(app.staticTexts["opponentCenterTitle"].waitForExistence(timeout: 8))
+            let era = app.descendants(matching: .any).matching(identifier: "opponentStat-ERA").firstMatch
+            XCTAssertTrue(era.exists); XCTAssertNotEqual(era.value as? String, "미집계")
+            capture(app, pitcher ? "Opponent pitcher season for pitcher" : "Opponent pitcher season for batter")
+            app.buttons["opponentTab-batter"].tap()
+            XCTAssertNotEqual(app.descendants(matching: .any).matching(identifier: "opponentStat-AVG").firstMatch.value as? String, "미집계")
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "opponentStat-OBP").firstMatch.exists); XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "opponentStat-SLG").firstMatch.exists)
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "opponentStat-WAR").firstMatch.value as? String, "미집계")
+            capture(app, pitcher ? "Opponent batting season for pitcher" : "Opponent batting season for batter")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertEqual(labels(app), before)
+        }
+    }
     @MainActor func testPlayerAndTrainingMenusBothRolesKeepChosenKindAndResumeSavedRound() {
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))

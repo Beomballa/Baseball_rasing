@@ -627,7 +627,7 @@ struct CareerGameView: View {
                                             ownRole:match.role,ownRatings:MatchOpponentCenter.ratings(player:player,stats:match.abilityStats,match:match),
                                             teamName:CareerTeamDirectory.name(plan.analysis.teamID,schools:schools),
                                             ownTeamName:CareerTeamDirectory.name((try? calendar.teamID(for:player,on:GameDate(record.gameDate))) ?? player.schoolID,schools:schools),
-                                            date:record.gameDate,activePitcher:match.opponentPitcher,locked:true,
+                                            date:record.gameDate,activePitcher:match.opponentPitcher,season:plan.season,locked:true,
                                             progress:MatchPlanOutcome.make(match:match,includingLive:true),choice:.constant(plan.choice))
                                             .navigationTitle("상대 분석 · 경기 계획").navigationBarTitleDisplayMode(.inline)
                                             .toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar)
@@ -984,6 +984,7 @@ struct CareerGameEntryView:View {
     let calendar:CareerCalendarState
     let schools:[School]
     @Environment(\.modelContext) private var context
+    @State private var season: MatchOpponentSeason?
     @State private var analysis:MatchOppositionAnalysis?
     @State private var fielders:MatchNPCTeam?
     @State private var ownRatings:[String:Double]=[:]
@@ -1001,7 +1002,7 @@ struct CareerGameEntryView:View {
                     if let analysis {
                         MatchOpponentCenter(analysis:analysis,fielders:fielders,ownRole:player.roleRaw,ownRatings:ownRatings,
                             teamName:CareerTeamDirectory.name(analysis.teamID,schools:schools),ownTeamName:ownTeamName,
-                            date:date,choice:$choice,onStart:start)
+                            date:date,season:season,choice:$choice,onStart:start)
                     } else if failure == nil {ProgressView("오늘 상대 자료 확인 중").frame(maxWidth:.infinity,maxHeight:.infinity)}
                     if let failure {
                         VStack(spacing:8) {
@@ -1027,9 +1028,10 @@ struct CareerGameEntryView:View {
             let stats=profile.map {MatchAbilityStats(mental:$0.mental,velocity:$0.velocity,control:$0.control,stuff:$0.stuff,stamina:$0.stamina,fatigue:player.fatigue)}
             ownRatings=MatchOpponentCenter.ratings(player:player,stats:stats)
             ownTeamName=CareerTeamDirectory.name(try calendar.teamID(for:player,on:fixture.date),schools:schools)
+            season = try CareerMatchStore.opponentSeason(player: player, state: calendar, analysis: value, in: context)
             analysis=value;date=player.gameDate;revision=calendar.revision
             choice=value.recommended(role:player.roleRaw);failure=nil
-        } catch {failure=error.localizedDescription}
+        } catch {analysis=nil;season=nil;failure=error.localizedDescription}
     }
     private func start() {
         guard let choice else {return}
@@ -1067,6 +1069,7 @@ struct MatchOpponentCenter:View {
     let ownTeamName:String
     let date:String
     var activePitcher:MatchNPCPitcher? = nil
+    var season: MatchOpponentSeason? = nil
     var locked=false
     var progress:MatchPlanOutcome? = nil
     @Binding var choice:MatchPlanChoice?
@@ -1120,7 +1123,7 @@ struct MatchOpponentCenter:View {
             .alert("미집계 통계",isPresented:$showStatsInfo) {
                 Button("확인",role:.cancel) {}
             } message: {
-                Text("상대 NPC의 개인 시즌 성적과 WAR 계산은 아직 연결되지 않았습니다. 능력 점수를 타율이나 WAR로 바꾸지 않으며, 실제 기록이 집계된 뒤 표시합니다. 코스별·최근 경기 기록도 같은 기준입니다.")
+                Text("경기 전날까지 완료된 실제 경기·자동 경기 원장의 개인 성적입니다. 경기 시작 때 저장해 이어하기에서도 바꾸지 않습니다. 분모 0·과거 미수집·자책점 미채점은 미집계로 남기며 WAR·코스별 기록은 후속입니다.")
             }
     }
     private var tabBar:some View {
@@ -1149,22 +1152,31 @@ struct MatchOpponentCenter:View {
             }.accessibilityElement(children:.ignore).accessibilityLabel("상대 선수 공용 도트 이미지").accessibilityIdentifier("opponentPortrait")
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading).background(Color(hex:0x203e52))
     }
-    private func statisticStrip(_ labels:[String]) -> some View {
-        let columns=Array(repeating:GridItem(.flexible(),spacing:8),count:typeSize.isAccessibilitySize ? 2:labels.count)
+    private var batterID: String? { batter.map { $0.position == "P" ? (team?.starter.id ?? $0.id) : $0.id } }
+    private func seasonValues(_ id: String?, _ labels: [String]) -> [String] {
+        labels.map { season?.player(id ?? "")?.value($0) ?? "미집계" }
+    }
+    private func statisticStrip(_ labels:[String], id: String?) -> some View {
+        let columns=Array(repeating:GridItem(.flexible(),spacing:8),count:typeSize.isAccessibilitySize ? 2:min(4,labels.count))
         return VStack(alignment:.leading,spacing:0) {
             LazyVGrid(columns:columns,spacing:12) {
                 ForEach(labels,id:\.self) {label in
                     VStack(alignment:.leading,spacing:6) {
                         Text(label).font(.caption2)
-                        Text("미집계").font(.subheadline.monospaced().bold()).lineLimit(1).minimumScaleFactor(0.8)
-                    }.frame(maxWidth:.infinity,alignment:.leading).accessibilityElement(children:.combine)
+                        Text(seasonValues(id, [label])[0]).font(.subheadline.monospaced().bold()).lineLimit(1).minimumScaleFactor(0.8)
+                    }.frame(maxWidth:.infinity,alignment:.leading).accessibilityElement(children:.ignore).accessibilityLabel(label).accessibilityValue(seasonValues(id, [label])[0]).accessibilityIdentifier("opponentStat-"+label)
                 }
             }.padding(14).foregroundStyle(Color(hex:0x153345)).background(Color(hex:0xeae4cc))
             HStack {
-                Text("실제 성적 집계 전").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Text(season.map { "\($0.through)까지 · 경기 전 고정" } ?? "이전 경기 · 시즌 자료 미기록").font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("opponentSeasonCutoff")
                 Spacer()
                 Button("통계 안내") {showStatsInfo=true}.font(.caption.bold()).foregroundStyle(GameTheme.gold).frame(minWidth:56,minHeight:44).accessibilityIdentifier("opponentStatsInfo")
             }.padding(.horizontal,12)
+            if let row = season?.player(id ?? "") {
+                Text(labels.contains("ERA") ? "\(row.pitchingGames)경기 · \(row.pitching.innings)이닝 · 자책 채점 \(row.earnedRunGames) / 미채점 \(row.unscoredPitchingGames)" : "\(row.battingGames)경기 · \(row.batting.plateAppearances)타석 · \(row.batting.atBats)타수")
+                    .font(.caption.monospacedDigit()).padding(.horizontal, 12).padding(.bottom, 10).accessibilityIdentifier("opponentSeasonSample")
+            }
+            if let missing = season?.uncollectedGames, missing > 0 { Text("시즌 미수집 경기 \(missing)개 · 수집된 경기만 집계").font(.caption).foregroundStyle(GameTheme.gold).padding(.horizontal,12) }
         }.accessibilityElement(children:.contain).accessibilityIdentifier("opponentUnrecordedStats")
     }
     @ViewBuilder private var pitcherPage:some View {
@@ -1172,7 +1184,7 @@ struct MatchOpponentCenter:View {
             let shares=pitcher.selectionShares
             VStack(spacing:0) {
                 identity(title:pitcher.id == team?.starter.id ? "선발 투수":"현재 구원 투수",eyebrow:pitcher.id == team?.starter.id ? "STARTER · PITCHING":"RELIEF · PITCHING",detail:String(format:"포심 %.0f km/h · 제구 %.1f",pitcher.fastball,pitcher.control))
-                statisticStrip(["ERA","WHIP","K/9","WAR"])
+                statisticStrip(["ERA","ER","WHIP","K/9"], id: pitcher.id)
             }.overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
             GamePanel(title:"무엇을 던지는 투수인가",onBoard:true,contentSpacing:14) {
                 Text(pitcher.id == team?.starter.id ? "선발 투수":"현재 구원 투수").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("opponentPitcherRole")
@@ -1232,7 +1244,7 @@ struct MatchOpponentCenter:View {
                         if typeSize.isAccessibilitySize {
                             VStack(alignment:.leading,spacing:8) {
                                 Text("\(index+1)번 \(player.position)").font(.headline).foregroundStyle(GameTheme.gold)
-                                Text(showSeason ? "타율·OPS·WAR 미집계":"컨택 \(n(player.contact)) · 파워 \(n(player.power))").font(.subheadline)
+                                Text(showSeason ? "AVG · OPS · WAR " + seasonValues(player.position == "P" ? team.starter.id : player.id, ["AVG","OPS","WAR"]).joined(separator:" / ") : "컨택 \(n(player.contact)) · 파워 \(n(player.power))").font(.subheadline)
                                 if !showSeason {Text("출루 \(n(player.onBase)) · 장타 \(n(player.slugging))").font(.caption).foregroundStyle(GameTheme.boardMuted)}
                             }.frame(maxWidth:.infinity,alignment:.leading)
                         } else {
@@ -1240,7 +1252,7 @@ struct MatchOpponentCenter:View {
                             Text("\(index+1)").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).frame(width:20)
                             Text(player.position).font(.subheadline.bold()).frame(maxWidth:.infinity,alignment:.leading)
                             if showSeason {
-                                ForEach(0..<3) { _ in Text("–").font(.subheadline.monospaced()).frame(width:48,alignment:.trailing)}
+                                ForEach(["AVG","OPS","WAR"], id: \.self) { stat in Text(seasonValues(player.position == "P" ? team.starter.id : player.id, [stat])[0]).font(.caption2.monospaced()).lineLimit(1).minimumScaleFactor(0.7).frame(width:48,alignment:.trailing)}
                             } else {
                                 Text(n(player.contact)).font(.caption.monospacedDigit()).frame(width:48,alignment:.trailing)
                                 Text(n(player.power)).font(.caption.monospacedDigit()).frame(width:48,alignment:.trailing)
@@ -1254,10 +1266,10 @@ struct MatchOpponentCenter:View {
                         }.frame(minHeight:48).padding(.horizontal,6).padding(.vertical,typeSize.isAccessibilitySize ? 8:0).foregroundStyle(ink)
                             .background(index == selected ? Color(hex:0x28503f):GameTheme.boardPanel)
                     }.buttonStyle(.plain).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton)
-                        .accessibilityLabel("\(index+1)번 \(player.position) · "+(showSeason ? "타율·OPS·WAR 미집계":"컨택 \(n(player.contact)) · 파워 \(n(player.power)) · 출루 성향 \(n(player.onBase)) · 장타 성향 \(n(player.slugging))"))
+                        .accessibilityLabel("\(index+1)번 \(player.position) · "+(showSeason ? seasonValues(player.position == "P" ? team.starter.id : player.id, ["AVG","OPS","WAR"]).joined(separator:" / ") : "컨택 \(n(player.contact)) · 파워 \(n(player.power)) · 출루 성향 \(n(player.onBase)) · 장타 성향 \(n(player.slugging))"))
                         .accessibilityIdentifier("opponentBatter-\(index+1)")
                 }
-                Text(showSeason ? "NPC 개인 시즌 성적·WAR은 아직 미집계입니다.":"녹색은 출루·금색은 장타 성향입니다. 선수를 누르면 상세가 열립니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Text(showSeason ? "경기 전날까지 완료 원장 · 상세에서 표본 확인 · WAR은 후속입니다.":"녹색은 출루·금색은 장타 성향입니다. 선수를 누르면 상세가 열립니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
             }
         } else {legacyMissing}
     }
@@ -1265,7 +1277,7 @@ struct MatchOpponentCenter:View {
         if let batter {
             VStack(spacing:0) {
                 identity(title:"\(selected+1)번 타자",eyebrow:"KEY BATTER · "+batter.position,detail:positionName(batter.position))
-                statisticStrip(["AVG","OPS","HR","WAR"])
+                statisticStrip(["AVG","OBP","SLG","OPS","HR","WAR"], id: batterID)
             }.overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
             GamePanel(title:"선수의 강점",onBoard:true,contentSpacing:14) {
                 if !typeSize.isAccessibilitySize {

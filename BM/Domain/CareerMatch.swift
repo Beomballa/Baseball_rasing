@@ -711,6 +711,7 @@ struct MatchPreparation:Codable,Equatable {
     let fixtureID:String
     let choice:MatchPlanChoice
     let analysis:MatchOppositionAnalysis
+    var season: MatchOpponentSeason? = nil
 }
 struct MatchPlanCheck:Codable,Equatable {
     let label:String
