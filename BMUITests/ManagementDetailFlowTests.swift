@@ -318,6 +318,103 @@ final class ManagementDetailFlowTests: XCTestCase {
         XCTAssertEqual(status(app), before)
     }
 
+    @MainActor func testV21GameplayBothRoles() {
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if pitcher { pickPitcher(app) }
+            app.buttons["clubhouse-rest"].tap(); app.buttons["confirmRest"].tap(); app.buttons["restDone"].tap()
+            app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 8)); app.buttons["opponentTab-plan"].tap()
+            reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+            let field = app.otherElements["careerMatchField"]
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            let board = app.descendants(matching: .any).matching(identifier: "matchScoreboard").firstMatch
+            XCTAssertTrue(board.exists)
+            XCTAssertFalse(app.buttons["replayLastFieldPlay"].exists)
+            capture(app, pitcher ? "v21-pitcher-ready" : "v21-batter-ready")
+            if pitcher {
+                let pitches = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "gamePitchChoice-"))
+                XCTAssertTrue((3...5).contains(pitches.count))
+                let gauge = app.descendants(matching: .any).matching(identifier: "releaseGauge").firstMatch
+                for i in 0..<pitches.count {
+                    let choice = pitches.element(boundBy: i)
+                    XCTAssertTrue(choice.isHittable)
+                    XCTAssertGreaterThanOrEqual(choice.frame.height, 44)
+                    XCTAssertLessThanOrEqual(choice.frame.maxY, gauge.frame.minY, "Every owned pitch must stay above the release control")
+                }
+                let selected = pitches.element(boundBy: 1); selected.tap(); XCTAssertTrue(selected.isSelected)
+                let pitch = app.buttons["gamePitch"]; XCTAssertTrue(app.frame.contains(pitch.frame))
+                XCTAssertTrue(app.frame.contains(selected.frame)); XCTAssertGreaterThanOrEqual(selected.frame.height, 44)
+                capture(app, "v21-pitcher-choice")
+                pitch.tap(); XCTAssertTrue(app.buttons["gameRelease"].waitForExistence(timeout: 2))
+                app.buttons["gameRelease"].tap()
+                XCTAssertFalse(selected.isEnabled)
+                XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 12))
+                capture(app, "v21-pitcher-arrived")
+            } else {
+                let touch = app.buttons["battingTouchSurface"]
+                XCTAssertTrue(touch.exists)
+                let before = touch.value as? String
+                let start = touch.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.52))
+                let end = touch.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.43))
+                start.press(forDuration: 0.05, thenDragTo: end)
+                XCTAssertNotEqual(touch.value as? String, before)
+                XCTAssertTrue(touch.label.contains("투구 요청"), "A swipe must not begin or resolve a pitch")
+                for id in ["watch", "swing", "bunt"] {
+                    let choice = app.buttons["gameInput-" + id]
+                    XCTAssertTrue(app.frame.contains(choice.frame)); XCTAssertGreaterThanOrEqual(choice.frame.height, 44)
+                    choice.tap(); XCTAssertTrue(choice.isSelected)
+                }
+                app.buttons["gameInput-watch"].tap()
+                touch.tap()
+                let idle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "투구 요청"), object: touch)
+                XCTAssertEqual(XCTWaiter.wait(for: [idle], timeout: 12), .completed)
+                capture(app, "v21-batter-take")
+            }
+            let automatic = app.buttons["gameAutomatic"]
+            if !pitcher {
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: automatic)
+                XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 12), .completed)
+                app.buttons["gameInput-swing"].tap()
+                let touch = app.buttons["battingTouchSurface"]
+                touch.tap(); touch.tap()
+            }
+            let unlocked = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: automatic)
+            XCTAssertEqual(XCTWaiter.wait(for: [unlocked], timeout: 12), .completed)
+            let savedCount = app.descendants(matching: .any).matching(identifier: "careerGameCount").firstMatch.label
+            app.buttons["closeRoomDetail"].tap()
+            XCTAssertTrue(app.buttons["homeTodayGame"].waitForExistence(timeout: 5)); app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "careerGameCount").firstMatch.waitForExistence(timeout: 8))
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "careerGameCount").firstMatch.label, savedCount)
+            capture(app, pitcher ? "v21-pitcher-resume" : "v21-batter-resume")
+            automatic.tap(); XCTAssertTrue(app.buttons["진행하고 결과 저장"].waitForExistence(timeout: 3)); app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 15))
+            capture(app, pitcher ? "v21-pitcher-completed" : "v21-batter-completed")
+        }
+    }
+
+    @MainActor func testV21LargeTextBoardAndChoicesBothRoles() {
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if pitcher { pickPitcher(app) }
+            reveal(app.buttons["clubhouse-rest"], app); app.buttons["clubhouse-rest"].tap()
+            reveal(app.buttons["confirmRest"], app); app.buttons["confirmRest"].tap(); app.buttons["restDone"].tap()
+            reveal(app.buttons["homeTodayGame"], app); app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 8)); app.buttons["opponentTab-plan"].tap()
+            reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+            let board = app.descendants(matching: .any).matching(identifier: "matchScoreboard").firstMatch
+            XCTAssertTrue(board.waitForExistence(timeout: 10)); capture(app, pitcher ? "v21-large-pitcher-board" : "v21-large-batter-board")
+            let choice = app.buttons[pitcher ? "gamePitchChoice-slider" : "gameInput-bunt"]
+            reveal(choice, app); XCTAssertTrue(choice.isHittable); choice.tap(); XCTAssertTrue(choice.isSelected)
+            XCTAssertGreaterThanOrEqual(choice.frame.minX, 0); XCTAssertLessThanOrEqual(choice.frame.maxX, app.frame.width)
+            capture(app, pitcher ? "v21-large-pitcher-choices" : "v21-large-batter-choices")
+        }
+    }
+
     @MainActor private func launch(large: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-stats-verification"]
         if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
@@ -331,7 +428,7 @@ final class ManagementDetailFlowTests: XCTestCase {
     @MainActor private func pickPitcher(_ app: XCUIApplication) {
         app.buttons["roomProfile"].tap(); app.buttons["homeRole-pitcher"].tap()
         if app.buttons["closeRoomDetail"].exists { close(app) }
-        app.buttons["managementTab-home"].tap()
+        if app.buttons["managementTab-home"].exists { app.buttons["managementTab-home"].tap() }
     }
     @MainActor private func close(_ app: XCUIApplication) {
         app.buttons["closeRoomDetail"].tap(); XCTAssertTrue(app.buttons["roomProfile"].waitForExistence(timeout: 5))

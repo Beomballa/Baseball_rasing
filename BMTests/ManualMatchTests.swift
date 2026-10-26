@@ -5,6 +5,35 @@ import SwiftData
 @testable import BM
 
 @MainActor final class ManualMatchTests: XCTestCase {
+    func testBroadcastMissingHistoryStaysUnknownAndReadsRecordedHits() throws {
+        var legacy = match()
+        XCTAssertNil(MatchBroadcastData.hits(legacy, home: true))
+        XCTAssertNil(MatchBroadcastData.errors(legacy, home: true))
+        legacy.detailedFieldVersion = 5
+        XCTAssertNil(MatchBroadcastData.errors(legacy, home: true))
+        legacy.fieldPlays = []
+        XCTAssertEqual(MatchBroadcastData.errors(legacy, home: true), 0)
+        XCTAssertEqual(MatchBroadcastData.errors(legacy, home: false), 0)
+        let container = try CareerStore.makeContainer(inMemory: true)
+        let (player, calendar, record) = try fixture(in: container.mainContext)
+        try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: record.revision, input: .automatic, in: container.mainContext)
+        let completed = try record.snapshot(), payload = record.payload
+        XCTAssertEqual(MatchBroadcastData.hits(completed, home: true), completed.playerRecords?.home.battingTotal.hits)
+        XCTAssertEqual(MatchBroadcastData.hits(completed, home: false), completed.playerRecords?.away.battingTotal.hits)
+        XCTAssertEqual(record.payload, payload)
+    }
+
+    func testBattingSwipeIsRelativeClampedAndNeverBecomesTapAfterMovingBack() {
+        var swipe = MatchBattingSwipe(x: 0.3, y: 0.7)
+        XCTAssertEqual(swipe.move(CGSize(width: 3, height: 2), field: CGSize(width: 400, height: 400)), CGPoint(x: 0.3, y: 0.7))
+        XCTAssertTrue(swipe.isTap)
+        let moved = swipe.move(CGSize(width: 52, height: -52), field: CGSize(width: 400, height: 400))
+        XCTAssertEqual(moved.x, 0.5, accuracy: 0.0001); XCTAssertEqual(moved.y, 0.5, accuracy: 0.0001)
+        XCTAssertFalse(swipe.isTap)
+        _ = swipe.move(.zero, field: CGSize(width: 400, height: 400)); XCTAssertFalse(swipe.isTap)
+        XCTAssertEqual(swipe.move(CGSize(width: 1000, height: -1000), field: .zero), CGPoint(x: 1, y: 0))
+    }
+
     private func motionPixels(_ image: UIImage) throws -> [UInt8] {
         let source = try XCTUnwrap(image.cgImage)
         var data = [UInt8](repeating: 0, count: source.width * source.height * 4)
@@ -486,12 +515,16 @@ import SwiftData
             let container = try CareerStore.makeContainer(url: url); let context = container.mainContext
             for role in PlayerRole.allCases {
                 let (_, _, record) = try fixture(in: context, role: role)
-                var legacy = try record.snapshot(); legacy.pitching = nil; legacy.controlVersion = nil; legacy.lastManual = nil
-                if role == .pitcher { try legacy.advance(.automatic) }
+                let source = try record.snapshot()
+                var legacy = CareerMatch(random: source.random, isHome: source.isHome, role: source.role,
+                    appearance: source.appearance, contact: source.contact, power: source.power,
+                    discipline: source.discipline, mastery: source.mastery)
+                if role == .pitcher { try legacy.advance(.automatic) } else { legacy.settle() }
                 var dictionary = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
                 dictionary.removeValue(forKey: "controlVersion"); dictionary.removeValue(forKey: "lastManual")
                 record.payload = try JSONSerialization.data(withJSONObject: dictionary, options: .sortedKeys)
                 record.completed = legacy.completed; record.rulesVersion = "native-match-v1"
+                _ = try record.snapshot()
                 if role == .pitcher { oldCompleted = record.payload }
             }
             try context.save()
