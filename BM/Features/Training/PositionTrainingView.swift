@@ -6,28 +6,51 @@ struct PositionHomePanel: View {
     let calendar: CareerCalendarState?
     @Environment(\.dynamicTypeSize) private var typeSize
     @Query private var profiles: [PlayerPositions]
+    @State private var selection: FieldPosition?
+    private var selected: FieldPosition { selection ?? FieldPosition(rawValue: player.positionRaw) ?? .shortstop }
     var body: some View {
         if player.role == .batter {
-            GamePanel(title: "포지션 숙련", onBoard: true) {
+            GamePanel(title: "포지션 수첩", onBoard: true, contentSpacing: 14) {
                 if let profile = profiles.first(where: { $0.playerID == player.id }), let value = try? profile.snapshot() {
+                    let heading = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+                    heading {
+                        Text("DEFENSE MAP").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                        if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
+                        Text("주 포지션 · " + player.positionRaw).font(.subheadline.bold())
+                    }
+                    if !typeSize.isAccessibilitySize {
+                        PositionNotebookField(selected: selected, primary: player.positionRaw, value: value) { selection = $0 }
+                            .frame(height: 248).accessibilityElement(children: .contain).accessibilityIdentifier("homePositionMap")
+                    }
+                    if let skill = value.skills[selected.rawValue] {
+                        PositionNotebookSkill(position: selected, skill: skill, primary: player.positionRaw, identifier: "homeSelectedPosition")
+                    }
+                    Text("위치를 선택해 숙련 확인").font(.subheadline.bold()).foregroundStyle(GameTheme.boardMuted)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 8) {
                         ForEach(FieldPosition.allCases) { position in
                             if let skill = value.skills[position.rawValue] {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("\(position.rawValue)\(player.positionRaw == position.rawValue ? " · 주" : "")  \(skill.mastery, specifier: "%.1f") / XP \(skill.xp, specifier: "%.1f")")
-                                        .font(.caption.monospaced()).foregroundStyle(GameTheme.boardInk)
-                                        .accessibilityIdentifier("homePosition-" + position.rawValue)
-                                    PositionMeter(value: skill.mastery, color: GameTheme.growth)
-                                }
+                                Button { selection = position } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(position.label + (player.positionRaw == position.rawValue ? " · 주" : ""))
+                                            .font(.subheadline.bold()).foregroundStyle(selected == position ? GameTheme.gold : GameTheme.boardInk)
+                                        Text("\(position.rawValue)\(player.positionRaw == position.rawValue ? " · 주" : "")  \(skill.mastery, specifier: "%.1f") / XP \(skill.xp, specifier: "%.1f")")
+                                            .font(.caption.monospaced()).foregroundStyle(GameTheme.boardInk)
+                                            .accessibilityIdentifier("homePosition-" + position.rawValue)
+                                        PositionMeter(value: skill.mastery, color: GameTheme.growth)
+                                    }.padding(10).frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
+                                        .background(GameTheme.navy, in: ManagementStepFrame())
+                                        .overlay(ManagementStepFrame().strokeBorder(selected == position ? GameTheme.gold : GameTheme.boardLine, lineWidth: 1))
+                                }.buttonStyle(.plain).accessibilityIdentifier("homePositionSelect-" + position.rawValue)
+                                    .accessibilityAddTraits(selected == position ? .isSelected : [])
                             }
                         }
                     }
-                    Text("XP 100마다 숙련 +1 · 출전 위치의 숙련을 경기 시작 시 고정").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    Text("XP 100마다 숙련 +1 · 출전 위치의 숙련을 경기 시작 시 고정").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 } else {
-                    Text("포지션 기록을 읽지 못했습니다. 훈련 화면에서 다시 확인해 주세요.").font(.caption).foregroundStyle(GameTheme.gold)
+                    Text("포지션 기록을 읽지 못했습니다. 훈련 화면에서 다시 확인해 주세요.").font(.subheadline).foregroundStyle(GameTheme.gold)
                 }
                 if let calendar {
-                    NavigationLink { PositionTrainingView(player: player, calendar: calendar) } label: { Text("포지션 훈련") }
+                    NavigationLink { PositionTrainingView(player: player, calendar: calendar, initialPosition: selected) } label: { Text("포지션 훈련") }
                         .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openPositionTraining")
                 }
             }
@@ -35,9 +58,62 @@ struct PositionHomePanel: View {
     }
 }
 
+private struct PositionNotebookField: View {
+    let selected: FieldPosition
+    let primary: String
+    let value: PositionLoadout
+    let choose: (FieldPosition) -> Void
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                PositionPracticeField(position: selected, phase: 0, overview: true).accessibilityHidden(true)
+                ForEach(FieldPosition.allCases) { position in
+                    Button { choose(position) } label: {
+                        VStack(spacing: 2) {
+                            Text(position.rawValue + (position.rawValue == primary ? " · 주" : "")).font(.caption.bold())
+                            if let skill = value.skills[position.rawValue] {
+                                Text(skill.mastery, format: .number.precision(.fractionLength(1))).font(.caption.monospacedDigit())
+                            }
+                        }.frame(width: 66, height: 46).foregroundStyle(selected == position ? GameTheme.gold : GameTheme.boardInk)
+                            .background(GameTheme.boardPanel, in: ManagementStepFrame())
+                            .overlay(ManagementStepFrame().strokeBorder(selected == position ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
+                    }.buttonStyle(.plain)
+                        .accessibilityLabel(position.label + (position.rawValue == primary ? ", 주 포지션" : ""))
+                        .accessibilityValue(value.skills[position.rawValue].map { "숙련 " + $0.mastery.formatted(.number.precision(.fractionLength(1))) } ?? "미기록")
+                        .accessibilityAddTraits(selected == position ? .isSelected : [])
+                        .accessibilityIdentifier("homePositionMap-" + position.rawValue)
+                        .position(x: geometry.size.width * position.fieldPoint.x, y: geometry.size.height * position.fieldPoint.y)
+                }
+            }
+        }
+    }
+}
+
+private struct PositionNotebookSkill: View {
+    let position: FieldPosition
+    let skill: PositionSkill
+    let primary: String
+    let identifier: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(position.label + "  " + position.rawValue + (position.rawValue == primary ? " · 주 포지션" : ""))
+                .font(.title3.bold()).foregroundStyle(GameTheme.gold)
+            Text("숙련 \(skill.mastery, specifier: "%.1f") / 100.0").font(.title2.monospacedDigit().bold())
+                .accessibilityIdentifier(identifier + "Mastery")
+            PositionMeter(value: skill.mastery, color: GameTheme.growth)
+            Text(skill.mastery == 100 ? "최대 숙련" : "다음 숙련 +1까지 \(100 - skill.xp, specifier: "%.1f") XP").font(.subheadline.bold())
+            PositionMeter(value: skill.xp, color: GameTheme.gold)
+            Text("잔여 XP \(skill.xp, specifier: "%.1f") / 100.0").font(.subheadline.monospacedDigit()).foregroundStyle(GameTheme.boardMuted)
+                .accessibilityIdentifier(identifier + "XP")
+        }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(GameTheme.board, in: ManagementStepFrame()).overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
+    }
+}
+
 struct PositionTrainingView: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
+    var initialPosition: FieldPosition? = nil
     @Environment(\.modelContext) private var context
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var selected = FieldPosition.shortstop
@@ -72,21 +148,23 @@ struct PositionTrainingView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("\(player.name) · 주 \(player.positionRaw) · 피로 \(player.fatigue)").font(.caption).foregroundStyle(GameTheme.gold)
+                    HStack(spacing: 12) {
+                        DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw)
+                            .frame(width: 56, height: 72).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("POSITION TRAINING").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                            Text(player.name + " · 주 " + player.positionRaw).font(.headline)
+                            Text("피로 \(player.fatigue) / 100").font(.subheadline.monospacedDigit()).foregroundStyle(GameTheme.boardMuted)
+                        }
+                    }
                     if let errorMessage {
                         Text(errorMessage).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("positionTrainingError")
                         Button("기록 다시 확인") { load() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true))
                     }
                     if let loadout, let skill {
                         selector(loadout).frame(height: typeSize.isAccessibilitySize ? nil : max(200, min(230, geometry.size.height - 430)))
-                        GamePanel(title: selected.rawValue + " · " + selected.label, onBoard: true) {
-                            Text("숙련 \(skill.mastery, specifier: "%.1f") / 100.0").font(.headline.monospaced()).accessibilityIdentifier("livePositionMastery")
-                            PositionMeter(value: skill.mastery, color: GameTheme.growth)
-                            Text(skill.mastery == 100 ? "최대 숙련" : "다음 숙련 +1까지 \(100 - skill.xp, specifier: "%.1f") XP").font(.subheadline.bold())
-                            PositionMeter(value: skill.xp, color: GameTheme.gold)
-                            Text("잔여 XP \(skill.xp, specifier: "%.1f") / 100.0").font(.caption.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("livePositionXP")
-                            Text("조건 · 야수 8위치 / 하루 준비 1회").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        }
+                        PositionNotebookSkill(position: selected, skill: skill, primary: player.positionRaw, identifier: "livePosition")
+                        Text("조건 · 야수 8위치 / 하루 준비 1회").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                         Text(selected.positionDrill.title).font(.subheadline.bold())
                         Text(lockMessage ?? "5회 결과로 선택 위치 XP 증가 · 완료 피로 +6").font(.caption).foregroundStyle(GameTheme.gold)
                         Button(ownsRecord ? record?.completed == true ? "오늘 포지션 훈련 결과" : "포지션 훈련 이어하기" : "포지션 훈련 시작 · 5회") {
@@ -99,7 +177,7 @@ struct PositionTrainingView: View {
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).preferredColorScheme(.dark)
             .navigationTitle("포지션 훈련").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
-            .onAppear { if !loaded { loaded = true; selected = FieldPosition(rawValue: player.positionRaw) ?? .shortstop; load(open: true) } }
+            .onAppear { if !loaded { loaded = true; selected = initialPosition ?? FieldPosition(rawValue: player.positionRaw) ?? .shortstop; load(open: true) } }
             .fullScreenCover(isPresented: $showDrill, onDismiss: { load() }) {
                 if let record { NavigationStack { PositionDrillLiveView(player: player, calendar: calendar, record: record) } }
             }

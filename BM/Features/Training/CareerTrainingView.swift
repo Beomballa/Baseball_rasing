@@ -45,6 +45,8 @@ struct CareerTrainingView: View {
     @State private var clock = MatchInputClock()
     @State private var scene = BallparkScene(size: CGSize(width: 320, height: 320))
     @State private var errorMessage: String?
+    @State private var preparationValue: Double?
+    @State private var preparationError: String?
     @State private var retryInput: TrainingInput?
     @State private var retryRevision: Int?
 
@@ -69,7 +71,17 @@ struct CareerTrainingView: View {
             }
             angle = selectedKind.initialDirection
             if code.isEmpty { code = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "" }
+            loadPreparation()
         } catch { errorMessage = error.localizedDescription }
+    }
+    private var preparationKey: String { "\(category):\(kind.rawValue):\(code)" }
+    private func loadPreparation() {
+        do {
+            preparationValue = try CareerTrainingStore.value(player: player, code: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
+            preparationError = nil
+        } catch {
+            preparationValue = nil; preparationError = error.localizedDescription
+        }
     }
     private func start() {
         do {
@@ -207,7 +219,10 @@ struct CareerTrainingView: View {
                                 }.padding(10).background(GameTheme.boardPanel)
                                     .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
                                     .accessibilityIdentifier("trainingProgress")
-                                if training == nil { selection }
+                                if training == nil {
+                                    selection
+                                    preparationBoard
+                                }
                                 if let training, !reviewReady { TrainingMissionBanner(kind: selectedKind, scores: (feedbackVisible ? self.training : displayTraining)?.scores ?? training.scores) }
                                 if dynamicTypeSize.isAccessibilitySize {
                                     Button("훈련 버튼으로 이동") { scroll.scrollTo("trainingControls", anchor: .bottom) }
@@ -239,6 +254,7 @@ struct CareerTrainingView: View {
         .toolbar {
             if practice { Button("훈련 바꾸기") { resetPractice() }.accessibilityIdentifier("practiceChangeTraining") }
         }
+        .onChange(of: preparationKey) { _, _ in if training == nil { loadPreparation() } }
         .onChange(of: clock.phase) { _, phase in
             if selectedKind == .pitch && clock.running { scene.preparePitch(phase: phase, reduced: reduced) }
         }
@@ -352,8 +368,7 @@ struct CareerTrainingView: View {
                     .accessibilityIdentifier("trainingAttempt")
             }
         } else {
-            Text(practice ? "5회 도전 · 제한 없이 다시 연습" : "5회 도전 · 완료 시 피로 +6 / 오늘 행동 사용").font(.caption)
-            Button("훈련 시작") { start() }.buttonStyle(MatchPixelButtonStyle(primary: true))
+            Button(practice ? "연습 시작" : "훈련 시작") { start() }.buttonStyle(MatchPixelButtonStyle(primary: true))
                 .disabled(errorMessage != nil).accessibilityIdentifier("startTraining")
         }
     }
@@ -365,16 +380,13 @@ struct CareerTrainingView: View {
         }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("retryTrainingSave")
     }
     }
-    private func scores(_ value: CareerTraining) -> some View {
-        LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.adaptive(minimum: 110))] : Array(repeating: GridItem(.flexible(), spacing: 4), count: 5), spacing: 4) {
-            ForEach(0..<5, id: \.self) { index in
-                VStack(spacing: 2) {
-                    Text("\(index + 1)회").font(.caption2).foregroundStyle(GameTheme.boardMuted)
-                    Text(index < value.scores.count ? "\(value.scores[index])" : "·").font(.caption.monospaced().bold())
-                }.frame(maxWidth: .infinity, minHeight: 38).background(GameTheme.boardPanel)
-                    .overlay(Rectangle().strokeBorder(index == value.scores.count ? GameTheme.gold : GameTheme.boardLine, lineWidth: 1))
-            }
-        }.accessibilityIdentifier("trainingScores")
+    private func scores(_ value: CareerTraining, expanded: Bool = false) -> some View {
+        TrainingAttemptStrip(scores: value.scores, expanded: expanded)
+            .accessibilityIdentifier("trainingScores")
+    }
+    private var preparationBoard: some View {
+        TrainingPreparationBoard(player: player, name: pitchName, kind: selectedKind, value: preparationValue,
+                                 failure: preparationError, practice: practice)
     }
     private func arena(height: CGFloat) -> some View {
         TimelineView(.animation(minimumInterval: reduced ? 0.1 : 1.0 / 30, paused: replay == nil && !judging && !clock.running)) { timeline in
@@ -535,38 +547,200 @@ struct CareerTrainingView: View {
     }
 
     private func result(_ value: CareerTraining) -> some View {
-        VStack(spacing: 12) {
-            GamePanel(title: "TRAINING CLEAR", onBoard: true) {
-                HStack(spacing: 12) {
-                    PixelPlayer(appearance: player.appearance).frame(width: 32, height: 44).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(pitchName + " 훈련 완료").font(.headline)
-                        Text("평균 \(value.average, specifier: "%.1f")점").font(.title2.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                    }
-                }
-                scores(value)
+        VStack(spacing: 16) {
+            TrainingResultHeading(player: player, name: pitchName, average: value.average, practice: practice)
+            ManagementPanel("5회 훈련 성적표") {
+                scores(value, expanded: true)
                 TrainingMissionBanner(kind: value.selectedKind, scores: value.scores, completed: true)
             }
             if practice {
-                Text("연습 완료 · 점수만 확인하며 실제 선수에게 반영되지 않습니다.")
-                    .accessibilityIdentifier("practiceCompleted")
+                ManagementPanel("자유 연습 완료", surface: .paper) {
+                    Text("점수만 확인 · 실제 선수의 성장·날짜·피로 변화 없음")
+                        .font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("practiceCompleted")
+                    Text("실전 훈련 기록과 보상에 합산되지 않습니다.")
+                        .font(.caption).foregroundStyle(GameTheme.navy.opacity(0.8))
+                }
                 Button("다시 연습") { resetPractice(); start() }
                     .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("practiceRetry")
                 Button("훈련 선택으로") { resetPractice() }.buttonStyle(MatchPixelButtonStyle())
-            } else { GamePanel(title: "성장 기록", onBoard: true) {
-                Text("\(value.before, specifier: "%.1f") → \(value.after, specifier: "%.1f")")
-                    .font(.title.monospaced().bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("trainingGrowth")
-                Text("성장 +\(value.gain, specifier: "%.1f")").font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
-                Text("피로 \(value.fatigue) → \(min(100, value.fatigue + 6))").font(.subheadline.bold()).accessibilityIdentifier("trainingFatigue")
-                Text("보상 저장 완료 · 다음 경기에 반영").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    .accessibilityIdentifier("trainingCompleted")
-            }
+            } else {
+                TrainingGrowthReceipt(name: pitchName, before: value.before, after: value.after,
+                                      gain: value.gain, fatigue: value.fatigue)
             }
             if let result = value.lastContact { ContactTrainingFeedback(result: result) }
-            Button(practice ? "연습 메뉴로" : "선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingReturnHome")
+            Button(practice ? "연습 메뉴로" : "선수 홈으로") { dismiss() }
+                .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingReturnHome")
         }
     }
 
+}
+
+private struct TrainingPreparationBoard: View {
+    let player: CareerPlayer
+    let name: String
+    let kind: TrainingKind
+    let value: Double?
+    let failure: String?
+    let practice: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var next: Double { min(100, floor(value ?? 0) + 1) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(practice ? "PRACTICE / 자유 연습" : "TRAINING / 오늘의 훈련").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                    Text(name).font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
+                    Text(practice ? "보유 기량으로 자유롭게 도전" : "5회 도전 후 성장 반영").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    if let value {
+                        Text("현재 \(kind == .pitch ? "구종 숙련도" : "능력치") \(value, specifier: "%.1f")")
+                            .font(.headline.monospacedDigit()).accessibilityIdentifier("trainingCurrentValue")
+                    } else { Text("현재 능력 미집계").font(.subheadline).foregroundStyle(GameTheme.gold) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                if !typeSize.isAccessibilitySize {
+                    DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber,
+                                       hand: player.throwingHandRaw, label: player.name + "의 훈련 도트")
+                        .frame(width: 66, height: 88)
+                }
+            }
+            if let value {
+                HStack {
+                    Text(value >= 100 ? "최대 기량" : "다음 목표 " + next.formatted(.number.precision(.fractionLength(1)))).font(.caption.bold())
+                    Spacer(minLength: 4)
+                    Text(value >= 100 ? "MAX" : "남은 성장 " + max(0, next - value).formatted(.number.precision(.fractionLength(1))))
+                        .font(.caption.monospacedDigit()).foregroundStyle(GameTheme.boardMuted)
+                }.accessibilityElement(children: .combine).accessibilityIdentifier("trainingNextTarget")
+                TrainingSegmentTrack(value: value >= 100 ? 1 : value - floor(value), color: GameTheme.growth)
+            }
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
+            layout {
+                TrainingRuleStamp(title: "시도", value: "5회")
+                TrainingRuleStamp(title: "피로", value: practice ? "변화 없음" : "\(player.fatigue) → \(min(100, player.fatigue + TrainingRules.fatigueCost))")
+                TrainingRuleStamp(title: "행동", value: practice ? "제한 없음" : "오늘 1회 사용")
+            }
+            if let failure { Text(failure).font(.caption).foregroundStyle(GameTheme.gold).fixedSize(horizontal: false, vertical: true) }
+        }.padding(12).background(GameTheme.boardPanel)
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold.opacity(0.65), lineWidth: 2))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("trainingPreparation")
+    }
+}
+
+private struct TrainingRuleStamp: View {
+    let title: String
+    let value: String
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(title).foregroundStyle(GameTheme.boardMuted)
+            Text(value).bold()
+        }.font(.caption).fixedSize(horizontal: false, vertical: true)
+            .padding(7).frame(maxWidth: .infinity, alignment: .leading)
+            .background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            .accessibilityElement(children: .combine)
+    }
+}
+
+private struct TrainingAttemptStrip: View {
+    let scores: [Int]
+    let expanded: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var columns: [GridItem] {
+        typeSize.isAccessibilitySize ? [GridItem(.adaptive(minimum: 110), spacing: 6)] : Array(repeating: GridItem(.flexible(), spacing: 4), count: 5)
+    }
+    private func color(_ index: Int) -> Color {
+        guard index < scores.count else { return GameTheme.boardLine }
+        return scores[index] >= 90 ? GameTheme.gold : scores[index] >= 75 ? GameTheme.growth : GameTheme.boardMuted
+    }
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 6) {
+            ForEach(0..<5, id: \.self) { index in
+                VStack(spacing: expanded ? 6 : 2) {
+                    Text("\(index + 1)회").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    Text(index < scores.count ? "\(scores[index])" : "·")
+                        .font(expanded ? .title3.monospacedDigit().bold() : .caption.monospacedDigit().bold())
+                        .foregroundStyle(index < scores.count ? color(index) : GameTheme.boardMuted)
+                }.frame(maxWidth: .infinity, minHeight: expanded ? 66 : 38)
+                    .background(GameTheme.boardPanel)
+                    .overlay(ManagementStepFrame().strokeBorder(index == scores.count ? GameTheme.gold : color(index).opacity(0.65), lineWidth: expanded ? 2 : 1))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(index + 1)회 " + (index < scores.count ? "\(scores[index])점" : "대기"))
+            }
+        }
+    }
+}
+
+private struct TrainingResultHeading: View {
+    let player: CareerPlayer
+    let name: String
+    let average: Double
+    let practice: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(practice ? "PRACTICE COMPLETE" : "TRAINING COMPLETE").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                Text(name + " 훈련 완료").font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
+                Text("평균 \(average, specifier: "%.1f")점").font(.title.monospacedDigit().bold())
+                    .accessibilityIdentifier("trainingAverage")
+                Text(player.name + " · #\(player.jerseyNumber)").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if !typeSize.isAccessibilitySize {
+                DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber,
+                                   hand: player.throwingHandRaw, label: player.name + "의 훈련 도트")
+                    .frame(width: 82, height: 108)
+            }
+        }.padding(16).background(GameTheme.boardPanel)
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
+    }
+}
+
+private struct TrainingGrowthReceipt: View {
+    let name: String
+    let before: Double
+    let after: Double
+    let gain: Double
+    let fatigue: Int
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        ManagementPanel("성장 기록", surface: .paper) {
+            Text(name).font(.subheadline.bold()).foregroundStyle(GameTheme.navy.opacity(0.8))
+            Text("\(before, specifier: "%.1f") → \(after, specifier: "%.1f")")
+                .font(.title.monospacedDigit().bold()).foregroundStyle(Color(hex: 0x237459))
+                .accessibilityIdentifier("trainingGrowth")
+            HStack {
+                Text("성장 +\(gain, specifier: "%.1f")").font(.subheadline.bold()).foregroundStyle(Color(hex: 0x237459))
+                Spacer(minLength: 4)
+                Text("MAX 100").font(.caption.monospaced()).foregroundStyle(GameTheme.navy.opacity(0.7))
+            }
+            TrainingSegmentTrack(value: after / 100, color: Color(hex: 0x237459), onPaper: true)
+            Divider().overlay(GameTheme.navy.opacity(0.2)).padding(.vertical, 4)
+            Text("피로 \(fatigue) → \(min(100, fatigue + TrainingRules.fatigueCost))")
+                .font(.subheadline.monospacedDigit().bold()).accessibilityIdentifier("trainingFatigue")
+            TrainingSegmentTrack(value: Double(min(100, fatigue + TrainingRules.fatigueCost)) / 100, color: Color(hex: 0x8b431b), onPaper: true)
+            Text("보상 저장 완료 · 다음 경기에 반영").font(.caption.bold()).foregroundStyle(GameTheme.navy.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("trainingCompleted")
+        }
+    }
+}
+
+private struct TrainingSegmentTrack: View {
+    let value: Double
+    let color: Color
+    var onPaper = false
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Rectangle().fill((onPaper ? GameTheme.navy : GameTheme.boardLine).opacity(0.16))
+                Rectangle().fill(color).frame(width: geometry.size.width * min(1, max(0, value)))
+                HStack(spacing: 0) {
+                    ForEach(0..<10, id: \.self) { _ in
+                        Spacer(minLength: 0)
+                        Rectangle().fill(onPaper ? GameTheme.boardInk : GameTheme.boardPanel).frame(width: 2)
+                    }
+                }
+            }
+        }.frame(height: 10).accessibilityHidden(true)
+    }
 }
 
 private struct ContactTrainingFeedback: View {

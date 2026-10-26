@@ -116,6 +116,208 @@ final class ManagementDetailFlowTests: XCTestCase {
         }
     }
 
+    @MainActor func testV20TraitsPositionsAndPreparationBothRoles() {
+        let app = launch()
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-player"].tap(); app.buttons["facility-traits"].tap()
+            reveal(app.buttons["traitDetails"], app); app.buttons["traitDetails"].tap()
+            XCTAssertTrue(app.staticTexts["traitActiveCount"].waitForExistence(timeout: 5))
+            capture(app, "v20-" + role + "-traits")
+            let toggle = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "traitToggle-")).firstMatch
+            reveal(toggle, app); toggle.tap()
+            reveal(app.staticTexts["traitActiveCount"], app)
+            XCTAssertEqual(app.staticTexts["traitActiveCount"].label, "활성 0 / 3")
+            reveal(toggle, app); toggle.tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(status(app), before)
+            if !pitcher {
+                app.buttons["managementTab-player"].tap(); app.buttons["facility-positions"].tap()
+                let map = app.buttons["homePositionMap-1B"]; reveal(map, app); map.tap()
+                let mastery = app.staticTexts["homeSelectedPositionMastery"]
+                reveal(mastery, app); XCTAssertTrue(mastery.exists)
+                capture(app, "v20-batter-position-map")
+                reveal(app.buttons["openPositionTraining"], app); app.buttons["openPositionTraining"].tap()
+                XCTAssertTrue(app.buttons["livePosition-1B"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.buttons["livePosition-1B"].isSelected)
+                capture(app, "v20-batter-position-ready")
+                app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+                XCTAssertEqual(status(app), before)
+            }
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            XCTAssertTrue(app.staticTexts["trainingCurrentValue"].waitForExistence(timeout: 5))
+            capture(app, "v20-" + role + "-training-ready")
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            app.buttons["managementTab-home"].tap()
+            XCTAssertTrue(app.buttons["homeResumeTraining"].waitForExistence(timeout: 5))
+            app.buttons["homeResumeTraining"].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch.waitForExistence(timeout: 5))
+            capture(app, "v20-" + role + "-training-resume")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(Array(status(app).prefix(2)), Array(before.prefix(2)))
+        }
+    }
+
+    @MainActor func testV20TrainingResultsAndRecentRecordsRemainStableBothRoles() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-management-stats-verification", "-management-v20-completed"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 20))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            let growth = app.staticTexts["trainingGrowth"]
+            XCTAssertTrue(growth.waitForExistence(timeout: 6)); let saved = growth.label
+            capture(app, "v20-" + role + "-training-result")
+            reveal(app.staticTexts["trainingFatigue"], app); capture(app, "v20-" + role + "-growth-receipt")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(status(app), before)
+            app.buttons["managementTab-player"].tap(); app.buttons["facility-records"].tap()
+            let recent = app.descendants(matching: .any).matching(identifier: "homeGameResults").firstMatch
+            reveal(recent, app); XCTAssertTrue(recent.exists)
+            capture(app, "v20-" + role + "-recent-records")
+            reveal(app.buttons["playerOpenSeason"], app); app.buttons["playerOpenSeason"].tap()
+            let totals = app.descendants(matching: .any).matching(identifier: "seasonTotals").firstMatch
+            reveal(totals, app); XCTAssertTrue(totals.exists)
+            capture(app, "v20-" + role + "-season-record")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            XCTAssertEqual(growth.label, saved)
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(status(app), before)
+        }
+    }
+
+    @MainActor func testV20DomesticOffersAndSeasonGoalsBothRoles() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 90))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-career"].tap(); app.buttons["facility-contracts"].tap()
+            reveal(app.buttons["openDomesticOffers"], app); app.buttons["openDomesticOffers"].tap()
+            XCTAssertTrue(app.staticTexts["liveOfferIssued"].waitForExistence(timeout: 10))
+            capture(app, "v20-" + role + "-offers")
+            reveal(app.buttons["liveOfferDetail-rookie"], app); app.buttons["liveOfferDetail-rookie"].tap()
+            let fit = app.staticTexts["liveOfferFit"]; reveal(fit, app); XCTAssertTrue(fit.exists)
+            capture(app, "v20-" + role + "-offer-detail")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            reveal(app.buttons["liveOffersCompare"], app); app.buttons["liveOffersCompare"].tap()
+            reveal(app.staticTexts["liveOfferCompareCaution"], app); XCTAssertTrue(app.staticTexts["liveOfferCompareCaution"].exists)
+            capture(app, "v20-" + role + "-offer-compare")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(status(app), before)
+        }
+        app.terminate()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-club-season-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 90))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-career"].tap(); app.buttons["facility-goals"].tap()
+            reveal(app.buttons["openClubSeasonGoals"], app); app.buttons["openClubSeasonGoals"].tap()
+            reveal(app.buttons["startClubSeasonGoal"], app); capture(app, "v20-" + role + "-goal-preview")
+            app.buttons["startClubSeasonGoal"].tap()
+            let state = app.staticTexts["clubSeasonGoalStatus"]; reveal(state, app)
+            XCTAssertTrue(state.label.contains("수행 중")); capture(app, "v20-" + role + "-season-goals")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(status(app), before)
+        }
+    }
+
+    @MainActor func testV20MarketProjectAndFrozenRoleFeedbackBothRoles() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-college-pro-verification", "-career-objectives-verification", "-goal-special-verification", "-overseas-renewal-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 120))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-career"].tap(); app.buttons["facility-contracts"].tap()
+            reveal(app.buttons["openContractMarket"], app); app.buttons["openContractMarket"].tap()
+            XCTAssertTrue(app.staticTexts["marketSummary"].waitForExistence(timeout: 10))
+            capture(app, "v20-" + role + "-market")
+            reveal(app.buttons["marketRenewal"], app); app.buttons["marketRenewal"].tap()
+            let evaluate = app.buttons["evaluateOverseasRenewal"]
+            if evaluate.exists { reveal(evaluate, app); evaluate.tap() }
+            XCTAssertFalse(app.staticTexts["overseasRenewalError"].exists)
+            capture(app, "v20-" + role + "-renewal")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(status(app), before)
+        }
+        app.terminate()
+        // Renewal QA advances its date; use the existing fresh-project fixture separately.
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-college-pro-verification", "-career-objectives-verification", "-goal-special-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 120))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-career"].tap(); app.buttons["facility-goals"].tap()
+            reveal(app.buttons["openCareerObjectives"], app); app.buttons["openCareerObjectives"].tap()
+            let start = app.buttons["startCareerProject"]; reveal(start, app); XCTAssertTrue(start.isHittable); start.tap()
+            let project = app.staticTexts["projectStatus"]; reveal(project, app); XCTAssertEqual(project.label, "진행 중")
+            capture(app, "v20-" + role + "-project")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(status(app), before)
+        }
+        app.terminate()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-club-season-verification", "-club-observation-verification", "-club-review-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 120))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-career"].tap(); app.buttons["facility-goals"].tap()
+            reveal(app.buttons["openClubSeasonGoals"], app); app.buttons["openClubSeasonGoals"].tap()
+            app.buttons["openClubSeasonObservations"].tap()
+            let change = app.staticTexts["clubObservationChange"].firstMatch
+            reveal(change, app); XCTAssertTrue(change.exists)
+            let fixed = change.label; capture(app, "v20-" + role + "-observation")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            reveal(app.buttons["settleClubSeasonGoal"], app); app.buttons["settleClubSeasonGoal"].tap()
+            reveal(app.buttons["openClubSeasonReviews"], app); app.buttons["openClubSeasonReviews"].tap()
+            let advice = app.staticTexts["clubNextRoleAdvice"]; reveal(advice, app); XCTAssertTrue(advice.exists)
+            capture(app, "v20-" + role + "-role-feedback")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            reveal(app.buttons["openClubSeasonObservations"], app); app.buttons["openClubSeasonObservations"].tap()
+            reveal(change, app); XCTAssertEqual(change.label, fixed)
+            app.navigationBars.buttons.element(boundBy: 0).tap(); app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            XCTAssertEqual(status(app), before)
+            app.buttons["managementTab-player"].tap(); app.buttons["facility-records"].tap()
+            reveal(app.buttons["playerOpenSeason"], app); app.buttons["playerOpenSeason"].tap()
+            XCTAssertTrue(app.staticTexts["seasonChampion"].waitForExistence(timeout: 10))
+            capture(app, "v20-" + role + "-season-final")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+        }
+    }
+
+    @MainActor func testV20LargeTextTraitPositionAndTrainingPreparation() {
+        let app = launch(large: true)
+        let before = status(app)
+        app.buttons["managementLargeMenu"].tap(); app.buttons["선수"].tap()
+        reveal(app.buttons["facility-traits"], app); app.buttons["facility-traits"].tap()
+        reveal(app.buttons["traitDetails"], app); app.buttons["traitDetails"].tap()
+        reveal(app.staticTexts["traitActiveCount"], app); capture(app, "v20-large-traits")
+        app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+        reveal(app.buttons["facility-positions"], app); app.buttons["facility-positions"].tap()
+        let position = app.buttons["homePositionSelect-1B"]; reveal(position, app); position.tap()
+        let value = app.staticTexts["homeSelectedPositionMastery"]; reveal(value, app); XCTAssertTrue(value.exists)
+        capture(app, "v20-large-position")
+        close(app)
+        app.buttons["managementLargeMenu"].tap(); app.buttons["훈련"].tap()
+        reveal(app.buttons["facility-training"], app); app.buttons["facility-training"].tap()
+        reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+        let current = app.staticTexts["trainingCurrentValue"]; reveal(current, app); XCTAssertTrue(current.isHittable)
+        capture(app, "v20-large-training-ready")
+        app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+        XCTAssertEqual(status(app), before)
+    }
+
     @MainActor private func launch(large: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-stats-verification"]
         if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
@@ -140,10 +342,8 @@ final class ManagementDetailFlowTests: XCTestCase {
     @MainActor private func reveal(_ element: XCUIElement, _ app: XCUIApplication) {
         for _ in 0..<14 {
             if element.isHittable { return }
-            let detail = app.scrollViews["roomDetailScroll"]
-            let scroll = detail.exists && detail.isHittable ? detail : app.scrollViews.firstMatch
-            if element.exists && element.frame.minY < scroll.frame.minY { scroll.swipeDown() }
-            else { scroll.swipeUp() }
+            if element.exists && element.frame.maxY < 170 { app.swipeDown() }
+            else { app.swipeUp() }
         }
     }
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {

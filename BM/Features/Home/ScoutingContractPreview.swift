@@ -496,20 +496,25 @@ struct DomesticOffersView: View {
     }
     @ViewBuilder private func list(_ packet:DomesticOfferPacket,_ value:ContractEvaluationSnapshot) -> some View {
         if packet.offers.isEmpty {
-            GamePanel(title:"이번 평가 · 제의 없음",onBoard:true) {
-                Text("다음 기회를 준비할 수 있습니다").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOffersEmpty")
+            GamePanel(title:"이번 평가 · 제의 없음",onBoard:true,contentSpacing:16) {
+                Text("다음 기회를 준비할 수 있습니다").font(.title3.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOffersEmpty")
                 ForEach(packet.emptyReasons,id:\.self) {Text($0).font(.subheadline).lineSpacing(4)}
                 Text(value.version == 4 ? "다음 국내 육성팀 재입단 평가는4월·7월입니다.":value.window.month == 4 ? "다음 국내 신인 창은7월 · 대학은 다음 해4월입니다.":"다음 국내 신인·대학 창은 다음 해4월입니다.")
-                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                Text("훈련으로 보완해도 이번 창의 결과는 다시 뽑지 않습니다.").font(.caption)
+                    .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                Text("훈련으로 보완해도 이번 창의 결과는 다시 뽑지 않습니다.").font(.footnote)
             }
         }
         ForEach(packet.offers) {offer in
-            GamePanel(title:offer.collegeEntry != nil ? "대학 재학생 · 프로 진출":offer.reentry == true ? "무소속 재도전 · 육성팀 재입단":offer.route == .rookie ? "프로 진입 · 신인 지명":"학적 선택 · 대학 선발",onBoard:true,contentSpacing:12) {
-                Text(offer.name).font(.title3.bold()).foregroundStyle(GameTheme.gold)
+            GamePanel(title:offer.collegeEntry != nil ? "대학 재학생 · 프로 진출":offer.reentry == true ? "무소속 재도전 · 육성팀 재입단":offer.route == .rookie ? "프로 진입 · 신인 지명":"학적 선택 · 대학 선발",onBoard:true,contentSpacing:16) {
+                Text(offer.name).font(.title2.bold()).foregroundStyle(GameTheme.gold)
                 Text(offer.kind+" / "+DomesticContractOffer.roleName(offer.roleID)).font(.subheadline)
-                Text(status(offer)+" · "+offer.expiresDate+"까지(포함)").font(.caption).accessibilityIdentifier("liveOfferStatus-"+offer.route.rawValue)
-                Text(offer.economicLabel+" \(offer.economicIndex) · "+offer.period).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                Text(status(offer)+" · "+offer.expiresDate+"까지(포함)").font(.subheadline.bold())
+                    .foregroundStyle(GameTheme.gold).padding(10).frame(maxWidth:.infinity,alignment:.leading)
+                    .background(GameTheme.navy,in:ManagementStepFrame())
+                    .overlay {ManagementStepFrame().strokeBorder(GameTheme.gold,lineWidth:2)}
+                    .accessibilityIdentifier("liveOfferStatus-"+offer.route.rawValue)
+                ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:offer.period)
+                ContractTermsTimeline(issued:offer.issuedDate,expires:offer.expiresDate,effective:offer.collegeEntry?.effectiveDate ?? "수락 후 확정")
                 NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation,page:.detail(offer.id))} label: {Text("제의 상세 보기")}
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("liveOfferDetail-"+offer.route.rawValue)
             }
@@ -519,44 +524,53 @@ struct DomesticOffersView: View {
                 .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("liveOffersCompare")
         }
         Text("실제 선발 결과에서 발행된 제의입니다. 수락/거절은 상세에서 확정하며 조회만으로 소속·능력·피로·날짜를 바꾸지 않습니다.")
-            .font(.caption).foregroundStyle(GameTheme.boardMuted).lineSpacing(4)
+            .font(.footnote).foregroundStyle(GameTheme.boardMuted).lineSpacing(4)
     }
+
     private func detail(_ offer:DomesticContractOffer,_ value:ContractEvaluationSnapshot) -> some View {
         VStack(alignment:.leading,spacing:16) {
             ScoutDossier(title:offer.name,code:"LIVE OFFER / "+offer.route.rawValue.uppercased(),stamp:status(offer),isPreview:false) {
                 detailRow("선수",value.observation.name+" · #\(value.observation.number) / "+value.observation.role.label)
-                detailRow("모집 역할",DomesticContractOffer.roleName(offer.roleID))
+                Text(DomesticContractOffer.roleName(offer.roleID)).font(.title3.bold())
+                ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:"해당 경로 기준 100 · 실제 통화 금액 아님",paper:true)
                 detailRow("종류 / 배치",offer.kind+" / "+offer.placement)
                 detailRow("기간",offer.period)
-                detailRow(offer.economicLabel,"\(offer.economicIndex) · 해당 경로 기준100")
-                detailRow("발행 / 만료",offer.issuedDate+" / "+offer.expiresDate+"까지 포함")
-                detailRow("발효 / 종료일",registrationTerms(offer))
-                detailRow("계약금/옵션/성과급","0 · 실제 통화 금액 아님")
-                detailRow("연간 예산","잔여\(offer.availableBudget) / 필요\(offer.economicIndex)지수")
-                detailRow("경쟁/선발","적격 경쟁\(offer.competition)명 · 고정F/ID 순으로 선발")
-                detailRow("필요 확인",offer.collegeEntry != nil ? "대학 재학생 자격 검증 · 발효 전 대학 소속/학적 유지":"성인 무소속 신규 지원 · 수락/등록은 별도")
+                ContractTermsTimeline(issued:offer.issuedDate,expires:offer.expiresDate,effective:offer.collegeEntry?.effectiveDate ?? "수락일",paper:true)
+                detailRow("소속 발효 / 경제 기간",registrationTerms(offer))
+                detailRow("소속 · 보유권리",offer.route == .rookie ? "경제 기간 종료와 권리 해제는 별도 · 자동 FA 아님":"학적 종료 규칙 적용 · 프로 보유권리와 구분")
                 detailRow("출전 보장","없음 · 입단 후 역할/선발 경쟁")
+                DisclosureGroup("예산 · 경쟁 · 등록 조건 원본") {
+                    VStack(alignment:.leading,spacing:12) {
+                        detailRow("계약금/옵션/성과급","0 · 실제 통화 금액 아님")
+                        detailRow("연간 예산","잔여\(offer.availableBudget) / 필요\(offer.economicIndex)지수")
+                        detailRow("경쟁/선발","적격 경쟁\(offer.competition)명 · 고정F/ID 순으로 선발")
+                        detailRow("필요 확인",offer.collegeEntry != nil ? "대학 재학생 자격 검증 · 발효 전 대학 소속/학적 유지":"성인 무소속 신규 지원 · 수락/등록은 별도")
+                    }.padding(.top,12)
+                }.font(.subheadline).tint(ScoutDossierInk.ink)
             }
-            GamePanel(title:"선발 근거 · 고정 평가 자료",onBoard:true,contentSpacing:12) {
+            GamePanel(title:"선발 근거 · 고정 평가 자료",onBoard:true,contentSpacing:16) {
                 Text(String(format:"H %.1f / C %.1f / P %+.1f / F %+.1f",offer.h,offer.c,offer.p,offer.f))
                     .font(.subheadline.monospaced()).accessibilityIdentifier("liveOfferFit")
+                ManagementProgress(title:"기량 H",value:ManagementProgressValue(current:offer.h,target:100),color:GameTheme.growth)
+                ManagementProgress(title:"구단 기준 C",value:ManagementProgressValue(current:offer.c,target:100))
+                Text("F는 부호 있는 적합도 점수 · 계약 성공 확률이 아닙니다.").font(.footnote).foregroundStyle(GameTheme.boardMuted)
                 if let sample=value.selection?.sample {
                     Text(sample.kind+" · "+sample.endDate+" 종료").font(.subheadline)
-                    Text(value.observation.role == .batter ? "\(sample.comparison.totals.line.plateAppearances)타석 · 같은 환경40타석 이상":"\(sample.comparison.totals.innings)이닝 · 같은 환경15이닝 이상").font(.caption)
+                    Text(value.observation.role == .batter ? "\(sample.comparison.totals.line.plateAppearances)타석 · 같은 환경40타석 이상":"\(sample.comparison.totals.innings)이닝 · 같은 환경15이닝 이상").font(.footnote)
                 }
                 Text("발행 뒤 훈련/경기·재실행으로 제의 조건을 재계산하지 않습니다. 현재 능력과 당시 평가를 구분해 보세요.")
-                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    .font(.footnote).foregroundStyle(GameTheme.boardMuted)
             }
             if status(offer) == "검토 가능" {
-                Text(offer.collegeEntry.map {"수락 시 "+$0.effectiveDate+" 소속 전환을 예약하며 그 전까지 대학 소속을 유지합니다. 다른 열린 제의는 닫힙니다."} ?? "수락하면 오늘 소속이 발효되고 다른 열린 제의는 닫힙니다. 진행 중인 경기·훈련을 먼저 마쳐 주세요.").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferDecisionGuide")
+                Text(offer.collegeEntry.map {"수락 시 "+$0.effectiveDate+" 소속 전환을 예약하며 그 전까지 대학 소속을 유지합니다. 다른 열린 제의는 닫힙니다."} ?? "수락하면 오늘 소속이 발효되고 다른 열린 제의는 닫힙니다. 진행 중인 경기·훈련을 먼저 마쳐 주세요.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferDecisionGuide")
                 Button("수락 · 소속 등록") {command=Command(offer:offer,accept:true,date:player.gameDate,revision:calendar.revision)}
                     .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptLiveOffer")
                 Button("이 제의 거절") {command=Command(offer:offer,accept:false,date:player.gameDate,revision:calendar.revision)}
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("rejectLiveOffer")
-            } else {Text(status(offer)+" · 원본 조건과 결정 이력을 보관합니다.").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferFinalDecision")}
-
+            } else {Text(status(offer)+" · 원본 조건과 결정 이력을 보관합니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferFinalDecision")}
         }
     }
+
     private func registrationTerms(_ offer:DomesticContractOffer) -> String {
         if let member=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).memberships.first(where:{$0.offerID == offer.id}) {
             return member.since+" 발효 · 경제 기간 "+member.economicEnd+(member.route == .rookie ? " / 보유 권리는 별도":" / 학적 종료 "+(member.enrollmentEnd ?? "—"))
@@ -575,19 +589,35 @@ struct DomesticOffersView: View {
         GamePanel(title:"제의 조건 · 나란히 비교",onBoard:true,contentSpacing:18) {
             if packet.offers.count == 2 {
                 let a=packet.offers[0],b=packet.offers[1]
-                compareRow("구단 / 대학",a.name,b.name)
-                compareRow("종류",a.kind,b.kind)
-                compareRow("모집 역할",DomesticContractOffer.roleName(a.roleID),DomesticContractOffer.roleName(b.roleID))
-                compareRow("배치",a.placement,b.placement)
-                compareRow("기간",a.period,b.period)
-                compareRow("경제 조건",a.economicLabel+" \(a.economicIndex)",b.economicLabel+" \(b.economicIndex)")
-                compareRow("만료(포함)",a.expiresDate,b.expiresDate)
-                compareRow("현재 상태",status(a),status(b))
-                compareRow("고정 적합도 F",String(format:"%+.1f",a.f),String(format:"%+.1f",b.f))
+                Text("경제 지수와 역할·기간을 함께 확인하세요").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                LazyVGrid(columns:Array(repeating:GridItem(.flexible(),alignment:.top),count:typeSize.isAccessibilitySize ? 1:2),alignment:.leading,spacing:12) {
+                    comparisonCard(a)
+                    comparisonCard(b)
+                }
                 Text("연봉지수와 대학 지원지수는 다른 기준입니다. 숫자를 실제 금액처럼 합산하거나 유불리 순위로 해석하지 않습니다.")
-                    .font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferCompareCaution")
+                    .font(.footnote).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferCompareCaution")
+                DisclosureGroup("배치 · 선발 근거 항목별 비교") {
+                    VStack(alignment:.leading,spacing:16) {
+                        compareRow("종류",a.kind,b.kind)
+                        compareRow("배치",a.placement,b.placement)
+                        compareRow("고정 적합도 F",String(format:"%+.1f",a.f),String(format:"%+.1f",b.f))
+                    }.padding(.top,12)
+                }.font(.subheadline).tint(GameTheme.gold)
             } else {Text("비교할 제의가2개일 때 표시됩니다.")}
         }
+    }
+    private func comparisonCard(_ offer:DomesticContractOffer) -> some View {
+        VStack(alignment:.leading,spacing:12) {
+            Text(offer.name).font(.headline).foregroundStyle(GameTheme.gold)
+            Text(DomesticContractOffer.roleName(offer.roleID)).font(.subheadline)
+            ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:offer.period)
+            Text(status(offer)).font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
+            Text("마감 · "+ManagementDisplay.date(offer.expiresDate)).font(.footnote.monospacedDigit())
+            NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation,page:.detail(offer.id))} label: {Text("상세 · 결정")}
+                .buttonStyle(ManagementButtonStyle(variant:.secondary))
+        }.padding(12).frame(maxWidth:.infinity,alignment:.topLeading)
+            .background(GameTheme.navy,in:ManagementStepFrame())
+            .overlay {ManagementStepFrame().strokeBorder(GameTheme.boardLine,lineWidth:2)}
     }
     private func compareRow(_ label:String,_ a:String,_ b:String) -> some View {
         VStack(alignment:.leading,spacing:9) {
@@ -598,5 +628,69 @@ struct DomesticOffersView: View {
             }.font(.subheadline.monospaced()).fixedSize(horizontal:false,vertical:true)
             Rectangle().fill(GameTheme.boardLine).frame(height:1).accessibilityHidden(true)
         }
+    }
+}
+
+
+/// Original contract terms rendered as an economic tile; no currency conversion or ranking.
+struct ContractTermsMetric: View {
+    let title: String
+    let value: String
+    var note: String = ""
+    var paper = false
+    var body: some View {
+        VStack(alignment:.leading,spacing:8) {
+            Text(title).font(.footnote.bold()).foregroundStyle(paper ? ScoutDossierInk.muted:GameTheme.boardMuted)
+            Text(value).font(.title.monospaced().bold()).foregroundStyle(paper ? ScoutDossierInk.ink:GameTheme.gold)
+            if !note.isEmpty {Text(note).font(.subheadline).fixedSize(horizontal:false,vertical:true)}
+        }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
+            .foregroundStyle(paper ? ScoutDossierInk.ink:GameTheme.boardInk)
+            .background(paper ? Color.white.opacity(0.22):GameTheme.navy,in:ManagementStepFrame())
+            .overlay {ManagementStepFrame().strokeBorder(paper ? ScoutDossierInk.rule:GameTheme.boardLine,lineWidth:2)}
+    }
+}
+
+struct ContractTermsTimeline: View {
+    let issued: String
+    let expires: String
+    let effective: String
+    var paper = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:16)):AnyLayout(HStackLayout(alignment:.top,spacing:12))) {
+            point("발행",issued)
+            point("마감 · 당일 포함",expires)
+            point("소속 발효",effective)
+        }.padding(.vertical,12)
+            .overlay(alignment:.top) {Rectangle().fill(paper ? ScoutDossierInk.rule:GameTheme.gold).frame(height:2).accessibilityHidden(true)}
+    }
+    private func point(_ title:String,_ value:String) -> some View {
+        VStack(alignment:.leading,spacing:6) {
+            Text(title).font(.footnote.bold()).foregroundStyle(paper ? ScoutDossierInk.muted:GameTheme.boardMuted)
+            Text(ManagementDisplay.date(value)).font(.subheadline.monospacedDigit()).fixedSize(horizontal:false,vertical:true)
+        }.frame(maxWidth:.infinity,alignment:.leading)
+            .foregroundStyle(paper ? ScoutDossierInk.ink:GameTheme.boardInk)
+            .accessibilityElement(children:.combine)
+    }
+}
+
+struct ContractStateLane<Content: View>: View {
+    let number: String
+    let title: String
+    @ViewBuilder let content: Content
+    init(number: String, title: String, @ViewBuilder content: () -> Content) {
+        self.number = number; self.title = title; self.content = content()
+    }
+    var body: some View {
+        VStack(alignment:.leading,spacing:12) {
+            HStack(spacing:8) {
+                Text(number).font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.navy)
+                    .padding(6).background(GameTheme.gold)
+                Text(title).font(.headline).foregroundStyle(GameTheme.gold)
+            }.accessibilityElement(children:.combine)
+            content
+        }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
+            .background(GameTheme.navy,in:ManagementStepFrame())
+            .overlay {ManagementStepFrame().strokeBorder(GameTheme.boardLine,lineWidth:2)}
     }
 }
