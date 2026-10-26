@@ -146,10 +146,17 @@ struct ManagementPlayerSummary {
     let fatigue: Double
     let action: String
     let appearance: PlayerAppearance
+    var secondaryDetail: String? = nil
 }
 
 struct ManagementPlayerHeader: View {
     let summary: ManagementPlayerSummary
+    var nameIdentifier = "managementPlayerName"
+    var detailIdentifier = "managementPlayerDetail"
+    var metadataIdentifier = "managementMetadata"
+    var dateIdentifier = "managementDate"
+    var actionIdentifier = "managementAction"
+    var fatigueIdentifier = "managementFatigue"
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
@@ -158,16 +165,20 @@ struct ManagementPlayerHeader: View {
                     .frame(width: ManagementTheme.Control.avatar, height: ManagementTheme.Control.avatar)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
-                    Text(summary.name).managementFont(.screenTitle).accessibilityIdentifier("managementPlayerName")
-                    Text(summary.detail).managementFont(.label).foregroundStyle(ManagementTheme.Palette.secondary)
+                    Text(summary.name).managementFont(.screenTitle).accessibilityIdentifier(nameIdentifier)
+                    Text(summary.detail).managementFont(.label).foregroundStyle(ManagementTheme.Palette.secondary).accessibilityIdentifier(detailIdentifier)
+                    if let detail = summary.secondaryDetail {
+                        Text(detail).managementFont(.helper).foregroundStyle(ManagementTheme.Palette.secondary).accessibilityIdentifier(metadataIdentifier)
+                    }
                 }.fixedSize(horizontal: false, vertical: true)
             }
             (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.micro)) : AnyLayout(HStackLayout(spacing: ManagementTheme.Space.inline))) {
-                Text(summary.date).monospacedDigit().fixedSize(horizontal: false, vertical: true)
+                Text(summary.date).monospacedDigit().fixedSize(horizontal: false, vertical: true).accessibilityIdentifier(dateIdentifier)
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
-                Text(summary.action).fixedSize(horizontal: false, vertical: true)
+                Text(summary.action).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier(actionIdentifier)
             }.managementFont(.helper).foregroundStyle(ManagementTheme.Palette.secondary)
             ManagementProgress(title: "피로", value: ManagementProgressValue(current: summary.fatigue, target: 100))
+                .accessibilityIdentifier(fatigueIdentifier)
         }
         .padding(ManagementTheme.Space.screen)
         .foregroundStyle(ManagementTheme.Palette.onDark).background(ManagementTheme.Palette.canvas)

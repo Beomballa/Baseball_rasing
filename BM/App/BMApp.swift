@@ -5,7 +5,9 @@ import SwiftData
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-management-components-preview") {
+            if ProcessInfo.processInfo.arguments.contains("-management-career-verification") {
+                ManagementCareerVerification()
+            } else if ProcessInfo.processInfo.arguments.contains("-management-components-preview") {
                 ManagementFoundationPreview()
             } else if ProcessInfo.processInfo.arguments.contains("-live-career-autoplay") {
                 LiveCareerPerformanceRun()

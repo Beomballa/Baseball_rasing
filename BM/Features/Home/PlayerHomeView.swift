@@ -48,38 +48,100 @@ struct PlayerHomeView: View {
             return age <= 18 ? player.schoolName:"무소속 · 출신 "+player.schoolName
         } catch {return "소속 조회 오류 · 출신 "+player.schoolName}
     }
+    @State private var selectedTab = ManagementTab.home
+    @State private var showCalendar = false
+    @Query private var contractEvaluations: [CareerContractEvaluation]
+    private var actionLabel: String {
+        if let todayTraining, !todayTraining.completed { return "훈련 진행 중 · 이어하기" }
+        return calendar?.hasAction(on: player.gameDate) == true ? "오늘 행동 완료" : "오늘 행동 전"
+    }
     var body: some View {
-        let _=calendar?.revision
-        let summary = HomeAbilitySummary(player: player, abilities: abilities)
-        ScrollView {
-            VStack(spacing: 12) {
-                HStack {
-                    Text("BM  CAREER").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                    Spacer()
-                    NavigationLink { TrainingPracticeView(sourcePlayers: players, initialRole: player.role) } label: { Text("자유 연습") }
-                        .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openTrainingPractice")
+        ManagementShell(selection: $selectedTab) {
+            ManagementPlayerHeader(summary: ManagementPlayerSummary(
+                name: "\(player.name)  #\(player.jerseyNumber)", detail: affiliationLabel, date: player.gameDate,
+                fatigue: Double(player.fatigue), action: actionLabel, appearance: player.appearance,
+                secondaryDetail: "\(player.role.label) · \(player.roleDetail) · \(age)세"),
+                nameIdentifier: "homePlayerName", detailIdentifier: "homeSchool", metadataIdentifier: "homeAge",
+                dateIdentifier: "calendarDate", actionIdentifier: "calendarAction", fatigueIdentifier: "homeFatigue")
+        } content: {
+            VStack(alignment: .leading, spacing: ManagementTheme.Space.section) {
+                switch selectedTab {
+                case .home: homeContent
+                case .player: playerContent
+                case .training: trainingContent
+                case .game: gameContent
+                case .career: careerContent
                 }
-                rolePicker
-                profile
-                if let calendar {
-                    CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).id(player.id)
-                    playActions(calendar)
-                    NavigationLink {ContractMarketView(player:player,calendar:calendar)} label: {Text("계약 시장 · 잔류 / 외부 비교")}
-                        .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openContractMarket")
-                    NavigationLink {CareerObjectivesView(player:player,calendar:calendar)} label: {CareerObjectivesHomeLabel(player:player,calendar:calendar)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openCareerObjectives")
-                    NavigationLink {ObservationReviewView(player:player,calendar:calendar)} label: {Text("28일 관찰 결산 · 다음 행동")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openObservationReview")
-                    NavigationLink {GoalSpecialActivitiesView(player:player,calendar:calendar)} label: {Text("목표 구단 · 특별 훈련 / 평가전")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openGoalSpecial")
-                    NavigationLink {ClubSeasonGoalsScreen(player:player,calendar:calendar)} label: {ClubSeasonHomeLabel(player:player,calendar:calendar)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubSeasonGoals")
-                    NavigationLink {ClubRoleScreen(player:player,calendar:calendar)} label: {Text("구단 역할 · 출전 / 승격 준비")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubRole")
-                    CareerContractStatusPanel(player:player,calendar:calendar).id(player.id)
-                    ContractEvaluationHomePanel(player:player,calendar:calendar).id(player.id)
-                    CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
-                    ScoutingObservationHomePanel(player: player, calendar: calendar)
-                    MatchAbilityGrowthHomePanel(player: player, records: gameRecords)
-                    AnnualLeagueHomePanel(player:player,state:calendar,schools:schools,transition:transition)
+            }
+        }
+        .id(player.id)
+        .navigationTitle(selectedTab.title).navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showCalendar) {
+            if let calendar {
+                NavigationStack {
+                    ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }
+                        .background(GameTheme.board).navigationTitle("휴식 · 일정 관리")
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showCalendar = false } } }
+                }.preferredColorScheme(.dark)
+            }
+        }
+            .onChange(of: player.id) { _, _ in showOriginals = false }
+            .onChange(of: recentRecords.map(MatchDisplaySnapshot.Token.init), initial: true) { _, _ in
+                var next: [String: MatchDisplaySnapshot] = [:]
+                for record in recentRecords {
+                    var cached = recentSnapshots[record.key] ?? MatchDisplaySnapshot()
+                    _ = try? cached.refresh(record)
+                    next[record.key] = cached
+                }
+                recentSnapshots = next
+            }
+    }
+
+
+    @ViewBuilder private var homeContent: some View {
+        if let calendar {
+            let status = CalendarScheduleStatus(player: player, state: calendar)
+            ManagementPanel("오늘 일정", surface: .paper) {
+                if let fixture = status.schedule?.today {
+                    let saved = gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id }
+                    Text("\(fixture.number)/30차전 · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools))")
+                        .managementFont(.label).accessibilityIdentifier("todaySchedule")
+                    Text(fixture.isAppearance(for: player.role) ? (player.role == .pitcher ? "오늘 선발 등판" : "오늘 출전 예정") : "비등판 · 팀 경기")
+                        .managementFont(.helper)
+                    NavigationLink { CareerGameEntryView(player: player, calendar: calendar, schools: schools) } label: {
+                        Text(saved?.completed == true ? "오늘 경기 결과" : saved == nil ? "오늘 경기 준비" : "오늘 경기 이어하기")
+                    }.buttonStyle(ManagementButtonStyle()).disabled(!calendar.hasAction(on: player.gameDate) && saved == nil)
+                        .accessibilityIdentifier("homeTodayGame")
+                    if !calendar.hasAction(on: player.gameDate) && saved == nil { Text("훈련 또는 휴식으로 먼저 준비하세요.").managementFont(.helper) }
                 } else {
-                    Text("달력 정보를 불러오지 못했습니다. 앱을 다시 열어 주세요.").font(.caption).foregroundStyle(GameTheme.gold)
+                    Text(status.schedule == nil ? "일정 확인 필요" : "비경기일 · 훈련 또는 휴식").managementFont(.label).accessibilityIdentifier("todaySchedule")
+                    Button(todayTraining == nil ? "훈련장 가기" : todayTraining?.completed == true ? "오늘 훈련 결과 보기" : "훈련 이어하기") { selectedTab = .training }
+                        .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("homeGoTraining")
                 }
+                if let next = status.schedule?.upcoming.first(where: { $0.date.description > player.gameDate && $0.isAppearance(for: player.role) }) {
+                    Text("다음 \(player.role == .pitcher ? "선발" : "출전") · \(next.date) · \(CareerTeamDirectory.name(next.opponent(of: (try? calendar.teamID(for: player, on: next.date)) ?? player.schoolID), schools: schools))")
+                        .managementFont(.helper).accessibilityIdentifier("nextAppearance")
+                }
+            }
+            if contractEvaluations.contains(where: { $0.playerID == player.id && !$0.acknowledged }) {
+                Button("새 계약 평가 · 자료 확인") { selectedTab = .career }
+                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("homeUnreadEvaluation")
+            }
+        }
+        ManagementClubhouseScene(appearance: player.appearance, selection: { selectedTab = $0 }, rest: { showCalendar = true })
+        if let calendar {
+            CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition, compact: true).id(player.id)
+        } else { Text("달력 정보를 불러오지 못했습니다. 기존 저장은 유지합니다.").managementFont(.body) }
+    }
+
+    @ViewBuilder private var playerContent: some View {
+        let summary = HomeAbilitySummary(player: player, abilities: abilities)
+        rolePicker
+        profile
+        MatchAbilityGrowthHomePanel(player: player, records: gameRecords)
                 GamePanel(title: "주요 능력 · 성장 그래프", onBoard: true) {
                     if summary.axes.count == 6 {
                         HomeRadarChart(values: summary.axes)
@@ -137,37 +199,65 @@ struct PlayerHomeView: View {
                 }
                 PositionHomePanel(player: player, calendar: calendar)
                 recentGames
-                GamePanel(title: "커리어 메뉴", onBoard: true) {
-                    #if DEBUG
-                    NavigationLink("인플레이 · 상황별 검증") { FieldReplayVerification() }
-                        .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openFieldVerification")
-                    NavigationLink("스카우트·계약 · 화면 시안") { ScoutingContractPreview() }
-                        .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openScoutingPreview")
-                    NavigationLink("포지션 훈련 · 화면 미리보기") { PositionTrainingPreview() }
-                        .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openPositionPreview")
-                    #endif
-                    Button("연습장 입장", action: play).buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openMatch")
-                    Text("연습 장면은 공식 기록·능력·피로에 반영되지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    if players.count < PlayerRole.allCases.count {
-                        Button("다른 역할 선수 만들기", action: create).buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("createOtherRole")
-                    }
-                }
-            }.padding(12)
-        }.id(player.id)
-            .background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
-            .navigationTitle("선수 홈").navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .onChange(of: player.id) { _, _ in showOriginals = false }
-            .onChange(of: recentRecords.map(MatchDisplaySnapshot.Token.init), initial: true) { _, _ in
-                var next: [String: MatchDisplaySnapshot] = [:]
-                for record in recentRecords {
-                    var cached = recentSnapshots[record.key] ?? MatchDisplaySnapshot()
-                    _ = try? cached.refresh(record)
-                    next[record.key] = cached
-                }
-                recentSnapshots = next
+
+        if players.count < PlayerRole.allCases.count {
+            Button("다른 역할 선수 만들기", action: create).buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("createOtherRole")
+        }
+    }
+
+    @ViewBuilder private var trainingContent: some View {
+        if let calendar {
+            trainingLink(calendar)
+            NavigationLink { TraitTrainingLiveView(player: player, calendar: calendar, initialTrait: .strongArm) } label: { Text("특성 습득 훈련") }
+                .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubTraitTraining")
+            if player.role == .batter {
+                NavigationLink { PositionTrainingView(player: player, calendar: calendar) } label: { Text("포지션 훈련") }
+                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubPositionTraining")
             }
+        }
+        NavigationLink { TrainingPracticeView(sourcePlayers: players, initialRole: player.role) } label: { Text("자유 연습 · 성장/날짜/피로 변화 없음") }
+            .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openTrainingPractice")
+        Button("연습장 입장", action: play).buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openMatch")
+        #if DEBUG
+        DisclosureGroup("개발용 화면 확인") {
+            NavigationLink("인플레이 · 상황별 검증") { FieldReplayVerification() }.accessibilityIdentifier("openFieldVerification")
+            NavigationLink("스카우트·계약 · 화면 시안") { ScoutingContractPreview() }.accessibilityIdentifier("openScoutingPreview")
+            NavigationLink("포지션 훈련 · 화면 미리보기") { PositionTrainingPreview() }.accessibilityIdentifier("openPositionPreview")
+        }.tint(GameTheme.gold)
+        #endif
+    }
+    private func trainingLink(_ calendar: CareerCalendarState) -> some View {
+        let status = CalendarScheduleStatus(player: player, state: calendar)
+        return NavigationLink { CareerTrainingDestination(player: player, calendar: calendar) } label: {
+            Text(todayTraining.map { $0.completed ? "오늘 훈련 결과" : "훈련 이어하기 · \((try? $0.snapshot().scores.count) ?? 0)/5" } ?? (player.role == .batter ? "타자 훈련" : "투수 훈련"))
+        }.buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("openTraining")
+            .disabled(status.schedule == nil || calendar.hasAction(on: player.gameDate) && todayTraining == nil)
+    }
+    @ViewBuilder private var gameContent: some View {
+        if let calendar {
+            let status = CalendarScheduleStatus(player: player, state: calendar)
+            if status.schedule?.today != nil { playActions(calendar, training: false) }
+            else { Text("오늘은 비경기일입니다. 홈에서 다음 일정을 확인하세요.").managementFont(.body) }
+            Button("연간 일정 · 날짜 진행") { showCalendar = true }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
+            AnnualLeagueHomePanel(player: player, state: calendar, schools: schools, transition: transition)
+        }
+        recentGames
+    }
+    @ViewBuilder private var careerContent: some View {
+        if let calendar {
+                    NavigationLink {ContractMarketView(player:player,calendar:calendar)} label: {Text("계약 시장 · 잔류 / 외부 비교")}
+                        .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("openContractMarket")
+                    NavigationLink {CareerObjectivesView(player:player,calendar:calendar)} label: {CareerObjectivesHomeLabel(player:player,calendar:calendar)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openCareerObjectives")
+                    NavigationLink {ObservationReviewView(player:player,calendar:calendar)} label: {Text("28일 관찰 결산 · 다음 행동")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openObservationReview")
+                    NavigationLink {GoalSpecialActivitiesView(player:player,calendar:calendar)} label: {Text("목표 구단 · 특별 훈련 / 평가전")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openGoalSpecial")
+                    NavigationLink {ClubSeasonGoalsScreen(player:player,calendar:calendar)} label: {ClubSeasonHomeLabel(player:player,calendar:calendar)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubSeasonGoals")
+                    NavigationLink {ClubRoleScreen(player:player,calendar:calendar)} label: {Text("구단 역할 · 출전 / 승격 준비")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubRole")
+                    CareerContractStatusPanel(player:player,calendar:calendar).id(player.id)
+                    ContractEvaluationHomePanel(player:player,calendar:calendar).id(player.id)
+                    CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
+                    ScoutingObservationHomePanel(player: player, calendar: calendar)
+
+        }
     }
 
     private var profile: some View {
@@ -187,16 +277,18 @@ struct PlayerHomeView: View {
             .background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(GameTheme.gold, lineWidth: 2))
     }
 
-    @ViewBuilder private func playActions(_ calendar: CareerCalendarState) -> some View {
+    @ViewBuilder private func playActions(_ calendar: CareerCalendarState, training: Bool = true) -> some View {
         let status = CalendarScheduleStatus(player: player, state: calendar)
         let saved = status.schedule?.today.flatMap { fixture in gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id } }
         let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
         layout {
+            if training {
             NavigationLink { CareerTrainingDestination(player: player, calendar: calendar) } label: {
                 Text(todayTraining.map { $0.completed ? "오늘 훈련 결과" : "훈련 이어하기 · \((try? $0.snapshot().scores.count) ?? 0)/5" }
                      ?? (player.role == .batter ? "타자 훈련" : "투수 훈련"))
             }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openTraining")
                 .disabled(status.schedule == nil || calendar.hasAction(on: player.gameDate) && todayTraining == nil)
+            }
             if status.schedule?.today != nil {
                 NavigationLink { CareerGameEntryView(player: player, calendar: calendar, schools: schools) } label: {
                     Text(saved?.completed == true ? "오늘 경기 결과" : (saved == nil ? "오늘 경기 시작" : "오늘 경기 이어하기"))

@@ -7,6 +7,7 @@ struct CareerCalendarPanel: View {
     let state: CareerCalendarState
     let schools: [School]
     let transition: CareerTransition
+    var compact = false
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var showSchedule = false
@@ -72,6 +73,7 @@ struct CareerCalendarPanel: View {
         let gameCompleted = savedGame?.completed == true && (try? savedGame?.snapshot()) != nil
         return GamePanel(title: "오늘 일정", onBoard: true) {
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            if !compact {
             layout {
                 Text(player.gameDate).monospacedDigit().bold().accessibilityIdentifier("calendarDate")
                 if !typeSize.isAccessibilitySize { Spacer() }
@@ -89,9 +91,11 @@ struct CareerCalendarPanel: View {
                     Rectangle().fill(GameTheme.gold).frame(width: max(0, geometry.size.width) * Double(min(100, max(0, player.fatigue))) / 100)
                 }.overlay(Rectangle().strokeBorder(GameTheme.boardLine))
             }.frame(height: 7).accessibilityHidden(true)
+            }
             if let message = status.errorMessage {
                 scheduleError(message)
             } else {
+                if !compact {
                 if let today {
                     Text("\(today.number) / 30차전 · \(gameCompleted ? "경기 종료" : today.isAppearance(for: player.role) ? (player.role == .pitcher ? "선발 등판 예정" : "출전 예정") : "비등판 · 팀 경기 예정")")
                         .font(.headline).accessibilityIdentifier("todaySchedule")
@@ -111,7 +115,8 @@ struct CareerCalendarPanel: View {
                     Text("이번 연간 일정의 다음 출전이 없습니다.")
                         .font(.caption).foregroundStyle(GameTheme.boardMuted)
                 }
-            }
+            }                }
+
             layout {
                 Button(hasAction ? (trainedToday ? "오늘 행동 완료" : "휴식 완료") : "오늘 휴식 −\(DailyRecovery.rest)") {
                     run {
