@@ -19,6 +19,7 @@ struct GameDate: Comparable, Hashable, Sendable, CustomStringConvertible {
     }
 
     private init(value: Date) { self.value = value }
+    var monday: GameDate { adding(days: -((Self.calendar.component(.weekday, from: value) + 5) % 7)) }
     var year: Int { Self.calendar.component(.year, from: value) }
     var description: String {
         let parts = Self.calendar.dateComponents([.year, .month, .day], from: value)
@@ -470,5 +471,104 @@ enum CareerLifecycleError:LocalizedError {
         case .tooYoung:"자율 은퇴는 게임 나이 20세부터 가능합니다."
         case .horizon:"41세 기념일 이후까지 이어지는 새 계약은 체결할 수 없습니다."
         }
+    }
+}
+
+
+// Selection is a weekly roster decision, separate from a match's simulation and rewards.
+struct ClubSelectionCandidate: Codable, Equatable, Identifiable {
+    let id: String
+    let h: Double
+    let p: Double
+    let readiness: Double
+    let evidence: String?
+    let note: String
+    var performance: Double { max(10, min(90, 50 + 10 * p)) }
+    var score: Double { 0.60 * h + 0.25 * performance + 0.15 * readiness }
+    func validate() throws {
+        guard !id.isEmpty, h.isFinite, (0...100).contains(h), p.isFinite, (-4...4).contains(p),
+              readiness.isFinite, (0...100).contains(readiness), !note.isEmpty,
+              evidence != nil || p == 0 else { throw ContractRegistrationError.invalid }
+    }
+}
+struct ClubSelectionReview: Codable, Equatable, Identifiable {
+    var version = 1
+    let context: String
+    let membershipID: String
+    let teamID: String
+    let level: String
+    let position: String
+    let roleID: String
+    let date: String
+    let week: String
+    let own: ClubSelectionCandidate
+    let rival: ClubSelectionCandidate
+    let incumbent: String
+    let selected: String
+    let holdUntil: String?
+    var id: String { context + "/" + week }
+    var isStarter: Bool { selected == own.id }
+    var nextReview: String {
+        (try? GameDate(week).adding(days: 7).description) ?? week
+    }
+    var reason: String {
+        if let holdUntil, date < holdUntil, incumbent == selected { return "기용 변경 후 관찰 중 · " + holdUntil + "까지 유지" }
+        if selected != incumbent { return "도전자가 기존 선수보다 출전점수 5 이상 높음" }
+        return "동률 또는 점수 차 5 미만 · 기존 기용 유지"
+    }
+    static func make(context: String, membershipID: String, teamID: String, level: String, position: String, roleID: String,
+                     date: GameDate, own: ClubSelectionCandidate, rival: ClubSelectionCandidate, previous: Self?) throws -> Self {
+        let incumbent = previous?.selected ?? own.id
+        let held = previous?.holdUntil.map { date.description < $0 } ?? false
+        let current = incumbent == own.id ? own : rival
+        let challenger = incumbent == own.id ? rival : own
+        let selected = !held && challenger.score >= current.score + 5 ? challenger.id : incumbent
+        let until = selected != incumbent ? date.adding(days: 14).description : previous?.holdUntil
+        let value = Self(context: context, membershipID: membershipID, teamID: teamID, level: level, position: position, roleID: roleID,
+                         date: date.description, week: date.monday.description, own: own, rival: rival, incumbent: incumbent, selected: selected, holdUntil: until)
+        try value.validate(previous: previous)
+        return value
+    }
+    func validate(previous: Self?) throws {
+        let day = try GameDate(date)
+        try own.validate(); try rival.validate()
+        guard version == 1, week == day.monday.description,
+              context == [membershipID,teamID,level,String(day.year),position].joined(separator:"/"),
+              !membershipID.isEmpty, !teamID.isEmpty,
+              ["domestic-development", "domestic-first-team", "mlb-development", "npb-first-team", "mlb-first-team"].contains(level),
+              (position == "P" || FieldPosition(rawValue: position) != nil), ["slugger", "onBase", "field", "starter"].contains(roleID),
+              own.id != rival.id, incumbent == (previous?.selected ?? own.id),
+              previous.map({ $0.context == context && $0.week < week && $0.own.id == own.id && $0.rival.id == rival.id }) ?? true else { throw ContractRegistrationError.invalid }
+        let held = previous?.holdUntil.map { date < $0 } ?? false
+        let current = incumbent == own.id ? own : rival, challenger = incumbent == own.id ? rival : own
+        let expected = !held && challenger.score >= current.score + 5 ? challenger.id : incumbent
+        guard selected == expected, holdUntil == (selected != incumbent ? day.adding(days:14).description : previous?.holdUntil) else { throw ContractRegistrationError.invalid }
+    }
+}
+struct MatchClubSelection: Codable, Equatable {
+    let fixtureID: String
+    let review: ClubSelectionReview
+    let rotationDay: Bool
+    var appearance: Bool { rotationDay && review.isStarter }
+    func validate(fixtureID: String, playerID: UUID, date: String, competition: String?, appearance: Bool, role: String) throws {
+        try review.own.validate(); try review.rival.validate()
+        let day=try GameDate(date), opening=try GameDate("\(day.year)-04-01")
+        let expectedTurn=role == "batter" || (opening.days(to:day)/6).isMultiple(of:5)
+        guard review.version == 1, review.week == day.monday.description, rotationDay == expectedTurn,
+              [review.own.id,review.rival.id].contains(review.selected),
+              self.fixtureID == fixtureID, review.own.id == playerID.uuidString, review.date <= date,
+              review.level == competition, self.appearance == appearance else { throw MatchError.invalidRecord }
+    }
+}
+struct ClubOpportunitySummary: Codable, Equatable {
+    let through: String
+    let keys: [String]
+    let starts: Int
+    let bench: Int
+    let rotationRest: Int
+    func validate() throws {
+        _ = try GameDate(through)
+        guard Set(keys).count == keys.count, keys == keys.sorted(), starts >= 0, bench >= 0, rotationRest >= 0,
+              starts + bench + rotationRest == keys.count else { throw ScoutingObservationError.invalid }
     }
 }

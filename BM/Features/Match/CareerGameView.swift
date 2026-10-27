@@ -575,8 +575,12 @@ struct CareerGameView: View {
             if let preparation=match.preparation,let outcome=MatchPlanOutcome.make(match:match) {MatchPlanOutcomePanel(preparation:preparation,outcome:outcome)}
             GamePanel(title: player.role == .batter ? "타자 경기 기록" : "투수 경기 기록", onBoard: true) {
                 if let change=match.ownPitcherChange {PitcherChangePanel(change:change,finalRuns:match.line.runsAllowed,appearance:player.appearance)}
+                if let decision = match.clubSelection {
+                    Text(decision.appearance ? "주전 기용 · 경기 시작 때 고정" : decision.rotationDay ? "벤치 · 개인 성적/XP 없음" : "로테이션 휴식 · 개인 성적/XP 없음")
+                        .font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("matchSelectionResult")
+                }
                 if !record.appearance {
-                    Text("비등판 · 팀 경기 결과").font(.headline).accessibilityIdentifier("gameResultNoAppearance")
+                    Text("비출전 · 팀 경기 결과").font(.headline).accessibilityIdentifier("gameResultNoAppearance")
                     Text("개인 기록과 피로 변화가 없습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 } else {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 6) {
@@ -1082,7 +1086,7 @@ struct CareerGameEntryView:View {
         do {
             let fixture=try CareerMatchStore.today(player:player,state:calendar)
             if let _=try CareerMatchStore.record(player:player,fixture:fixture,in:context) {enterGame=true;return}
-            if !fixture.isAppearance(for:player.role) {enterGame=true;return}
+            if !(try ClubSelectionStore.matchSelection(player:player,calendar:calendar,fixture:fixture,in:context)?.appearance ?? fixture.isAppearance(for:player.role)) {enterGame=true;return}
             let value=try CareerMatchStore.opposition(player:player,state:calendar)
             if let attack=value.attack {
                 fielders=MatchNPCFielders.make(year:fixture.date.year,competition:attack.competition,homeID:fixture.homeID,awayID:fixture.awayID).team(home:fixture.homeID == value.teamID)

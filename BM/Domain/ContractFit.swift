@@ -753,6 +753,7 @@ struct CareerContractJournal:Codable,Equatable {
     var seasonGoals:[ClubSeasonGoal]? = nil
     var seasonGoalReports:[ClubSeasonObservation]? = nil
     var seasonReviews:[ClubSeasonReview]? = nil
+    var clubSelections:[ClubSelectionReview]? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -791,6 +792,24 @@ struct CareerContractJournal:Codable,Equatable {
         try overseasCareer?.validate(owner:self,today:today)
         guard version == 1,playerID == player.id,revision >= 0,
               Set(decisions.map(\.offerID)).count == decisions.count,Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractRegistrationError.invalid}
+        var selections: [String: ClubSelectionReview] = [:]
+        var selectionIDs = Set<String>()
+        for review in clubSelections ?? [] {
+            try review.validate(previous: selections[review.context])
+            guard selectionIDs.insert(review.id).inserted, review.date >= origin.description, review.date <= today.description,
+                  review.own.id == player.id.uuidString,
+                  let member = try current(on: GameDate(review.date)), member.offerID == review.membershipID,
+                  member.teamID == review.teamID, member.level == review.level else { throw ContractRegistrationError.invalid }
+            if let evidence=review.own.evidence {
+                guard let report=overseasReports?.first(where: { report in report.comparisons.contains {$0.id.hasPrefix(review.level+"/") && report.id+"/"+$0.id == evidence} }),
+                      report.observation.observedDate <= review.date,
+                      report.observation.observedDate >= (try GameDate(review.date)).adding(days:-364).description,
+                      let sample=report.comparisons.first(where: {report.id+"/"+$0.id == evidence}),sample.verified,
+                      sample.correction == review.own.p,
+                      player.role == .batter ? sample.totals.line.plateAppearances >= 40 : sample.totals.line.pitchingOuts >= 45 else {throw ContractRegistrationError.invalid}
+            }
+            selections[review.context] = review
+        }
         let overseas=overseasEligibility ?? []
         guard Set(overseas.map(\.id)).count == overseas.count else {throw ContractRegistrationError.invalid}
         for value in overseas {

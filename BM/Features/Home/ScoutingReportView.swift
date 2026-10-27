@@ -118,6 +118,12 @@ struct SavedScoutingObservationView: View {
                 ScoutingInterestList(value: value)
                 roleBoard
                 frozenSample
+                if let opportunities = value.opportunities, !opportunities.keys.isEmpty {
+                    GamePanel(title:"기용과 실제 출전 · 관찰 당시 고정",onBoard:true) {
+                        Text("주전 \(opportunities.starts) · 벤치 \(opportunities.bench) · 순번 휴식 \(opportunities.rotationRest)").font(.headline.monospacedDigit()).accessibilityIdentifier("scoutOpportunities")
+                        Text("새 기용 규칙으로 완료한 최근365일 경기만 표시합니다. 비출전은 개인 표본·실패 성과로 만들지 않습니다.").font(.subheadline)
+                    }
+                }
                 if let fit = value.contractFit {
                     comparisonBoard(fit)
                     clubBoard(fit)

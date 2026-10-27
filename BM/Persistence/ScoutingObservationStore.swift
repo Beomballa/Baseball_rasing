@@ -98,6 +98,7 @@ struct ScoutingObservation: Codable {
     var evaluationPending: [String]
     var contractFit: ScoutingContractFit?
     var interests: ScoutingInterests?
+    var opportunities: ClubOpportunitySummary? = nil
 
     static func pendingReasons(age: Int, role: PlayerRole, groups: [ScoutingSampleGroup], modern: Bool = false, compared: Bool = false) -> [String] {
         var reasons = ["구단 기준 미연결", "동일 환경 비교 성적 미검증", "육성 전망 미산정", "진로/권리·모집/예산 심사 미연결"]
@@ -113,6 +114,8 @@ struct ScoutingObservation: Codable {
     }
 
     func validate() throws {
+        try opportunities?.validate()
+        if let opportunities, opportunities.through != observedDate { throw ScoutingObservationError.invalid }
         let origin = try GameDate(origin), date = try GameDate(observedDate)
         let cycle = try ScoutingPeriod(origin: origin, today: date)
         guard [1,2,3,4,5].contains(version), evaluationVersion == "contracts-role-v1", cycle.index == period,
@@ -208,6 +211,7 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
             pending: live.pending, positionMastery: mastery,
             grades: try ScoutingRoleEvaluation.grades(role: player.role, abilities: live.abilities, positionMastery: mastery),
             evaluationPending: ScoutingObservation.pendingReasons(age: live.age, role: player.role, groups: live.groups))
+        value.opportunities = try ClubSelectionStore.opportunities(player:player,through:player.gameDate,in:context)
         value.version = 4
         value.contractFit = try ScoutingContractFit.make(value)
         value.interests = ScoutingInterests.make(value)
@@ -1398,5 +1402,94 @@ enum GoalSpecialError:LocalizedError {
         let review=try makeReview(goal:goal,owner:owner,player:player,calendar:calendar,date:date,in:context)
         owner.seasonReviews=(owner.seasonReviews ?? [])+[review]
         try write(owner,player:player,calendar:calendar,in:context,save:save)
+    }
+}
+
+
+@MainActor enum ClubSelectionStore {
+    static func projection(player: CareerPlayer, calendar: CareerCalendarState, in context: ModelContext) throws -> ClubSelectionReview? {
+        guard !player.isRetired, context.container.schema.entities.contains(where: { $0.name == "ContractRegistration" }) else { return nil }
+        let owner = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        let date = try GameDate(player.gameDate)
+        guard let member = try owner.current(on: date), member.level != "college" else { return nil }
+        let position = player.role == .pitcher ? "P" : player.positionRaw
+        let contextID = [member.offerID, member.teamID, member.level, String(date.year), position].joined(separator: "/")
+        let previous = owner.clubSelections?.last { $0.context == contextID }
+        // Offseason displays the last decision; no weekly competition is created outside the annual schedule.
+        guard date >= (try GameDate("\(date.year)-04-01")), date <= (try GameDate("\(date.year)-09-22")) else { return previous }
+        if previous?.week == date.monday.description { return previous }
+        let plan = try calendar.competition(for: player, year: date.year)
+        guard plan.teamID == member.teamID, plan.membership?.level == member.level,
+              let opponent = plan.teamIDs.first(where: { $0 != member.teamID }) else { return nil }
+        let fielders = MatchNPCFielders.make(year: date.year, competition: member.level, homeID: member.teamID, awayID: opponent)
+        let team = fielders.team(home: true), attack = MatchNPCAttack.make(roster: fielders).home
+        let offers = try ContractOfferStore.records(player:player,calendar:calendar,in:context).flatMap { row -> [DomesticContractOffer] in
+            guard let evaluation = try ContractEvaluationStore.records(player:player,calendar:calendar,in:context).first(where: {$0.key == row.key}) else { throw ContractRegistrationError.invalid }
+            return try row.snapshot(evaluation:evaluation,player:player,calendar:calendar).offers
+        }
+        let role = CareerClubRole.make(member: member, owner: owner, offers: offers, on: player.gameDate)
+        let roleID = role.roleID ?? (player.role == .pitcher ? "starter" : "field")
+        let profile = try PlayerAbilityStore.profile(playerID: player.id, in: context)
+        let abilities = HomeAbilitySummary(player: player, abilities: profile)
+        let mastery = try FieldPosition(rawValue:position).flatMap { position in try PlayerPositionStore.profile(playerID:player.id,in:context)?.snapshot().skill(position).mastery }
+        guard let h = try ScoutingRoleEvaluation.grades(role:player.role,abilities:abilities,positionMastery:mastery).first(where: {$0.id == roleID})?.score else { throw ContractRegistrationError.invalid }
+        let performance = try frozenPerformance(player:player,calendar:calendar,level:member.level,owner:owner,in:context)
+        let own = ClubSelectionCandidate(id:player.id.uuidString,h:h,p:performance.p,readiness:Double(100-player.fatigue),evidence:performance.source,
+            note:(role.roleID == nil ? "모집 역할 미확인 · 주 포지션 수비/선발 기준. " : "수락/승격 역할 기준. ") + performance.note)
+        let rival: ClubSelectionCandidate
+        if player.role == .pitcher {
+            let npc = attack.starter
+            var values = PlayerInitialValues(contact:60,power:60,discipline:60,speed:60,defense:60,arm:60,mental:60,
+                velocity:npc.velocity,control:npc.control,stuff:60,stamina:60)
+            values.pitches = Dictionary(uniqueKeysWithValues:npc.pitches.map {($0,60.0)})
+            guard let rating = try ScoutingRoleEvaluation.grades(role:.pitcher,abilities:ScoutingClubCatalog.abilities(values,role:.pitcher),positionMastery:nil).first?.score else { throw ContractRegistrationError.invalid }
+            rival = ClubSelectionCandidate(id:npc.id,h:rating,p:0,readiness:100,evidence:nil,note:"기존 가상 선발의 구속·제구·구종. 미수집 구위·지구력·멘탈·숙련은 게임 기준60, 피로 원장 없음·준비100, 성과 P0 중립")
+        } else {
+            guard let npc = team.players.first(where: {$0.position == position}), let bat = attack.batters.first(where: {$0.id == npc.id}) else { throw ContractRegistrationError.invalid }
+            let values = PlayerInitialValues(contact:bat.contact,power:bat.power,discipline:bat.discipline,speed:npc.speed,defense:npc.defense,arm:npc.arm,mental:60)
+            guard let rating = try ScoutingRoleEvaluation.grades(role:.batter,abilities:ScoutingClubCatalog.abilities(values,role:.batter),positionMastery:60).first(where: {$0.id == roleID})?.score else { throw ContractRegistrationError.invalid }
+            rival = ClubSelectionCandidate(id:npc.id,h:rating,p:0,readiness:100,evidence:nil,note:"기존 같은 포지션 가상 선수의 공격·주루·수비·송구. 미수집 멘탈·숙련은 게임 기준60, 피로 원장 없음·준비100, 성과 P0 중립")
+        }
+        return try ClubSelectionReview.make(context:contextID,membershipID:member.offerID,teamID:member.teamID,level:member.level,position:position,roleID:roleID,date:date,own:own,rival:rival,previous:previous)
+    }
+    static func frozenPerformance(player:CareerPlayer,calendar:CareerCalendarState,level:String,owner:CareerContractJournal,in context:ModelContext) throws -> (p:Double,source:String?,note:String) {
+        let today = try GameDate(player.gameDate)
+        // Adult comparisons have their own fixed reference; never relabel a high-school reference.
+        let reports = (owner.overseasReports ?? []).filter {
+            $0.observation.role == player.role && (player.role == .pitcher || $0.observation.position == player.positionRaw)
+                && $0.observation.observedDate <= player.gameDate && $0.observation.observedDate >= today.adding(days:-364).description
+                && $0.comparisons.contains(where: {$0.id.hasPrefix(level+"/")})
+        }.sorted { $0.observation.observedDate == $1.observation.observedDate ? $0.id < $1.id : $0.observation.observedDate > $1.observation.observedDate }
+        guard let latest = reports.first,
+              let row = ScoutingContractFit.selected(latest.comparisons.filter {
+                  $0.id.hasPrefix(level+"/") && $0.verified && (player.role == .batter ? $0.totals.line.plateAppearances >= 40 : $0.totals.line.pitchingOuts >= 45)
+              },role:player.role) else { return (0,nil,"동일 수준 고정 보고서 표본 부족/미검증 · P0 중립") }
+        return (row.correction,latest.id+"/"+row.id,"고정 성인 보고서 "+latest.observation.observedDate+" · 동일 환경 성과")
+    }
+    // Called only inside the parent's day/start transaction. Viewing a projection never writes.
+    @discardableResult static func capture(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> ClubSelectionReview? {
+        guard let projected = try projection(player:player,calendar:calendar,in:context) else { return nil }
+        var owner = try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        if let existing = owner.clubSelections?.first(where: {$0.id == projected.id}) { return existing }
+        owner.clubSelections = (owner.clubSelections ?? []) + [projected]; owner.revision += 1
+        guard let row = try ContractRegistrationStore.row(player:player,in:context) else { throw ContractRegistrationError.invalid }
+        row.payload = try JSONEncoder().encode(owner)
+        return projected
+    }
+    static func matchSelection(player:CareerPlayer,calendar:CareerCalendarState,fixture:SeasonFixture,in context:ModelContext) throws -> MatchClubSelection? {
+        try projection(player:player,calendar:calendar,in:context).map { MatchClubSelection(fixtureID:fixture.id,review:$0,rotationDay:fixture.isAppearance(for:player.role)) }
+    }
+    static func opportunities(player:CareerPlayer,through:String,in context:ModelContext) throws -> ClubOpportunitySummary {
+        let id = player.id
+        let rows = try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.completed}))
+            .filter {$0.gameDate <= through && $0.gameDate >= ((try? GameDate(through).adding(days:-364).description) ?? through)}
+        var keys:[String]=[], starts=0, bench=0, rotation=0
+        for row in rows {
+            let match = try row.snapshot()
+            guard let selection = match.clubSelection else {continue}
+            keys.append(row.key)
+            if match.appearance { starts += 1 } else if !selection.rotationDay { rotation += 1 } else { bench += 1 }
+        }
+        return ClubOpportunitySummary(through:through,keys:keys.sorted(),starts:starts,bench:bench,rotationRest:rotation)
     }
 }

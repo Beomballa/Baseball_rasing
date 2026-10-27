@@ -2,6 +2,61 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV32BenchCompetitionAndTeamResultBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            app.buttons["managementTab-game"].tap();app.buttons["facility-game"].tap()
+            let panel=app.staticTexts["clubSelectionStatus"];XCTAssertTrue(panel.waitForExistence(timeout:8));XCTAssertTrue(panel.label.contains("벤치"))
+            capture(app,"v32-"+(pitcher ? "pitcher":"batter")+"-selection-home")
+            let before=status(app)
+            app.buttons["openClubSelection"].tap()
+            XCTAssertTrue(app.staticTexts["clubSelectionDetail"].waitForExistence(timeout:6))
+            capture(app,"v32-"+(pitcher ? "pitcher":"batter")+"-competition")
+            app.swipeUp();capture(app,"v32-"+(pitcher ? "pitcher":"batter")+"-evidence")
+            app.navigationBars.buttons.element(boundBy:0).tap();XCTAssertEqual(status(app),before);close(app)
+            app.buttons["managementTab-home"].tap();app.buttons["clubhouse-rest"].tap()
+            app.buttons["confirmRest"].tap();app.buttons["restDone"].tap()
+            app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["confirmGamePlan"].exists)
+            app.buttons["gameAutomatic"].tap();app.buttons["진행하고 결과 저장"].tap()
+            let result=app.staticTexts["gameResultNoAppearance"];reveal(result,app);XCTAssertTrue(result.waitForExistence(timeout:10))
+            capture(app,"v32-"+(pitcher ? "pitcher":"batter")+"-bench-result")
+            let home=app.buttons["gameReturnHome"];reveal(home,app);home.tap();XCTAssertTrue(app.buttons["roomProfile"].waitForExistence(timeout:5))
+        }
+    }
+    @MainActor func testV32FrozenReportShowsBenchOpportunityWithoutPersonalSample() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench","-club-selection-completed"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            app.buttons["managementTab-career"].tap();app.buttons["facility-observation"].tap()
+            reveal(app.buttons["openSavedScoutingReport"],app);app.buttons["openSavedScoutingReport"].tap()
+            let opportunities=app.staticTexts["scoutOpportunities"];reveal(opportunities,app)
+            XCTAssertTrue(opportunities.exists);XCTAssertTrue(opportunities.label.contains("벤치 1"))
+            capture(app,"v32-"+(pitcher ? "pitcher":"batter")+"-observation-opportunities")
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+            app.buttons["facility-goals"].tap();reveal(app.buttons["openClubSeasonGoals"],app);app.buttons["openClubSeasonGoals"].tap()
+            let actual=app.staticTexts["clubGoalOpportunities"];reveal(actual,app);XCTAssertTrue(actual.exists)
+            capture(app,"v32-"+(pitcher ? "pitcher":"batter")+"-season-opportunities")
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+        }
+    }
+    @MainActor func testV32StarterSelectionAndLargeText() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        app.buttons["managementLargeMenu"].tap();app.buttons["경기"].tap()
+        reveal(app.buttons["facility-game"],app);app.buttons["facility-game"].tap()
+        reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+        XCTAssertTrue(app.staticTexts["clubSelectionDetail"].waitForExistence(timeout:5));capture(app,"v32-large-selection")
+        reveal(app.staticTexts["selectionOwnScore"],app);capture(app,"v32-large-own-score")
+        reveal(app.staticTexts["selectionRivalScore"],app);capture(app,"v32-large-rival-score")
+        XCTAssertTrue(app.staticTexts["selectionRivalScore"].isHittable)
+    }
     @MainActor func testV31AgingRetirementArchiveAndNewCareerFormBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication()

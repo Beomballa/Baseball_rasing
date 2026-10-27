@@ -208,6 +208,25 @@ struct CareerPathVerification: View {
                         let packet=try ContractOfferStore.records(player:p,calendar:calendar,in:c.mainContext).first!.snapshot(evaluation:evaluation,player:p,calendar:calendar)
                         let offer=packet.offers.first {$0.route == .rookie}!
                         try ContractRegistrationStore.decide(player:p,calendar:calendar,offerID:offer.id,accept:true,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                        if args.contains("-club-selection-verification") {
+                            let next=try calendar.fixtures(for:p,year:2030).first {$0.date.description >= p.gameDate && $0.isAppearance(for:p.role)}!
+                            p.gameDate=next.date.description;calendar.actionDate=nil
+                            if args.contains("-club-selection-bench") {
+                                p.contact=20;p.power=20;p.discipline=20;p.speed=20;p.defense=20;p.arm=20
+                                let profile=try PlayerAbilityStore.profile(playerID:p.id,in:c.mainContext)!
+                                profile.mental=20
+                                if role == .pitcher {profile.velocity=20;profile.control=20;profile.stuff=20;profile.stamina=20;for pitch in p.pitches {pitch.mastery=20}}
+                            }
+                            try c.mainContext.save()
+                            if args.contains("-club-selection-completed") {
+                                try CalendarProgression.rest(player:p,state:calendar,revision:calendar.revision,in:c.mainContext)
+                                let game=try CareerMatchStore.start(player:p,state:calendar,in:c.mainContext)
+                                try CareerMatchStore.advance(player:p,state:calendar,record:game,revision:game.revision,input:.automatic,in:c.mainContext)
+                                p.gameDate=try ScoutingPeriod(origin:GameDate(calendar.originDate),today:GameDate(p.gameDate)).next.description
+                                calendar.actionDate=nil;try c.mainContext.save()
+                                try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
+                            }
+                        }
                         if args.contains("-club-observation-verification") {
                             try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
                             try ClubSeasonStore.start(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)

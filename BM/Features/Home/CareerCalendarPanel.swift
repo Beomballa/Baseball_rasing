@@ -72,6 +72,8 @@ struct CareerCalendarPanel: View {
         let nextAppearance = schedule?.upcoming.first { $0.date.description > player.gameDate && $0.isAppearance(for: player.role) }
         let savedGame = today.flatMap { fixture in gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id } }
         let gameCompleted = savedGame?.completed == true && (try? savedGame?.snapshot()) != nil
+        let decision = try? ClubSelectionStore.projection(player:player,calendar:state,in:context)
+        let todayAppearance = savedGame?.appearance ?? ((today?.isAppearance(for:player.role) ?? false) && (decision?.isStarter ?? true))
         return GamePanel(title: "오늘 일정", onBoard: true) {
             if let life=try? player.lifecycle,!life.traitRisk.isEmpty {
                 Text("! 특성 유지 주의 · 커리어의 변화 기록을 확인하세요").font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("calendarTraitWarning")
@@ -101,7 +103,7 @@ struct CareerCalendarPanel: View {
             } else {
                 if !compact {
                 if let today {
-                    Text("\(today.number) / 30차전 · \(gameCompleted ? "경기 종료" : today.isAppearance(for: player.role) ? (player.role == .pitcher ? "선발 등판 예정" : "출전 예정") : "비등판 · 팀 경기 예정")")
+                    Text("\(today.number) / 30차전 · \(gameCompleted ? "경기 종료" : todayAppearance ? (player.role == .pitcher ? "선발 등판 예정" : "출전 예정") : "비출전 · 팀 경기 예정")")
                         .font(.headline).accessibilityIdentifier("todaySchedule")
                     Text(detail(today)).font(.caption).foregroundStyle(GameTheme.boardMuted)
                     Text(gameCompleted ? "경기 결과 저장 완료 · 다음 날 진행 가능" : "경기일 · 경기 완료 후 다음 날 진행 가능")
@@ -116,7 +118,7 @@ struct CareerCalendarPanel: View {
                     Text("\(player.role == .pitcher ? "다음 선발" : "다음 출전")  \(detail(next))").font(.caption)
                         .accessibilityIdentifier("nextAppearance")
                 } else {
-                    Text("이번 연간 일정의 다음 출전이 없습니다.")
+                    Text("올해 남은 기본 출전 차례가 없습니다.")
                         .font(.caption).foregroundStyle(GameTheme.boardMuted)
                 }
             }                }

@@ -75,6 +75,11 @@ enum CareerSchemaV3: VersionedSchema {
                 try roster.validate()
                 guard preparation.analysis == MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack) else {throw MatchError.invalidRecord}
             }
+            try match.clubSelection?.validate(fixtureID:fixtureID,playerID:playerID,date:gameDate,competition:match.competition,appearance:match.appearance,role:match.role)
+            if let selection=match.clubSelection {
+                guard match.npcFielders?.team(home:match.isHome).teamID == selection.review.teamID,
+                      match.fieldStats?.position == selection.review.position else {throw MatchError.invalidRecord}
+            }
             try match.projectFeedback?.validate(match:match,key:key,date:gameDate)
             try match.validatePitching()
             try match.inningScores?.validate(match: match)
@@ -124,9 +129,11 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         guard state.hasAction(on: player.gameDate) else { throw MatchError.preparation }
         let seed = (player.id.uuidString + fixture.id).utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         let plan=try state.competition(for:player,year:fixture.date.year)
+        let selection = try ClubSelectionStore.matchSelection(player:player,calendar:state,fixture:fixture,in:context)
         var match = CareerMatch(random: seed, isHome: fixture.homeID == plan.teamID, role: player.roleRaw,
-                                appearance: fixture.isAppearance(for: player.role), contact: player.contact, power: player.power,
+                                appearance: selection?.appearance ?? fixture.isAppearance(for: player.role), contact: player.contact, power: player.power,
                                 discipline: player.discipline, mastery: Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }))
+        match.clubSelection=selection
         match.competition=plan.membership?.level
         // Old schema fixtures and saved matches retain their original rules.
         if context.container.schema.entities.contains(where: { $0.name == "PlayerAbilities" }),
@@ -155,8 +162,10 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             match.fieldStats?.activeTraits = active
             let skill = try profile.snapshot().skill(position)
             match.fieldStats?.positionMastery = skill.mastery
-            match.positionExperience = MatchPositionExperience(position: position, before: skill,
-                profileRevision: profile.revision, age: try state.age(of: player), fatigue: player.fatigue)
+            if match.appearance {
+                match.positionExperience = MatchPositionExperience(position: position, before: skill,
+                    profileRevision: profile.revision, age: try state.age(of: player), fatigue: player.fatigue)
+            }
         }
         match.pitching=MatchPitching(startingFatigue:player.fatigue)
         match.detailedFieldVersion=5;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
@@ -189,7 +198,10 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"
         context.insert(saved); state.revision += 1
-        do { try save(context) } catch { context.rollback(); throw error }
+        do {
+            if selection != nil { _ = try ClubSelectionStore.capture(player:player,calendar:state,in:context) }
+            try save(context)
+        } catch { context.rollback(); throw error }
         return saved
     }
     static func advance(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
