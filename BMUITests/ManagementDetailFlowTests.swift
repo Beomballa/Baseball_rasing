@@ -2,6 +2,59 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV27LiveInningScoreboardsAndResumeBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if pitcher { pickPitcher(app) }
+            app.buttons["clubhouse-rest"].tap(); app.buttons["confirmRest"].tap(); app.buttons["restDone"].tap()
+            app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 8)); app.buttons["opponentTab-plan"].tap()
+            reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+            let board = app.descendants(matching: .any).matching(identifier: "careerGameScore").firstMatch
+            XCTAssertTrue(board.waitForExistence(timeout: 8)); XCTAssertTrue(board.label.contains("1회"))
+            XCTAssertTrue(board.label.contains("9회 미시작")); XCTAssertFalse(board.label.contains("미기록"))
+            XCTAssertTrue(app.frame.contains(board.frame))
+            XCTAssertTrue(app.buttons[pitcher ? "gamePitch" : "battingTouchSurface"].isHittable)
+            capture(app, pitcher ? "v27-pitcher-live-innings" : "v27-batter-live-innings")
+            if pitcher { app.buttons["gamePitch"].tap(); app.buttons["gameRelease"].tap() }
+            else { app.buttons["gameInput-watch"].tap(); app.buttons["battingTouchSurface"].tap() }
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: app.buttons["gameAutomatic"])
+            // A home run includes all four bases and its result receipt before returning to pitching.
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 35), .completed)
+            let score = board.label
+            app.buttons["closeRoomDetail"].tap()
+            XCTAssertTrue(app.buttons["homeTodayGame"].waitForExistence(timeout: 6)); app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(board.waitForExistence(timeout: 8)); XCTAssertEqual(board.label, score)
+            capture(app, pitcher ? "v27-pitcher-resumed-innings" : "v27-batter-resumed-innings")
+        }
+    }
+
+    @MainActor func testV27LargeInningScoreboardsBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if pitcher { pickPitcher(app) }
+            reveal(app.buttons["clubhouse-rest"], app); app.buttons["clubhouse-rest"].tap()
+            reveal(app.buttons["confirmRest"], app); app.buttons["confirmRest"].tap()
+            reveal(app.buttons["restDone"], app); app.buttons["restDone"].tap()
+            reveal(app.buttons["homeTodayGame"], app); app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 8)); app.buttons["opponentTab-plan"].tap()
+            reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+            for side in ["away", "home"] {
+                let row = app.descendants(matching: .any).matching(identifier: "boardTeam-" + side).firstMatch
+                reveal(row, app); XCTAssertTrue(row.exists); XCTAssertTrue(row.label.contains("1회"))
+                XCTAssertTrue(row.label.contains("9회 미시작")); XCTAssertFalse(row.label.contains("미기록"))
+                XCTAssertGreaterThanOrEqual(row.frame.minX, 0); XCTAssertLessThanOrEqual(row.frame.maxX, app.frame.width)
+            }
+            capture(app, pitcher ? "v27-large-pitcher-innings" : "v27-large-batter-innings")
+        }
+    }
+
     @MainActor func testV26CreationThreeAndFivePitchSelectionsMatchHomeLibrary() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

@@ -260,3 +260,5 @@
 - ui-pitch-course-v25: 투수 직접 목표는 ManualMatchInput.pitchTarget 선택필드, 최근결과는 pitchAim(recommended/target)로 기록한다. nil 입력은 기존 plan/RNG/scatter/자동판정을 유지하며 새목표만 finite0~1 검증, 실제도착은 clamp하지않는다. 추천조회추가난수금지, begin에구종/revision/목표고정·릴리스잠금·PendingSave재시도/복귀표시같은목표를사용한다. 미확정초안취소는추천복귀, 확정최근1공만기존JSON원자저장/복원하며 옛nil/완료경기·보고서소급생성금지. 새스키마/보상/날짜변경없음. 140pt compact/84pt코스/44pt버튼·큰글자본문판·목표/실제구분과V24도착시계를유지한다.
 
 - native-pitch-repertoire-v26: 새 투수만 PitchType 9종 중 distinct3~5개를 선택해 관계/초기 스냅샷에 함께 저장한다. 기존 기본4·레거시2/6개·NPC3~4개/고정 보고서를 재구성하지 않는다. 선택 pitchStudy JSON은 등록숙련과 습득진척을 구분하며 기존5회/행동/피로+6/원자save·rollback·재개/완료1회를 유지한다. 진척100에 숙련20 등록, 교체전숙련은 완료원장 rosterSnapshot에 보관하고5회재등록으로 복원한다. 모든 릴리스/채점/코치설명은 controlMastery를 쓴다. 기존4종 속도/궤적·V24포구시계/V25코스/판정RNG·V14스키마를 보존하며 너클은 고정 완만궤적의 MVP 근사다.
+
+- native-inning-scoreboard-v27: 새 공식 경기만 초기 settle 전에 선택 inningScores(version1,away/home각9[Int?])를 만든다. 실제타석확정runs를현재half에1회관찰하고 실제진입half만0으로연다. 구형nil·완료원문을소급보완하지않고 V14/판정/RNG/XP·저장재개·결과1회를유지한다. 0/미시작·/9말미실시X/미기록—와기존RHE를구분하고이닝합계는원득점과대조만하며다시더하지않는다. 전달된표시snapshot만읽어포구/수비·HRresolved전새점수를공개하지않는다. 자동리그/평가전초기화·전체투구원장은이번범위가아니다. 큰글자는3열이닝표·RHE분리·날짜줄바꿈과부모팀의명시적전체이닝음성설명을유지한다.

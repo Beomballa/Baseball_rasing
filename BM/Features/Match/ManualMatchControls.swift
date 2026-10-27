@@ -106,8 +106,21 @@ struct BattingAimZone: View {
     }
 }
 
-// The match does not store inning-by-inning runs or zone averages. Missing history stays missing.
+// Broadcast values come only from the match snapshot currently being presented.
 enum MatchBroadcastData {
+    static func inningMark(_ match: CareerMatch, home: Bool, inning: Int) -> String {
+        guard (1...9).contains(inning), let scores = match.inningScores else { return "—" }
+        if let runs = (home ? scores.home : scores.away)[inning - 1] { return String(runs) }
+        return home && inning == 9 && match.completed && match.half == 17 && match.homeScore > match.awayScore ? "X" : "·"
+    }
+    static func inningDescription(_ match: CareerMatch, home: Bool, inning: Int) -> String {
+        let mark = inningMark(match, home: home, inning: inning)
+        return "\(inning)회 " + (mark == "—" ? "미기록" : mark == "·" ? "미시작" : mark == "X" ? "미실시" : mark + "점")
+    }
+    static func inningSummary(_ match: CareerMatch, home: Bool) -> String {
+        guard match.inningScores != nil else { return "이닝별 득점 미기록" }
+        return (1...9).map { inningDescription(match, home: home, inning: $0) }.joined(separator: ", ")
+    }
     static func hits(_ match: CareerMatch, home: Bool) -> Int? {
         guard let records = match.playerRecords else { return nil }
         return (home ? records.home : records.away).battingTotal.hits
@@ -139,16 +152,23 @@ struct MatchBroadcastBoard: View {
     }
     var body: some View {
         VStack(spacing: 5) {
-            HStack(spacing: 6) {
-                Text(displayedDate).lineLimit(1)
-                Spacer(minLength: 2)
-                Text(match.inningLabel).foregroundStyle(GameTheme.gold)
-            }.font(.system(.caption2, design: .monospaced, weight: .bold))
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(displayedDate).fixedSize(horizontal: false, vertical: true)
+                    Text(match.inningLabel).foregroundStyle(GameTheme.gold)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.system(.caption2, design: .monospaced, weight: .bold))
+            } else {
+                HStack(spacing: 6) {
+                    Text(displayedDate).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(match.inningLabel).foregroundStyle(GameTheme.gold)
+                }.font(.system(.caption2, design: .monospaced, weight: .bold))
+            }
             if typeSize.isAccessibilitySize {
                 VStack(spacing: 4) {
                     accessibleTeam(home: false)
                     accessibleTeam(home: true)
-                    Text("이닝별 득점 미집계").font(.caption).foregroundStyle(muted)
                 }
             } else {
                 VStack(spacing: 1) {
@@ -157,7 +177,7 @@ struct MatchBroadcastBoard: View {
                     teamRow(home: true)
                 }.font(.system(size: 10, weight: .bold, design: .monospaced))
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(teamSummary(home: false)). \(teamSummary(home: true)). 이닝별 득점 미집계")
+                    .accessibilityLabel("\(teamSummary(home: false)). \(MatchBroadcastData.inningSummary(match, home: false)). \(teamSummary(home: true)). \(MatchBroadcastData.inningSummary(match, home: true))")
                     .accessibilityIdentifier("careerGameScore")
             }
             Rectangle().fill(Color(hex: 0x426075)).frame(height: 1)
@@ -214,7 +234,9 @@ struct MatchBroadcastBoard: View {
         HStack(spacing: 0) {
             Text(home ? homeName : awayName).lineLimit(1).truncationMode(.tail).frame(width: 58, alignment: .leading)
             ForEach(1...9, id: \.self) { inning in
-                Text("·").foregroundStyle(muted).frame(maxWidth: .infinity, minHeight: 17)
+                Text(MatchBroadcastData.inningMark(match, home: home, inning: inning))
+                    .foregroundStyle(activeInning == inning ? GameTheme.gold : paper)
+                    .frame(maxWidth: .infinity, minHeight: 17)
                     .background(activeInning == inning ? Color(hex: 0x29445a) : .clear)
             }
             Text(String(home ? match.homeScore : match.awayScore)).foregroundStyle(GameTheme.gold).frame(width: 20)
@@ -223,10 +245,31 @@ struct MatchBroadcastBoard: View {
         }
     }
     private func accessibleTeam(home: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(home ? homeName : awayName).font(.headline)
-            Text("R \(home ? match.homeScore : match.awayScore)  H \(MatchBroadcastData.hits(match, home: home).map(String.init) ?? "미집계")  E \(MatchBroadcastData.errors(match, home: home).map(String.init) ?? "미집계")")
-                .font(.body.monospaced())
+            HStack(alignment: .top, spacing: 6) {
+                accessibleTotal("R", value: String(home ? match.homeScore : match.awayScore))
+                accessibleTotal("H", value: MatchBroadcastData.hits(match, home: home).map(String.init) ?? "—")
+                accessibleTotal("E", value: MatchBroadcastData.errors(match, home: home).map(String.init) ?? "—")
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3), alignment: .leading, spacing: 6) {
+                ForEach(1...9, id: \.self) { inning in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(inning)회").font(.caption2).foregroundStyle(muted)
+                        Text(MatchBroadcastData.inningMark(match, home: home, inning: inning)).font(.headline.monospacedDigit())
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(MatchBroadcastData.inningDescription(match, home: home, inning: inning))
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(teamSummary(home: home)). \(MatchBroadcastData.inningSummary(match, home: home))")
+            .accessibilityIdentifier(home ? "boardTeam-home" : "boardTeam-away")
+    }
+    private func accessibleTotal(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption2).foregroundStyle(muted)
+            Text(value).font(.headline.monospacedDigit())
         }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .combine)
     }
     private func teamSummary(home: Bool) -> String {

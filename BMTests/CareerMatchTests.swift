@@ -4,6 +4,68 @@ import SwiftUI
 @testable import BM
 
 @MainActor final class CareerMatchTests: XCTestCase {
+    func testV27InningScoresDiskResumeRollbackAndCompletedResultApplyOnce() throws {
+        enum Failure: Error { case injected }
+        for role in PlayerRole.allCases {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let url = directory.appendingPathComponent("innings.store")
+            let pending: Data = try autoreleasepool {
+                let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+                let (player, state) = try setup(role: role, in: context)
+                let record = try ready(player, state, in: context)
+                XCTAssertNotNil(try record.snapshot().inningScores)
+                try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision,
+                    input: role == .batter ? .watch : .pitch, pitchCode: role == .pitcher ? "four-seam" : nil,
+                    control: role == .pitcher ? ManualMatchInput(release: 0.68) : nil, in: context)
+                let match = try record.snapshot()
+                try XCTUnwrap(match.inningScores).validate(match: match)
+                XCTAssertFalse(record.completed)
+                return record.payload
+            }
+            try autoreleasepool {
+                let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+                let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+                let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let record = try XCTUnwrap(context.fetch(FetchDescriptor<CareerMatchRecord>()).first)
+                XCTAssertEqual(record.payload, pending)
+                let before = (record.payload, record.revision, state.revision, player.fatigue)
+                XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision,
+                    input: .automatic, in: context, save: { _ in throw Failure.injected }))
+                XCTAssertEqual(record.payload, before.0); XCTAssertEqual(record.revision, before.1)
+                XCTAssertEqual(state.revision, before.2); XCTAssertEqual(player.fatigue, before.3)
+                try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision, input: .automatic, in: context)
+                let completed = try record.snapshot(), final = record.payload, fatigue = player.fatigue
+                try XCTUnwrap(completed.inningScores).validate(match: completed)
+                XCTAssertTrue(record.completed)
+                XCTAssertEqual(try CareerMatchStore.start(player: player, state: state, in: context).payload, final)
+                XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision, input: .automatic, in: context))
+                XCTAssertEqual(record.payload, final); XCTAssertEqual(player.fatigue, fatigue)
+                XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerMatchRecord>()), 1)
+            }
+        }
+    }
+
+    func testV27LegacyNilInningsRemainMissingAndCorruptionDoesNotRepairPayload() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player, state) = try setup(in: context), record = try ready(player, state, in: context)
+        var legacy = try record.snapshot(); legacy.inningScores = nil
+        record.payload = try JSONEncoder().encode(legacy); try context.save()
+        let original = record.payload
+        XCTAssertEqual(try CareerMatchStore.start(player: player, state: state, in: context).payload, original)
+        XCTAssertNil(try record.snapshot().inningScores)
+        try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision, input: .automatic, in: context)
+        let completed = try record.snapshot()
+        XCTAssertNil(completed.inningScores)
+        var corrupt = completed; corrupt.inningScores = MatchInningScores()
+        record.payload = try JSONEncoder().encode(corrupt); try context.save()
+        let damaged = record.payload
+        XCTAssertThrowsError(try record.snapshot())
+        XCTAssertThrowsError(try CareerMatchStore.start(player: player, state: state, in: context))
+        XCTAssertEqual(record.payload, damaged)
+    }
+
     private func setup(role: PlayerRole = .batter, date: String = "2026-04-01", in context: ModelContext) throws -> (CareerPlayer, CareerCalendarState) {
         var draft = PlayerDraft(); draft.name = role == .batter ? "경기타자" : "경기투수"
         draft.schoolID = "hs-ref-001"; draft.role = role; draft.throwingHand = .left
@@ -389,7 +451,10 @@ import SwiftUI
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (p,s)=try setup(role:.pitcher,in:c),r=try ready(p,s,in:c)
             func oldJSON(_ object:Any) -> Any {
-                if let d=object as? [String:Any] {return d.filter {$0.key != "pitching" && $0.key != "responsiblePitcher"}.mapValues {oldJSON($0)}}
+                if let d=object as? [String:Any] {
+                    let laterFields = ["pitching", "responsiblePitcher", "playerRecords", "inningScores"]
+                    return d.filter { !laterFields.contains($0.key) }.mapValues {oldJSON($0)}
+                }
                 if let a=object as? [Any] {return a.map {oldJSON($0)}}
                 return object
             }
@@ -682,6 +747,7 @@ import SwiftUI
         let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
         let (p,s)=try growthSetup(in:c),row=try ready(p,s,in:c)
         var old=try row.snapshot();old.npcFielders=nil
+        old.npcAttack=nil;old.playerRecords=nil;old.preparation=nil;old.inningScores=nil
         row.payload=try JSONEncoder().encode(old);try c.save()
         let original=row.payload
         XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,original)

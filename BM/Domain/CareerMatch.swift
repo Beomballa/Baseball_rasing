@@ -12,6 +12,40 @@ struct MatchLine: Codable, Equatable {
     var pitchingOuts = 0, pitches = 0, hitsAllowed = 0, runsAllowed = 0, pitchingWalks = 0, pitchingStrikeouts = 0
 }
 
+struct MatchInningScores: Codable, Equatable {
+    var version = 1
+    var away: [Int?] = [0] + Array(repeating: nil, count: 8)
+    var home: [Int?] = Array(repeating: nil, count: 9)
+
+    mutating func record(runs: Int, half: Int) {
+        if half.isMultiple(of: 2) { away[half / 2] = (away[half / 2] ?? 0) + runs }
+        else { home[half / 2] = (home[half / 2] ?? 0) + runs }
+    }
+    mutating func enter(half: Int) {
+        guard (0..<18).contains(half) else { return }
+        if half.isMultiple(of: 2) { away[half / 2] = away[half / 2] ?? 0 }
+        else { home[half / 2] = home[half / 2] ?? 0 }
+    }
+    func validate(match: CareerMatch) throws {
+        guard version == 1, away.count == 9, home.count == 9,
+              (0...18).contains(match.half), match.homeScore >= 0, match.awayScore >= 0,
+              match.completed ? (match.half == 18 || match.half == 17 && match.homeScore > match.awayScore) : match.half < 18 else { throw MatchError.invalidRecord }
+        let lastHalf = match.completed ? (match.half == 17 && home[8] == nil ? 16 : 17) : match.half
+        for half in 0..<18 {
+            let value = half.isMultiple(of: 2) ? away[half / 2] : home[half / 2]
+            guard half <= lastHalf ? value.map({ $0 >= 0 }) == true : value == nil else { throw MatchError.invalidRecord }
+        }
+        for (values, total) in [(away, match.awayScore), (home, match.homeScore)] {
+            var remaining = total
+            for value in values.compactMap({ $0 }) {
+                guard value <= remaining else { throw MatchError.invalidRecord }
+                remaining -= value
+            }
+            guard remaining == 0 else { throw MatchError.invalidRecord }
+        }
+    }
+}
+
 /// The saved RNG and complete field state make retry/resume use the same next pitch.
 struct CareerMatch: Codable, Equatable {
     var random: UInt64
@@ -41,6 +75,7 @@ struct CareerMatch: Codable, Equatable {
     var npcFielders:MatchNPCFielders?
     var npcAttack:MatchNPCAttack? = nil
     var playerRecords:MatchPlayerRecords? = nil
+    var inningScores: MatchInningScores? = nil
     var fieldPlays: [MatchDetailedPlay]?
     var homeRuns: [MatchHomeRun]?
     var runnerProfiles: [FieldRunnerProfile?]?
@@ -394,6 +429,7 @@ struct CareerMatch: Codable, Equatable {
             pitchingRelief:pitching?.change(home:half % 2 == 0) != nil,
             result:result,play:detailed,runs:runs,outsAdded:outs-outsBefore,
             rbi:detailed?.rbi ?? runs,responsible:scoring,earnedContext:earnedContext)
+        inningScores?.record(runs: runs, half: half)
         if half % 2 == 0 { awayScore += runs; awayOrder += 1 }
         else { homeScore += runs; homeOrder += 1 }
         balls = 0; strikes = 0
@@ -405,6 +441,7 @@ struct CareerMatch: Codable, Equatable {
             if playerRecords?.earned != nil {playerRecords?.earned=MatchEarnedState(half:nextHalf)}
             if half == 17 && homeScore > awayScore { completed = true }
             if half == 18 { completed = true }
+            if !completed { inningScores?.enter(half: half) }
         }
     }
 }

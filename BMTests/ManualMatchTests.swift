@@ -6,6 +6,77 @@ import SwiftUI
 @testable import BM
 
 @MainActor final class ManualMatchTests: XCTestCase {
+    func testV27InningScoreStatesDistinguishZeroFutureSkippedAndLegacy() throws {
+        var game = match(); game.half = 0
+        var scores = MatchInningScores()
+        game.inningScores = scores
+        try scores.validate(match: game)
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: false, inning: 1), "0")
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: true, inning: 1), "·")
+        scores.record(runs: 2, half: 0); scores.enter(half: 1)
+        game.half = 1; game.awayScore = 2; game.inningScores = scores
+        try scores.validate(match: game)
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: false, inning: 1), "2")
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: true, inning: 1), "0")
+        game.inningScores = nil
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: false, inning: 1), "—")
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: true, inning: 9), "—")
+    }
+
+    func testV27NinthInningSkippedWalkoffAndTieRemainDifferent() throws {
+        var game = match(); game.completed = true; game.half = 17
+        var scores = MatchInningScores()
+        for half in 1...16 { scores.enter(half: half) }
+        scores.record(runs: 2, half: 1)
+        game.homeScore = 2; game.inningScores = scores
+        try scores.validate(match: game)
+        XCTAssertNil(scores.home[8])
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: true, inning: 9), "X")
+        scores.enter(half: 17); scores.record(runs: 1, half: 17)
+        game.homeScore = 3; game.inningScores = scores
+        try scores.validate(match: game)
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: true, inning: 9), "1")
+        scores.away[0] = 3; game.awayScore = 3; game.half = 18; game.inningScores = scores
+        try scores.validate(match: game)
+        XCTAssertEqual(game.homeScore, game.awayScore)
+        XCTAssertEqual(MatchBroadcastData.inningMark(game, home: true, inning: 9), "1")
+    }
+
+    func testV27InningScoreValidationRejectsMalformedOrInventedHistory() throws {
+        var game = match(); game.half = 0
+        var bad = MatchInningScores(); bad.version = 2
+        XCTAssertThrowsError(try bad.validate(match: game))
+        bad = MatchInningScores(); bad.away.removeLast()
+        XCTAssertThrowsError(try bad.validate(match: game))
+        bad = MatchInningScores(); bad.away[0] = -1
+        XCTAssertThrowsError(try bad.validate(match: game))
+        bad = MatchInningScores(); bad.home[0] = 0
+        XCTAssertThrowsError(try bad.validate(match: game))
+        bad = MatchInningScores(); bad.away[0] = Int.max
+        XCTAssertThrowsError(try bad.validate(match: game))
+        bad = MatchInningScores(); game.completed = true
+        XCTAssertThrowsError(try bad.validate(match: game))
+        game.completed = false; game.half = 18
+        XCTAssertThrowsError(try bad.validate(match: game))
+    }
+
+    func testV27InningTrackingDoesNotChangeEitherRoleJudgementOrRandomSequence() throws {
+        for role in PlayerRole.allCases {
+            for seed in UInt64(1)...8 {
+                var tracked = match(role: role, seed: seed); tracked.half = 0
+                tracked.inningScores = MatchInningScores()
+                var legacy = tracked; legacy.inningScores = nil
+                try tracked.advance(.automatic); try legacy.advance(.automatic)
+                let scores = try XCTUnwrap(tracked.inningScores)
+                try scores.validate(match: tracked)
+                XCTAssertEqual(scores.away.compactMap { $0 }.reduce(0, +), tracked.awayScore)
+                XCTAssertEqual(scores.home.compactMap { $0 }.reduce(0, +), tracked.homeScore)
+                tracked.inningScores = nil
+                XCTAssertEqual(tracked, legacy)
+            }
+        }
+    }
+
     func testBroadcastMissingHistoryStaysUnknownAndReadsRecordedHits() throws {
         var legacy = match()
         XCTAssertNil(MatchBroadcastData.hits(legacy, home: true))
