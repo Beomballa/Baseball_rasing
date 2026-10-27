@@ -1,4 +1,222 @@
 import SwiftUI
+import SpriteKit
+
+/// Display coordinates use the exact normalized input consumed by CareerTraining.attempt.
+struct LocationDrillReplay: Equatable {
+    let kind: TrainingKind
+    let target: TrainingTarget
+    let input: TrainingTarget
+    let score: Int
+    static let windup = 0.45
+    static let flight = 1.0
+    static let receive = 0.3
+    static let duration = windup + flight + receive
+    var comparison: String {
+        "◇ 목표 \(Self.coordinate(target)) · + \(kind == .control ? "조준" : "선수") \(Self.coordinate(input))"
+    }
+    static func coordinate(_ point: TrainingTarget) -> String { "가로 \(Int((point.x * 100).rounded())) 세로 \(Int((point.y * 100).rounded()))" }
+    static func area(_ kind: TrainingKind) -> CGRect {
+        kind == .control ? CGRect(x: 108, y: 75, width: 76, height: 76) : CGRect(x: 24, y: 95, width: 272, height: 150)
+    }
+    static func point(_ value: TrainingTarget, kind: TrainingKind) -> CGPoint {
+        let rect = area(kind)
+        return CGPoint(x: rect.minX + value.x * rect.width, y: rect.minY + value.y * rect.height)
+    }
+    static func input(at point: CGPoint, kind: TrainingKind) -> TrainingTarget {
+        let rect = area(kind)
+        return TrainingTarget(x: min(1, max(0, (point.x - rect.minX) / rect.width)), y: min(1, max(0, (point.y - rect.minY) / rect.height)))
+    }
+    static func finished(elapsed: Double) -> Bool { elapsed >= duration }
+}
+
+@MainActor final class LocationDrillScene: SKScene {
+    private let actor = SKSpriteNode(), receiver = SKSpriteNode(), mitt = SKSpriteNode()
+    private let ball = SKSpriteNode(texture: PixelBaseball.texture)
+    private let goal = SKShapeNode(), aim = SKShapeNode()
+    private var kind = TrainingKind.control
+    private var appearance = PlayerAppearance()
+    private var number = 1, hand = "right"
+    private var frames: [SKTexture] = [], catchFrames: [SKTexture] = []
+    private var actorKey = "", receiverKey = ""
+    private var target = TrainingTarget(x: 0.5, y: 0.5), selected = TrainingTarget(x: 0.5, y: 0.5)
+    private var playback: (replay: LocationDrillReplay, started: Double, completion: @MainActor () -> Void)?
+    private var movement: (from: CGPoint, to: CGPoint, started: Double)?
+    private(set) var playing = false
+    private(set) var finished = false
+    override init(size: CGSize) { super.init(size: size); scaleMode = .aspectFit }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    private func point(_ value: CGPoint) -> CGPoint { CGPoint(x: value.x, y: 320 - value.y) }
+    private func facing(from: CGPoint, to: CGPoint) -> FieldFacing { .direction(dx: to.x - from.x, dy: from.y - to.y) }
+    private func contact(_ motion: FieldSpriteMotion, at origin: CGPoint, hand: Bool) -> CGPoint {
+        let offset = FieldRasterArt.contact(motion, kind: "fielder", left: self.hand == "left", hand: hand) ?? .zero
+        return CGPoint(x: origin.x + offset.x * 1.7, y: origin.y - offset.y * 1.7)
+    }
+    private func cropped(_ name: String, rect: CGRect) -> SKTexture? {
+        guard let image = MatchArt.image(name) else { return nil }
+        let texture = SKTexture(rect: rect, in: SKTexture(image: image)); texture.filteringMode = .nearest; return texture
+    }
+    private func backdrop(_ texture: SKTexture?, rect: CGRect) {
+        let node = SKSpriteNode(texture: texture, size: rect.size)
+        node.position = point(CGPoint(x: rect.midX, y: rect.midY)); addChild(node)
+    }
+    func configure(kind: TrainingKind, appearance: PlayerAppearance, number: Int, hand: String) {
+        cancel(); removeAllChildren(); self.kind = kind; self.appearance = appearance; self.number = number; self.hand = hand; actorKey = ""; receiverKey = ""
+        actor.name = "locationActor"; ball.name = "locationBall"; goal.name = "locationGoal"; aim.name = "locationAim"
+        backgroundColor = UIColor(Color(hex: 0x163b32))
+        if kind == .control {
+            // Recompose the existing field/fence crops as a bullpen, without the baked-in batter or umpire.
+            backdrop(cropped("stadium-clean", rect: CGRect(x: 0.78, y: 0.24, width: 0.2, height: 0.15)), rect: CGRect(x: 0, y: 0, width: 320, height: 320))
+            backdrop(cropped("stadium-clean", rect: CGRect(x: 0.8, y: 0.59, width: 0.2, height: 0.19)), rect: CGRect(x: 0, y: 0, width: 320, height: 93))
+            backdrop(cropped("stadium-clean", rect: CGRect(x: 0.5, y: 0.12, width: 0.05, height: 0.03)), rect: CGRect(x: 84, y: 83, width: 176, height: 237))
+            let lane = SKShapeNode(rect: CGRect(x: 84, y: 0, width: 176, height: 237))
+            lane.fillColor = .clear; lane.strokeColor = UIColor(Color(hex: 0xe0ad65)); lane.lineWidth = 2; addChild(lane)
+            let plate = SKSpriteNode(color: .white, size: CGSize(width: 22, height: 4)); plate.position = point(CGPoint(x: 146, y: 155)); addChild(plate)
+            frames = PlayerMotionArt.textures(role: .pitcher, appearance: appearance, number: number, hand: hand)
+            catchFrames = (0..<4).compactMap { i in
+                cropped("catcher-parts", rect: CGRect(x: Double(i % 2) / 2, y: 1 - Double(i / 2 + 1) / 2, width: 0.5, height: 0.5))
+            }
+            actor.position = point(CGPoint(x: 248, y: 310)); actor.anchorPoint = CGPoint(x: 0.5, y: 0.05)
+            actor.size = CGSize(width: 158, height: 195); actor.xScale = hand == "left" ? -1 : 1
+            receiver.xScale = 1; receiver.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            receiver.size = CGSize(width: 74, height: 80); receiver.position = point(CGPoint(x: 146, y: 118))
+            receiver.texture = catchFrames.first; receiver.zPosition = 2; addChild(receiver)
+            mitt.size = CGSize(width: 28, height: 28); mitt.texture = catchFrames.count == 4 ? catchFrames[2] : nil
+            mitt.zPosition = 5; addChild(mitt); actor.texture = frames.first
+        } else {
+            backdrop(cropped("inplay-stadium-arcade-v1", rect: CGRect(x: 0, y: 0.15, width: 1, height: 0.72)), rect: CGRect(x: 0, y: 0, width: 320, height: 320))
+            let coachMotion = FieldSpriteMotion(facing: .direction(dx: 0, dy: -1), stage: .ready)
+            setFieldActor(receiver, motion: coachMotion, number: 0); receiver.position = point(CGPoint(x: 160, y: 286))
+            receiver.zPosition = 3; addChild(receiver); actor.xScale = 1
+        }
+        actor.zPosition = 4; addChild(actor)
+        ball.size = CGSize(width: 10, height: 10); ball.zPosition = 8; ball.isHidden = true; addChild(ball)
+        let diamond = CGMutablePath(); diamond.move(to: CGPoint(x: 0, y: 7)); diamond.addLine(to: CGPoint(x: 7, y: 0)); diamond.addLine(to: CGPoint(x: 0, y: -7)); diamond.addLine(to: CGPoint(x: -7, y: 0)); diamond.closeSubpath()
+        goal.path = diamond; goal.strokeColor = UIColor(Color(hex: 0x91dfba)); goal.fillColor = .clear; goal.lineWidth = 2; goal.zPosition = 6; addChild(goal)
+        let cross = CGMutablePath(); cross.move(to: CGPoint(x: -6, y: 0)); cross.addLine(to: CGPoint(x: 6, y: 0)); cross.move(to: CGPoint(x: 0, y: -6)); cross.addLine(to: CGPoint(x: 0, y: 6))
+        aim.path = cross; aim.strokeColor = UIColor(Color(hex: 0xf1c965)); aim.lineWidth = 2; aim.zPosition = 7; addChild(aim)
+        preview(target: target, input: selected, animated: false)
+    }
+    private func setFieldActor(_ node: SKSpriteNode, motion: FieldSpriteMotion, number: Int) {
+        guard let sample = FieldRasterArt.samples(motion, kind: "fielder", left: hand == "left").first else { return }
+        let key = sample.frame.file + sample.frame.action + String(sample.mirrored) + String(number)
+        if node === actor, key == actorKey { return }; if node === receiver, key == receiverKey { return }
+        guard let image = FieldRasterArt.image(sample, kit: PlayerAppearance.kitColors[appearance.kit], skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: number, back: motion.facing.back) else { return }
+        let texture = SKTexture(image: image); texture.filteringMode = .nearest; node.texture = texture
+        node.size = CGSize(width: image.size.width * sample.unit * 1.7, height: image.size.height * sample.unit * 1.7)
+        node.anchorPoint = CGPoint(x: sample.frame.pivot[0] / sample.frame.rect[2], y: 1 - sample.frame.pivot[1] / sample.frame.rect[3])
+        node.xScale = sample.mirrored ? -1 : 1
+        if node === actor { actorKey = key }; if node === receiver { receiverKey = key }
+    }
+    func preview(target: TrainingTarget, input: TrainingTarget, animated: Bool = true) {
+        guard !playing else { return }
+        self.target = target; selected = input; finished = false
+        goal.position = point(LocationDrillReplay.point(target, kind: kind)); aim.position = point(LocationDrillReplay.point(input, kind: kind))
+        ball.isHidden = true
+        if kind == .control {
+            actor.texture = frames.first; receiver.texture = catchFrames.first; mitt.texture = catchFrames.count == 4 ? catchFrames[2] : nil; mitt.position = goal.position
+        } else {
+            let destination = point(LocationDrillReplay.point(input, kind: kind)), delta = CGPoint(x: destination.x - actor.position.x, y: destination.y - actor.position.y)
+            movement = animated && hypot(delta.x, delta.y) > 0.5 ? (actor.position, destination, ProcessInfo.processInfo.systemUptime) : nil
+            setFieldActor(actor, motion: FieldSpriteMotion(facing: facing(from: actor.position, to: destination), stage: movement == nil ? .ready : .run), number: number)
+            if movement == nil { actor.position = destination }
+        }
+    }
+    func play(_ replay: LocationDrillReplay, at now: Double = ProcessInfo.processInfo.systemUptime, completion: @escaping @MainActor () -> Void) {
+        movement = nil
+        preview(target: replay.target, input: replay.input, animated: false)
+        playback = (replay, now, completion); playing = true; finished = false; advance(at: now)
+    }
+    override func update(_ currentTime: TimeInterval) { advance(at: ProcessInfo.processInfo.systemUptime) }
+    func advance(at now: Double) {
+        if let movement {
+            let progress = min(1, max(0, (now - movement.started) / 0.18))
+            let dx = movement.to.x - movement.from.x, dy = movement.to.y - movement.from.y
+            actor.position = CGPoint(x: movement.from.x + dx * progress, y: movement.from.y + dy * progress)
+            setFieldActor(actor, motion: FieldSpriteMotion(facing: facing(from: movement.from, to: movement.to), stage: progress < 1 ? .run : .ready, progress: progress, gait: progress * .pi * 2), number: number)
+            if progress == 1 { self.movement = nil }
+        }
+        guard let playback else { return }
+        let elapsed = max(0, now - playback.started), p = min(1, max(0, (elapsed - LocationDrillReplay.windup) / LocationDrillReplay.flight))
+        let destination = point(LocationDrillReplay.point(kind == .control ? playback.replay.input : playback.replay.target, kind: kind))
+        if kind == .control {
+            let frame = elapsed < 0.2 ? 1 : elapsed < LocationDrillReplay.windup ? 2 : p < 0.3 ? 3 : p < 1 ? 4 : 5
+            if frames.indices.contains(frame) { actor.texture = frames[frame] }
+            let anchors = [(0.42, 0.56), (0.38, 0.52), (0.72, 0.37), (0.78, 0.11)]
+            let held = anchors[min(3, frame)]
+            let release = CGPoint(x: actor.position.x + (0.78 - 0.5) * actor.size.width * actor.xScale, y: actor.position.y + (1 - 0.11 - 0.05) * actor.size.height)
+            ball.position = elapsed < LocationDrillReplay.windup ? CGPoint(x: actor.position.x + (held.0 - 0.5) * actor.size.width * actor.xScale, y: actor.position.y + (1 - held.1 - 0.05) * actor.size.height) : CGPoint(x: release.x + (destination.x - release.x) * p, y: release.y + (destination.y - release.y) * p)
+            mitt.position = CGPoint(x: goal.position.x + (destination.x - goal.position.x) * p, y: goal.position.y + (destination.y - goal.position.y) * p)
+            if p == 1, catchFrames.count == 4 { receiver.texture = catchFrames[1]; mitt.texture = catchFrames[3] }
+        } else {
+            let direction = facing(from: receiver.position, to: destination)
+            let origin = contact(FieldSpriteMotion(facing: direction, stage: .release), at: receiver.position, hand: true)
+            let catching = FieldSpriteMotion(facing: facing(from: destination, to: receiver.position), stage: .catchBall, progress: 1, chestCatch: true)
+            let end = contact(catching, at: destination, hand: false)
+            setFieldActor(receiver, motion: FieldSpriteMotion(facing: direction, stage: elapsed < LocationDrillReplay.windup ? .windup : p < 0.2 ? .release : .followThrough, progress: p), number: 0)
+            ball.position = CGPoint(x: origin.x + (end.x - origin.x) * p, y: origin.y + (end.y - origin.y) * p + sin(p * .pi) * 16)
+            setFieldActor(actor, motion: FieldSpriteMotion(facing: facing(from: actor.position, to: receiver.position), stage: p < 0.8 ? .ready : .catchBall, progress: p, chestCatch: true), number: number)
+        }
+        ball.isHidden = elapsed < LocationDrillReplay.windup && kind == .defense
+        if LocationDrillReplay.finished(elapsed: elapsed) {
+            self.playback = nil; playing = false; finished = true; playback.completion()
+        }
+    }
+    func cancel() { playback = nil; movement = nil; playing = false; removeAllActions(); actor.removeAllActions(); ball.isHidden = true }
+}
+
+struct LocationPracticeBoard: View {
+    let kind: TrainingKind, target: TrainingTarget
+    let scene: LocationDrillScene
+    let player: CareerPlayer
+    @Binding var x: Double
+    @Binding var y: Double
+    let locked: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var aim: TrainingTarget { TrainingTarget(x: x, y: y) }
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            SpriteView(scene: scene, preferredFramesPerSecond: 30).allowsHitTesting(false).accessibilityHidden(true)
+            if kind == .defense, !typeSize.isAccessibilitySize {
+                GeometryReader { geometry in
+                    Color.clear.contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                        guard !locked else { return }
+                        let input = LocationDrillReplay.input(at: CGPoint(x: value.location.x / geometry.size.width * 320, y: value.location.y / geometry.size.height * 320), kind: kind)
+                        x = input.x; y = input.y
+                    })
+                }.accessibilityHidden(true)
+            }
+            if kind == .control, !typeSize.isAccessibilitySize {
+                GeometryReader { boardGeometry in
+                let edge = min(84, max(44, boardGeometry.size.width * 0.26))
+                VStack(spacing: 3) {
+                    Text("코스").font(.caption.bold())
+                    GeometryReader { geometry in
+                        ZStack {
+                            Rectangle().fill(GameTheme.navy)
+                            Path { p in for i in 1...2 {
+                                let f = Double(i) / 3
+                                p.move(to: CGPoint(x: geometry.size.width * f, y: 0)); p.addLine(to: CGPoint(x: geometry.size.width * f, y: geometry.size.height))
+                                p.move(to: CGPoint(x: 0, y: geometry.size.height * f)); p.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height * f))
+                            }}.stroke(GameTheme.boardLine, lineWidth: 1)
+                            Text("◇").foregroundStyle(GameTheme.growth).position(x: target.x * geometry.size.width, y: target.y * geometry.size.height)
+                            Text("+").foregroundStyle(GameTheme.gold).position(x: x * geometry.size.width, y: y * geometry.size.height)
+                        }.contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
+                            guard !locked else { return }; x = min(1, max(0, event.location.x / geometry.size.width)); y = min(1, max(0, event.location.y / geometry.size.height))
+                        })
+                    }.frame(width: edge, height: edge).overlay(Rectangle().strokeBorder(GameTheme.boardLine))
+                }.padding(5).background(GameTheme.navy).padding(6).accessibilityHidden(true)
+                }
+            }
+        }.accessibilityElement(children: .ignore)
+            .accessibilityLabel(kind == .control ? "불펜 제구 연습장" : "일반 수비 연습장")
+            .accessibilityValue("◇ 목표 \(LocationDrillReplay.coordinate(target)), + \(kind == .control ? "조준" : "선수") \(LocationDrillReplay.coordinate(aim))")
+            .accessibilityIdentifier("locationPracticeField")
+            .onAppear { scene.configure(kind: kind, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw); scene.preview(target: target, input: aim) }
+            .onChange(of: x) { _, _ in if !locked { scene.preview(target: target, input: aim) } }
+            .onChange(of: y) { _, _ in if !locked { scene.preview(target: target, input: aim) } }
+            .onChange(of: target) { _, _ in if !locked { scene.preview(target: target, input: aim) } }
+    }
+}
 
 struct TrainingAdjustment: View {
     let label: String

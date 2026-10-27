@@ -2,6 +2,121 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV28SmallLocationTrainingFieldAndControlsFit() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if pitcher { pickPitcher(app) }
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-physical"].tap()
+            let kind = app.buttons[pitcher ? "trainingKind-control" : "trainingKind-defense"]
+            reveal(kind, app); kind.tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            let field = app.descendants(matching: .any).matching(identifier: "trainingField").firstMatch
+            let attempt = app.buttons["trainingAttempt"]
+            XCTAssertTrue(attempt.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.frame.contains(field.frame)); XCTAssertTrue(app.frame.contains(attempt.frame)); XCTAssertTrue(attempt.isHittable)
+            XCTAssertGreaterThanOrEqual(field.frame.height, 150)
+            let before = field.value as? String
+            app.buttons["locationMove-오른쪽"].tap(); XCTAssertNotEqual(field.value as? String, before)
+            capture(app, pitcher ? "v28-small-control-ready" : "v28-small-defense-ready")
+            attempt.tap(); XCTAssertFalse(app.buttons["trainingNext"].exists)
+            XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout: 8))
+            reveal(app.buttons["trainingNext"], app); XCTAssertTrue(app.buttons["trainingNext"].isHittable)
+            capture(app, pitcher ? "v28-small-control-feedback" : "v28-small-defense-feedback")
+        }
+    }
+
+    @MainActor func testV28LocationCareerTrainingMotionResumeAndOneReward() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for (pitcher, kind) in [(true, "control"), (false, "defense"), (true, "defense")] {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if pitcher { pickPitcher(app) }
+            let before = status(app)
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-physical"].tap()
+            reveal(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            let role = pitcher ? "pitcher" : "batter"
+            for round in 1...5 {
+                let progress = app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch
+                XCTAssertTrue(progress.waitForExistence(timeout: 5)); XCTAssertTrue(progress.label.contains("\(round) / 5"))
+                let move = app.buttons["locationMove-오른쪽"]
+                reveal(move, app); XCTAssertGreaterThanOrEqual(move.frame.height, 44); move.tap()
+                let attempt = app.buttons["trainingAttempt"]
+                reveal(attempt, app); XCTAssertTrue(attempt.isHittable)
+                if round == 1 { capture(app, "v28-\(role)-\(kind)-ready") }
+                attempt.tap()
+                XCTAssertFalse(app.buttons["trainingNext"].exists)
+                XCTAssertFalse(app.staticTexts["locationPracticeComparison"].exists)
+                XCTAssertFalse(move.isEnabled)
+                if round == 1 { capture(app, "v28-\(role)-\(kind)-motion") }
+                let next = app.buttons["trainingNext"]
+                XCTAssertTrue(next.waitForExistence(timeout: 8))
+                XCTAssertTrue(app.staticTexts["locationPracticeComparison"].exists)
+                if round == 1 { capture(app, "v28-\(role)-\(kind)-feedback") }
+                reveal(next, app); next.tap()
+                if round == 2 {
+                    app.navigationBars.buttons.element(boundBy: 0).tap()
+                    reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+                    XCTAssertTrue(progress.waitForExistence(timeout: 5)); XCTAssertTrue(progress.label.contains("3 / 5"))
+                    capture(app, "v28-\(role)-\(kind)-resumed-third-attempt")
+                }
+            }
+            let completed = app.staticTexts["trainingCompleted"]
+            XCTAssertTrue(completed.waitForExistence(timeout: 5)); capture(app, "v28-\(role)-\(kind)-result")
+            let growth = app.staticTexts["trainingGrowth"].label
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            XCTAssertTrue(completed.waitForExistence(timeout: 5)); XCTAssertEqual(app.staticTexts["trainingGrowth"].label, growth)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            app.buttons["closeRoomDetail"].tap(); app.buttons["managementTab-home"].tap()
+            let after = status(app)
+            XCTAssertEqual(after[0], before[0]); XCTAssertEqual(after[2], "행동 0/1")
+            XCTAssertNotEqual(after[1], before[1])
+        }
+    }
+
+    @MainActor func testV28LargeTextReducedMotionPracticeLocationControls() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification", "-management-reduced-motion-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if pitcher { pickPitcher(app) }
+            let before = status(app)
+            app.buttons["managementLargeMenu"].tap(); app.buttons["훈련"].tap()
+            reveal(app.buttons["facility-practice"], app); app.buttons["facility-practice"].tap()
+            reveal(app.buttons["openTrainingPractice"], app); app.buttons["openTrainingPractice"].tap()
+            reveal(app.buttons["practiceGeneralTraining"], app); app.buttons["practiceGeneralTraining"].tap()
+            let category = app.buttons[pitcher ? "trainingCategory-2" : "trainingCategory-1"]
+            revealLocationChoice(category, app); category.tap(); XCTAssertTrue(category.isSelected)
+            let kind = app.buttons[pitcher ? "trainingKind-control" : "trainingKind-defense"]
+            revealLocationChoice(kind, app); kind.tap()
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            let move = app.buttons["locationMove-오른쪽"]
+            reveal(move, app); XCTAssertTrue(move.isHittable); XCTAssertGreaterThanOrEqual(move.frame.height, 44); move.tap()
+            let attempt = app.buttons["trainingAttempt"]
+            reveal(attempt, app); XCTAssertTrue(app.frame.contains(attempt.frame))
+            capture(app, pitcher ? "v28-large-reduced-control-ready" : "v28-large-reduced-defense-ready")
+            attempt.tap(); XCTAssertFalse(app.buttons["trainingNext"].exists)
+            let next = app.buttons["trainingNext"]
+            XCTAssertTrue(next.waitForExistence(timeout: 8)); reveal(next, app)
+            XCTAssertTrue(next.isHittable); XCTAssertLessThanOrEqual(next.frame.maxX, app.frame.width)
+            capture(app, pitcher ? "v28-large-reduced-control-feedback" : "v28-large-reduced-defense-feedback")
+            next.tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            app.buttons["closeRoomDetail"].tap()
+            app.buttons["managementLargeMenu"].tap(); app.buttons["홈"].tap()
+            XCTAssertEqual(status(app), before)
+        }
+    }
+
     @MainActor func testV27LiveInningScoreboardsAndResumeBothRoles() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -682,6 +797,16 @@ final class ManagementDetailFlowTests: XCTestCase {
             if element.isHittable { return }
             if element.exists && element.frame.maxY < 170 { app.swipeDown() }
             else { app.swipeUp() }
+        }
+    }
+    @MainActor private func revealLocationChoice(_ element: XCUIElement, _ app: XCUIApplication) {
+        // Large text on SE can report a partially clipped choice as hittable above the navigation bar.
+        for _ in 0..<18 {
+            let exists = element.exists, frame = exists ? element.frame : .zero
+            if exists && element.isHittable && frame.minY >= 100 && frame.maxY <= app.frame.maxY - 10 { return }
+            let down = exists && frame.minY < 100
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.6)).press(forDuration: 0.05,
+                thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: down ? 0.8 : 0.4)))
         }
     }
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {

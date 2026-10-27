@@ -6,6 +6,57 @@ import SpriteKit
 @testable import BM
 
 @MainActor final class FieldTrainingTests: XCTestCase {
+    func testV28LocationProjectionAndFeedbackKeepOriginalDistanceScores() throws {
+        for kind in [TrainingKind.control, .defense] {
+            for value in [0.0, 0.25, 0.5, 0.75, 1] {
+                let input = TrainingTarget(x: value, y: 1 - value)
+                let inverse = LocationDrillReplay.input(at: LocationDrillReplay.point(input, kind: kind), kind: kind)
+                XCTAssertEqual(inverse.x, input.x, accuracy: 0.000001); XCTAssertEqual(inverse.y, input.y, accuracy: 0.000001)
+            }
+            var round = CareerTraining(playerID: UUID(), date: "2026-04-01", role: "pitcher", pitchCode: nil, before: 60, fatigue: 0, age: 16, calendarRevision: 0, kind: kind)
+            let original = round, target = round.targets[0], input = TrainingInput(x: target.x + 0.1, y: target.y)
+            try round.attempt(input)
+            let score = try XCTUnwrap(round.scores.last)
+            XCTAssertEqual(score, Int((max(0, 1 - 0.1 / (kind == .control ? 0.3 : 0.55)) * 100).rounded()))
+            let display = LocationDrillReplay(kind: kind, target: target, input: TrainingTarget(x: input.x, y: input.y), score: score)
+            XCTAssertTrue(display.comparison.contains("◇ 목표")); XCTAssertTrue(display.comparison.contains("+"))
+            XCTAssertEqual(original.scores, []); XCTAssertEqual(original.targets, round.targets)
+        }
+    }
+
+    func testV28LocationPlaybackEndsAtJudgedCoordinatesAndCompletesOnlyOnceAfterReceive() throws {
+        for kind in [TrainingKind.control, .defense] {
+            let scene = LocationDrillScene(size: CGSize(width: 320, height: 320))
+            scene.configure(kind: kind, appearance: PlayerAppearance(), number: 27, hand: "left")
+            let target = TrainingTarget(x: 0.3, y: 0.6), input = TrainingTarget(x: 0.7, y: 0.4)
+            let replay = LocationDrillReplay(kind: kind, target: target, input: input, score: 0)
+            var completions = 0
+            scene.play(replay, at: 100) { completions += 1 }
+            scene.advance(at: 100 + LocationDrillReplay.windup + LocationDrillReplay.flight)
+            XCTAssertEqual(completions, 0); XCTAssertFalse(scene.finished)
+            scene.advance(at: 100 + LocationDrillReplay.duration + 0.001)
+            XCTAssertEqual(completions, 1); XCTAssertTrue(scene.finished)
+            let judged = LocationDrillReplay.point(kind == .control ? input : target, kind: kind)
+            let ball = try XCTUnwrap(scene.childNode(withName: "locationBall"))
+            if kind == .control {
+                XCTAssertEqual(ball.position.x, judged.x, accuracy: 0.0001)
+                XCTAssertEqual(ball.position.y, 320 - judged.y, accuracy: 0.0001)
+            } else {
+                let catchFacing = FieldFacing.direction(dx: 160 - judged.x, dy: 286 - judged.y)
+                let offset = try XCTUnwrap(FieldRasterArt.contact(FieldSpriteMotion(facing: catchFacing, stage: .catchBall, progress: 1, chestCatch: true), kind: "fielder", left: true, hand: false))
+                XCTAssertEqual(ball.position.x, judged.x + offset.x * 1.7, accuracy: 0.0001)
+                XCTAssertEqual(ball.position.y, 320 - judged.y - offset.y * 1.7, accuracy: 0.0001)
+            }
+            let actor = try XCTUnwrap(scene.childNode(withName: "locationActor"))
+            if kind == .defense {
+                let chosen = LocationDrillReplay.point(input, kind: kind)
+                XCTAssertEqual(actor.position.x, chosen.x, accuracy: 0.0001); XCTAssertEqual(actor.position.y, 320 - chosen.y, accuracy: 0.0001)
+            }
+            scene.advance(at: 150); XCTAssertEqual(completions, 1)
+            scene.play(replay, at: 200) { completions += 1 }; scene.cancel(); scene.advance(at: 250)
+            XCTAssertEqual(completions, 1)
+        }
+    }
     func testSessionMissionUsesSavedScoresAndDoesNotRewardFailuresOrLongestStreakTwice() {
         let mixed = TrainingMissionProgress(kind: .contact, scores: [75, 80, 0, 100, 74])
         XCTAssertEqual(mixed.successes, 3); XCTAssertTrue(mixed.achieved); XCTAssertEqual(mixed.bestStreak, 2)

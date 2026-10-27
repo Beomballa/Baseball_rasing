@@ -8,7 +8,13 @@ struct CareerTrainingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var chromeHeights: [String: CGFloat] = [:]
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.accessibilityReduceMotion) private var systemReduced
+    private var reduced: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-management-career-verification") && ProcessInfo.processInfo.arguments.contains("-management-reduced-motion-verification") { return true }
+        #endif
+        return systemReduced
+    }
     let player: CareerPlayer
     let calendar: CareerCalendarState
     var practice = false
@@ -46,6 +52,8 @@ struct CareerTrainingView: View {
     @State private var y = 0.5
     @State private var clock = MatchInputClock()
     @State private var scene = BallparkScene(size: CGSize(width: 320, height: 320))
+    @State private var locationScene = LocationDrillScene(size: CGSize(width: 320, height: 320))
+    @State private var locationReplay: LocationDrillReplay?
     @State private var errorMessage: String?
     @State private var preparationValue: Double?
     @State private var preparationError: String?
@@ -58,6 +66,8 @@ struct CareerTrainingView: View {
     private var isPitcher: Bool { player.role == .pitcher }
     private var selectedKind: TrainingKind { training?.selectedKind ?? (category == 0 && isPitcher ? .pitch : kind) }
     private var studying: Bool { training?.pitchStudy != nil || initialPitchStudyCode != nil }
+    private var isLocationDrill: Bool { [.control, .defense].contains(selectedKind) && training?.position == nil && training?.trait == nil }
+    private var locationTarget: TrainingTarget? { displayTraining.flatMap { $0.completed ? nil : $0.targets[$0.scores.count] } }
     private var title: String { training?.title ?? (studying ? "구종 습득 훈련" : selectedKind.label + " 훈련") }
     private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? PitchType(rawValue: training?.pitchCode ?? code)?.label ?? "구종") : selectedKind.label }
     private func load() {
@@ -154,7 +164,17 @@ struct CareerTrainingView: View {
             retryInput = nil; retryRevision = nil; errorMessage = nil
             replayScore = training?.scores.last
             if let previous = replay, let score = replayScore { coachNote = TrainingSessionGuide.note(round: previous, input: input, score: score) }
-            if selectedKind == .pitch, let previous = replay {
+            if isLocationDrill, let previous = replay, let score = replayScore {
+                let resolved = LocationDrillReplay(kind: selectedKind, target: previous.targets[previous.scores.count], input: TrainingTarget(x: input.x, y: input.y), score: score)
+                locationReplay = resolved
+                locationScene.play(resolved) {
+                    showFeedback()
+                    replayTask = Task { @MainActor in
+                        do { try await Task.sleep(for: .seconds(DeliveryPresentation.trainingRead(reduced: reduced))) } catch { return }
+                        guard !Task.isCancelled else { return }; finishReplay()
+                    }
+                }
+            } else if selectedKind == .pitch, let previous = replay {
                 let target = previous.targets[previous.scores.count]
                 let release = input.release ?? 0
                 releaseHint = abs(release - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: previous.controlMastery)
@@ -182,6 +202,8 @@ struct CareerTrainingView: View {
     private func continueSession() {
         guard reviewReady else { return }
         replay = nil; feedbackVisible = false; reviewReady = false; scene.cancelDelivery()
+        locationReplay = nil; locationScene.cancel()
+        if let target = locationTarget { locationScene.preview(target: target, input: TrainingTarget(x: x, y: y)) }
     }
     private var reviewControls: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -191,7 +213,12 @@ struct CareerTrainingView: View {
                 Text(coachNote.next).font(.caption).fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("trainingCoach")
             }
-            TrainingMissionBanner(kind: selectedKind, scores: training?.scores ?? [])
+            if isLocationDrill, let locationReplay {
+                Text(locationReplay.comparison).font(.caption.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("locationPracticeComparison")
+                Text(selectedKind == .control ? "조준한 위치 그대로 판정 · 별도 투구 오차 없음" : "선택한 위치의 정확도만 판정 · 포구 성공/실패 판정 없음")
+                    .font(.caption2).foregroundStyle(GameTheme.boardMuted)
+            } else { TrainingMissionBanner(kind: selectedKind, scores: training?.scores ?? []) }
             Button(training?.completed == true ? "세트 결산 보기" : "다음 시도 · \((training?.scores.count ?? 0) + 1)/5") {
                 continueSession()
             }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingNext")
@@ -210,6 +237,7 @@ struct CareerTrainingView: View {
     private func cancelUncommitted() {
         clock.stop(); scene.cancelDelivery(); judging = false
         replayTask?.cancel(); replayTask = nil; replay = nil; feedbackVisible = false; reviewReady = false; coachNote = nil
+        locationScene.cancel(); locationReplay = nil
     }
 
     var body: some View {
@@ -225,20 +253,21 @@ struct CareerTrainingView: View {
                                     PixelPlayer(appearance: player.appearance).frame(width: 28, height: 36).accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(pitchName).font(.headline)
-                                        Text(practice ? "자유 연습 · 성장·날짜·피로 변화 없음" : training == nil ? "5회 도전 · 피로 +6 · 하루 행동 1회" : "도전 기록은 시도마다 저장됩니다")
+                                        Text(isLocationDrill && training != nil ? (locationTarget.map { "◇ 목표 " + LocationDrillReplay.coordinate($0) } ?? "훈련 완료") : practice ? "자유 연습 · 성장·날짜·피로 변화 없음" : training == nil ? "5회 도전 · 피로 +6 · 하루 행동 1회" : "도전 기록은 시도마다 저장됩니다")
                                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                                     }
                                     Spacer(minLength: 0)
-                                    Text(displayTraining.map { "\($0.scores.count + (feedbackVisible ? 1 : 0)) / 5" } ?? "READY")
+                                    Text(displayTraining.map { "\(isLocationDrill ? min(5, $0.scores.count + 1) : $0.scores.count + (feedbackVisible ? 1 : 0)) / 5" } ?? "READY")
                                         .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                                 }.padding(10).background(GameTheme.boardPanel)
                                     .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+                                    .accessibilityElement(children: .combine)
                                     .accessibilityIdentifier("trainingProgress")
                                 if training == nil {
                                     if !studying { selection }
                                     preparationBoard
                                 }
-                                if let training, !reviewReady { TrainingMissionBanner(kind: selectedKind, scores: (feedbackVisible ? self.training : displayTraining)?.scores ?? training.scores) }
+                                if let training, !reviewReady, !isLocationDrill { TrainingMissionBanner(kind: selectedKind, scores: (feedbackVisible ? self.training : displayTraining)?.scores ?? training.scores) }
                                 if dynamicTypeSize.isAccessibilitySize {
                                     Button("훈련 버튼으로 이동") { scroll.scrollTo("trainingControls", anchor: .bottom) }
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("trainingJumpControls")
@@ -351,7 +380,7 @@ struct CareerTrainingView: View {
             if selectedKind.isRaw {
                 rawButtons(training).disabled(retryInput != nil)
             } else if selectedKind.isField {
-                Button(replay != nil ? replayLabel : selectedKind == .speed ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .defense ? "포구!" : "송구!") {
+                Button(replay != nil ? replayLabel : selectedKind == .speed ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .defense ? "위치 확정 · 공 받기" : "송구!") {
                     if [.speed, .stamina].contains(selectedKind) { beginAttempt() }
                     else if selectedKind == .defense { submit(TrainingInput(x: x, y: y)) }
                     else { submit(TrainingInput(force: throwForce, angle: throwAngle, base: throwBase)) }
@@ -403,7 +432,13 @@ struct CareerTrainingView: View {
         TrainingPreparationBoard(player: player, name: pitchName, kind: selectedKind, value: preparationValue,
                                  failure: preparationError, practice: practice, studying: studying)
     }
-    private func arena(height: CGFloat) -> some View {
+    @ViewBuilder private func arena(height: CGFloat) -> some View {
+        if isLocationDrill, let target = locationTarget {
+            LocationPracticeBoard(kind: selectedKind, target: target, scene: locationScene, player: player, x: $x, y: $y, locked: inputLocked)
+                .frame(width: height, height: height).clipped()
+                .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+                .accessibilityIdentifier("trainingField")
+        } else {
         TimelineView(.animation(minimumInterval: reduced ? 0.1 : 1.0 / 30, paused: replay == nil && !judging && !clock.running)) { timeline in
         let progress = replay == nil ? 0.0 : reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(replayStarted) / 0.9))
         let training = displayTraining
@@ -479,6 +514,7 @@ struct CareerTrainingView: View {
             .overlay(Rectangle().strokeBorder(GameTheme.gold.opacity(0.5), lineWidth: 2))
             .accessibilityElement(children: .contain).accessibilityIdentifier("trainingField")
         }
+        }
     }
     @ViewBuilder private func rawControls(_ training: CareerTraining) -> some View {
         if [.velocity, .stuff].contains(selectedKind) {
@@ -493,7 +529,7 @@ struct CareerTrainingView: View {
         } else if selectedKind == .stamina {
             fieldControls(training)
         } else if selectedKind == .control {
-            Text("초록 목표에 노란 조준점을 맞추고 투구").font(.caption)
+            locationControls
         }
     }
     @ViewBuilder private func rawButtons(_ training: CareerTraining) -> some View {
@@ -505,7 +541,7 @@ struct CareerTrainingView: View {
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("mentalChoice-\(index)")
             }
         } else {
-            Button(replay != nil ? replayLabel : selectedKind == .stamina ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .control ? "목표로 투구!" : "\(selectedKind.label) 도전!") {
+            Button(replay != nil ? replayLabel : selectedKind == .stamina ? (clock.running ? "달리는 중…" : "4초 달리기 시작") : selectedKind == .control ? "조준 확정 · 투구" : "\(selectedKind.label) 도전!") {
                 if selectedKind == .stamina { beginAttempt() }
                 else if selectedKind == .control { submit(TrainingInput(x: x, y: y)) }
                 else { submit(TrainingInput(force: force, angle: angle)) }
@@ -521,6 +557,28 @@ struct CareerTrainingView: View {
     }
     private var adjustmentLayout: AnyLayout {
         dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 12))
+    }
+    private var locationControls: some View {
+        VStack(spacing: 6) {
+            Text("◇ 목표 · + \(selectedKind == .control ? "조준" : "선수") · 위치 정확도만 채점")
+                .font(.caption).fixedSize(horizontal: false, vertical: true)
+            let columns = dynamicTypeSize.isAccessibilitySize ? 2 : 4
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: columns), spacing: 6) {
+                locationDirection("←", label: "왼쪽", dx: -0.01, dy: 0)
+                locationDirection("→", label: "오른쪽", dx: 0.01, dy: 0)
+                locationDirection("↑", label: "위쪽", dx: 0, dy: -0.01)
+                locationDirection("↓", label: "아래쪽", dx: 0, dy: 0.01)
+            }
+        }
+    }
+    private func locationDirection(_ title: String, label: String, dx: Double, dy: Double) -> some View {
+        Button {
+            guard !inputLocked else { return }
+            x = min(1, max(0, x + dx)); y = min(1, max(0, y + dy))
+        } label: { Text(title).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+            .buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked)
+            .accessibilityLabel((selectedKind == .control ? "조준 " : "선수 ") + label + " 1 이동")
+            .accessibilityIdentifier("locationMove-" + label)
     }
     private func adjustment(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String, identifier: String) -> some View {
         TrainingAdjustment(label: label, value: value, range: range, suffix: suffix, identifier: identifier)
@@ -546,7 +604,7 @@ struct CareerTrainingView: View {
             }.buttonStyle(MatchPixelButtonStyle()).disabled(!clock.running)
             ProgressView(value: clock.running || replay != nil ? clock.phase : 0).tint(GameTheme.gold).accessibilityLabel("4초 달리기 진행").accessibilityIdentifier("sprintProgress")
         } else if selectedKind == .defense {
-            Text("노란 낙하지점으로 선수를 옮겨 포구").font(.caption)
+            locationControls
         } else {
             Text("목표 \(TrainingRules.throwBase(training.scores.count) == 4 ? "홈" : "\(TrainingRules.throwBase(training.scores.count))루")").font(.caption.bold())
             LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.flexible()), GridItem(.flexible())] : Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
