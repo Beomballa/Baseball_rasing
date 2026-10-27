@@ -308,16 +308,26 @@ enum MatchPresentation {
     }
 }
 
+// Game-time calibration, separate from saved velocity and phase-based judgments.
+struct PitchFlightPresentation {
+    let flightDuration: Double
+    var battingDuration: Double { flightDuration / MatchDelivery.contactPhase }
+    init(delivery: MatchDelivery) {
+        flightDuration = 0.90 * 145 / (delivery.exactSpeed ?? Double(delivery.speed))
+    }
+}
+
 enum MatchBallPath {
     static func point(from start: CGPoint, to end: CGPoint, size: CGSize, role: PlayerRole,
                       hand: String, code: String, progress: Double) -> CGPoint {
         let t = min(1, max(0, progress))
         let depth = role == .batter ? t / (2.4 - 1.4 * t) : 2.4 * t / (1 + 1.4 * t)
-        let bend = depth * depth - depth
-        let lateral = (code == "slider" ? 0.07 : code == "changeup" ? -0.04 : 0) * (hand == "left" ? -1.0 : 1)
-        let drop = code == "fork" ? 0.13 : code == "changeup" ? 0.08 : 0.025
-        return CGPoint(x: start.x + (end.x - start.x) * depth + lateral * size.width * bend,
-                       y: start.y + (end.y - start.y) * depth - drop * size.height * bend)
+        // A late-breaking arc returns to the saved endpoint without oscillation.
+        let bend = depth - depth * depth * depth
+        let lateral = (code == "slider" ? 0.10 : code == "changeup" ? -0.05 : 0) * (hand == "left" ? -1.0 : 1)
+        let drop = code == "fork" ? 0.20 : code == "changeup" ? 0.12 : code == "slider" ? 0.06 : 0.018
+        return CGPoint(x: start.x + (end.x - start.x) * depth - lateral * size.width * bend,
+                       y: start.y + (end.y - start.y) * depth + drop * size.height * bend)
     }
 }
 

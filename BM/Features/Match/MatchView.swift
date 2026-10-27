@@ -34,7 +34,7 @@ struct MatchView: View {
                     let code = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "four-seam"
                     let velocity = player.role == .pitcher ? try CareerTrainingStore.value(player: player, code: nil, kind: .velocity, in: context) : 62.5
                     let delivery = MatchDelivery.pitch(code: code, velocity: velocity)
-                    let started = scene.demonstrate(reduceMotion: reduceMotion, flightDuration: delivery.duration, pitchCode: code,
+                    let started = scene.demonstrate(reduceMotion: reduceMotion, flightDuration: PitchFlightPresentation(delivery: delivery).flightDuration, pitchCode: code,
                         onArrival: { cue = "포수 수신 완료 · \(delivery.speed) km/h · 기록/피로 변화 없음" },
                         completion: { showingDelivery = false })
                     if !started { showingDelivery = false }

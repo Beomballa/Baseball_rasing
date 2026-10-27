@@ -105,7 +105,8 @@ struct CareerTrainingView: View {
             judging = true; judgementStarted = Date()
             scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
             scene.demonstrate(reduceMotion: reduced, flightDuration: 0.9, x: training.targets[training.scores.count].x,
-                              y: training.targets[training.scores.count].y, pitchCode: "four-seam")
+                              y: training.targets[training.scores.count].y, pitchCode: "four-seam",
+                              inputTimeline: MatchInputTimeline(windup: MatchDelivery.windup, duration: 0.9))
             return
         }
         scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
@@ -145,7 +146,7 @@ struct CareerTrainingView: View {
                 let release = input.release ?? 0
                 releaseHint = abs(release - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: previous.before)
                     ? "정확한 릴리스" : release < ManualMatchRules.releaseCenter ? "릴리스 빠름" : "릴리스 늦음"
-                let started = scene.demonstrate(reduceMotion: reduced, flightDuration: delivery(code: previous.pitchCode ?? "four-seam").duration, x: target.x, y: target.y,
+                let started = scene.demonstrate(reduceMotion: reduced, flightDuration: PitchFlightPresentation(delivery: delivery(code: previous.pitchCode ?? "four-seam")).flightDuration, x: target.x, y: target.y,
                                                pitchCode: previous.pitchCode ?? "four-seam", preparedRelease: true,
                                                onArrival: { showFeedback() }, completion: { finishReplay() })
                 if !started { scheduleFeedback() }

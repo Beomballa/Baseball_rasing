@@ -194,11 +194,12 @@ struct CareerGameView: View {
         let actualCode=match.deliveryPitchCode(requested:pitchCode)
         attempt = Attempt(revision: record.revision, input: input, pitchCode: actualCode)
         let delivery = match.delivery(pitchCode: actualCode)
+        let flight = PitchFlightPresentation(delivery: delivery)
         let timeline = MatchInputTimeline(windup: player.role == .batter ? MatchDelivery.windup : 0,
-                                          duration: player.role == .batter ? delivery.duration : 1.8)
+                                          duration: player.role == .batter ? flight.battingDuration : 1.8)
         if player.role == .batter {
             scene.cancelDelivery()
-            _ = scene.demonstrate(reduceMotion: reduced, flightDuration: delivery.duration, x: delivery.x, y: delivery.y, pitchCode: actualCode, inputTimeline: timeline)
+            _ = scene.demonstrate(reduceMotion: reduced, flightDuration: flight.flightDuration, x: delivery.x, y: delivery.y, pitchCode: actualCode, inputTimeline: timeline)
         }
         if player.role == .pitcher { scene.preparePitch(phase: 0, reduced: reduced) }
         clock.start(timeline: timeline) { resolve(timeout: true) }
@@ -253,7 +254,7 @@ struct CareerGameView: View {
                 }
                 let contact=fieldPlay.flatMap {FieldContactPresentation.matches($0,previous:previous,action:result.action) ? $0:nil}
                 if player.role == .pitcher {
-                    let started = scene.demonstrate(reduceMotion: reduced, flightDuration: previous.delivery(pitchCode: result.pitchCode).duration,
+                    let started = scene.demonstrate(reduceMotion: reduced, flightDuration: PitchFlightPresentation(delivery: previous.delivery(pitchCode: result.pitchCode)).flightDuration,
                                           x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
                                           outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, onArrival: showCall, completion: showResult)
                     if !started { showCall(); showResult() }

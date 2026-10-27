@@ -97,13 +97,8 @@ import SpriteKit
         }
         if let flight=pitchFlight {
             let t=min(1,max(0,(now-flight.started)/flight.duration))
-            if flight.reduced {
-                ball.position=CGPoint(x:flight.start.x+(flight.end.x-flight.start.x)*t,y:flight.start.y+(flight.end.y-flight.start.y)*t)
-                ball.setScale(0.9)
-            } else {
-                ball.position=MatchBallPath.point(from:flight.start,to:flight.end,size:size,role:.pitcher,hand:hand,code:flight.code,progress:t)
-                ball.setScale(1.1-(2.4*t/(1+1.4*t))*0.4)
-            }
+            ball.position=MatchBallPath.point(from:flight.start,to:flight.end,size:size,role:.pitcher,hand:hand,code:flight.code,progress:t)
+            ball.setScale(1.1-(2.4*t/(1+1.4*t))*0.4)
             if t >= 1 {
                 pitchFlight=nil;ball.position=flight.end;pitcherPose(5)
                 if let play=flight.fieldPlay {
@@ -265,7 +260,7 @@ import SpriteKit
         destination = arrivalPoint(x:x,y:y)
         let release = role == .batter ? point(0.458, 0.237) : handPoint(3)
         if role == .batter {
-            let timeline=inputTimeline ?? MatchInputTimeline(windup:MatchDelivery.windup,duration:flightDuration ?? 1.1)
+            let timeline=inputTimeline ?? MatchInputTimeline(windup:MatchDelivery.windup,duration:(flightDuration ?? 1.1)/MatchDelivery.contactPhase)
             contactAt=timeline.contactAt
             pitchStage = .preparing;ball.position=release;ball.isHidden=true
             batterFlight=BatterFlight(timeline:timeline,start:release,end:destination,code:pitchCode,reduced:reduceMotion,

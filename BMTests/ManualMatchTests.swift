@@ -801,6 +801,144 @@ private struct BatterTimelineRenderProbe: View {
 }
 
 extension ManualMatchTests {
+    func testV24FlightCalibrationSharesArrivalAcrossSpeedsHandsAndMotionSettings() {
+        for speed in [110.5, 125, 129, 132, 145, 160] {
+            let delivery = MatchDelivery(x: 0.3, y: 0.7, speed: Int(speed.rounded()), exactSpeed: speed)
+            let flight = PitchFlightPresentation(delivery: delivery)
+            XCTAssertEqual(flight.flightDuration, 0.90 * 145 / speed, accuracy: 0.000001)
+            XCTAssertEqual(delivery.duration, 1.35 * 145 / speed, accuracy: 0.000001)
+            let timeline = MatchInputTimeline(startedAt: 100, windup: MatchDelivery.windup, duration: flight.battingDuration)
+            XCTAssertEqual(timeline.contactAt - timeline.releaseAt, flight.flightDuration, accuracy: 0.000001)
+            XCTAssertEqual(timeline.phase(at: timeline.contactAt), 0.82, accuracy: 0.000001)
+            for reduced in [false, true] { for hand in ["left", "right"] {
+                let scene = BallparkScene(size: CGSize(width: 320, height: 320))
+                scene.configure(hand: hand, kit: 0, role: .batter)
+                var arrivals = 0
+                XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, flightDuration: flight.flightDuration,
+                    x: delivery.x, y: delivery.y, pitchCode: "fork", onArrival: { arrivals += 1 }, inputTimeline: timeline))
+                scene.advanceDelivery(at: timeline.contactAt - 0.00001)
+                XCTAssertEqual(scene.pitchStage, .flight); XCTAssertEqual(arrivals, 0)
+                scene.advanceDelivery(at: timeline.contactAt)
+                XCTAssertEqual(scene.pitchStage, .received); XCTAssertEqual(arrivals, 1)
+                let marker = scene.childNode(withName: "receivedBaseball")!
+                let target = scene.arrivalPoint(x: delivery.x, y: delivery.y)
+                XCTAssertEqual(marker.position.x, target.x, accuracy: 0.0001)
+                XCTAssertEqual(marker.position.y, target.y, accuracy: 0.0001)
+                scene.advanceDelivery(at: timeline.contactAt + 1); XCTAssertEqual(arrivals, 1)
+                scene.cancelDelivery()
+            } }
+        }
+    }
+
+    func testV24LateBreakSeparatesPitchTypesWithoutChangingEndpointsOrJudgments() throws {
+        let size = CGSize(width: 320, height: 320), start = CGPoint(x: 160, y: 240), end = CGPoint(x: 160, y: 90)
+        var game = match(); let original = game
+        let payload = try JSONEncoder().encode(game)
+        for role in PlayerRole.allCases {
+            var drops = [Double]()
+            for code in ["four-seam", "slider", "changeup", "fork"] {
+                let delivery = game.delivery(pitchCode: code)
+                _ = PitchFlightPresentation(delivery: delivery)
+                let middle = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "right", code: code, progress: 0.7)
+                drops.append(middle.y)
+                var previous = start
+                for step in 0...100 {
+                    let p = Double(step) / 100
+                    let right = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "right", code: code, progress: p)
+                    let left = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "left", code: code, progress: p)
+                    XCTAssertEqual(right.x + left.x, 320, accuracy: 0.000001)
+                    XCTAssertEqual(right.y, left.y)
+                    if step > 0 { XCTAssertLessThan(right.y, previous.y) }
+                    previous = right
+                    if step == 0 { XCTAssertEqual(right, start) }
+                    if step == 100 { XCTAssertEqual(right, end) }
+                }
+            }
+            XCTAssertTrue(zip(drops, drops.dropFirst()).allSatisfy { $0.0 < $0.1 })
+        }
+        XCTAssertEqual(game, original)
+        XCTAssertEqual(try JSONDecoder().decode(CareerMatch.self, from: payload), game)
+        let delivery = game.delivery()
+        XCTAssertEqual(ManualMatchRules.battingQuality(input: ManualMatchInput(x: delivery.x, y: delivery.y, timing: 0.82), delivery: delivery, contact: 60), 1)
+        try game.advance(.watch, control: ManualMatchInput())
+        XCTAssertNotEqual(game, original)
+    }
+
+    func testV24BothSceneEntryPathsKeepMotionSettingIndependentFlightAndCatch() {
+        let flight = PitchFlightPresentation(delivery: MatchDelivery(x: 0.5, y: 0.5, speed: 129))
+        for role in PlayerRole.allCases { for hand in ["left", "right"] {
+            var samples = [CGPoint]()
+            for reduced in [false, true] {
+                let scene = BallparkScene(size: CGSize(width: 320, height: 320))
+                scene.configure(hand: hand, kit: 0, role: role)
+                let start = ProcessInfo.processInfo.systemUptime
+                var calls = 0
+                XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, flightDuration: flight.flightDuration, pitchCode: "fork",
+                                               preparedRelease: role == .pitcher, onArrival: { calls += 1 }))
+                let windup = role == .batter ? MatchDelivery.windup : 0
+                scene.advanceDelivery(at: start + windup + flight.flightDuration * 0.6)
+                samples.append(scene.childNode(withName: "baseball")!.position)
+                scene.advanceDelivery(at: start + windup + flight.flightDuration - 0.01)
+                XCTAssertEqual(scene.pitchStage, .flight); XCTAssertEqual(calls, 0)
+                scene.advanceDelivery(at: start + windup + flight.flightDuration + 0.01)
+                XCTAssertEqual(scene.pitchStage, .received); XCTAssertEqual(calls, 1)
+                scene.cancelDelivery()
+            }
+            XCTAssertEqual(samples[0].x, samples[1].x, accuracy: 0.5)
+            XCTAssertEqual(samples[0].y, samples[1].y, accuracy: 0.5)
+        } }
+    }
+
+    func testV24RenderedFastAndOffspeedArrivalWithBothRolesAndMotionSettings() async throws {
+        let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = windowScene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: windowScene)
+        defer { window.isHidden = true; previous?.makeKey() }
+        var metrics = [[String: Double]]()
+        for role in PlayerRole.allCases { for reduced in [false, true] {
+            let code = reduced ? "fork" : "four-seam"
+            let speed = reduced ? 129 : 145
+            let flight = PitchFlightPresentation(delivery: MatchDelivery(x: 0.5, y: 0.5, speed: speed))
+            let scene = BallparkScene(size: CGSize(width: 320, height: 320))
+            scene.configure(hand: reduced ? "left" : "right", kit: 0, role: role)
+            let clock = MatchInputClock()
+            let controller = UIHostingController(rootView: BatterTimelineRenderProbe(scene: scene, clock: clock))
+            window.rootViewController = controller; window.makeKeyAndVisible()
+            try await Task.sleep(for: .milliseconds(100))
+            let timeline = MatchInputTimeline(windup: role == .batter ? MatchDelivery.windup : 0, duration: flight.battingDuration)
+            let arrived = expectation(description: "v24 " + role.rawValue + code)
+            var arrivalTime = 0.0
+            XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, flightDuration: flight.flightDuration, pitchCode: code,
+                preparedRelease: role == .pitcher, onArrival: { arrivalTime = ProcessInfo.processInfo.systemUptime; arrived.fulfill() },
+                inputTimeline: role == .batter ? timeline : nil))
+            clock.start(timeline: timeline) {}
+            try await Task.sleep(for: .seconds((role == .batter ? MatchDelivery.windup : 0) + flight.flightDuration * 0.65))
+            XCTAssertEqual(scene.pitchStage, .flight)
+            func capture(_ suffix: String) {
+                let image = UIGraphicsImageRenderer(bounds: controller.view.bounds).image { _ in
+                    controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
+                }
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "v24-\(role.rawValue)-\(code)-\(reduced ? "reduced" : "normal")-\(suffix)"
+                attachment.lifetime = .keepAlways; add(attachment)
+            }
+            capture("flight")
+            await fulfillment(of: [arrived], timeout: 3)
+            let expected = (role == .batter ? MatchDelivery.windup : 0) + flight.flightDuration
+            XCTAssertGreaterThanOrEqual(arrivalTime - timeline.startedAt, expected - 0.01)
+            XCTAssertLessThan(arrivalTime - timeline.startedAt - expected, 0.09)
+            XCTAssertEqual(scene.pitchStage, .received)
+            XCTAssertEqual(timeline.phase(at: arrivalTime), 0.82, accuracy: 0.065)
+            capture("received")
+            metrics.append(["pitcher": role == .pitcher ? 1 : 0, "reduced": reduced ? 1 : 0, "speed": Double(speed),
+                            "expectedArrival": expected, "actualArrival": arrivalTime - timeline.startedAt,
+                            "arrivalPhase": timeline.phase(at: arrivalTime)])
+            clock.stop(); scene.cancelDelivery()
+        } }
+        let data = try JSONSerialization.data(withJSONObject: metrics, options: [.sortedKeys, .prettyPrinted])
+        let attachment = XCTAttachment(string: String(decoding: data, as: UTF8.self))
+        attachment.name = "v24-rendered-arrival-metrics"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
     func testBatterSharedTimelineMapsMittArrivalToYellowCenterWithoutChangingSpeedBudget() {
         let duration = MatchDelivery(x: 0.5, y: 0.5, speed: 145).duration
         XCTAssertEqual(duration, 1.35, accuracy: 0.000001)
