@@ -49,7 +49,7 @@ struct PlayerInitialValues: Codable, Equatable {
     var pitches: [String: Double] = [:]
 
     static func breakingRating(_ pitches: [String: Double]) -> Double {
-        let values = pitches.filter { $0.key != "four-seam" }.map(\.value).sorted(by: >)
+        let values = pitches.filter { PitchType(rawValue: $0.key)?.family != "fast" }.map(\.value).sorted(by: >)
         guard let first = values.first else { return 0 }
         return values.count == 1 ? first : first * 0.6 + values[1] * 0.4
     }

@@ -2,6 +2,82 @@ import XCTest
 import SwiftData
 @testable import BM
 
+extension PlayerAbilitiesTests {
+    func testV26ThreeAndFivePitchCreationKeepsOrderedLoadoutAndInitialSnapshotOnDisk() throws {
+        let selections = [["two-seam", "curve", "knuckle"], ["four-seam", "cutter", "slider", "sweeper", "changeup"]]
+        for codes in selections {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let url = directory.appendingPathComponent("repertoire.store")
+            let expected = try autoreleasepool {
+                let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+                var value = draft(.control); value.pitchCodes = codes
+                if codes.count == 5 {
+                    value.isCustom = true
+                    value.allocation = PlayerStatAllocation(role: .pitcher, base: value.selectedArchetype.values)
+                }
+                let initial = value.initialValues
+                let player = try CareerStore.create(value, schools: SchoolCatalog.load(), in: context)
+                XCTAssertEqual(player.pitches.sorted { $0.order < $1.order }.map(\.code), codes)
+                XCTAssertEqual(Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }), initial.pitches)
+                XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerSchemaV1.PitchMastery>()), codes.count)
+                let abilities = try profile(player, context)
+                XCTAssertEqual(abilities.archetypeRaw, value.isCustom ? "custom" : "control")
+                XCTAssertEqual(abilities.productionPresetVersion, value.isCustom ? "custom-v1" : "production-v1")
+                return (player.id, initial, try XCTUnwrap(abilities.initialValues))
+            }
+            let reopened = try CareerStore.makeContainer(url: url), context = reopened.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == expected.0 })
+            let abilities = try profile(player, context)
+            XCTAssertEqual(player.pitches.sorted { $0.order < $1.order }.map(\.code), codes)
+            XCTAssertEqual(Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }), expected.1.pitches)
+            XCTAssertEqual(abilities.initialValues, expected.2)
+            XCTAssertEqual(try JSONDecoder().decode(PlayerInitialValues.self, from: XCTUnwrap(abilities.initialValues)), expected.1)
+        }
+    }
+
+    func testV26InvalidPitchSelectionsNeverInsertAndBatterHasNoPitchLoadout() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let invalid = [[], ["four-seam", "slider"], ["four-seam", "slider", "changeup", "fork", "curve", "knuckle"],
+                       ["slider", "slider", "fork"], ["four-seam", "slider", "unavailable"]]
+        for codes in invalid {
+            var value = draft(.control); value.pitchCodes = codes
+            XCTAssertThrowsError(try CareerStore.create(value, schools: SchoolCatalog.load(), in: context)) { error in
+                guard case CreationError.invalidPitches = error else { return XCTFail("Unexpected creation failure: \(error)") }
+            }
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPlayer>()), 0)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<PlayerAbilities>()), 0)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerSchemaV1.PitchMastery>()), 0)
+            XCTAssertFalse(context.hasChanges)
+        }
+        var batter = draft(.contact); batter.pitchCodes = ["unavailable"]
+        let player = try CareerStore.create(batter, schools: SchoolCatalog.load(), in: context)
+        XCTAssertTrue(player.pitches.isEmpty)
+        XCTAssertTrue(batter.initialValues.pitches.isEmpty)
+        XCTAssertTrue(batter.selectedPitchCodes.isEmpty)
+    }
+
+    func testV26PitchCreationFailureRollsBackChildrenWithoutChangingExistingPlayer() throws {
+        enum Injected: Error { case failure }
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let batter = try CareerStore.create(draft(.contact), schools: SchoolCatalog.load(), in: context)
+        let original = preserved(batter), initial = try profile(batter, context).initialValues
+        var pitcher = draft(.control); pitcher.pitchCodes = ["cutter", "sweeper", "knuckle"]
+        XCTAssertThrowsError(try CareerStore.create(pitcher, schools: SchoolCatalog.load(), in: context,
+                                                   save: { _ in throw Injected.failure }))
+        XCTAssertEqual(preserved(batter), original); XCTAssertEqual(try profile(batter, context).initialValues, initial)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPlayer>()), 1)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<PlayerAbilities>()), 1)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerCalendarState>()), 1)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerSchemaV1.PitchMastery>()), 0)
+        XCTAssertFalse(context.hasChanges)
+        let created = try CareerStore.create(pitcher, schools: SchoolCatalog.load(), in: context)
+        XCTAssertEqual(created.pitches.count, 3)
+        XCTAssertEqual(preserved(batter), original)
+    }
+}
+
 @MainActor final class PlayerAbilitiesTests: XCTestCase {
     private func draft(_ type: PlayerArchetype) -> PlayerDraft {
         var draft = PlayerDraft(); draft.name = "유형선수"; draft.schoolID = "hs-ref-001"

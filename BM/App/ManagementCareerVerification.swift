@@ -17,7 +17,8 @@ struct ManagementCareerVerification: View {
             do {
                 let catalog = try SchoolCatalog.load()
                 let memory = try CareerStore.makeContainer(inMemory: true)
-                let roles: [PlayerRole] = ProcessInfo.processInfo.arguments.contains("-management-single-role-verification") ? [.batter] : PlayerRole.allCases
+                let roles: [PlayerRole] = ProcessInfo.processInfo.arguments.contains("-management-empty-verification") ? []
+                    : ProcessInfo.processInfo.arguments.contains("-management-single-role-verification") ? [.batter] : PlayerRole.allCases
                 for role in roles {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"

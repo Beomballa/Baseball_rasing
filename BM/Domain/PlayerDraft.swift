@@ -52,7 +52,20 @@ struct PlayerDraft {
     var selectedArchetype: PlayerArchetype { archetype ?? .initial(for: role) }
     var isCustom = false
     var allocation: PlayerStatAllocation?
-    var initialValues: PlayerInitialValues { isCustom ? allocation?.values ?? selectedArchetype.values : selectedArchetype.values }
+    static let defaultPitchCodes = ["four-seam", "slider", "changeup", "fork"]
+    var pitchCodes: [String]?
+    var selectedPitchCodes: [String] { role == .pitcher ? pitchCodes ?? Self.defaultPitchCodes : [] }
+    var initialValues: PlayerInitialValues {
+        var values = isCustom ? allocation?.values ?? selectedArchetype.values : selectedArchetype.values
+        if role == .pitcher {
+            let original = values.pitches
+            values.pitches = selectedPitchCodes.reduce(into: [:]) { result, code in
+                guard let pitch = PitchType(rawValue: code) else { return }
+                result[code] = original[code] ?? pitch.initialMastery
+            }
+        }
+        return values
+    }
     var schoolID = ""
     var position: FieldPosition = .center
     var throwingHand: ThrowingHand = .right
@@ -72,11 +85,15 @@ struct PlayerDraft {
         if isCustom {
             guard let allocation, allocation.role == role, allocation.isValid else { throw CreationError.invalidAllocation }
         }
+        if role == .pitcher {
+            guard (3...5).contains(selectedPitchCodes.count), Set(selectedPitchCodes).count == selectedPitchCodes.count,
+                  selectedPitchCodes.allSatisfy({ PitchType(rawValue: $0) != nil }) else { throw CreationError.invalidPitches }
+        }
     }
 }
 
 enum CreationError: LocalizedError {
-    case invalidName, invalidNumber, invalidSchool, invalidAppearance, invalidArchetype, invalidAllocation, roleAlreadyExists
+    case invalidName, invalidNumber, invalidSchool, invalidAppearance, invalidArchetype, invalidAllocation, invalidPitches, roleAlreadyExists
     var errorDescription: String? {
         switch self {
         case .invalidName: "이름은 공백만 입력할 수 없으며 1~12자로 입력해 주세요."
@@ -85,6 +102,7 @@ enum CreationError: LocalizedError {
         case .invalidAppearance: "외형 선택을 다시 확인해 주세요."
         case .invalidArchetype: "선수 역할에 맞는 유형을 선택해 주세요."
         case .invalidAllocation: "사용자 지정 능력치를 0~100 범위에서 남은 포인트 없이 배분해 주세요."
+        case .invalidPitches: "서로 다른 구종을 3~5개 선택해 주세요."
         case .roleAlreadyExists: "이미 해당 역할의 선수가 있습니다. 홈에서 확인해 주세요."
         }
     }

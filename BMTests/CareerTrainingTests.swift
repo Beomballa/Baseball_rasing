@@ -10,7 +10,9 @@ import SwiftData
         return (player, try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }))
     }
     private func attempt(_ player: CareerPlayer, _ calendar: CareerCalendarState, _ record: CareerTrainingRecord, _ context: ModelContext) throws {
-        let training = try record.snapshot(); let target = training.targets[training.scores.count]
+        let training = try record.snapshot()
+        guard !training.completed else { throw TrainingError.finished }
+        let target = training.targets[training.scores.count]
         let input = player.role == .batter ? TrainingInput(x: target.x, y: target.y, timing: MatchDelivery.contactPhase) : TrainingInput(release: 0.68)
         try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: record.revision, input: input, in: context)
     }
@@ -406,4 +408,183 @@ import SwiftData
         XCTAssertEqual(player.contact,65.2028);XCTAssertEqual(player.fatigue,30)
     }
 
+    private func seedPitchStudyProgress(_ player: CareerPlayer, code: String, replacing: String? = nil, in context: ModelContext) throws {
+        var history = CareerTraining(playerID: player.id, date: "2026-03-31", role: "pitcher", pitchCode: code,
+                                     before: 98, fatigue: player.fatigue, age: 16, calendarRevision: 0)
+        history.pitchStudy = try PitchStudyStore.preparation(player: player, code: code, replacing: replacing, in: context)
+        history.scores = [100,100,100,100,100]
+        let record = try CareerTrainingRecord(history); record.completed = true
+        context.insert(record); try context.save()
+    }
+
+    func testPitchStudyUsesFiveAttemptsDailyActionAndPreservesRegisteredSkillsUntilAcquired() throws {
+        enum Injected: Error { case failure }
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player, state) = try setup(context, role: .pitcher, date: "2026-04-02")
+        let original = try PitchStudyStore.roster(player), fatigue = player.fatigue
+        XCTAssertThrowsError(try PitchStudyStore.start(player: player, state: state, code: "cutter", in: context, save: { _ in throw Injected.failure }))
+        XCTAssertNil(try CareerTrainingStore.record(player: player, in: context)); XCTAssertEqual(state.revision, 0)
+        let record = try PitchStudyStore.start(player: player, state: state, code: "cutter", in: context)
+        XCTAssertEqual(record.rulesVersion, "native-pitch-study-v1")
+        XCTAssertEqual(try record.snapshot().controlMastery, 20)
+        XCTAssertEqual(try PitchStudyStore.start(player: player, state: state, code: "cutter", in: context).key, record.key)
+        XCTAssertThrowsError(try PitchStudyStore.start(player: player, state: state, code: "curve", in: context))
+        XCTAssertThrowsError(try CareerTrainingStore.start(player: player, state: state, pitchCode: "four-seam", in: context))
+        XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context))
+        XCTAssertThrowsError(try CareerMatchStore.start(player: player, state: state, in: context))
+        let targets = try record.snapshot().targets, revision = state.revision
+        XCTAssertThrowsError(try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: record.revision,
+            input: TrainingInput(release: 0.68), in: context, save: { _ in throw Injected.failure }))
+        XCTAssertEqual(try record.snapshot().scores, []); XCTAssertEqual(try record.snapshot().targets, targets)
+        XCTAssertEqual(state.revision, revision); XCTAssertEqual(try PitchStudyStore.roster(player), original)
+        for _ in 0..<4 { try attempt(player, state, record, context) }
+        XCTAssertEqual(try PitchStudyStore.roster(player), original)
+        XCTAssertEqual(try PitchStudyStore.progress(player: player, code: "cutter", in: context), 0)
+        XCTAssertEqual(player.fatigue, fatigue); XCTAssertFalse(state.hasAction(on: player.gameDate))
+        try attempt(player, state, record, context)
+        let completed = try record.snapshot()
+        XCTAssertEqual(completed.scores, [100,100,100,100,100])
+        let expectedProgress = TrainingRules.traitGrowth(before: 0, score: 100, fatigue: fatigue, age: completed.age)
+        XCTAssertEqual(completed.after, expectedProgress)
+        XCTAssertEqual(try PitchStudyStore.progress(player: player, code: "cutter", in: context), expectedProgress)
+        XCTAssertEqual(try PitchStudyStore.roster(player), original)
+        XCTAssertEqual(player.fatigue, fatigue + 6); XCTAssertTrue(state.hasAction(on: player.gameDate))
+        XCTAssertThrowsError(try attempt(player, state, record, context))
+        XCTAssertEqual(player.fatigue, fatigue + 6)
+        try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context)
+        let next = try PitchStudyStore.start(player: player, state: state, code: "cutter", in: context)
+        XCTAssertEqual(try next.snapshot().before, expectedProgress)
+        XCTAssertEqual(try next.snapshot().controlMastery, 20 + expectedProgress * 0.2, accuracy: 0.0001)
+    }
+
+    func testPitchStudyAcquisitionRegistersAtHundredAndNextGameUsesLearnedPitch() throws {
+        enum Injected: Error { case failure }
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player, state) = try setup(context, role: .pitcher)
+        let original = try PitchStudyStore.roster(player)
+        try seedPitchStudyProgress(player, code: "cutter", in: context)
+        let record = try PitchStudyStore.start(player: player, state: state, code: "cutter", in: context)
+        XCTAssertEqual(try record.snapshot().before, TrainingRules.traitGrowth(before: 98, score: 100, fatigue: player.fatigue, age: 16))
+        for _ in 0..<4 { try attempt(player, state, record, context) }
+        XCTAssertEqual(try PitchStudyStore.roster(player), original)
+        let revision = record.revision
+        XCTAssertThrowsError(try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: revision,
+            input: TrainingInput(release: 0.68), in: context, save: { _ in throw Injected.failure }))
+        XCTAssertEqual(try PitchStudyStore.roster(player), original)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerSchemaV1.PitchMastery>()), original.count)
+        XCTAssertEqual(record.revision, revision); XCTAssertFalse(record.completed)
+        try attempt(player, state, record, context)
+        XCTAssertEqual(try record.snapshot().after, 100)
+        XCTAssertEqual(player.pitches.count, original.count + 1)
+        XCTAssertEqual(player.pitches.first { $0.code == "cutter" }?.mastery, 20)
+        for pitch in original { XCTAssertEqual(player.pitches.first { $0.code == pitch.code }?.mastery, pitch.mastery) }
+        let game = try CareerMatchStore.start(player: player, state: state, in: context).snapshot()
+        XCTAssertEqual(game.mastery["cutter"], 20)
+        XCTAssertThrowsError(try attempt(player, state, record, context))
+        XCTAssertEqual(player.pitches.filter { $0.code == "cutter" }.count, 1)
+    }
+
+    func testPitchStudyReplacementArchivesSkillAndReregistrationRestoresOriginalMastery() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player, state) = try setup(context, role: .pitcher, date: "2026-04-02")
+        let extra = CareerSchemaV1.PitchMastery(code: "curve", name: "커브", mastery: 61.75, order: 4)
+        context.insert(extra); player.pitches.append(extra); try context.save()
+        let original = try PitchStudyStore.roster(player)
+        let old = try XCTUnwrap(player.pitches.first { $0.code == "four-seam" }), oldID = old.persistentModelID
+        let oldMastery = old.mastery
+        XCTAssertThrowsError(try PitchStudyStore.start(player: player, state: state, code: "cutter", in: context))
+        try seedPitchStudyProgress(player, code: "cutter", replacing: "four-seam", in: context)
+        let record = try PitchStudyStore.start(player: player, state: state, code: "cutter", replacing: "four-seam", in: context)
+        for _ in 0..<4 { try attempt(player, state, record, context) }
+        XCTAssertEqual(try PitchStudyStore.roster(player), original)
+        try attempt(player, state, record, context)
+        XCTAssertEqual(player.pitches.count, 5)
+        XCTAssertEqual(player.pitches.first { $0.code == "cutter" }?.persistentModelID, oldID)
+        XCTAssertEqual(try PitchStudyStore.archived(player: player, in: context), [try XCTUnwrap(original.first { $0.code == "four-seam" })])
+        try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context)
+        let restore = try PitchStudyStore.start(player: player, state: state, code: "four-seam", replacing: "cutter", in: context)
+        XCTAssertEqual(try restore.snapshot().before, 100)
+        XCTAssertEqual(try restore.snapshot().controlMastery, oldMastery)
+        XCTAssertEqual(try restore.snapshot().pitchStudy?.restoredMastery, oldMastery)
+        for _ in 0..<5 { try attempt(player, state, restore, context) }
+        XCTAssertEqual(player.pitches.first { $0.code == "four-seam" }?.mastery, oldMastery)
+        XCTAssertEqual(player.pitches.first { $0.code == "four-seam" }?.persistentModelID, oldID)
+        XCTAssertEqual(try PitchStudyStore.archived(player: player, in: context).map(\.code), ["cutter"])
+        XCTAssertEqual(try PitchStudyStore.archived(player: player, in: context).first?.mastery, 20)
+        XCTAssertThrowsError(try attempt(player, state, restore, context))
+        XCTAssertEqual(player.pitches.count, 5)
+    }
+
+    func testPitchStudyDiskResumeFinalSaveFailureAndCompletedReopenPreserveOneRegistration() throws {
+        enum Injected: Error { case failure }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("pitch-study.store")
+        let snapshot = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            let (player, state) = try setup(context, role: .pitcher, date: "2026-04-02")
+            try seedPitchStudyProgress(player, code: "cutter", replacing: "slider", in: context)
+            let record = try PitchStudyStore.start(player: player, state: state, code: "cutter", replacing: "slider", in: context)
+            for _ in 0..<2 { try attempt(player, state, record, context) }
+            return try record.snapshot()
+        }
+        try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let record = try PitchStudyStore.start(player: player, state: state, code: "cutter", replacing: "slider", in: context)
+            XCTAssertEqual(try record.snapshot(), snapshot)
+            let roster = try PitchStudyStore.roster(player)
+            for _ in 0..<2 { try attempt(player, state, record, context) }
+            let payload = record.payload, revision = record.revision, calendarRevision = state.revision
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: revision,
+                input: TrainingInput(release: 0.68), in: context, save: { _ in throw Injected.failure }))
+            XCTAssertEqual(record.payload, payload); XCTAssertEqual(record.revision, revision)
+            XCTAssertEqual(state.revision, calendarRevision); XCTAssertNil(state.actionDate)
+            XCTAssertEqual(try PitchStudyStore.roster(player), roster); XCTAssertEqual(player.fatigue, snapshot.fatigue)
+            XCTAssertTrue(try PitchStudyStore.archived(player: player, in: context).isEmpty)
+            try attempt(player, state, record, context)
+            XCTAssertEqual(try PitchStudyStore.archived(player: player, in: context).map(\.code), ["slider"])
+        }
+        let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+        let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let record = try PitchStudyStore.start(player: player, state: state, code: "cutter", replacing: "slider", in: context)
+        XCTAssertTrue(record.completed); XCTAssertEqual(try record.snapshot().after, 100)
+        XCTAssertEqual(player.pitches.count, 4); XCTAssertEqual(player.pitches.first { $0.code == "cutter" }?.mastery, 20)
+        XCTAssertEqual(player.fatigue, snapshot.fatigue + TrainingRules.fatigueCost); XCTAssertTrue(state.hasAction(on: player.gameDate))
+        XCTAssertThrowsError(try attempt(player, state, record, context))
+        XCTAssertEqual(player.fatigue, snapshot.fatigue + TrainingRules.fatigueCost)
+        XCTAssertEqual(try PitchStudyStore.archived(player: player, in: context).first?.mastery, 65)
+    }
+
+    func testPitchStudyPreservesLegacyRosterAndTrainingAndRejectsStaleRoster() throws {
+        for count in [2, 6] {
+            let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+            let (player, state) = try setup(context, role: .pitcher)
+            if count == 2 { player.pitches = Array(player.pitches.sorted { $0.order < $1.order }.prefix(2)) }
+            else {
+                for (offset, code) in ["curve", "two-seam"].enumerated() {
+                    let pitch = CareerSchemaV1.PitchMastery(code: code, name: code, mastery: 44.1234, order: offset + 4)
+                    context.insert(pitch); player.pitches.append(pitch)
+                }
+            }
+            try context.save()
+            let roster = try PitchStudyStore.roster(player)
+            if count > 5 { XCTAssertThrowsError(try PitchStudyStore.start(player: player, state: state, code: "cutter", in: context)) }
+            let record = try PitchStudyStore.start(player: player, state: state, code: "cutter", replacing: count > 5 ? "slider" : nil, in: context)
+            XCTAssertEqual(try PitchStudyStore.roster(player), roster)
+            player.pitches[0].mastery += 0.1; try context.save()
+            XCTAssertThrowsError(try attempt(player, state, record, context))
+            XCTAssertEqual(record.revision, 0); XCTAssertEqual(player.pitches.count, count)
+        }
+        var legacy = CareerTraining(playerID: UUID(), date: "2026-04-01", role: "pitcher", pitchCode: "four-seam", before: 91.1234, fatigue: 24, age: 16, calendarRevision: 1)
+        legacy.scores = [27,100]
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        json.removeValue(forKey: "pitchStudy")
+        let restored = try JSONDecoder().decode(CareerTraining.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(restored.pitchStudy); XCTAssertEqual(restored.before, 91.1234); XCTAssertEqual(restored.scores, [27,100])
+        XCTAssertEqual(restored.controlMastery, 91.1234)
+    }
 }

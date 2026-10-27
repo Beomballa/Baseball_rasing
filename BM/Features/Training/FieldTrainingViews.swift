@@ -348,7 +348,7 @@ enum TrainingSessionGuide {
                           contact.timingScore == 100 ? "지금 타이밍을 유지하고 다음 목표를 확인하세요" : early ? "배트를 조금 더 늦게 내보세요" : "배트를 조금 더 일찍 내보세요")
         case .pitch:
             let phase = input.release ?? 0
-            let exact = abs(phase - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: round.before)
+            let exact = abs(phase - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: round.controlMastery)
             return result(exact ? "노란 구간에서 공을 놓았어요" : phase < ManualMatchRules.releaseCenter ? "릴리스가 빨랐어요" : "릴리스가 늦었어요",
                           exact ? "같은 손 놓는 위치를 다시 재현해 보세요" : phase < ManualMatchRules.releaseCenter ? "다음에는 손을 조금 더 늦게 떼세요" : "다음에는 손을 조금 더 일찍 떼세요")
         case .power:

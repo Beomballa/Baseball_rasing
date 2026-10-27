@@ -92,11 +92,10 @@ struct CareerMatch: Codable, Equatable {
             let width=0.6/sqrt(pitcher.zoneChance)
             return MatchDelivery(x:0.5+(x-0.5)*width,y:0.5+(y-0.5)*width,speed:Int(speed.rounded()),exactSpeed:speed)
         }
-        let speeds = ["four-seam": 145, "slider": 132, "changeup": 125, "fork": 129]
         let actualSpeed = ownPitcherActive && abilityStats?.version == 1 ? abilityStats?.speedValue(code: pitchCode ?? "four-seam") : nil
         return MatchDelivery(x: role == "pitcher" ? 0.25 + x * 0.5 : 0.05 + x * 0.9,
                              y: role == "pitcher" ? 0.25 + y * 0.5 : 0.05 + y * 0.9,
-                             speed: actualSpeed.map { Int($0.rounded()) } ?? speeds[pitchCode ?? "four-seam"] ?? 135, exactSpeed: actualSpeed)
+                             speed: actualSpeed.map { Int($0.rounded()) } ?? PitchType(rawValue: pitchCode ?? "four-seam").map { Int(145 + $0.speedOffset) } ?? 135, exactSpeed: actualSpeed)
     }
 
     func automaticControl(_ input: MatchInput, pitchCode: String?) -> ManualMatchInput {

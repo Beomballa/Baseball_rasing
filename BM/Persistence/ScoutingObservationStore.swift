@@ -32,10 +32,8 @@ struct ScoutingRoleGrade: Codable, Equatable, Identifiable {
 
 // Frozen inputs and game-setting weights. Club criteria and NPC reference statistics remain unavailable.
 enum ScoutingRoleEvaluation {
-    static let pitches: [String: (family: String, speed: Double)] = [
-        "four-seam": ("fast", 145), "slider": ("glove", 132),
-        "changeup": ("slow", 125), "fork": ("vertical", 129)
-    ]
+    static let pitches: [String: (family: String, speed: Double)] = Dictionary(uniqueKeysWithValues:
+        PitchType.allCases.map { ($0.rawValue, (family: $0.family, speed: 145 + $0.speedOffset)) })
     static func grades(role: PlayerRole, abilities: HomeAbilitySummary, positionMastery: Double?) throws -> [ScoutingRoleGrade] {
         let original = abilities.originals
         guard Set(original.map(\.id)).count == original.count,

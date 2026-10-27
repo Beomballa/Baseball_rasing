@@ -128,11 +128,12 @@ struct PlayerCreationView: View {
                         CreationStatRow(name: "수비", value: values.defense)
                         CreationStatRow(name: "송구", value: values.arm)
                         CreationStatRow(name: "멘탈", value: values.mental)
-                        Text(draft.role == .batter ? "유형은 시작 능력치만 바꿉니다. 성장 배율과 상한은 같습니다." : "구속 능력은 0~100점 기준 · 초기 구종 숙련 62 / 55 / 42 / 35")
+                        Text(draft.role == .batter ? "유형은 시작 능력치만 바꿉니다. 성장 배율과 상한은 같습니다." : "구속 능력은 0~100점 기준 · 초기 구종 숙련은 아래 구성에서 확인하세요.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                     }
                 }
-                GamePanel(title: "04  도트 외형", onBoard: true) {
+                if draft.role == .pitcher { pitchSelection }
+                GamePanel(title: draft.role == .pitcher ? "05  도트 외형" : "04  도트 외형", onBoard: true) {
                     palette("피부", selection: $draft.appearance.skin, colors: PlayerAppearance.skinColors)
                     palette("머리색", selection: $draft.appearance.hair, colors: PlayerAppearance.hairColors)
                     palette("유니폼", selection: $draft.appearance.kit, colors: PlayerAppearance.kitColors)
@@ -182,7 +183,7 @@ struct PlayerCreationView: View {
             SchoolPicker(schools: schools, selected: $draft.schoolID)
         }
         .onAppear { if let role = availableRoles.first, !availableRoles.contains(draft.role) { draft.role = role } }
-        .onChange(of: draft.role) { _, role in draft.archetype = .initial(for: role); draft.isCustom = false; draft.allocation = nil }
+        .onChange(of: draft.role) { _, role in draft.archetype = .initial(for: role); draft.isCustom = false; draft.allocation = nil; draft.pitchCodes = nil }
         .disabled(registeredID != nil).accessibilityHidden(registeredID != nil)
         .overlay {
             if registeredID != nil { CreationRegistrationOverlay(appearance: draft.appearance, name: draft.name, reduced: reduced) }
@@ -199,6 +200,60 @@ struct PlayerCreationView: View {
     private var selectedSchool: School? { schools.first { $0.id == draft.schoolID } }
     private var choiceColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 8), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
+    }
+
+    private var pitchSelection: some View {
+        GamePanel(title: "04  구종 구성", onBoard: true) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("보유 \(draft.selectedPitchCodes.count) / 5")
+                    .font(.headline.monospaced()).foregroundStyle(GameTheme.gold)
+                Spacer(minLength: 6)
+                Text("남은 슬롯 \(max(0, 5 - draft.selectedPitchCodes.count))")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }.accessibilityElement(children: .combine).accessibilityIdentifier("creationPitchCount")
+            Text("3~5개를 선택하세요 · 습득한 구종은 이후 훈련으로 성장합니다.")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            LazyVGrid(columns: choiceColumns, spacing: 8) {
+                ForEach(PitchType.allCases) { pitch in
+                    let selected = draft.selectedPitchCodes.contains(pitch.rawValue)
+                    Button {
+                        focusedField = nil
+                        var codes = draft.selectedPitchCodes
+                        if selected { codes.removeAll { $0 == pitch.rawValue } }
+                        else { codes.append(pitch.rawValue) }
+                        draft.pitchCodes = codes
+                    } label: {
+                        HStack(spacing: 8) {
+                            MatchGrip(code: pitch.rawValue, hand: draft.throwingHand.rawValue)
+                                .frame(width: 26, height: 32).accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(pitch.label).font(.subheadline.bold())
+                                Text("숙련 \(draft.initialValues.pitches[pitch.rawValue] ?? pitch.initialMastery, specifier: "%.1f")")
+                                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                            }
+                            Spacer(minLength: 0)
+                            Text(selected ? "■" : "□").foregroundStyle(selected ? GameTheme.gold : GameTheme.boardMuted)
+                                .accessibilityHidden(true)
+                        }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    }.buttonStyle(GameButtonStyle(secondary: !selected, onBoard: true))
+                        .overlay(Rectangle().strokeBorder(selected ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2).allowsHitTesting(false))
+                        .disabled(selected ? draft.selectedPitchCodes.count <= 3 : draft.selectedPitchCodes.count >= 5)
+                        .accessibilityLabel(pitch.label + " · 초기 숙련 " + String(format: "%.1f", draft.initialValues.pitches[pitch.rawValue] ?? pitch.initialMastery))
+                        .accessibilityValue(selected ? "선택" : "미선택")
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                        .accessibilityIdentifier("creationPitch-" + pitch.rawValue)
+                }
+            }
+            let actions = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            actions {
+                Button("추천 구성") { focusedField = nil; draft.pitchCodes = nil }
+                    .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("creationPitchRecommended")
+                Button("무작위 3~5개") {
+                    focusedField = nil
+                    draft.pitchCodes = Array(PitchType.allCases.shuffled().prefix(Int.random(in: 3...5))).map(\.rawValue)
+                }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("creationPitchRandom")
+            }
+        }
     }
 
     private func choice(_ title: String, selected: Bool, id: String, action: @escaping () -> Void) -> some View {

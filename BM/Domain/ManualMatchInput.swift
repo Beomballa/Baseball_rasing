@@ -1,5 +1,56 @@
 import Foundation
 
+enum PitchType: String, Codable, CaseIterable, Identifiable {
+    case fourSeam = "four-seam", twoSeam = "two-seam", cutter, slider, curve, changeup, fork, sweeper, knuckle
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .fourSeam: "포심"
+        case .twoSeam: "투심"
+        case .cutter: "커터"
+        case .slider: "슬라이더"
+        case .curve: "커브"
+        case .changeup: "체인지업"
+        case .fork: "포크"
+        case .sweeper: "스위퍼"
+        case .knuckle: "너클"
+        }
+    }
+    var initialMastery: Double {
+        switch self {
+        case .fourSeam: 62
+        case .twoSeam, .slider: 55
+        case .cutter: 48
+        case .curve, .changeup: 42
+        case .fork: 35
+        case .sweeper: 40
+        case .knuckle: 30
+        }
+    }
+    var speedOffset: Double {
+        switch self {
+        case .fourSeam: 0
+        case .twoSeam: -4
+        case .cutter: -7
+        case .slider: -13
+        case .curve: -27
+        case .changeup: -20
+        case .fork: -16
+        case .sweeper: -18
+        case .knuckle: -40
+        }
+    }
+    var family: String {
+        switch self {
+        case .fourSeam, .twoSeam, .cutter: "fast"
+        case .slider, .sweeper: "glove"
+        case .changeup: "slow"
+        case .curve, .fork: "vertical"
+        case .knuckle: "float"
+        }
+    }
+}
+
 struct PitchTarget: Codable, Equatable {
     let x: Double
     let y: Double
@@ -95,9 +146,8 @@ struct MatchAbilityStats: Codable, Equatable {
     func homeRunChance(quality: Double) -> Double { max(0.01, min(0.25, 0.16 - quality * 0.10 - ((stuff ?? 50) - 50) * 0.0004)) }
     func speed(code: String) -> Int { Int(speedValue(code: code).rounded()) }
     func speedValue(code: String) -> Double {
-        let offsets: [String: Double] = ["four-seam": 0, "slider": -13, "changeup": -20, "fork": -16]
         let base: Double = 120 + (velocity ?? 62.5) * 0.4
-        return base + (offsets[code] ?? -10)
+        return base + (PitchType(rawValue: code)?.speedOffset ?? -10)
     }
 }
 

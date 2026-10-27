@@ -13,6 +13,8 @@ struct CareerTrainingView: View {
     let calendar: CareerCalendarState
     var practice = false
     var initialKind: TrainingKind? = nil
+    var initialPitchStudyCode: String? = nil
+    var replacingPitchCode: String? = nil
     @State private var initialSelectionApplied = false
     @State private var record: CareerTrainingRecord?
     @State private var training: CareerTraining?
@@ -55,10 +57,14 @@ struct CareerTrainingView: View {
     private var inputLocked: Bool { retryInput != nil || replay != nil }
     private var isPitcher: Bool { player.role == .pitcher }
     private var selectedKind: TrainingKind { training?.selectedKind ?? (category == 0 && isPitcher ? .pitch : kind) }
-    private var title: String { selectedKind.label + " 훈련" }
-    private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? "구종") : selectedKind.label }
+    private var studying: Bool { training?.pitchStudy != nil || initialPitchStudyCode != nil }
+    private var title: String { training?.title ?? (studying ? "구종 습득 훈련" : selectedKind.label + " 훈련") }
+    private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? PitchType(rawValue: training?.pitchCode ?? code)?.label ?? "구종") : selectedKind.label }
     private func load() {
         do {
+            if !initialSelectionApplied, let initialPitchStudyCode {
+                code = initialPitchStudyCode; category = 0; kind = .pitch; initialSelectionApplied = true
+            }
             if !initialSelectionApplied, let initialKind, initialKind.allows(player.roleRaw) {
                 kind = initialKind
                 category = initialKind.isRaw ? 2 : initialKind.isField ? 1 : 0
@@ -77,7 +83,11 @@ struct CareerTrainingView: View {
     private var preparationKey: String { "\(category):\(kind.rawValue):\(code)" }
     private func loadPreparation() {
         do {
-            preparationValue = try CareerTrainingStore.value(player: player, code: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
+            if let studyCode = training?.pitchStudy?.code ?? initialPitchStudyCode {
+                preparationValue = try PitchStudyStore.progress(player: player, code: studyCode, in: context)
+            } else {
+                preparationValue = try CareerTrainingStore.value(player: player, code: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
+            }
             preparationError = nil
         } catch {
             preparationValue = nil; preparationError = error.localizedDescription
@@ -85,7 +95,10 @@ struct CareerTrainingView: View {
     }
     private func start() {
         do {
-            if practice {
+            if let initialPitchStudyCode, !practice {
+                record = try PitchStudyStore.start(player: player, state: calendar, code: initialPitchStudyCode, replacing: replacingPitchCode, in: context)
+                training = try record?.snapshot()
+            } else if practice {
                 training = try TrainingPractice.round(player: player, calendar: calendar, kind: selectedKind, code: code, in: context)
             } else {
                 record = try CareerTrainingStore.start(player: player, state: calendar, pitchCode: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
@@ -144,7 +157,7 @@ struct CareerTrainingView: View {
             if selectedKind == .pitch, let previous = replay {
                 let target = previous.targets[previous.scores.count]
                 let release = input.release ?? 0
-                releaseHint = abs(release - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: previous.before)
+                releaseHint = abs(release - ManualMatchRules.releaseCenter) <= ManualMatchRules.perfectWidth(mastery: previous.controlMastery)
                     ? "정확한 릴리스" : release < ManualMatchRules.releaseCenter ? "릴리스 빠름" : "릴리스 늦음"
                 let started = scene.demonstrate(reduceMotion: reduced, flightDuration: PitchFlightPresentation(delivery: delivery(code: previous.pitchCode ?? "four-seam")).flightDuration, x: target.x, y: target.y,
                                                pitchCode: previous.pitchCode ?? "four-seam", preparedRelease: true,
@@ -222,7 +235,7 @@ struct CareerTrainingView: View {
                                     .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
                                     .accessibilityIdentifier("trainingProgress")
                                 if training == nil {
-                                    selection
+                                    if !studying { selection }
                                     preparationBoard
                                 }
                                 if let training, !reviewReady { TrainingMissionBanner(kind: selectedKind, scores: (feedbackVisible ? self.training : displayTraining)?.scores ?? training.scores) }
@@ -323,8 +336,8 @@ struct CareerTrainingView: View {
                 Text(judging ? "존 안이면 스트라이크 · 밖이면 볼" : "공 보기를 누르고 존 안팎을 판단하세요").font(.caption)
             } else {
                 MatchTimingGauge(phase: clock.phase, center: isPitcher ? ManualMatchRules.releaseCenter : MatchDelivery.contactPhase,
-                                 good: isPitcher ? ManualMatchRules.goodWidth(mastery: training.before) : ManualMatchRules.timingWidth(contact: training.before),
-                                 perfect: isPitcher ? ManualMatchRules.perfectWidth(mastery: training.before) : TrainingRules.contactPerfectWidth,
+                                 good: isPitcher ? ManualMatchRules.goodWidth(mastery: training.controlMastery) : ManualMatchRules.timingWidth(contact: training.before),
+                                 perfect: isPitcher ? ManualMatchRules.perfectWidth(mastery: training.controlMastery) : TrainingRules.contactPerfectWidth,
                                  label: isPitcher ? (replay != nil ? (feedbackVisible ? "포구 완료 · 결과 확인" : "릴리스 확정 · 공 비행 중") : clock.running ? "팔 준비 중 · 노란 구간에 릴리스" : "공을 쥐고 투구 준비") : "노란 구간 · 타이밍 100점")
                     .accessibilityIdentifier("trainingTimingGauge")
             }
@@ -388,7 +401,7 @@ struct CareerTrainingView: View {
     }
     private var preparationBoard: some View {
         TrainingPreparationBoard(player: player, name: pitchName, kind: selectedKind, value: preparationValue,
-                                 failure: preparationError, practice: practice)
+                                 failure: preparationError, practice: practice, studying: studying)
     }
     private func arena(height: CGFloat) -> some View {
         TimelineView(.animation(minimumInterval: reduced ? 0.1 : 1.0 / 30, paused: replay == nil && !judging && !clock.running)) { timeline in
@@ -566,6 +579,19 @@ struct CareerTrainingView: View {
                 Button("다시 연습") { resetPractice(); start() }
                     .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("practiceRetry")
                 Button("훈련 선택으로") { resetPractice() }.buttonStyle(MatchPixelButtonStyle())
+            } else if let study = value.pitchStudy {
+                ManagementPanel("구종 습득 진척", surface: .paper) {
+                    Text("\(value.before, specifier: "%.1f") → \(value.after, specifier: "%.1f") / 100")
+                        .font(.title3.monospacedDigit().bold()).accessibilityIdentifier("pitchStudyResult")
+                    ProgressView(value: value.after, total: 100).tint(GameTheme.growth)
+                    Text(value.after == 100 ? "\(pitchName) 등록 완료 · 숙련도 \(study.restoredMastery ?? 20, specifier: "%.1f")" : "진척이 저장됐습니다. 다음 훈련일에 이어서 학습합니다.")
+                        .font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                    Text("피로 +6 · 오늘 행동 1회 사용 · 같은 결과 재지급 없음").font(.caption)
+                    if let retired = study.retired, value.after == 100 {
+                        Text("\(retired.name) 숙련도 \(retired.mastery, specifier: "%.1f") 보관 · 재등록 훈련으로 복원")
+                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             } else {
                 TrainingGrowthReceipt(name: pitchName, before: value.before, after: value.after,
                                       gain: value.gain, fatigue: value.fatigue)
@@ -585,6 +611,7 @@ private struct TrainingPreparationBoard: View {
     let value: Double?
     let failure: String?
     let practice: Bool
+    var studying = false
     @Environment(\.dynamicTypeSize) private var typeSize
     private var next: Double { min(100, floor(value ?? 0) + 1) }
     var body: some View {
@@ -595,7 +622,7 @@ private struct TrainingPreparationBoard: View {
                     Text(name).font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
                     Text(practice ? "보유 기량으로 자유롭게 도전" : "5회 도전 후 성장 반영").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     if let value {
-                        Text("현재 \(kind == .pitch ? "구종 숙련도" : "능력치") \(value, specifier: "%.1f")")
+                        Text("현재 \(studying ? "습득 진척" : kind == .pitch ? "구종 숙련도" : "능력치") \(value, specifier: "%.1f")")
                             .font(.headline.monospacedDigit()).accessibilityIdentifier("trainingCurrentValue")
                     } else { Text("현재 능력 미집계").font(.subheadline).foregroundStyle(GameTheme.gold) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -607,12 +634,12 @@ private struct TrainingPreparationBoard: View {
             }
             if let value {
                 HStack {
-                    Text(value >= 100 ? "최대 기량" : "다음 목표 " + next.formatted(.number.precision(.fractionLength(1)))).font(.caption.bold())
+                    Text(studying ? (value >= 100 ? "보관 구종 재등록 · 원숙련 복원" : "습득 목표 100 · 최초 숙련 20") : value >= 100 ? "최대 기량" : "다음 목표 " + next.formatted(.number.precision(.fractionLength(1)))).font(.caption.bold())
                     Spacer(minLength: 4)
-                    Text(value >= 100 ? "MAX" : "남은 성장 " + max(0, next - value).formatted(.number.precision(.fractionLength(1))))
+                    Text(value >= 100 ? "MAX" : (studying ? "남은 진척 " : "남은 성장 ") + max(0, (studying ? 100 : next) - value).formatted(.number.precision(.fractionLength(1))))
                         .font(.caption.monospacedDigit()).foregroundStyle(GameTheme.boardMuted)
                 }.accessibilityElement(children: .combine).accessibilityIdentifier("trainingNextTarget")
-                TrainingSegmentTrack(value: value >= 100 ? 1 : value - floor(value), color: GameTheme.growth)
+                TrainingSegmentTrack(value: studying ? value / 100 : value >= 100 ? 1 : value - floor(value), color: GameTheme.growth)
             }
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
             layout {
@@ -776,5 +803,109 @@ private struct TrainingChromeHeightKey: PreferenceKey {
     static var defaultValue: [String: CGFloat] { [:] }
     static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+struct PitchRepertoireView: View {
+    let player: CareerPlayer
+    let calendar: CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var progress: [String: Double] = [:]
+    @State private var archives: [PitchStoredSkill] = []
+    @State private var pending = false
+    @State private var blocked: String?
+    @State private var replacing = ""
+    @State private var selectedCode: String?
+    @State private var confirm = false
+    @State private var showTraining = false
+    private var ordered: [CareerSchemaV1.PitchMastery] { player.pitches.sorted { $0.order < $1.order } }
+    private var choices: [PitchType] { PitchType.allCases.filter { pitch in !player.pitches.contains { $0.code == pitch.rawValue } } }
+    private var canStart: Bool { blocked == nil && !pending && (player.pitches.count < 5 || !replacing.isEmpty) }
+    private func load() {
+        do {
+            archives = try PitchStudyStore.archived(player: player, in: context)
+            progress = try Dictionary(uniqueKeysWithValues: choices.map { ($0.rawValue, try PitchStudyStore.progress(player: player, code: $0.rawValue, in: context)) })
+            pending = try CareerTrainingStore.record(player: player, in: context).map { !$0.completed } ?? false
+            blocked = nil
+            if !pending {
+                if calendar.hasAction(on: player.gameDate) { blocked = "오늘 행동을 사용했습니다. 다음 훈련일에 시작할 수 있습니다." }
+                else {
+                    try CareerTrainingStore.requireNoPending(player: player, in: context)
+                    let id = player.id, date = player.gameDate
+                    if try context.fetchCount(FetchDescriptor<CareerMatchRecord>(predicate: #Predicate { $0.playerID == id && $0.gameDate == date })) > 0 {
+                        blocked = "오늘 경기 기록을 먼저 마친 뒤 다음 훈련일에 구종을 변경하세요."
+                    }
+                }
+            }
+        } catch { blocked = error.localizedDescription }
+    }
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                ManagementPanel("등록 구종 · \(ordered.count) / 5") {
+                    Text("경기에 사용할 구종과 숙련도").managementFont(.helper)
+                        .accessibilityIdentifier("pitchLibraryCount")
+                    ForEach(ordered) { pitch in
+                        HStack(spacing: 12) {
+                            MatchGrip(code: pitch.code, hand: player.throwingHandRaw).frame(width: 44, height: 48)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(pitch.name).font(.headline)
+                                ProgressView(value: pitch.mastery, total: 100).tint(GameTheme.gold)
+                            }
+                            Text(pitch.mastery.formatted(.number.precision(.fractionLength(1)))).font(.headline.monospacedDigit())
+                        }.accessibilityElement(children: .combine).accessibilityIdentifier("pitchLibraryOwned-" + pitch.code)
+                    }
+                }
+                if pending {
+                    NavigationLink { CareerTrainingView(player: player, calendar: calendar) } label: { Text("진행 중인 훈련 이어하기") }
+                        .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("pitchLibraryResume")
+                }
+                ManagementPanel("새 구종 · 습득과 등록", surface: .paper) {
+                    Text("5회 훈련 성적에 따라 습득 진척이 쌓입니다. 100에 도달하면 숙련도20으로 등록합니다.")
+                        .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                    Picker("등록할 자리", selection: $replacing) {
+                        Text(player.pitches.count < 5 ? "빈 슬롯에 추가" : "교체할 구종 선택").tag("")
+                        ForEach(ordered) { pitch in Text(pitch.name + " 자리 · 기존 숙련 보관").tag(pitch.code) }
+                    }.accessibilityIdentifier("pitchStudyReplacement")
+                    if let blocked { Text(blocked).font(.caption).foregroundStyle(GameTheme.navy) }
+                    if player.pitches.count >= 5 && replacing.isEmpty {
+                        Text("등록5개 · 교체할 구종을 먼저 선택하세요.").font(.caption.bold())
+                    }
+                    ForEach(choices) { pitch in
+                        let archived = archives.first { $0.code == pitch.rawValue }
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 12) {
+                                MatchGrip(code: pitch.rawValue, hand: player.throwingHandRaw).frame(width: 44, height: 44)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(pitch.label).font(.headline)
+                                    Text(archived.map { "보관 숙련 \($0.mastery.formatted(.number.precision(.fractionLength(1)))) · 5회 재등록으로 복원" }
+                                         ?? "습득 진척 \((progress[pitch.rawValue] ?? 0).formatted(.number.precision(.fractionLength(1)))) / 100")
+                                        .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                        .accessibilityIdentifier("pitchStudyProgress-" + pitch.rawValue)
+                                }
+                            }
+                            ProgressView(value: progress[pitch.rawValue] ?? 0, total: 100).tint(GameTheme.growth)
+                            Button(archived == nil ? "\(pitch.label) 습득 훈련" : "\(pitch.label) 재등록 훈련") {
+                                selectedCode = pitch.rawValue; confirm = true
+                            }.buttonStyle(ManagementButtonStyle(variant: .secondary)).disabled(!canStart)
+                                .accessibilityIdentifier("pitchStudyStart-" + pitch.rawValue)
+                        }.padding(.vertical, 6)
+                    }
+                }
+                Text("훈련 완료 시 피로+6 · 하루 행동1회. 교체 전 구종은 숙련도를 보관하며, 진행 중인 경기·훈련의 구성은 바꾸지 않습니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.paper).navigationTitle("구종 보관함")
+            .onAppear(perform: load)
+            .confirmationDialog("구종 훈련을 준비할까요?", isPresented: $confirm, titleVisibility: .visible) {
+                Button("훈련 준비 화면으로") { showTraining = true }.accessibilityIdentifier("pitchStudyConfirm")
+                Button("취소", role: .cancel) {}
+            } message: {
+                Text(replacing.isEmpty ? "새 구종은 빈 슬롯에 추가됩니다. 준비 화면에서 훈련을 시작할 때 일정이 고정됩니다." : "진척100에 도달하면 선택한 자리를 교체합니다. 기존 구종의 숙련도는 보관됩니다.")
+            }
+            .navigationDestination(isPresented: $showTraining) {
+                CareerTrainingView(player: player, calendar: calendar, initialKind: .pitch,
+                                   initialPitchStudyCode: selectedCode, replacingPitchCode: replacing.isEmpty ? nil : replacing)
+            }
     }
 }

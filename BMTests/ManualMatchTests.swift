@@ -801,6 +801,44 @@ private struct BatterTimelineRenderProbe: View {
 }
 
 extension ManualMatchTests {
+    func testV26PitchCatalogConnectsNamesSpeedGripsAndManualPitching() throws {
+        let expected: [String: Int] = ["four-seam": 145, "two-seam": 141, "cutter": 138, "slider": 132, "curve": 118,
+                                      "changeup": 125, "fork": 129, "sweeper": 127, "knuckle": 105]
+        XCTAssertEqual(PitchType.allCases.count, 9)
+        var extraImages = Set<Data>()
+        for pitch in PitchType.allCases {
+            let speed = MatchDelivery.pitch(code: pitch.rawValue, velocity: 62.5)
+            XCTAssertEqual(speed.speed, expected[pitch.rawValue])
+            XCTAssertEqual(PitchFlightPresentation(delivery: speed).flightDuration, 0.90 * 145 / Double(expected[pitch.rawValue]!), accuracy: 0.000001)
+            let image = try XCTUnwrap(MatchGrip.image(code: pitch.rawValue))
+            if ![PitchType.fourSeam, .slider, .changeup].contains(pitch) { extraImages.insert(try XCTUnwrap(image.pngData())) }
+            var game = CareerMatch(random: 42, isHome: true, role: "pitcher", appearance: true, contact: 60, power: 60, discipline: 60, mastery: [pitch.rawValue: 50])
+            game.controlVersion = 2; game.settle()
+            let delivery = game.delivery(pitchCode: pitch.rawValue)
+            try game.advance(.pitch, pitchCode: pitch.rawValue, control: ManualMatchInput(release: 0.68, pitchTarget: PitchTarget(x: delivery.x, y: delivery.y)))
+            let result = try XCTUnwrap(game.lastManual)
+            XCTAssertEqual(result.pitchCode, pitch.rawValue); XCTAssertEqual(result.speed, expected[pitch.rawValue])
+            XCTAssertEqual(MatchPresentation.pitchName(result), pitch.label)
+        }
+        XCTAssertEqual(extraImages.count, 6, "Each extra grip must use its own authored atlas cell")
+    }
+
+    func testV26NewPitchPathsKeepEndpointsHandednessAndFastballFamilySeparation() {
+        let size = CGSize(width: 320, height: 320), start = CGPoint(x: 150, y: 240), end = CGPoint(x: 170, y: 90)
+        for role in PlayerRole.allCases { for pitch in PitchType.allCases {
+            for hand in ["left", "right"] {
+                XCTAssertEqual(MatchBallPath.point(from: start, to: end, size: size, role: role, hand: hand, code: pitch.rawValue, progress: 0), start)
+                XCTAssertEqual(MatchBallPath.point(from: start, to: end, size: size, role: role, hand: hand, code: pitch.rawValue, progress: 1), end)
+            }
+            let normal = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "right", code: "four-seam", progress: 0.7)
+            let right = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "right", code: pitch.rawValue, progress: 0.7)
+            let left = MatchBallPath.point(from: start, to: end, size: size, role: role, hand: "left", code: pitch.rawValue, progress: 0.7)
+            XCTAssertEqual(right.x + left.x, normal.x * 2, accuracy: 0.000001); XCTAssertEqual(right.y, left.y)
+        } }
+        XCTAssertEqual(PlayerInitialValues.breakingRating(["four-seam": 62, "slider": 55, "changeup": 42, "fork": 35]), 49.8, accuracy: 0.000001)
+        XCTAssertEqual(PlayerInitialValues.breakingRating(["two-seam": 100, "cutter": 100, "curve": 40]), 40)
+    }
+
     func testV25RecommendedTargetPreservesLegacyManualAndAutomaticResults() throws {
         for seed in 1...12 { for release in [0.0, 0.68, 0.81] {
             var legacy = match(role: .pitcher, seed: UInt64(seed))

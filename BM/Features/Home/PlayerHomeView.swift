@@ -291,20 +291,26 @@ struct PlayerHomeView: View {
                         }
                     }
                     Text("구속은 능력 점수 · 변화구 종합과 개별 구종 숙련은 구분합니다.").managementFont(.helper).foregroundStyle(GameTheme.boardMuted)
+                    if let calendar { pitchLibrary(calendar) }
                 }
             }
         case .traits: TraitManagementPanel(player: player, calendar: calendar, onBoard: true, compact: true).id(player.id)
-        case .positions: PositionHomePanel(player: player, calendar: calendar)
+        case .positions:
+            if player.role == .pitcher { if let calendar { pitchLibrary(calendar) } }
+            else { PositionHomePanel(player: player, calendar: calendar) }
         case .records:
             MatchAbilityGrowthHomePanel(player: player, records: gameRecords)
                 if let latest = trainingRecords.first(where: { $0.playerID == player.id && $0.completed }), let result = try? latest.snapshot() {
                     GamePanel(title: "최근 훈련 성장", onBoard: true) {
-                        let name = result.position?.label ?? result.trait?.label ?? result.pitchCode.flatMap { code in player.pitches.first { $0.code == code }?.name } ?? result.selectedKind.label
+                        let name = result.position?.label ?? result.trait?.label ?? result.pitchCode.flatMap { code in player.pitches.first { $0.code == code }?.name ?? PitchType(rawValue: code)?.label } ?? result.selectedKind.label
                         Text("\(latest.gameDate) · \(name)  \(result.before, specifier: "%.1f") → \(result.after, specifier: "%.1f")")
                             .font(.subheadline.bold()).accessibilityIdentifier("homeTrainingGrowth")
                         if result.position != nil {
                             Text("XP +\(result.positionGainXP, specifier: "%.1f") · 잔여 \(result.positionAfter.xp, specifier: "%.1f") / 100 · 다음 새 경기 반영")
                                 .font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homePositionTrainingGrowth")
+                        } else if let study = result.pitchStudy {
+                            Text("습득 진척 +\(result.gain, specifier: "%.1f") / 100 · \(result.after == 100 ? "등록 숙련 \((study.restoredMastery ?? 20).formatted(.number.precision(.fractionLength(1))))" : "다음 훈련일에 이어서 학습")")
+                                .font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("homePitchStudyGrowth")
                         } else {
                             Text("\(result.trait == nil ? "성장" : "진척") +\(result.gain, specifier: "%.1f") · 평균 \(result.average, specifier: "%.1f")점 · \(result.trait == nil ? "다음 새 경기 반영" : "습득 후 직접 활성화")")
                                 .font(.caption).foregroundStyle(GameTheme.growth)
@@ -355,7 +361,8 @@ struct PlayerHomeView: View {
                     }
                 }
             case .positions:
-                PositionHomePanel(player: player, calendar: calendar)
+                if player.role == .pitcher { pitchLibrary(calendar) }
+                else { PositionHomePanel(player: player, calendar: calendar) }
             case .practice:
                 NavigationLink { TrainingPracticeView(sourcePlayers: players, initialRole: player.role) } label: { Text("자유 연습 · 성장/날짜/피로 변화 없음") }
                     .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("openTrainingPractice")
@@ -389,6 +396,7 @@ struct PlayerHomeView: View {
                         ManagementMetricRow(title: pitch.name, value: String(format: "%.1f", pitch.mastery))
                     }
                     Text("준비 화면에서 훈련할 보유 구종을 선택합니다.").managementFont(.helper)
+                    pitchLibrary(calendar)
                 } else {
                     let value = HomeAbilitySummary(player: player, abilities: abilities).originals.first { $0.id == "home" + activeTrainingKind.rawValue.prefix(1).uppercased() + activeTrainingKind.rawValue.dropFirst() }
                     if let value {
@@ -409,6 +417,11 @@ struct PlayerHomeView: View {
                 .buttonStyle(ManagementButtonStyle()).disabled(todayTraining != nil || calendar.hasAction(on: player.gameDate))
                 .accessibilityIdentifier(todayTraining == nil ? "openTraining" : "openNewAbilityTraining")
         }
+    }
+    private func pitchLibrary(_ calendar: CareerCalendarState) -> some View {
+        NavigationLink { PitchRepertoireView(player: player, calendar: calendar) } label: {
+            Text("구종 보관함 · 습득 / 교체")
+        }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openPitchLibrary")
     }
 
     private func trainingLink(_ calendar: CareerCalendarState) -> some View {

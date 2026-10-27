@@ -303,8 +303,7 @@ enum MatchPresentation {
     }
     static func pitchName(_ result: ManualMatchResult?) -> String {
         guard let result else { return "투구 대기" }
-        let names = ["four-seam": "포심", "slider": "슬라이더", "changeup": "체인지업", "fork": "포크"]
-        return result.pitchCode.flatMap { names[$0] } ?? "구종 미기록"
+        return result.pitchCode.flatMap { PitchType(rawValue: $0)?.label } ?? "구종 미기록"
     }
 }
 
@@ -318,14 +317,28 @@ struct PitchFlightPresentation {
 }
 
 enum MatchBallPath {
+    static func movement(_ code: String) -> (lateral: Double, drop: Double) {
+        switch PitchType(rawValue: code) ?? .fourSeam {
+        case .fourSeam: (0, 0.018)
+        case .twoSeam: (-0.055, 0.05)
+        case .cutter: (0.06, 0.035)
+        case .slider: (0.10, 0.06)
+        case .curve: (0.065, 0.23)
+        case .changeup: (-0.05, 0.12)
+        case .fork: (0, 0.20)
+        case .sweeper: (0.19, 0.07)
+        case .knuckle: (0.025, 0.16)
+        }
+    }
     static func point(from start: CGPoint, to end: CGPoint, size: CGSize, role: PlayerRole,
                       hand: String, code: String, progress: Double) -> CGPoint {
         let t = min(1, max(0, progress))
         let depth = role == .batter ? t / (2.4 - 1.4 * t) : 2.4 * t / (1 + 1.4 * t)
         // A late-breaking arc returns to the saved endpoint without oscillation.
         let bend = depth - depth * depth * depth
-        let lateral = (code == "slider" ? 0.10 : code == "changeup" ? -0.05 : 0) * (hand == "left" ? -1.0 : 1)
-        let drop = code == "fork" ? 0.20 : code == "changeup" ? 0.12 : code == "slider" ? 0.06 : 0.018
+        let movement = movement(code)
+        let lateral = movement.lateral * (hand == "left" ? -1.0 : 1)
+        let drop = movement.drop
         return CGPoint(x: start.x + (end.x - start.x) * depth - lateral * size.width * bend,
                        y: start.y + (end.y - start.y) * depth + drop * size.height * bend)
     }
@@ -414,13 +427,16 @@ struct MatchScoreStrip: View {
 struct MatchGrip: View {
     let code: String
     let hand: String
+    static func image(code: String) -> UIImage? {
+        let extra: [String: Int] = ["two-seam": 0, "cutter": 2, "sweeper": 3, "curve": 4, "fork": 6, "knuckle": 7]
+        if let cell = extra[code] { return MatchArt.cell("grips-extra", column: cell % 4, row: cell / 4, columns: 4, rows: 2) }
+        return MatchArt.image(code == "slider" ? "grip-slider" : code == "changeup" ? "grip-changeup" : "grip-fastball")
+    }
     var body: some View {
-        let image = code == "fork" ? MatchArt.cell("grips-extra", column: 2, row: 1, columns: 4, rows: 2)
-            : MatchArt.image(code == "slider" ? "grip-slider" : code == "changeup" ? "grip-changeup" : "grip-fastball")
-        if let image {
+        if let image = Self.image(code: code) {
             Image(uiImage: image).resizable().interpolation(.none).scaledToFit()
                 .scaleEffect(x: hand == "left" ? -1 : 1, y: 1)
-                .accessibilityLabel(hand == "left" ? "왼손 구종 그립" : "오른손 구종 그립")
+                .accessibilityLabel((hand == "left" ? "왼손 " : "오른손 ") + (PitchType(rawValue: code)?.label ?? "구종") + " 그립")
         }
     }
 }

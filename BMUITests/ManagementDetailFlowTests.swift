@@ -2,6 +2,107 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV26CreationThreeAndFivePitchSelectionsMatchHomeLibrary() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let defaults = ["four-seam", "slider", "changeup", "fork"]
+        for count in [3, 5] {
+            app.terminate()
+            app.launchArguments = ["-management-career-verification", "-management-empty-verification"]
+            app.launch()
+            let name = app.textFields["playerName"]
+            XCTAssertTrue(name.waitForExistence(timeout: 15))
+            name.tap(); name.typeText("V26Pitch\(count)")
+            if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
+            reveal(app.buttons["role-pitcher"], app); app.buttons["role-pitcher"].tap()
+            reveal(app.buttons["randomSchool"], app); app.buttons["randomSchool"].tap()
+            for code in defaults {
+                let pitch = app.buttons["creationPitch-" + code]
+                reveal(pitch, app); XCTAssertTrue(pitch.isSelected)
+                XCTAssertGreaterThanOrEqual(pitch.frame.height, 44)
+            }
+            let countBadge = app.descendants(matching: .any).matching(identifier: "creationPitchCount").firstMatch
+            reveal(countBadge, app); XCTAssertTrue(countBadge.label.contains("보유 4 / 5"))
+            let selected: [String]
+            if count == 3 {
+                let fork = app.buttons["creationPitch-fork"]; reveal(fork, app); fork.tap()
+                selected = Array(defaults.prefix(3))
+                let minimum = app.buttons["creationPitch-slider"]
+                reveal(minimum, app); XCTAssertTrue(minimum.isSelected); XCTAssertFalse(minimum.isEnabled)
+            } else {
+                let curve = app.buttons["creationPitch-curve"]; reveal(curve, app); curve.tap()
+                selected = defaults + ["curve"]
+                let sixth = app.buttons["creationPitch-knuckle"]
+                reveal(sixth, app); XCTAssertFalse(sixth.isSelected); XCTAssertFalse(sixth.isEnabled)
+            }
+            reveal(countBadge, app); XCTAssertTrue(countBadge.label.contains("보유 \(count) / 5"))
+            capture(app, "v26-creation-\(count)-pitch-limits")
+            reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("V26Pitch\(count)"))
+            capture(app, "v26-created-\(count)-pitch-home")
+            app.buttons["managementTab-player"].tap(); app.buttons["facility-abilities"].tap()
+            for code in selected {
+                let mastery = app.descendants(matching: .any).matching(identifier: code).firstMatch
+                reveal(mastery, app); XCTAssertTrue(mastery.exists, "Selected pitch \(code) must appear in player abilities")
+            }
+            capture(app, "v26-created-\(count)-pitch-abilities")
+            reveal(app.buttons["openPitchLibrary"], app); app.buttons["openPitchLibrary"].tap()
+            XCTAssertTrue(app.staticTexts["등록 구종 · \(count) / 5"].waitForExistence(timeout: 6))
+            let owned = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "pitchLibraryOwned-"))
+            XCTAssertEqual(Set(owned.allElementsBoundByIndex.map(\.identifier)), Set(selected.map { "pitchLibraryOwned-" + $0 }))
+            capture(app, "v26-created-\(count)-pitch-library")
+        }
+    }
+
+    @MainActor func testV26CurveStudyFiveAttemptsStoresProgressAndDailyLock() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15)); pickPitcher(app)
+        let before = status(app)
+        app.buttons["managementTab-player"].tap(); app.buttons["facility-abilities"].tap()
+        reveal(app.buttons["openPitchLibrary"], app); app.buttons["openPitchLibrary"].tap()
+        XCTAssertTrue(app.staticTexts["등록 구종 · 4 / 5"].waitForExistence(timeout: 6))
+        let progress = app.staticTexts["pitchStudyProgress-curve"]
+        reveal(progress, app); let priorProgress = progress.label
+        XCTAssertTrue(priorProgress.contains("0.0 / 100"))
+        let start = app.buttons["pitchStudyStart-curve"]
+        reveal(start, app); XCTAssertTrue(start.isEnabled); capture(app, "v26-curve-study-ready"); start.tap()
+        let confirm = app.buttons.matching(identifier: "pitchStudyConfirm").firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3)); confirm.tap()
+        let begin = app.buttons["startTraining"]
+        XCTAssertTrue(begin.waitForExistence(timeout: 6)); reveal(begin, app); begin.tap()
+        for round in 1...5 {
+            let attempt = app.buttons["trainingAttempt"]
+            reveal(attempt, app)
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: attempt)
+            XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+            attempt.tap()
+            attempt.tap()
+            let next = app.buttons["trainingNext"]
+            XCTAssertTrue(next.waitForExistence(timeout: 10), "Round \(round) must finish flight and coaching")
+            if round == 1 { capture(app, "v26-curve-study-first-coaching") }
+            reveal(next, app); next.tap()
+        }
+        let result = app.staticTexts["pitchStudyResult"]
+        XCTAssertTrue(result.waitForExistence(timeout: 6))
+        let afterText = try XCTUnwrap(result.label.components(separatedBy: "→").last?.components(separatedBy: "/").first)
+        let after = try XCTUnwrap(Double(afterText.trimmingCharacters(in: .whitespacesAndNewlines)))
+        XCTAssertGreaterThan(after, 0); XCTAssertLessThan(after, 100)
+        capture(app, "v26-curve-study-growth-result")
+        reveal(app.buttons["trainingReturnHome"], app); app.buttons["trainingReturnHome"].tap()
+        XCTAssertTrue(app.staticTexts["등록 구종 · 4 / 5"].waitForExistence(timeout: 6))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "pitchLibraryOwned-curve").firstMatch.exists)
+        reveal(progress, app); XCTAssertNotEqual(progress.label, priorProgress)
+        reveal(start, app); XCTAssertFalse(start.isEnabled)
+        let locked = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "오늘 행동을 사용했습니다")).firstMatch
+        reveal(locked, app); XCTAssertTrue(locked.exists)
+        capture(app, "v26-curve-study-progress-and-daily-lock")
+        app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+        XCTAssertEqual(status(app)[0], before[0]); XCTAssertEqual(status(app)[2], "행동 0/1")
+        capture(app, "v26-curve-study-home-action-used")
+    }
+
     @MainActor func testPlayerLeagueAndFrozenScoutBoardsBothRoles() {
         let app = launch()
         for pitcher in [false, true] {

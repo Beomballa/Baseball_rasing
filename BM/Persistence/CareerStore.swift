@@ -47,7 +47,14 @@ import SwiftData
         guard let school = schools.first(where: { $0.id == draft.schoolID }) else { throw CreationError.invalidSchool }
         let player = CareerPlayer(draft: draft, school: school)
         let values = draft.initialValues
+        if player.role == .pitcher {
+            player.pitches = draft.selectedPitchCodes.enumerated().compactMap { order, code in
+                guard let pitch = PitchType(rawValue: code), let mastery = values.pitches[code] else { return nil }
+                return CareerSchemaV1.PitchMastery(code: code, name: pitch.label, mastery: mastery, order: order)
+            }
+        }
         let abilities = try PlayerAbilities(player: player, archetype: draft.selectedArchetype, customValues: draft.isCustom ? values : nil)
+        abilities.initialValues = try JSONEncoder().encode(values)
         PlayerAbilityStore.apply(values, to: player)
         let traits = try PlayerTraits(playerID: player.id,
             loadout: TraitLoadout.initial(speed: player.speed, defense: player.defense, arm: player.arm), source: "initial-v1")

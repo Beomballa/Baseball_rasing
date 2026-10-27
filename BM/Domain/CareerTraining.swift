@@ -43,6 +43,33 @@ struct ContactTrainingResult: Codable, Equatable {
     var total: Int { Int((Double(positionScore) * 0.65 + Double(timingScore) * 0.35).rounded()) }
 }
 
+struct PitchStoredSkill: Codable, Equatable, Identifiable {
+    let code: String
+    let name: String
+    let mastery: Double
+    let order: Int
+    var id: String { code }
+}
+
+struct PitchStudy: Codable, Equatable {
+    let code: String
+    let replacing: String?
+    let rosterSnapshot: [PitchStoredSkill]
+    let restoredMastery: Double?
+    var retired: PitchStoredSkill? { rosterSnapshot.first { $0.code == replacing } }
+    func validate(training: CareerTraining) throws {
+        guard PitchType(rawValue: code) != nil, training.role == "pitcher", training.selectedKind == .pitch,
+              training.pitchCode == code, training.kind == nil, training.trait == nil, training.position == nil,
+              !rosterSnapshot.contains(where: { $0.code == code }),
+              Set(rosterSnapshot.map(\.code)).count == rosterSnapshot.count,
+              rosterSnapshot.allSatisfy({ !$0.code.isEmpty && !$0.name.isEmpty && $0.mastery.isFinite && (0...100).contains($0.mastery) && $0.order >= 0 }),
+              replacing == nil ? rosterSnapshot.count < 5 : retired != nil,
+              restoredMastery.map({ $0.isFinite && (0...100).contains($0) && training.before == 100 }) ?? (training.before < 100) else {
+            throw TrainingError.invalidRecord
+        }
+    }
+}
+
 struct CareerTraining: Codable, Equatable {
     let playerID: UUID
     let date: String
@@ -54,6 +81,7 @@ struct CareerTraining: Codable, Equatable {
     var position: FieldPosition?
     var positionRevision: Int?
     var positionXP: Double?
+    var pitchStudy: PitchStudy?
     var selectedKind: TrainingKind { kind ?? (pitchCode == nil ? .contact : .pitch) }
     let before: Double
     let fatigue: Int
@@ -66,9 +94,10 @@ struct CareerTraining: Codable, Equatable {
     var average: Double { scores.isEmpty ? 0 : Double(scores.reduce(0, +)) / Double(scores.count) }
     var positionGainXP: Double { completed && position != nil ? PositionTrainingRules.gainedXP(mastery: before, score: average.rounded(), fatigue: fatigue, age: age) : 0 }
     var positionAfter: PositionSkill { PositionTrainingRules.adding(positionGainXP, to: PositionSkill(mastery: before, xp: positionXP ?? 0)) }
-    var after: Double { position != nil ? positionAfter.mastery : completed ? (trait == nil ? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil) : TrainingRules.traitGrowth(before: before, score: average.rounded(), fatigue: fatigue, age: age)) : before }
+    var after: Double { position != nil ? positionAfter.mastery : completed ? (trait == nil && pitchStudy == nil ? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil) : TrainingRules.traitGrowth(before: before, score: average.rounded(), fatigue: fatigue, age: age)) : before }
+    var controlMastery: Double { pitchStudy.map { $0.restoredMastery ?? min(40, 20 + before * 0.2) } ?? before }
     var gain: Double { TrainingRules.round(after - before) }
-    var title: String { (position?.label ?? trait?.label ?? selectedKind.label) + " 훈련" }
+    var title: String { pitchStudy.map { (PitchType(rawValue: $0.code)?.label ?? $0.code) + ($0.restoredMastery == nil ? " 습득 훈련" : " 재등록 훈련") } ?? (position?.label ?? trait?.label ?? selectedKind.label) + " 훈련" }
     func throwBase(_ round: Int) -> Int { trait == nil ? TrainingRules.throwBase(round) : [1, 2, 3, 2, 1][round] }
 
     init(playerID: UUID, date: String, role: String, pitchCode: String?, before: Double, fatigue: Int, age: Int, calendarRevision: Int, kind: TrainingKind? = nil, position: FieldPosition? = nil) {
@@ -151,7 +180,7 @@ struct CareerTraining: Codable, Equatable {
         case .pitch:
             guard input.force == nil, input.angle == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
             guard role == "pitcher", input.timing == nil, let release = input.release else { throw TrainingError.invalidInput }
-            score = ManualMatchRules.releaseQuality(release, mastery: before) * 100
+            score = ManualMatchRules.releaseQuality(release, mastery: controlMastery) * 100
         case .contact:
             guard input.force == nil, input.angle == nil, input.calledStrike == nil else { throw TrainingError.invalidInput }
             guard role == "batter", input.release == nil else { throw TrainingError.invalidInput }
