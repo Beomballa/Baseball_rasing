@@ -2,6 +2,37 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV34ObservedNPCPerformanceAndFatigueAreReadOnlyBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench","-v34-npc-evidence"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:120))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-game"].tap();app.buttons["facility-game"].tap()
+            reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+            let sample=app.staticTexts["npcPerformanceSample"];reveal(sample,app);XCTAssertTrue(sample.isHittable)
+            let result=app.staticTexts["npcPerformanceStatus"];reveal(result,app);XCTAssertTrue(result.label.contains("평가 가능"))
+            capture(app,"v34-"+(pitcher ? "pitcher":"batter")+"-actual-performance")
+            let fatigue=app.staticTexts["npcFatigueStatus"];reveal(fatigue,app);XCTAssertTrue(fatigue.isHittable);XCTAssertTrue(fatigue.label.contains("준비"))
+            capture(app,"v34-"+(pitcher ? "pitcher":"batter")+"-fatigue")
+            let first=fatigue.label
+            app.navigationBars.buttons.element(boundBy:0).tap();app.buttons["openClubSelection"].tap()
+            reveal(fatigue,app);XCTAssertEqual(fatigue.label,first)
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before)
+        }
+    }
+    @MainActor func testV34SmallPhoneLargeTextSampleAndFatigueRemainReachable() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench","-v34-npc-evidence","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:120))
+        app.buttons["managementLargeMenu"].tap();app.buttons["경기"].tap()
+        reveal(app.buttons["facility-game"],app);app.buttons["facility-game"].tap();reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+        let sample=app.staticTexts["npcPerformanceSample"];reveal(sample,app);XCTAssertTrue(sample.isHittable)
+        capture(app,"v34-large-sample")
+        let fatigue=app.staticTexts["npcFatigueStatus"];reveal(fatigue,app);XCTAssertTrue(fatigue.isHittable)
+        capture(app,"v34-large-fatigue")
+    }
     @MainActor func testV33OpponentAndCompetitionShowStoredCompleteProfilesBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification"];app.launch()

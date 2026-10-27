@@ -1439,6 +1439,9 @@ enum GoalSpecialError:LocalizedError {
         let rival: ClubSelectionCandidate
         let values:PlayerInitialValues
         let rivalMastery:Double
+        guard let fielder=team.players.first(where:{$0.position == position}) else {throw ContractRegistrationError.invalid}
+        let rivalID=player.role == .pitcher ? attack.starter.id:fielder.id
+        let npcEvidence=try NPCSelectionStore.evidence(playerID:player.id,rivalID:rivalID,teamID:member.teamID,position:position,level:member.level,date:date,in:context)
         if player.role == .pitcher {
             let npc = attack.starter
             guard let profile=npc.profile,let field=team.players.first(where:{$0.position == "P"}),let bat=attack.batters.first(where:{$0.position == "P"}),let position=bat.profile else {throw ContractRegistrationError.invalid}
@@ -1446,15 +1449,15 @@ enum GoalSpecialError:LocalizedError {
                 velocity:npc.velocity,control:npc.control,stuff:profile.stuff,stamina:profile.stamina)
             raw.pitches=profile.mastery;values=raw;rivalMastery=position.positionMastery
             guard let rating=try ScoutingRoleEvaluation.grades(role:.pitcher,abilities:ScoutingClubCatalog.abilities(values,role:.pitcher),positionMastery:nil).first?.score else {throw ContractRegistrationError.invalid}
-            rival=ClubSelectionCandidate(id:npc.id,h:rating,p:0,readiness:100,evidence:nil,note:"선수별 고정 프로필2 · 멘탈·구위·지구력·보유 구종 숙련을 함께 반영. 피로 원장 없음·준비100, 검증 성과 P0 중립")
+            rival=ClubSelectionCandidate(id:npc.id,h:rating,p:npcEvidence.p,readiness:100-npcEvidence.fatigue,evidence:npcEvidence.source,note:NPCSelectionStore.note(npcEvidence))
         } else {
             guard let npc=team.players.first(where:{$0.position == position}),let bat=attack.batters.first(where:{$0.id == npc.id}),let profile=bat.profile else {throw ContractRegistrationError.invalid}
             values=PlayerInitialValues(contact:bat.contact,power:bat.power,discipline:bat.discipline,speed:npc.speed,defense:npc.defense,arm:npc.arm,mental:profile.mental)
             rivalMastery=profile.positionMastery
             guard let rating=try ScoutingRoleEvaluation.grades(role:.batter,abilities:ScoutingClubCatalog.abilities(values,role:.batter),positionMastery:rivalMastery).first(where:{$0.id == roleID})?.score else {throw ContractRegistrationError.invalid}
-            rival=ClubSelectionCandidate(id:npc.id,h:rating,p:0,readiness:100,evidence:nil,note:"같은 자리 선수별 고정 프로필2 · 공격·주루·수비·송구·멘탈/위치 숙련. 피로 원장 없음·준비100, 검증 성과 P0 중립")
+            rival=ClubSelectionCandidate(id:npc.id,h:rating,p:npcEvidence.p,readiness:100-npcEvidence.fatigue,evidence:npcEvidence.source,note:NPCSelectionStore.note(npcEvidence))
         }
-        return try ClubSelectionReview.make(context:contextID,membershipID:member.offerID,teamID:member.teamID,level:member.level,position:position,roleID:roleID,date:date,own:own,rival:rival,previous:previous,rivalAbilities:values,rivalPositionMastery:rivalMastery)
+        return try ClubSelectionReview.make(context:contextID,membershipID:member.offerID,teamID:member.teamID,level:member.level,position:position,roleID:roleID,date:date,own:own,rival:rival,previous:previous,rivalAbilities:values,rivalPositionMastery:rivalMastery,rivalEvidence:npcEvidence)
     }
 
     static func frozenPerformance(player:CareerPlayer,calendar:CareerCalendarState,level:String,owner:CareerContractJournal,in context:ModelContext) throws -> (p:Double,source:String?,note:String) {
@@ -1496,5 +1499,105 @@ enum GoalSpecialError:LocalizedError {
             if match.appearance { starts += 1 } else if !selection.rotationDay { rotation += 1 } else { bench += 1 }
         }
         return ClubOpportunitySummary(through:through,keys:keys.sorted(),starts:starts,bench:bench,rotationRest:rotation)
+    }
+}
+
+
+@MainActor enum NPCSelectionStore {
+    struct Game {
+        let key:String
+        let date:GameDate
+        let match:CareerMatch
+    }
+    // The same completed fixture is one workload/performance event, not another mutable cumulative total.
+    static func games(playerID:UUID,level:String,date:GameDate,in context:ModelContext) throws -> [Game] {
+        let official=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == playerID && $0.completed}))
+        let automatic=try AutomaticLeagueStore.records(playerID:playerID,year:date.year,in:context)
+        var seen:[String:Data]=[:],result:[Game]=[]
+        func add(fixture:String,day:String,payload:Data,snapshot:() throws -> CareerMatch) throws {
+            let parsed=try GameDate(day)
+            guard parsed.year == date.year,parsed<date else {return}
+            let match=try snapshot()
+            guard (match.competition ?? "highschool") == level else {return}
+            let key=CareerMatchRecord.key(playerID,fixture)
+            if let old=seen[key] {guard old == payload else {throw MatchError.invalidRecord};return}
+            seen[key]=payload
+            guard match.completed else {throw MatchError.invalidRecord}
+            result.append(Game(key:key,date:parsed,match:match))
+        }
+        for row in official {try add(fixture:row.fixtureID,day:row.gameDate,payload:row.payload,snapshot:{try row.snapshot()})}
+        for row in automatic {try add(fixture:row.fixtureID,day:row.gameDate,payload:row.payload,snapshot:{try row.snapshot()})}
+        return result.sorted {$0.date == $1.date ? $0.key<$1.key:$0.date<$1.date}
+    }
+    private static func tracked(_ games:[Game],id:String) -> [Game] {
+        games.filter {$0.match.npcReadiness?.players.contains(where:{$0.id == id}) == true}
+    }
+    static func readiness(playerID:UUID,attack:MatchNPCAttack,date:GameDate,in context:ModelContext) throws -> MatchNPCReadiness {
+        let history=try games(playerID:playerID,level:attack.competition,date:date,in:context)
+        let ids=Set([attack.home,attack.away].flatMap {$0.batters.map(\.id)+[$0.starter.id,$0.relief.id]})
+        let players=try ids.sorted().map {id in
+            let last=tracked(history,id:id).last
+            let fatigue=try last.map {try $0.match.npcReadiness!.fatigue(for:id,match:$0.match,on:date)} ?? 0
+            return NPCReadinessPlayer(id:id,fatigue:fatigue)
+        }
+        return MatchNPCReadiness(date:date.description,players:players)
+    }
+    private struct Counts {
+        var games=0
+        var batting=MatchBattingCounts()
+        var pitching=MatchPitchingCounts(earnedRuns:0)
+    }
+    static func performance(games:[Game],rivalID:String,teamID:String,position:String,level:String) throws -> NPCSelectionPerformance? {
+        var groups:[String:[String:Counts]]=[:],sources:[String:Set<String>]=[:]
+        for game in games {
+            let match=game.match
+            guard rivalID.hasPrefix("npc-v1/\(level)/\(game.date.year)/\(teamID)/"),
+                  let attack=match.npcAttack,attack.version == 2,attack.competition == level,attack.year == game.date.year,let ledger=match.playerRecords,
+                  match.controlVersion == 2,match.detailedFieldVersion == 5,match.battedBallVersion == 1 else {continue}
+            let route:String
+            if match.role == "league" {route="automatic"}
+            else if let inputs=match.scoutingPerformance?.inputs {
+                route=inputs.direct == 0 ? "automatic":match.role+"-"+inputs.mode.suffix
+            } else {continue}
+            let environment="npc-selection-v1/"+level+"/control2-field5-batted1-attack2/"+route+"/"+position
+            for (team,records) in [(attack.home,ledger.home),(attack.away,ledger.away)] {
+                let id=position == "P" ? team.starter.id:team.batters.first {$0.position == position}?.id
+                guard let id else {continue}
+                // The user's UUID and the unused NPC placeholder never become fabricated appearances.
+                var counts=groups[environment]?[id] ?? Counts()
+                let batting=records.batting.first {$0.id == id}?.counts ?? MatchBattingCounts()
+                let pitching=records.pitching.first {$0.id == id && $0.role == "starter"}?.counts ?? MatchPitchingCounts(earnedRuns:0)
+                guard position == "P" ? pitching.pitches>0:batting.plateAppearances>0 else {continue}
+                counts.games+=1;counts.batting.add(batting);counts.pitching.add(pitching)
+                groups[environment,default:[:]][id]=counts;sources[environment,default:[]].insert(game.key)
+            }
+        }
+        let rows=try groups.compactMap {environment,players -> NPCSelectionPerformance? in
+            guard let own=players[rivalID] else {return nil}
+            var batting=MatchBattingCounts(),pitching=MatchPitchingCounts(earnedRuns:0)
+            let peers=players.filter {$0.key != rivalID}
+            for (_,counts) in peers {batting.add(counts.batting);pitching.add(counts.pitching)}
+            let result=NPCSelectionPerformance(environment:environment,fixtures:Array(sources[environment] ?? []).sorted(),games:own.games,batting:own.batting,pitching:own.pitching,
+                peerBatting:batting,peerPitching:pitching,peerPlayers:peers.count)
+            try result.validate();return result
+        }
+        return rows.sorted {
+            if $0.enough != $1.enough {return $0.enough}
+            return $0.sample == $1.sample ? $0.environment<$1.environment:$0.sample>$1.sample
+        }.first
+    }
+    static func evidence(playerID:UUID,rivalID:String,teamID:String,position:String,level:String,date:GameDate,in context:ModelContext) throws -> NPCSelectionEvidence {
+        guard rivalID.hasPrefix("npc-v1/\(level)/\(date.year)/\(teamID)/") else {throw ContractRegistrationError.invalid}
+        let history=try games(playerID:playerID,level:level,date:date,in:context)
+        let workloads=tracked(history,id:rivalID),last=workloads.last
+        let fatigue=try last.map {try $0.match.npcReadiness!.fatigue(for:rivalID,match:$0.match,on:date)} ?? 0
+        return NPCSelectionEvidence(through:date.adding(days:-1).description,performance:try performance(games:history,rivalID:rivalID,teamID:teamID,position:position,level:level),fatigue:fatigue,
+            trackingSince:workloads.first?.date.description,lastWorkloadKey:last?.key,lastWorkloadDate:last?.date.description,lastCost:last.map {$0.match.npcReadiness!.cost(for:rivalID,match:$0.match)})
+    }
+    static func note(_ evidence:NPCSelectionEvidence) -> String {
+        let performance=evidence.performance
+        let result=performance?.enough == true ? "같은 수준·포지션·조작 환경의 실제 NPC 성과":"동일 환경 실제 표본 부족 · P0 중립"
+        let fatigue=evidence.trackingSince == nil ? "피로 기록 시작 전 · 기준0":"실제 출전량·날짜 회복에 따른 평가 피로"
+        return result+". "+fatigue+". 이미 고정한 평가/경기는 재계산하지 않습니다."
     }
 }

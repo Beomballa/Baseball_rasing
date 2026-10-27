@@ -255,6 +255,7 @@ enum CareerSchemaV14:VersionedSchema {
                   records.year == (try GameDate(gameDate)).year,roster.year == records.year,
                   fixtureID == gameDate+"-"+roster.home.teamID+"-"+roster.away.teamID,
                   match.fieldPlays?.isEmpty == true,match.homeRuns == nil else {throw LeagueError.invalidRecord}
+            try match.npcReadiness?.validate(match:match,date:gameDate)
             try attack.validate(roster:roster);try match.validatePitching();try match.validateDetailedField();try records.validate(match:match);try match.pitchLog?.validate(match:match)
             return match
         }
@@ -270,7 +271,7 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         guard Set(rows.map(\.key)).count == rows.count else {throw LeagueError.invalidRecord}
         return rows
     }
-    static func simulate(playerID:UUID,fixture:SeasonFixture,competition:String) throws -> CareerMatch {
+    static func simulate(playerID:UUID,fixture:SeasonFixture,competition:String,readiness:MatchNPCReadiness?=nil) throws -> CareerMatch {
         let seed=("native-league-player-records-v1/"+playerID.uuidString+"/"+competition+"/"+fixture.id).utf8.reduce(UInt64(14695981039346656037)){($0 ^ UInt64($1)) &* 1099511628211}
         var match=CareerMatch(random:seed,isHome:true,role:"league",appearance:false,contact:60,power:60,discipline:60,mastery:[:])
         match.competition=competition == "highschool" ? nil:competition
@@ -279,7 +280,7 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         match.npcAttack=MatchNPCAttack.makeComplete(roster:match.npcFielders!)
         match.pitching=MatchPitching();match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.playerRecords=MatchPlayerRecords.make(match:match,careerID:playerID,fixtureID:fixture.id,trackEarnedRuns:true)
-        match.pitchLog=MatchPitchLog()
+        match.pitchLog=MatchPitchLog();match.npcReadiness=readiness
         try match.advance(.automatic)
         try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match);try match.pitchLog?.validate(match:match)
         // Automatic games retain their result/rosters/counters, not unused replay geometry.
@@ -298,7 +299,9 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
                 guard row.competition == level,saved.npcFielders?.home.teamID == fixture.homeID,saved.npcFielders?.away.teamID == fixture.awayID else {throw LeagueError.invalidRecord}
                 continue
             }
-            let match=try simulate(playerID:player.id,fixture:fixture,competition:level)
+            let roster=MatchNPCFielders.make(year:date.year,competition:level,homeID:fixture.homeID,awayID:fixture.awayID)
+            let readiness=try NPCSelectionStore.readiness(playerID:player.id,attack:MatchNPCAttack.makeComplete(roster:roster),date:date,in:context)
+            let match=try simulate(playerID:player.id,fixture:fixture,competition:level,readiness:readiness)
             context.insert(try CareerLeagueGameRecord(playerID:player.id,fixture:fixture,competition:level,match:match))
         }
     }

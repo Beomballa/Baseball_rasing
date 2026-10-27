@@ -74,6 +74,7 @@ struct CareerMatch: Codable, Equatable {
     var battedBallVersion: Int?
     var npcFielders:MatchNPCFielders?
     var npcAttack:MatchNPCAttack? = nil
+    var npcReadiness: MatchNPCReadiness? = nil
     var playerRecords:MatchPlayerRecords? = nil
     var inningScores: MatchInningScores? = nil
     var clubSelection: MatchClubSelection? = nil

@@ -75,6 +75,7 @@ enum CareerSchemaV3: VersionedSchema {
                 try roster.validate()
                 guard preparation.analysis == MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack) else {throw MatchError.invalidRecord}
             }
+            try match.npcReadiness?.validate(match:match,date:gameDate)
             try match.clubSelection?.validate(fixtureID:fixtureID,playerID:playerID,date:gameDate,competition:match.competition,appearance:match.appearance,role:match.role)
             if let selection=match.clubSelection {
                 guard match.npcFielders?.team(home:match.isHome).teamID == selection.review.teamID,
@@ -189,7 +190,10 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         match.scoutingPerformance = .tracked
         match.inningScores = MatchInningScores()
         if match.npcAttack != nil {match.playerRecords=MatchPlayerRecords.make(match:match,careerID:player.id,fixtureID:fixture.id,trackEarnedRuns:true)}
-        if match.playerRecords != nil {match.pitchLog=MatchPitchLog()}
+        if match.playerRecords != nil {
+            match.pitchLog=MatchPitchLog()
+            match.npcReadiness=try NPCSelectionStore.readiness(playerID:player.id,attack:match.npcAttack!,date:fixture.date,in:context)
+        }
         if match.appearance { match.settle() }
         try match.inningScores?.validate(match: match)
         try match.pitchLog?.validate(match:match)

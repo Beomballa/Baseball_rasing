@@ -2822,6 +2822,7 @@ struct ClubSelectionScreen: View {
                     candidate(review.own,title:player.name,isOwn:true)
                     candidate(review.rival,title:"같은 자리 가상 선수",isOwn:false)
                 }
+                if let evidence=review.rivalEvidence {NPCSelectionEvidencePanel(evidence:evidence,role:player.role)}
                 if let values=review.rivalAbilities {
                     GamePanel(title:"경쟁자의 고정 능력",onBoard:true,contentSpacing:12) {
                         Text("평가 당시 프로필2 · "+review.position).font(.subheadline).foregroundStyle(GameTheme.gold)
@@ -2835,7 +2836,7 @@ struct ClubSelectionScreen: View {
                 }
                 GamePanel(title:"기용을 준비하는 방법",onBoard:true,contentSpacing:12) {
                     Text("기량 H60% · 성과25% · 준비도15%").font(.headline)
-                    Text("성과는 50+10P(10~90), 준비도는 평가 당시100−피로입니다. 미검증 성과는 P0 중립입니다.").font(.subheadline)
+                    Text("성과는 50+10P(10~90), 준비도는 평가 당시100−피로입니다. 내 성과는 고정 보고서, NPC는 동일 환경의 실제 선수 기록을 사용합니다. 표본 부족은 P0 중립입니다.").font(.subheadline)
                     Text("현재 피로 \(player.fatigue)/100 · 훈련으로 기량을 보완하거나 휴식으로 다음 평가를 준비하세요.").font(.subheadline)
                     Text("교체에는 점수 차5 이상이 필요하며 변경 후14일은 관찰합니다. 오늘의 휴식은 이미 고정한 주간 기용을 다시 뽑지 않습니다.").font(.subheadline)
                     Text("비출전 팀 경기는 개인 성적·경기 XP를 만들지 않습니다. 구단 시즌 목표의 원래 기준과 고정 보고서는 보존합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
@@ -2882,6 +2883,51 @@ private struct NPCSelectionAbilityRows: View {
                 }.accessibilityElement(children:.combine).accessibilityIdentifier("selectionRival-"+row.id)
                 ProgressView(value:row.current,total:100).tint(GameTheme.growth).accessibilityHidden(true)
             }
+        }
+    }
+}
+
+
+private struct NPCSelectionEvidencePanel: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    let evidence:NPCSelectionEvidence
+    let role:PlayerRole
+    private func n(_ value:Double) -> String {String(format:"%.1f",value)}
+    var body: some View {
+        GamePanel(title:"경쟁자의 실제 성과 · 컨디션",onBoard:true,contentSpacing:14) {
+            Text(ManagementDisplay.date(evidence.through)+" 완료 기록까지 · 평가 기준").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            if let performance=evidence.performance {
+                let sample=role == .pitcher ? performance.pitching.outs:performance.batting.plateAppearances
+                let needed=role == .pitcher ? 45:40
+                Text(role == .pitcher ? "실제 \(performance.pitching.innings)이닝 / 기준 15.0이닝":"실제 \(sample)타석 / 기준 40타석")
+                    .font(.headline.monospacedDigit()).accessibilityIdentifier("npcPerformanceSample")
+                ProgressView(value:Double(min(sample,needed)),total:Double(needed)).tint(GameTheme.gold).accessibilityHidden(true)
+                Text(performance.enough ? "평가 가능 · P "+n(performance.correction):"표본 대기 · P0 중립")
+                    .font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("npcPerformanceStatus")
+                if role == .pitcher {
+                    Text("K \(performance.pitching.strikeouts) · BB \(performance.pitching.walks) · 피홈런 \(performance.pitching.homeRuns)").font(.subheadline.monospacedDigit())
+                } else {
+                    Text("안타 \(performance.batting.hits) · 장타 \(performance.batting.doubles+performance.batting.triples+performance.batting.homeRuns) · 출루 \(performance.batting.hits+performance.batting.walks)").font(.subheadline.monospacedDigit())
+                }
+                Text("완료 \(performance.games)경기 · 같은 포지션 비교 \(performance.peerPlayers)명").font(.subheadline)
+                Text("같은 리그·포지션·조작 환경끼리 비교합니다. 비교군 2명과 기준 표본이 필요하며, 내 성과는 종전 고정 보고서를 유지합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                DisclosureGroup("실제 경기 출처 \(performance.fixtures.count)개") {
+                    Text(performance.environment).font(.caption).textSelection(.enabled)
+                    ForEach(performance.fixtures,id:\.self) {Text($0).font(.caption).textSelection(.enabled)}
+                }.font(.subheadline).tint(GameTheme.gold)
+            } else {
+                Text("아직 같은 환경의 출전 기록이 없습니다. P0 중립으로 평가합니다.").font(.subheadline).accessibilityIdentifier("npcPerformanceStatus")
+            }
+            Text("피로 "+n(evidence.fatigue)+" / 100"+(typeSize.isAccessibilitySize ? "\n":" · ")+"준비 "+n(100-evidence.fatigue))
+                .font(.headline.monospacedDigit()).accessibilityIdentifier("npcFatigueStatus")
+            ProgressView(value:evidence.fatigue,total:100).tint(GameTheme.gold).accessibilityHidden(true)
+            if let date=evidence.lastWorkloadDate,let cost=evidence.lastCost {
+                Text(ManagementDisplay.date(date)+" 출전량 +"+n(cost)+" · 이후 날짜 회복 반영").font(.subheadline)
+                Text("피로 기록 시작 "+ManagementDisplay.date((evidence.trackingSince ?? date))).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            } else {
+                Text("피로 기록 시작 전 · 기준 0. 과거 경기의 피로를 임의 복원하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            }
+            Text("출전 타석 +1 · 투구 수×지구력 비용\n수면 −4 · 비출전일 휴식 −18").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
         }
     }
 }

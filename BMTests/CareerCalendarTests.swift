@@ -5434,3 +5434,172 @@ extension CareerCalendarTests {
         }}}}
     }
 }
+
+
+extension CareerCalendarTests {
+    func testV34ObservedContributionThresholdShrinkageAndEvidenceValidation() throws {
+        let good=MatchBattingCounts(plateAppearances:40,atBats:32,singles:12,doubles:4,homeRuns:2,walks:8,strikeouts:3)
+        let peers=MatchBattingCounts(plateAppearances:80,atBats:72,singles:8,doubles:2,walks:8,strikeouts:24)
+        let data=NPCSelectionPerformance(environment:"npc-selection-v1/domestic-development/engine/SS",fixtures:["a","b"],games:2,batting:good,pitching:MatchPitchingCounts(),peerBatting:peers,peerPitching:MatchPitchingCounts(),peerPlayers:2)
+        try data.validate();XCTAssertTrue(data.enough)
+        let own=(8*0.7+12*0.9+4*1.3+2*2-3*0.25)/40.0
+        let other=(8*0.7+8*0.9+2*1.3-24*0.25)/80.0
+        XCTAssertEqual(data.correction,ScoutingContractFit.correction(value:own,reference:other,n:40));XCTAssertGreaterThan(data.correction,0)
+        let short=NPCSelectionPerformance(environment:data.environment,fixtures:data.fixtures,games:2,batting:MatchBattingCounts(plateAppearances:39,atBats:39,singles:39),pitching:data.pitching,peerBatting:peers,peerPitching:data.peerPitching,peerPlayers:2)
+        XCTAssertFalse(short.enough);XCTAssertEqual(short.correction,0)
+        let pitcher=NPCSelectionPerformance(environment:"npc-selection-v1/domestic-development/engine/P",fixtures:["a","b"],games:2,batting:MatchBattingCounts(),pitching:MatchPitchingCounts(pitches:180,battersFaced:60,outs:45,hits:10,homeRuns:1,walks:2,strikeouts:24),peerBatting:MatchBattingCounts(),peerPitching:MatchPitchingCounts(pitches:400,battersFaced:120,outs:90,hits:24,homeRuns:6,walks:20,strikeouts:12),peerPlayers:2)
+        try pitcher.validate();XCTAssertTrue(pitcher.enough);XCTAssertGreaterThan(pitcher.correction,0)
+    }
+    func testV34WorkloadCountsRecoveryAndNoChangesToEventsOrRNG() throws {
+        let id=UUID(),date=try GameDate("2030-04-01"),fixture=SeasonFixture(number:1,date:date,homeID:"A",awayID:"B")
+        let original=try AutomaticLeagueStore.simulate(playerID:id,fixture:fixture,competition:"domestic-development")
+        let attack=try XCTUnwrap(original.npcAttack)
+        let ids=Set([attack.home,attack.away].flatMap {$0.batters.map(\.id)+[$0.starter.id,$0.relief.id]})
+        let readiness=MatchNPCReadiness(date:date.description,players:ids.sorted().map {NPCReadinessPlayer(id:$0,fatigue:12)})
+        var tracked=try AutomaticLeagueStore.simulate(playerID:id,fixture:fixture,competition:"domestic-development",readiness:readiness)
+        try readiness.validate(match:tracked,date:date.description)
+        let npc=attack.home.starter,record=try XCTUnwrap(tracked.playerRecords?.home.pitching.first {$0.id == npc.id})
+        let cost=TrainingRules.round(Double(record.counts.pitches)*(0.3+0.002*(100-npc.profile!.stamina))+Double(tracked.playerRecords!.home.batting.first {$0.id == npc.id}?.counts.plateAppearances ?? 0))
+        XCTAssertEqual(readiness.cost(for:npc.id,match:tracked),cost)
+        XCTAssertEqual(try readiness.fatigue(for:npc.id,match:tracked,on:date.adding(days:1)),TrainingRules.round(max(0,min(100,12+cost)-4)))
+        XCTAssertEqual(try readiness.fatigue(for:npc.id,match:tracked,on:date.adding(days:3)),TrainingRules.round(max(0,min(100,12+cost)-4-44)))
+        let absent=attack.home.batters.first {$0.position == "P"}!.id
+        XCTAssertEqual(readiness.cost(for:absent,match:tracked),0)
+        XCTAssertEqual(try readiness.fatigue(for:absent,match:tracked,on:date.adding(days:1)),0)
+        tracked.npcReadiness=nil;XCTAssertEqual(tracked,original)
+        var corrupt=readiness
+        corrupt=MatchNPCReadiness(date:date.description,players:[NPCReadinessPlayer(id:npc.id,fatigue:Double.nan)])
+        XCTAssertThrowsError(try corrupt.validate(match:original,date:date.description))
+    }
+    func testV34PerformanceSeparatesRoutesLevelsLegacyAndNeverInventsBenchedStats() throws {
+        let id=UUID(),date=try GameDate("2030-04-01"),fixture=SeasonFixture(number:1,date:date,homeID:"A",awayID:"B")
+        let match=try AutomaticLeagueStore.simulate(playerID:id,fixture:fixture,competition:"domestic-development")
+        let rival=match.npcAttack!.home.batters.first {$0.position == "SS"}!.id
+        let game=NPCSelectionStore.Game(key:"one",date:date,match:match)
+        let data=try XCTUnwrap(NPCSelectionStore.performance(games:[game],rivalID:rival,teamID:"A",position:"SS",level:"domestic-development"))
+        XCTAssertEqual(data.games,1);XCTAssertEqual(data.batting,match.playerRecords!.home.batting.first {$0.id == rival}!.counts)
+        XCTAssertEqual(data.correction,0);XCTAssertFalse(data.enough)
+        var legacy=match;legacy.npcAttack=MatchNPCAttack.make(roster:match.npcFielders!)
+        XCTAssertNil(try NPCSelectionStore.performance(games:[.init(key:"old",date:date,match:legacy)],rivalID:rival,teamID:"A",position:"SS",level:"domestic-development"))
+        var missing=match;missing.playerRecords=nil
+        XCTAssertNil(try NPCSelectionStore.performance(games:[.init(key:"missing",date:date,match:missing)],rivalID:rival,teamID:"A",position:"SS",level:"domestic-development"))
+        var direct=match
+        // Only routing metadata differs here; the raw observed NPC counts stay identical.
+        direct=CareerMatch(random:1,isHome:true,role:"batter",appearance:false,contact:60,power:60,discipline:60,mastery:[:])
+        direct.npcAttack=match.npcAttack;direct.playerRecords=match.playerRecords;direct.controlVersion=2;direct.detailedFieldVersion=5;direct.battedBallVersion=1
+        direct.scoutingPerformance = .tracked;direct.scoutingPerformance?.inputs=ScoutingInputUsage(direct:1,automatic:0)
+        let separated=try XCTUnwrap(NPCSelectionStore.performance(games:[game,.init(key:"direct",date:date,match:direct)],rivalID:rival,teamID:"A",position:"SS",level:"domestic-development"))
+        XCTAssertEqual(separated.games,1);XCTAssertEqual(separated.fixtures.count,1)
+        XCTAssertNil(try NPCSelectionStore.performance(games:[game],rivalID:id.uuidString,teamID:"A",position:"SS",level:"domestic-development"))
+    }
+    func testV34OfficialAndAutomaticWorkloadRollbackAndWeeklyFreezeBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try v32Fixture(role),c=db.mainContext
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let row=try CareerMatchStore.start(player:p,state:s,in:c),start=try row.snapshot(),bytes=row.payload
+            XCTAssertNotNil(start.npcReadiness)
+            XCTAssertTrue(start.npcReadiness!.players.allSatisfy {$0.fatigue == 0})
+            let owner=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),ownerBytes=owner.payload
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(row.payload,bytes);XCTAssertEqual(owner.payload,ownerBytes)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            let frozen=try row.snapshot(),next=try GameDate(p.gameDate).adding(days:1),rival=frozen.clubSelection!.review.rival.id,team=frozen.clubSelection!.review.teamID
+            let data=try NPCSelectionStore.evidence(playerID:p.id,rivalID:rival,teamID:team,position:role == .pitcher ? "P":p.positionRaw,level:"domestic-development",date:next,in:c)
+            XCTAssertNotNil(data.trackingSince);XCTAssertNotNil(data.performance);XCTAssertGreaterThan(data.lastCost ?? 0,0)
+            XCTAssertEqual(data,try NPCSelectionStore.evidence(playerID:p.id,rivalID:rival,teamID:team,position:role == .pitcher ? "P":p.positionRaw,level:"domestic-development",date:next,in:c))
+            let final=row.payload,ownFatigue=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+            XCTAssertEqual(row.payload,final);XCTAssertEqual(p.fatigue,ownFatigue)
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertTrue(try AutomaticLeagueStore.records(playerID:p.id,in:c).isEmpty);XCTAssertEqual(row.payload,final)
+            try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
+            let autos=try AutomaticLeagueStore.records(playerID:p.id,in:c);XCTAssertEqual(autos.count,2)
+            XCTAssertTrue(try autos.allSatisfy {try $0.snapshot().npcReadiness != nil})
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,ownerBytes)
+            XCTAssertEqual(try ClubSelectionStore.projection(player:p,calendar:s,in:c),frozen.clubSelection?.review)
+            XCTAssertEqual(try NPCSelectionStore.games(playerID:p.id,level:"domestic-development",date:next,in:c).count,3)
+            XCTAssertTrue(try NPCSelectionStore.games(playerID:p.id,level:"npb-first-team",date:next,in:c).isEmpty)
+            XCTAssertEqual(try row.snapshot().clubSelection,frozen.clubSelection)
+        }
+    }
+    func testV34SelectionStoresObservedSampleAndProtectsFrozenReports() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try v32Fixture(role),c=db.mainContext
+            let plan=try s.competition(for:p,year:2030),fixtures=Array(plan.fixtures.filter {$0.includes(plan.teamID)}.prefix(15))
+            let reportBytes=try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload)
+            for fixture in fixtures {
+                p.gameDate=fixture.date.description;s.actionDate=p.gameDate;try c.save()
+                let row=try CareerMatchStore.start(player:p,state:s,in:c)
+                try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+                try AutomaticLeagueStore.completeDay(player:p,state:s,date:fixture.date,in:c);try c.save()
+            }
+            let last=try XCTUnwrap(fixtures.last);p.gameDate=last.date.adding(days:1).monday.adding(days:7).description;try c.save()
+            let before=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            let review=try XCTUnwrap(ClubSelectionStore.projection(player:p,calendar:s,in:c)),evidence=try XCTUnwrap(review.rivalEvidence)
+            XCTAssertTrue(evidence.performance?.enough == true);XCTAssertNotNil(review.rival.evidence)
+            XCTAssertEqual(review.rival.p,evidence.performance!.correction);XCTAssertEqual(review.rival.readiness,100-evidence.fatigue)
+            XCTAssertEqual(review.own.p,0);try review.validateRivalBasis()
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,before)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reportBytes)
+            _=try ClubSelectionStore.capture(player:p,calendar:s,in:c);try c.save()
+            let fixed=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            p.fatigue=99;try c.save();XCTAssertEqual(try ClubSelectionStore.projection(player:p,calendar:s,in:c),review)
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,fixed)
+        }
+    }
+    func testV34DiskResumePreservesConditioningAndCompletesOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+            let url=dir.appendingPathComponent("npc-performance.store");var id:UUID!,bytes:Data!
+            do {
+                let (db,p,s)=try v32Fixture(role,url:url),c=db.mainContext;id=p.id
+                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                bytes=try CareerMatchStore.start(player:p,state:s,in:c).payload
+            }
+            let db=try CareerStore.makeContainer(url:url),c=db.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+            let row=try CareerMatchStore.start(player:p,state:s,in:c);XCTAssertEqual(row.payload,bytes)
+            let readiness=try row.snapshot().npcReadiness
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            XCTAssertEqual(try row.snapshot().npcReadiness,readiness)
+            let final=row.payload
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c));XCTAssertEqual(row.payload,final)
+        }
+    }
+}
+
+
+extension CareerCalendarTests {
+    func testV34LegacyUntrackedFatigueIsNotReconstructedAndCutoffExcludesToday() throws {
+        let (db,p,s)=try v32Fixture(.batter),c=db.mainContext
+        try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+        let row=try CareerMatchStore.start(player:p,state:s,in:c)
+        let today=try GameDate(p.gameDate),next=today.adding(days:1)
+        XCTAssertTrue(try NPCSelectionStore.games(playerID:p.id,level:"domestic-development",date:next,in:c).isEmpty)
+        try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+        var legacy=try row.snapshot();legacy.npcReadiness=nil
+        row.payload=try JSONEncoder().encode(legacy);try c.save();let bytes=row.payload
+        let review=try XCTUnwrap(legacy.clubSelection?.review)
+        let evidence=try NPCSelectionStore.evidence(playerID:p.id,rivalID:review.rival.id,teamID:review.teamID,position:p.positionRaw,level:review.level,date:next,in:c)
+        XCTAssertNotNil(evidence.performance);XCTAssertNil(evidence.trackingSince);XCTAssertEqual(evidence.fatigue,0)
+        XCTAssertTrue(try NPCSelectionStore.games(playerID:p.id,level:review.level,date:today,in:c).isEmpty)
+        XCTAssertEqual(try NPCSelectionStore.games(playerID:p.id,level:review.level,date:next,in:c).count,1)
+        XCTAssertTrue(try NPCSelectionStore.games(playerID:p.id,level:review.level,date:GameDate("2031-04-01"),in:c).isEmpty)
+        XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,bytes)
+        XCTAssertNil(try row.snapshot().npcReadiness)
+    }
+    func testV34CorruptEvidenceIsRejectedAndChangesOnlyNewWeeklyDecisions() throws {
+        let (db,p,s)=try v32Fixture(.pitcher),c=db.mainContext
+        let review=try XCTUnwrap(ClubSelectionStore.projection(player:p,calendar:s,in:c)),evidence=try XCTUnwrap(review.rivalEvidence)
+        var damaged=review
+        damaged.rivalEvidence=NPCSelectionEvidence(through:evidence.through,performance:evidence.performance,fatigue:50,trackingSince:nil,lastWorkloadKey:nil,lastWorkloadDate:nil,lastCost:nil)
+        XCTAssertThrowsError(try damaged.validateRivalBasis())
+        var legacy=review;legacy.rivalEvidence=nil
+        var owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c);owner.clubSelections=[legacy]
+        let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c));row.payload=try JSONEncoder().encode(owner);try c.save();let bytes=row.payload
+        XCTAssertEqual(try ClubSelectionStore.projection(player:p,calendar:s,in:c),legacy);XCTAssertEqual(row.payload,bytes)
+        p.gameDate="2030-04-08";try c.save()
+        XCTAssertNotNil(try ClubSelectionStore.projection(player:p,calendar:s,in:c)?.rivalEvidence);XCTAssertEqual(row.payload,bytes)
+    }
+}

@@ -508,6 +508,7 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
     let holdUntil: String?
     var rivalAbilities:PlayerInitialValues? = nil
     var rivalPositionMastery:Double? = nil
+    var rivalEvidence: NPCSelectionEvidence? = nil
     var id: String { context + "/" + week }
     var isStarter: Bool { selected == own.id }
     var nextReview: String {
@@ -519,7 +520,7 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
         return "동률 또는 점수 차 5 미만 · 기존 기용 유지"
     }
     static func make(context: String, membershipID: String, teamID: String, level: String, position: String, roleID: String,
-                     date: GameDate, own: ClubSelectionCandidate, rival: ClubSelectionCandidate, previous: Self?, rivalAbilities:PlayerInitialValues?=nil, rivalPositionMastery:Double?=nil) throws -> Self {
+                     date: GameDate, own: ClubSelectionCandidate, rival: ClubSelectionCandidate, previous: Self?, rivalAbilities:PlayerInitialValues?=nil, rivalPositionMastery:Double?=nil, rivalEvidence:NPCSelectionEvidence?=nil) throws -> Self {
         let incumbent = previous?.selected ?? own.id
         let held = previous?.holdUntil.map { date.description < $0 } ?? false
         let current = incumbent == own.id ? own : rival
@@ -528,11 +529,12 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
         let until = selected != incumbent ? date.adding(days: 14).description : previous?.holdUntil
         var value = Self(context: context, membershipID: membershipID, teamID: teamID, level: level, position: position, roleID: roleID,
                          date: date.description, week: date.monday.description, own: own, rival: rival, incumbent: incumbent, selected: selected, holdUntil: until)
-        value.rivalAbilities=rivalAbilities;value.rivalPositionMastery=rivalPositionMastery
+        value.rivalAbilities=rivalAbilities;value.rivalPositionMastery=rivalPositionMastery;value.rivalEvidence=rivalEvidence
         try value.validate(previous: previous)
         return value
     }
     func validateRivalBasis() throws {
+        try rivalEvidence?.validate(review:self)
         guard let values=rivalAbilities else {guard rivalPositionMastery == nil else {throw ContractRegistrationError.invalid};return}
         guard let mastery=rivalPositionMastery,mastery.isFinite,(0...100).contains(mastery),
               roleID != "starter" || [values.velocity,values.control,values.stuff,values.stamina].allSatisfy({$0 != nil}) else {throw ContractRegistrationError.invalid}
@@ -581,5 +583,107 @@ struct ClubOpportunitySummary: Codable, Equatable {
         _ = try GameDate(through)
         guard Set(keys).count == keys.count, keys == keys.sorted(), starts >= 0, bench >= 0, rotationRest >= 0,
               starts + bench + rotationRest == keys.count else { throw ScoutingObservationError.invalid }
+    }
+}
+
+
+// Workload observes completed official counts; it never changes match execution or rewards.
+struct MatchNPCReadiness: Codable, Equatable {
+    var version = 1
+    let date: String
+    let players: [NPCReadinessPlayer]
+    func validate(match: CareerMatch, date: String) throws {
+        guard version == 1, self.date == date, let attack=match.npcAttack, attack.version == 2,
+              match.playerRecords != nil, match.controlVersion == 2, match.detailedFieldVersion == 5,
+              match.battedBallVersion == 1 else {throw MatchError.invalidRecord}
+        _ = try GameDate(date)
+        let expected=Set([attack.home,attack.away].flatMap {team in
+            team.batters.map(\.id)+[team.starter.id,team.relief.id]
+        })
+        guard Set(players.map(\.id)) == expected, players.count == expected.count else {throw MatchError.invalidRecord}
+        for player in players {
+            guard player.fatigue.isFinite,(0...100).contains(player.fatigue) else {throw MatchError.invalidRecord}
+        }
+    }
+    func cost(for id: String, match: CareerMatch) -> Double {
+        guard match.completed, let attack=match.npcAttack,let records=match.playerRecords else {return 0}
+        var cost=0.0
+        for (team,counts) in [(attack.home,records.home),(attack.away,records.away)] {
+            cost += Double(counts.batting.first {$0.id == id}?.counts.plateAppearances ?? 0)
+            if let pitcher=[team.starter,team.relief].first(where:{$0.id == id}),let profile=pitcher.profile {
+                let pitchCost=MatchAbilityStats(mental:profile.mental,velocity:pitcher.velocity,control:pitcher.control,stuff:profile.stuff,stamina:profile.stamina,fatigue:0).pitchCost
+                cost += Double(counts.pitching.first {$0.id == id}?.counts.pitches ?? 0)*pitchCost
+            }
+        }
+        return TrainingRules.round(cost)
+    }
+    func fatigue(for id:String, match:CareerMatch, on date:GameDate) throws -> Double {
+        guard let before=players.first(where:{$0.id == id}),date >= (try GameDate(self.date)) else {throw MatchError.invalidRecord}
+        let days=try GameDate(self.date).days(to:date),load=cost(for:id,match:match)
+        let after=min(100,before.fatigue+load)
+        guard days > 0 else {return after}
+        let firstRecovery=Double(DailyRecovery.sleep+(load == 0 ? DailyRecovery.rest:0))
+        return TrainingRules.round(max(0,after-firstRecovery-Double(days-1)*Double(DailyRecovery.sleep+DailyRecovery.rest)))
+    }
+}
+struct NPCReadinessPlayer: Codable, Equatable {
+    let id: String
+    let fatigue: Double
+}
+
+struct NPCSelectionPerformance: Codable, Equatable {
+    let environment: String
+    let fixtures: [String]
+    let games: Int
+    let batting: MatchBattingCounts
+    let pitching: MatchPitchingCounts
+    let peerBatting: MatchBattingCounts
+    let peerPitching: MatchPitchingCounts
+    let peerPlayers: Int
+    var isPitcher: Bool {environment.hasSuffix("/P")}
+    var sample: Int {isPitcher ? pitching.battersFaced:batting.plateAppearances}
+    var enough: Bool {
+        peerPlayers >= 2 && (isPitcher ? pitching.outs >= 45 && peerPitching.outs >= 45:batting.plateAppearances >= 40 && peerBatting.plateAppearances >= 40)
+    }
+    private func contribution(_ batting:MatchBattingCounts,_ pitching:MatchPitchingCounts) -> Double {
+        if isPitcher {return pitching.battersFaced == 0 ? 0:Double(pitching.strikeouts-pitching.walks-2*pitching.homeRuns)/Double(pitching.battersFaced)}
+        let numerator=Double(batting.walks)*0.7+Double(batting.singles)*0.9+Double(batting.doubles)*1.3+Double(batting.triples)*1.7+Double(batting.homeRuns)*2-Double(batting.strikeouts)*0.25
+        return batting.plateAppearances == 0 ? 0:numerator/Double(batting.plateAppearances)
+    }
+    var correction: Double {
+        enough ? ScoutingContractFit.correction(value:contribution(batting,pitching),reference:contribution(peerBatting,peerPitching),n:sample):0
+    }
+    func validate() throws {
+        try batting.validate();try pitching.validate();try peerBatting.validate();try peerPitching.validate()
+        guard environment.hasPrefix("npc-selection-v1/"),games>=0,peerPlayers>=0,
+              games<=fixtures.count,fixtures == Array(Set(fixtures)).sorted() else {throw ContractRegistrationError.invalid}
+    }
+}
+struct NPCSelectionEvidence: Codable, Equatable {
+    var version = 1
+    let through: String
+    let performance: NPCSelectionPerformance?
+    let fatigue: Double
+    let trackingSince: String?
+    let lastWorkloadKey: String?
+    let lastWorkloadDate: String?
+    let lastCost: Double?
+    var p: Double {performance?.correction ?? 0}
+    var source: String? {performance.map {$0.environment+"/through/"+through}}
+    func validate(review:ClubSelectionReview) throws {
+        guard version == 1,try GameDate(through) == GameDate(review.date).adding(days:-1),
+              fatigue.isFinite,(0...100).contains(fatigue),review.rival.readiness == 100-fatigue,
+              review.rival.p == p,review.rival.evidence == source else {throw ContractRegistrationError.invalid}
+        try performance?.validate()
+        if let performance {
+            guard performance.environment.hasPrefix("npc-selection-v1/"+review.level+"/"),
+                  performance.environment.hasSuffix("/"+review.position) else {throw ContractRegistrationError.invalid}
+        }
+        if let trackingSince, let lastWorkloadDate, let lastWorkloadKey,let lastCost {
+            guard !lastWorkloadKey.isEmpty,try GameDate(trackingSince) <= GameDate(lastWorkloadDate),
+                  try GameDate(lastWorkloadDate) <= GameDate(through),lastCost.isFinite,lastCost>=0 else {throw ContractRegistrationError.invalid}
+        } else {
+            guard trackingSince == nil,lastWorkloadDate == nil,lastWorkloadKey == nil,lastCost == nil,fatigue == 0 else {throw ContractRegistrationError.invalid}
+        }
     }
 }
