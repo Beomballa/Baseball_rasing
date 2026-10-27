@@ -109,10 +109,11 @@ struct CareerTrainingView: View {
             return
         }
         scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
+        let timeline = MatchInputTimeline(windup: selectedKind == .pitch ? 0 : MatchDelivery.windup, duration: 1.6)
         if selectedKind == .pitch { scene.preparePitch(phase: 0, reduced: reduced) }
         else { scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: training.targets[training.scores.count].x,
-                          y: training.targets[training.scores.count].y, pitchCode: training.pitchCode ?? "four-seam") }
-        clock.start(windup: selectedKind == .pitch ? 0 : 0.35, duration: 1.6) {
+                          y: training.targets[training.scores.count].y, pitchCode: training.pitchCode ?? "four-seam", inputTimeline: timeline) }
+        clock.start(timeline: timeline) {
             submit(isPitcher ? TrainingInput(release: 0) : TrainingInput())
         }
     }
@@ -362,7 +363,7 @@ struct CareerTrainingView: View {
             } else {
                 Button(replay != nil ? (feedbackVisible ? "결과 확인 중…" : isPitcher ? "투구·포구 중…" : "타격 동작 중…") : clock.running ? (isPitcher ? "던지기!" : "타격!") : "\(training.scores.count + 1)번째 시도 시작") {
                     if clock.running {
-                        submit(isPitcher ? TrainingInput(release: clock.phase) : TrainingInput(x: x, y: y, timing: clock.phase))
+                        submit(isPitcher ? TrainingInput(release: clock.phase) : TrainingInput(x: x, y: y, timing: clock.currentPhase))
                     } else { beginAttempt() }
                 }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(retryInput != nil)
                     .accessibilityIdentifier("trainingAttempt")

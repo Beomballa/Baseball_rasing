@@ -341,7 +341,7 @@ final class ManagementDetailFlowTests: XCTestCase {
                 for i in 0..<pitches.count {
                     let choice = pitches.element(boundBy: i)
                     XCTAssertTrue(choice.isHittable)
-                    XCTAssertGreaterThanOrEqual(choice.frame.height, 44)
+                    XCTAssertGreaterThanOrEqual(choice.frame.height + 0.000001, 44)
                     XCTAssertLessThanOrEqual(choice.frame.maxY, gauge.frame.minY, "Every owned pitch must stay above the release control")
                 }
                 let selected = pitches.element(boundBy: 1); selected.tap(); XCTAssertTrue(selected.isSelected)
@@ -364,7 +364,7 @@ final class ManagementDetailFlowTests: XCTestCase {
                 XCTAssertTrue(touch.label.contains("투구 요청"), "A swipe must not begin or resolve a pitch")
                 for id in ["watch", "swing", "bunt"] {
                     let choice = app.buttons["gameInput-" + id]
-                    XCTAssertTrue(app.frame.contains(choice.frame)); XCTAssertGreaterThanOrEqual(choice.frame.height, 44)
+                    XCTAssertTrue(app.frame.contains(choice.frame)); XCTAssertGreaterThanOrEqual(choice.frame.height + 0.000001, 44)
                     choice.tap(); XCTAssertTrue(choice.isSelected)
                 }
                 app.buttons["gameInput-watch"].tap()

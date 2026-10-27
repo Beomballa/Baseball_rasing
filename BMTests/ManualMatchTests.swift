@@ -2,6 +2,7 @@ import XCTest
 import SpriteKit
 import UIKit
 import SwiftData
+import SwiftUI
 @testable import BM
 
 @MainActor final class ManualMatchTests: XCTestCase {
@@ -784,4 +785,115 @@ extension ManualMatchTests {
         }
     }
 
+}
+
+
+private struct BatterTimelineRenderProbe: View {
+    let scene: BallparkScene
+    let clock: MatchInputClock
+    var body: some View {
+        VStack(spacing: 4) {
+            SpriteView(scene: scene).frame(width: 320, height: 320)
+            MatchTimingGauge(phase: clock.phase, center: MatchDelivery.contactPhase, good: 0.09,
+                             perfect: 0.025, label: "공 도착 = 노란 중심", batting: true).padding(8)
+        }.frame(width: 320).background(GameTheme.board).foregroundStyle(GameTheme.paper)
+    }
+}
+
+extension ManualMatchTests {
+    func testBatterSharedTimelineMapsMittArrivalToYellowCenterWithoutChangingSpeedBudget() {
+        let duration = MatchDelivery(x: 0.5, y: 0.5, speed: 145).duration
+        XCTAssertEqual(duration, 1.35, accuracy: 0.000001)
+        let timeline = MatchInputTimeline(startedAt: 100, windup: MatchDelivery.windup, duration: duration)
+        XCTAssertEqual(timeline.releaseAt, 100.35, accuracy: 0.000001)
+        XCTAssertEqual(timeline.contactAt, 101.457, accuracy: 0.000001)
+        XCTAssertEqual(timeline.phase(at: timeline.releaseAt), 0, accuracy: 0.000001)
+        XCTAssertEqual(timeline.phase(at: timeline.contactAt), MatchDelivery.contactPhase, accuracy: 0.000001)
+        for reduced in [false, true] {
+            XCTAssertEqual(DeliveryPresentation.flight(duration, reduced: reduced, role: .batter), duration)
+            let scene = BallparkScene(size: CGSize(width: 320, height: 320))
+            scene.configure(hand: "right", kit: 0, role: .batter)
+            let marker = scene.childNode(withName: "receivedBaseball")!
+            var calls = 0
+            XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, flightDuration: duration, onArrival: { calls += 1 }, inputTimeline: timeline))
+            scene.advanceDelivery(at: timeline.releaseAt)
+            XCTAssertTrue(marker.isHidden); XCTAssertEqual(calls, 0)
+            scene.advanceDelivery(at: timeline.contactAt - 0.00001)
+            XCTAssertTrue(marker.isHidden); XCTAssertEqual(calls, 0)
+            scene.advanceDelivery(at: timeline.contactAt)
+            XCTAssertFalse(marker.isHidden); XCTAssertEqual(calls, 1)
+            XCTAssertEqual(marker.position.x, scene.arrivalPoint(x: 0.5, y: 0.5).x, accuracy: 0.001)
+            scene.advanceDelivery(at: timeline.contactAt + 0.1); XCTAssertEqual(calls, 1)
+            scene.cancelDelivery()
+        }
+    }
+
+    func testBatterEarlyInputAndCancelCannotShowCatchOrResolveBeforeSharedContact() {
+        for reduced in [false, true] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 320))
+            scene.configure(hand: "left", kit: 0, role: .batter)
+            let timeline = MatchInputTimeline(windup: MatchDelivery.windup, duration: 1.35)
+            var calls = 0, completions = 0
+            XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, flightDuration: 1.35, inputTimeline: timeline))
+            scene.finishBat(action: "swing", outcome: "헛스윙", reduced: reduced, matchJudgment: true,
+                            onArrival: { calls += 1 }, completion: { completions += 1 })
+            scene.advanceDelivery(at: timeline.contactAt - 0.001)
+            XCTAssertTrue(scene.childNode(withName: "receivedBaseball")!.isHidden); XCTAssertEqual(calls, 0)
+            scene.advanceDelivery(at: timeline.contactAt)
+            XCTAssertEqual(calls, 1); XCTAssertEqual(completions, 0)
+            scene.advanceDelivery(at: timeline.contactAt + DeliveryPresentation.receipt(reduced: reduced, match: true) + 0.01)
+            XCTAssertEqual(completions, 1)
+            scene.advanceDelivery(at: timeline.contactAt + 10); XCTAssertEqual(completions, 1)
+            let next = MatchInputTimeline(windup: MatchDelivery.windup, duration: 1.35)
+            XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, onArrival: { calls += 1 }, inputTimeline: next))
+            scene.finishBat(action: "watch", outcome: "볼", reduced: reduced, onArrival: { calls += 1 }, completion: { completions += 1 })
+            scene.cancelDelivery(); scene.advanceDelivery(at: next.contactAt + 10)
+            XCTAssertEqual(calls, 1); XCTAssertEqual(completions, 1)
+        }
+    }
+
+    func testRenderedBatterCatchAndGaugeUseSameTimeWithBothMotionSettings() async throws {
+        let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = windowScene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: windowScene)
+        var samples = [[String: Double]]()
+        defer { window.isHidden = true; previous?.makeKey() }
+        for reduced in [false, true] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 320)); scene.configure(hand: "right", kit: 0, role: .batter)
+            let clock = MatchInputClock()
+            let controller = UIHostingController(rootView: BatterTimelineRenderProbe(scene: scene, clock: clock))
+            window.rootViewController = controller; window.makeKeyAndVisible()
+            try await Task.sleep(for: .milliseconds(120))
+            let duration = MatchDelivery(x: 0.5, y: 0.5, speed: 145).duration
+            let timeline = MatchInputTimeline(windup: MatchDelivery.windup, duration: duration)
+            let arrived = expectation(description: reduced ? "reduced mitt at center" : "normal mitt at center")
+            var arrivalTime = 0.0, arrivalPhase = 0.0
+            XCTAssertTrue(scene.demonstrate(reduceMotion: reduced, flightDuration: duration, onArrival: {
+                arrivalTime = ProcessInfo.processInfo.systemUptime
+                arrivalPhase = clock.currentPhase
+                arrived.fulfill()
+            }, inputTimeline: timeline))
+            clock.start(timeline: timeline) {}
+            try await Task.sleep(for: .milliseconds(700))
+            XCTAssertTrue(scene.childNode(withName: "receivedBaseball")!.isHidden)
+            let beforeImage = UIGraphicsImageRenderer(bounds: controller.view.bounds).image { _ in
+                controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
+            }
+            let before = XCTAttachment(image: beforeImage); before.name = reduced ? "v23-reduced-in-flight" : "v23-normal-in-flight"; before.lifetime = .keepAlways; add(before)
+            await fulfillment(of: [arrived], timeout: 3)
+            XCTAssertGreaterThanOrEqual(arrivalTime, timeline.contactAt)
+            XCTAssertEqual(arrivalPhase, MatchDelivery.contactPhase, accuracy: 0.04)
+            XCTAssertFalse(scene.childNode(withName: "receivedBaseball")!.isHidden)
+            samples.append(["reduced": reduced ? 1 : 0, "expectedArrival": timeline.contactAt - timeline.startedAt,
+                            "actualArrival": arrivalTime - timeline.startedAt, "arrivalPhase": arrivalPhase,
+                            "centerPhase": MatchDelivery.contactPhase])
+            let afterImage = UIGraphicsImageRenderer(bounds: controller.view.bounds).image { _ in
+                controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
+            }
+            let after = XCTAttachment(image: afterImage); after.name = reduced ? "v23-reduced-received" : "v23-normal-received"; after.lifetime = .keepAlways; add(after)
+            clock.stop(); scene.cancelDelivery()
+        }
+        let data = try JSONSerialization.data(withJSONObject: samples, options: [.sortedKeys, .prettyPrinted])
+        let attachment = XCTAttachment(string: String(decoding: data, as: UTF8.self)); attachment.name = "v23-rendered-arrival-metrics"; attachment.lifetime = .keepAlways; add(attachment)
+    }
 }

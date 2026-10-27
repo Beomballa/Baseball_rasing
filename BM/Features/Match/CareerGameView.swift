@@ -194,18 +194,19 @@ struct CareerGameView: View {
         let actualCode=match.deliveryPitchCode(requested:pitchCode)
         attempt = Attempt(revision: record.revision, input: input, pitchCode: actualCode)
         let delivery = match.delivery(pitchCode: actualCode)
+        let timeline = MatchInputTimeline(windup: player.role == .batter ? MatchDelivery.windup : 0,
+                                          duration: player.role == .batter ? delivery.duration : 1.8)
         if player.role == .batter {
             scene.cancelDelivery()
-            _ = scene.demonstrate(reduceMotion: reduced, flightDuration: delivery.duration, x: delivery.x, y: delivery.y, pitchCode: actualCode)
+            _ = scene.demonstrate(reduceMotion: reduced, flightDuration: delivery.duration, x: delivery.x, y: delivery.y, pitchCode: actualCode, inputTimeline: timeline)
         }
         if player.role == .pitcher { scene.preparePitch(phase: 0, reduced: reduced) }
-        clock.start(windup: player.role == .batter ? MatchDelivery.windup : 0,
-                    duration: player.role == .batter ? delivery.duration : 1.8) { resolve(timeout: true) }
+        clock.start(timeline: timeline) { resolve(timeout: true) }
     }
     private func resolve(timeout: Bool = false) {
         guard let attempt else { return }
         let control = player.role == .pitcher ? ManualMatchInput(release: timeout ? 0 : clock.phase)
-            : ManualMatchInput(x: aimX, y: aimY, timing: timeout || attempt.input == .watch ? nil : clock.phase)
+            : ManualMatchInput(x: aimX, y: aimY, timing: timeout || attempt.input == .watch ? nil : clock.currentPhase)
         self.attempt = nil; clock.stop()
         commit(PendingSave(attempt: attempt, control: control))
     }

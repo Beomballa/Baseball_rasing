@@ -252,3 +252,5 @@
 - native-inplay-frame-pacing-v1은 이전30Hz 기본을 대체한다. 움직이는 연속 인플레이60Hz,정적/preview·명시적 단계별·저전력30Hz이며 전력 알림은 main run loop에서 반영한다. 시스템 동작 줄이기는 효과만 줄이며 연속 이동은60Hz다. FPS 변경으로 같은 scene/uptime/handoff·첫 준비 조건/판정·저장·결과/XP1회를 재시작하지 않는다. DEBUG30/60 비교와 완료 QA 경기의 event ID 고정 읽기 전용 재생은 일반 Release에서 제외한다. 대조는 같은 UUID/경기/event ID와 payload/revision/날짜/피로 보존을 확인하고,새 실제 경기·기존 UI검증·CPU callback/실제 Display·GPU channel·체감·저전력/장기 인수를 구분한다. 단일 iPhone 짧은 표본의50ms 미관측을 모든 기기 무지연으로 확대하지 않는다.
 
 - native-power-endurance-v1은 인플레이 overlay가 덮는 완료 결과의 하위 재생 뷰를 분리해 숨겨진 SKView를 함께 연결하지 않는다. DEBUG 장시간 QA는 별도 UUID 경기 완료 후 저장된 수비/홈런을 반복 재생하는 표시 부하 시험이다. 실제 경기 최초 완료/재열기와 반복 재생을 구분하고 결과/날짜/피로/원문 불변을 검사한다. 프레임 로그12,000개 상한과 메모리3초 표본 수집을 분리하고 전력/열 상태·실제 활성 윈도·footprint/배터리 충전 상태를 기록한다. 화면 자동 잠금/배터리 모니터링 변경은 QA 종료 시 복구하고 일반 Release에는 장시간 driver/계측을 포함하지 않는다. 실제 Display는 고유 clip 시작/종료 표식과 대상 IOSurface를 연결한 짧은 구간에서만 판단한다. 전환 중/마지막 부분 clip은 제외하며 전체15분의 모든 프레임이나 전 기기 무누수/배터리 소모 통과로 확대하지 않는다.
+
+- ui-batting-sync-v1: 타자 경기·컨택 훈련/연습의 공 비행과 입력 게이지는 같은 MatchInputTimeline을 공유한다. 동작 줄이기도 비행 시간을 압축하지 않으며 포구·접촉은 contactAt(phase0.82)보다 앞서 표시하지 않는다. 구속산식/판정폭·무입력 지켜보기·원장/revision/결과1회는 유지한다.
