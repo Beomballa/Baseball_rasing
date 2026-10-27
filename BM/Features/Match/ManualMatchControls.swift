@@ -288,3 +288,146 @@ struct MatchPitchChip: View {
             }
     }
 }
+
+enum PitchCourseGeometry {
+    static func target(at point: CGPoint, size: CGSize) -> PitchTarget {
+        PitchTarget(x: min(1, max(0, (point.x / max(1, size.width) - 0.08) / 0.84)),
+                    y: min(1, max(0, (point.y / max(1, size.height) - 0.08) / 0.84)))
+    }
+    static func marker(_ target: PitchTarget, size: CGSize) -> CGPoint {
+        PitchLocationBoard.marker(x: target.x, y: target.y, size: size)
+    }
+}
+
+struct PitchCourseDiagram: View {
+    let recommended: PitchTarget?
+    let target: PitchTarget?
+    let actual: PitchTarget?
+    var body: some View {
+        Canvas { context, size in
+            func point(_ x: Double, _ y: Double) -> CGPoint {
+                PitchCourseGeometry.marker(PitchTarget(x: x, y: y), size: size)
+            }
+            let a = point(0.2, 0.2), b = point(0.8, 0.8)
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(hex: 0x112c3b)))
+            context.stroke(Path(CGRect(x: a.x, y: a.y, width: b.x-a.x, height: b.y-a.y)),
+                           with: .color(GameTheme.boardInk), lineWidth: 1.5)
+            for part in [0.4, 0.6] {
+                var lines = Path()
+                lines.move(to: CGPoint(x: point(part, 0).x, y: a.y)); lines.addLine(to: CGPoint(x: point(part, 0).x, y: b.y))
+                lines.move(to: CGPoint(x: a.x, y: point(0, part).y)); lines.addLine(to: CGPoint(x: b.x, y: point(0, part).y))
+                context.stroke(lines, with: .color(GameTheme.boardLine), lineWidth: 0.7)
+            }
+            if let recommended {
+                let p = PitchCourseGeometry.marker(recommended, size: size)
+                var diamond = Path()
+                diamond.move(to: CGPoint(x: p.x, y: p.y-7)); diamond.addLine(to: CGPoint(x: p.x+7, y: p.y))
+                diamond.addLine(to: CGPoint(x: p.x, y: p.y+7)); diamond.addLine(to: CGPoint(x: p.x-7, y: p.y)); diamond.closeSubpath()
+                context.stroke(diamond, with: .color(Color(hex: 0x8cc6f2)), lineWidth: 2)
+            }
+            if let target {
+                let p = PitchCourseGeometry.marker(target, size: size)
+                var cross = Path()
+                cross.move(to: CGPoint(x: p.x-5, y: p.y)); cross.addLine(to: CGPoint(x: p.x+5, y: p.y))
+                cross.move(to: CGPoint(x: p.x, y: p.y-5)); cross.addLine(to: CGPoint(x: p.x, y: p.y+5))
+                context.stroke(cross, with: .color(GameTheme.gold), lineWidth: 2)
+            }
+            if let actual { PixelBaseball.draw(in: context, at: PitchCourseGeometry.marker(actual, size: size), diameter: 9) }
+        }.aspectRatio(1, contentMode: .fit).accessibilityHidden(true)
+    }
+}
+
+struct PitchCourseControl: View {
+    let recommended: PitchTarget
+    @Binding var selection: PitchTarget?
+    let locked: Bool
+    let result: ManualMatchResult?
+    var arrived = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var reviewingLast = false
+    private var reviewing: Bool { arrived || reviewingLast }
+    private var editable: Bool { !locked && !reviewing }
+    private var selected: PitchTarget { selection ?? recommended }
+    private var status: String {
+        reviewing ? (arrived ? "도착 비교" : "직전 코스") : selection == nil ? "추천 코스" : "직접 조준"
+    }
+    private var displayedStatus: String {
+        guard reviewing, !typeSize.isAccessibilitySize else { return status }
+        return (result?.pitchAim == nil ? "목표 미집계" : status) + " · ●실제"
+    }
+    private var coordinateSummary: String {
+        if reviewing, let result {
+            let actual = "실제 가로 \(Int((result.x * 100).rounded())), 세로 \(Int((result.y * 100).rounded()))"
+            guard let aim = result.pitchAim else { return "목표 기록 없음, " + actual }
+            return "목표 가로 \(Int((aim.target.x * 100).rounded())), 세로 \(Int((aim.target.y * 100).rounded())), " + actual
+        }
+        return "\(selection == nil ? "추천 사용" : "직접 변경"), 목표 가로 \(Int((selected.x * 100).rounded())), 세로 \(Int((selected.y * 100).rounded()))"
+    }
+    private func move(x: Double, y: Double) {
+        guard editable else { return }
+        selection = PitchTarget(x: min(1, max(0, selected.x+x)), y: min(1, max(0, selected.y+y)))
+    }
+    private var coursePad: some View {
+        GeometryReader { geometry in
+            PitchCourseDiagram(recommended: reviewing ? result?.pitchAim?.recommended : recommended,
+                               target: reviewing ? result?.pitchAim?.target : selected,
+                               actual: reviewing ? result.map { PitchTarget(x: $0.x, y: $0.y) } : nil)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                    guard editable else { return }
+                    selection = PitchCourseGeometry.target(at: value.location, size: geometry.size)
+                })
+        }.aspectRatio(1, contentMode: .fit).frame(minHeight: 84)
+            .accessibilityRepresentation {
+                Text("투구 목표 코스")
+                    .accessibilityValue(coordinateSummary)
+                    .accessibilityHint(editable ? "동작 메뉴에서 왼쪽, 오른쪽, 위, 아래로 목표를 변경하세요" : "투구 중이거나 직전 코스를 확인하고 있습니다")
+                    .accessibilityAction(named: "왼쪽") { move(x: -0.1, y: 0) }
+                    .accessibilityAction(named: "오른쪽") { move(x: 0.1, y: 0) }
+                    .accessibilityAction(named: "위") { move(x: 0, y: -0.1) }
+                    .accessibilityAction(named: "아래") { move(x: 0, y: 0.1) }
+                    .accessibilityIdentifier("pitchCoursePad")
+            }
+    }
+    private var legend: some View {
+        HStack(spacing: 4) {
+            Text("◇추천").foregroundStyle(Color(hex: 0x8cc6f2))
+            Text("+목표").foregroundStyle(GameTheme.gold)
+        }.font(typeSize.isAccessibilitySize ? .caption : .system(size: 10, weight: .bold, design: .monospaced))
+            .accessibilityHidden(true)
+    }
+    private var courseActions: some View {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(HStackLayout(spacing: 2)) : AnyLayout(VStackLayout(spacing: 2))
+        return layout {
+            Button { selection = nil; reviewingLast = false } label: { Text("추천").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                .disabled(locked).accessibilityLabel("포수 추천으로 복귀").accessibilityIdentifier("pitchCourseReset")
+            Button { reviewingLast.toggle() } label: { Text(reviewingLast ? "닫기" : "직전").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                .disabled(locked || result == nil).accessibilityLabel(reviewingLast ? "직전 코스 닫기" : "직전 목표와 실제 코스 보기")
+                .accessibilityIdentifier("pitchCourseReview")
+        }.font(typeSize.isAccessibilitySize ? .caption.bold() : .system(size: 12, weight: .bold, design: .monospaced))
+            .buttonStyle(.plain).foregroundStyle(GameTheme.paper).background(Color(hex: 0x254659))
+    }
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(displayedStatus)
+                .font(typeSize.isAccessibilitySize ? .headline : .system(size: 12, weight: .heavy, design: .monospaced))
+                .foregroundStyle(GameTheme.gold).accessibilityIdentifier("pitchCourseStatus")
+            if typeSize.isAccessibilitySize {
+                coursePad
+                legend
+                if reviewing { Text(result?.pitchAim == nil ? "목표 기록 없음" : "● 실제 도착").font(.caption).foregroundStyle(GameTheme.paper) }
+                courseActions
+            } else {
+                HStack(alignment: .top, spacing: 2) {
+                    VStack(spacing: 3) { coursePad.frame(width: 84, height: 84); legend }.frame(width: 84)
+                    courseActions.frame(width: 44)
+                }
+            }
+        }.padding(5).background(GameTheme.board.opacity(0.96))
+            .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("pitchCourseControl")
+            .onChange(of: locked) { _, _ in reviewingLast = false }
+            .onChange(of: result) { _, _ in reviewingLast = false }
+    }
+}

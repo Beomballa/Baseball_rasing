@@ -202,7 +202,8 @@ struct CareerMatch: Codable, Equatable {
         let quality = pitcher ? releaseQuality(control.release ?? 0, mastery: masteryValue)
             : ManualMatchRules.battingQuality(input: control, delivery: plan, contact: contact, execution: executionFactor)
         let scatter = pitcher ? (1 - quality) * 0.5 * (abilityStats?.scatterScale ?? 1) : 0
-        let x = plan.x + directionX * scatter, y = plan.y + directionY * scatter
+        let target = pitcher ? control.pitchTarget : nil
+        let x = (target?.x ?? plan.x) + directionX * scatter, y = (target?.y ?? plan.y) + directionY * scatter
         let inZone = ManualMatchRules.isStrike(x: x, y: y)
         let releaseError = abs((control.release ?? 0) - ManualMatchRules.releaseCenter)
         let grade = pitcher ? (releaseError <= releasePerfectWidth(mastery: masteryValue) ? "PERFECT"
@@ -246,7 +247,8 @@ struct CareerMatch: Codable, Equatable {
         if strikes >= 3 { endPlate("삼진", batter: !pitcher, pitcher: pitcher) }
         else if balls >= 4 { endPlate("볼넷", batter: !pitcher, pitcher: pitcher) }
         lastManual = ManualMatchResult(action: input.rawValue, quality: quality, grade: grade,
-                                       x: x, y: y, speed: plan.speed, outcome: message, pitchCode: pitcher ? pitchCode : (npcAttack == nil ? "four-seam":actualCode))
+                                       x: x, y: y, speed: plan.speed, outcome: message, pitchCode: pitcher ? pitchCode : (npcAttack == nil ? "four-seam":actualCode),
+                                       pitchAim: target.map { PitchAim(recommended: PitchTarget(x: plan.x, y: plan.y), target: $0) })
     }
 
     private mutating func endPlate(_ initial: String, batter: Bool, pitcher: Bool, bunt:Bool=false,

@@ -256,3 +256,5 @@
 - ui-batting-sync-v1: 타자 경기·컨택 훈련/연습의 공 비행과 입력 게이지는 같은 MatchInputTimeline을 공유한다. 동작 줄이기도 비행 시간을 압축하지 않으며 포구·접촉은 contactAt(phase0.82)보다 앞서 표시하지 않는다. 구속산식/판정폭·무입력 지켜보기·원장/revision/결과1회는 유지한다.
 
 - ui-flight-feel-v24: 구속 원값/Domain duration·판정 phase폭은 유지하고 PitchFlightPresentation의 실제비행0.90×145/구속과 타자budget=비행/0.82를 쓴다. 두 시점·구종 훈련/연습은 같은 실제비행, 컨택/선구안 기초훈련의 기존budget은 유지한다. 공 경로는 끝점고정·후반낙차/좌투가로반전이며 동작줄이기도 동일하다. 실시간(ms)판정폭은 비행단축에 비례해 줄어드는 게임난도 조정이다. 저장/보고서/RNG/원장·이어하기/결과1회 변경 금지.
+
+- ui-pitch-course-v25: 투수 직접 목표는 ManualMatchInput.pitchTarget 선택필드, 최근결과는 pitchAim(recommended/target)로 기록한다. nil 입력은 기존 plan/RNG/scatter/자동판정을 유지하며 새목표만 finite0~1 검증, 실제도착은 clamp하지않는다. 추천조회추가난수금지, begin에구종/revision/목표고정·릴리스잠금·PendingSave재시도/복귀표시같은목표를사용한다. 미확정초안취소는추천복귀, 확정최근1공만기존JSON원자저장/복원하며 옛nil/완료경기·보고서소급생성금지. 새스키마/보상/날짜변경없음. 140pt compact/84pt코스/44pt버튼·큰글자본문판·목표/실제구분과V24도착시계를유지한다.

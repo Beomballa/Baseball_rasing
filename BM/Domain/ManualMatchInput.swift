@@ -1,18 +1,29 @@
 import Foundation
 
+struct PitchTarget: Codable, Equatable {
+    let x: Double
+    let y: Double
+}
+
+struct PitchAim: Codable, Equatable {
+    let recommended: PitchTarget
+    let target: PitchTarget
+}
+
 struct ManualMatchInput: Codable, Equatable {
     var x = 0.5
     var y = 0.5
     var timing: Double?
     var release: Double?
+    var pitchTarget: PitchTarget? = nil
 
     func validate(for input: MatchInput, role: String) throws {
-        let values = [x, y] + [timing, release].compactMap { $0 }
+        let values = [x, y] + [timing, release].compactMap { $0 } + (pitchTarget.map { [$0.x, $0.y] } ?? [])
         guard values.allSatisfy({ $0.isFinite && (0...1).contains($0) }), input != .automatic else { throw MatchError.invalidInput }
         if role == "pitcher" {
             guard input == .pitch, release != nil, timing == nil else { throw MatchError.invalidInput }
         } else {
-            guard release == nil, input != .pitch, input != .watch || timing == nil else { throw MatchError.invalidInput }
+            guard release == nil, pitchTarget == nil, input != .pitch, input != .watch || timing == nil else { throw MatchError.invalidInput }
         }
     }
 }
@@ -26,6 +37,7 @@ struct ManualMatchResult: Codable, Equatable {
     let speed: Int
     var outcome: String
     var pitchCode: String? = nil
+    var pitchAim: PitchAim? = nil
 }
 
 struct MatchDelivery: Equatable {

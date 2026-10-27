@@ -801,6 +801,99 @@ private struct BatterTimelineRenderProbe: View {
 }
 
 extension ManualMatchTests {
+    func testV25RecommendedTargetPreservesLegacyManualAndAutomaticResults() throws {
+        for seed in 1...12 { for release in [0.0, 0.68, 0.81] {
+            var legacy = match(role: .pitcher, seed: UInt64(seed))
+            legacy.settle(); var recommended = legacy
+            let plan = legacy.delivery(pitchCode: "four-seam")
+            try legacy.advance(.pitch, pitchCode: "four-seam", control: ManualMatchInput(release: release))
+            try recommended.advance(.pitch, pitchCode: "four-seam", control: ManualMatchInput(release: release, pitchTarget: PitchTarget(x: plan.x, y: plan.y)))
+            XCTAssertEqual(recommended.lastManual?.pitchAim?.recommended, PitchTarget(x: plan.x, y: plan.y))
+            XCTAssertEqual(recommended.random, legacy.random)
+            recommended.lastManual?.pitchAim = nil
+            XCTAssertEqual(recommended, legacy)
+        } }
+        let old = try JSONDecoder().decode(ManualMatchInput.self, from: Data(#"{"x":0.5,"y":0.5,"release":0.68}"#.utf8))
+        XCTAssertNil(old.pitchTarget)
+    }
+
+    func testV25SelectedCourseUsesExistingControlScatterAndKeepsOutsideArrival() throws {
+        for release in [0.0, 0.68, 0.82] {
+            var a = match(role: .pitcher)
+            a.settle(); var b = a
+            let near = PitchTarget(x: 0.0, y: 1.0), far = PitchTarget(x: 0.8, y: 0.2)
+            let plan = a.delivery(pitchCode: "four-seam")
+            try a.advance(.pitch, pitchCode: "four-seam", control: ManualMatchInput(release: release, pitchTarget: near))
+            try b.advance(.pitch, pitchCode: "four-seam", control: ManualMatchInput(release: release, pitchTarget: far))
+            let first = try XCTUnwrap(a.lastManual), second = try XCTUnwrap(b.lastManual)
+            XCTAssertEqual(first.x - near.x, second.x - far.x, accuracy: 0.000001)
+            XCTAssertEqual(first.y - near.y, second.y - far.y, accuracy: 0.000001)
+            XCTAssertEqual(first.quality, second.quality); XCTAssertEqual(first.speed, plan.speed)
+            XCTAssertEqual(first.pitchAim, PitchAim(recommended: PitchTarget(x: plan.x, y: plan.y), target: near))
+            if release == 0.68 { XCTAssertEqual(first.x, near.x); XCTAssertEqual(first.y, near.y) }
+        }
+        var sawOutside = false
+        for seed in 1...12 {
+            var game = match(role: .pitcher, seed: UInt64(seed))
+            try game.advance(.pitch, pitchCode: "four-seam", control: ManualMatchInput(release: 0, pitchTarget: PitchTarget(x: 0, y: 1)))
+            let result = try XCTUnwrap(game.lastManual)
+            sawOutside = sawOutside || result.x < 0 || result.y > 1
+        }
+        XCTAssertTrue(sawOutside, "Actual misses must not be clamped to the selectable board")
+    }
+
+    func testV25InvalidTargetsRejectBeforeMutationAndBatterCannotSubmitPitchTarget() throws {
+        for target in [PitchTarget(x: -.infinity, y: 0), PitchTarget(x: 0, y: .nan), PitchTarget(x: -0.01, y: 0.5), PitchTarget(x: 0.5, y: 1.01)] {
+            var game = match(role: .pitcher); let before = game
+            XCTAssertThrowsError(try game.advance(.pitch, pitchCode: "four-seam", control: ManualMatchInput(release: 0.68, pitchTarget: target)))
+            XCTAssertEqual(game, before)
+        }
+        var batter = match(); let before = batter
+        XCTAssertThrowsError(try batter.advance(.swing, control: ManualMatchInput(timing: 0.82, pitchTarget: PitchTarget(x: 0.5, y: 0.5))))
+        XCTAssertEqual(batter, before)
+    }
+
+    func testV25TargetSaveFailureRetryDiskResumeAndCompletionRemainOnce() throws {
+        enum Injected: Error { case failure }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("course.store")
+        let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+        let (player, calendar, record) = try fixture(in: context, role: .pitcher)
+        let original = record.payload, revision = record.revision
+        let input = ManualMatchInput(release: 0.82, pitchTarget: PitchTarget(x: 0.1, y: 0.9))
+        XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: revision,
+            input: .pitch, pitchCode: "four-seam", control: input, in: context, save: { _ in throw Injected.failure }))
+        XCTAssertEqual(record.payload, original); XCTAssertEqual(record.revision, revision)
+        try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: revision,
+            input: .pitch, pitchCode: "four-seam", control: input, in: context)
+        let saved = try record.snapshot(), bytes = record.payload
+        XCTAssertEqual(saved.lastManual?.pitchAim?.target, input.pitchTarget)
+        XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: revision,
+            input: .pitch, pitchCode: "four-seam", control: input, in: context))
+        XCTAssertEqual(record.payload, bytes)
+        let reopened = try CareerStore.makeContainer(url: url)
+        let restored = try XCTUnwrap(reopened.mainContext.fetch(FetchDescriptor<CareerMatchRecord>()).first)
+        XCTAssertEqual(restored.payload, bytes); XCTAssertEqual(try restored.snapshot(), saved)
+        try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: record.revision, input: .automatic, in: context)
+        let fatigue = player.fatigue, completed = record.payload
+        XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: record.revision, input: .automatic, in: context))
+        XCTAssertEqual(player.fatigue, fatigue); XCTAssertEqual(record.payload, completed)
+    }
+
+    func testV25BoardCoordinatesRoundTripAndLegacyArrivalHasNoInventedTarget() throws {
+        for width in [84.0, 112, 280] { for x in [0.0, 0.2, 0.5, 0.8, 1] { for y in [0.0, 0.2, 0.8, 1] {
+            let target = PitchTarget(x: x, y: y), size = CGSize(width: width, height: width)
+            let marker = PitchCourseGeometry.marker(target, size: size)
+            let restored = PitchCourseGeometry.target(at: marker, size: size)
+            XCTAssertEqual(restored.x, x, accuracy: 0.000001); XCTAssertEqual(restored.y, y, accuracy: 0.000001)
+        } } }
+        XCTAssertEqual(PitchCourseGeometry.target(at: CGPoint(x: -20, y: 300), size: CGSize(width: 100, height: 100)), PitchTarget(x: 0, y: 1))
+        let old = try JSONDecoder().decode(ManualMatchResult.self, from: Data(#"{"action":"pitch","quality":1,"grade":"PERFECT","x":0.2,"y":0.3,"speed":145,"outcome":"볼"}"#.utf8))
+        XCTAssertNil(old.pitchAim)
+    }
+
     func testV24FlightCalibrationSharesArrivalAcrossSpeedsHandsAndMotionSettings() {
         for speed in [110.5, 125, 129, 132, 145, 160] {
             let delivery = MatchDelivery(x: 0.3, y: 0.7, speed: Int(speed.rounded()), exactSpeed: speed)

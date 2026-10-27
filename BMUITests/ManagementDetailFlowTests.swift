@@ -318,6 +318,59 @@ final class ManagementDetailFlowTests: XCTestCase {
         XCTAssertEqual(status(app), before)
     }
 
+    @MainActor func testV25PitchCourseSelectionLockReceiptAndSavedReview() {
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15)); pickPitcher(app)
+        app.buttons["clubhouse-rest"].tap(); app.buttons["confirmRest"].tap(); app.buttons["restDone"].tap()
+        app.buttons["homeTodayGame"].tap(); app.buttons["opponentTab-plan"].tap()
+        reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+        capture(app, "v25-pitcher-course-ready")
+        let pad = app.descendants(matching: .any).matching(identifier: "pitchCoursePad").firstMatch
+        XCTAssertTrue(pad.waitForExistence(timeout: 8)); XCTAssertTrue(pad.isHittable)
+        XCTAssertTrue((pad.value as? String)?.contains("추천 사용") == true)
+        let reset = app.buttons["pitchCourseReset"], review = app.buttons["pitchCourseReview"]
+        XCTAssertGreaterThanOrEqual(reset.frame.height + 0.000001, 44)
+        XCTAssertGreaterThanOrEqual(review.frame.height + 0.000001, 44)
+        pad.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.8)).tap()
+        XCTAssertTrue((pad.value as? String)?.contains("직접 변경") == true)
+        reset.tap(); XCTAssertTrue((pad.value as? String)?.contains("추천 사용") == true)
+        pad.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.9)).tap()
+        let chosen = pad.value as? String
+        capture(app, "v25-pitcher-selected-course")
+        app.buttons["gamePitch"].tap()
+        pad.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.1)).tap()
+        XCTAssertEqual(pad.value as? String, chosen)
+        app.buttons["gameRelease"].tap()
+        let unlocked = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["gamePitch"])
+        XCTAssertEqual(XCTWaiter.wait(for: [unlocked], timeout: 15), .completed)
+        XCTAssertTrue((pad.value as? String)?.contains("추천 사용") == true)
+        review.tap()
+        let saved = pad.value as? String
+        XCTAssertTrue(saved?.contains("목표 가로") == true); XCTAssertTrue(saved?.contains("실제 가로") == true)
+        capture(app, "v25-pitcher-target-and-arrival")
+        app.buttons["closeRoomDetail"].tap(); app.buttons["homeTodayGame"].tap()
+        XCTAssertTrue(pad.waitForExistence(timeout: 8)); review.tap()
+        XCTAssertEqual(pad.value as? String, saved)
+        capture(app, "v25-pitcher-restored-course")
+    }
+
+    @MainActor func testV25LargeTextCoursePreparationKeepsButtonsReachable() {
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15)); pickPitcher(app)
+        reveal(app.buttons["clubhouse-rest"], app); app.buttons["clubhouse-rest"].tap()
+        reveal(app.buttons["confirmRest"], app); app.buttons["confirmRest"].tap(); app.buttons["restDone"].tap()
+        reveal(app.buttons["homeTodayGame"], app); app.buttons["homeTodayGame"].tap()
+        app.buttons["opponentTab-plan"].tap(); reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+        capture(app, "v25-large-course-ready")
+        let pad = app.descendants(matching: .any).matching(identifier: "pitchCoursePad").firstMatch
+        reveal(pad, app); XCTAssertTrue(pad.isHittable)
+        pad.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.2)).tap()
+        XCTAssertTrue((pad.value as? String)?.contains("직접 변경") == true)
+        let reset = app.buttons["pitchCourseReset"]; reveal(reset, app); reset.tap()
+        XCTAssertTrue((pad.value as? String)?.contains("추천 사용") == true)
+        capture(app, "v25-large-pitch-course")
+    }
+
     @MainActor func testV21GameplayBothRoles() {
         let app = XCUIApplication()
         for pitcher in [false, true] {

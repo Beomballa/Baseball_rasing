@@ -19,6 +19,7 @@ struct CareerGameView: View {
         let revision: Int
         let input: MatchInput
         let pitchCode: String
+        let pitchTarget: PitchTarget?
     }
     private struct PendingSave {
         let attempt: Attempt
@@ -31,6 +32,7 @@ struct CareerGameView: View {
     @State private var battingAction = MatchInput.swing
     @State private var aimX = 0.5
     @State private var aimY = 0.5
+    @State private var pitchTarget: PitchTarget?
     @State private var record: CareerMatchRecord?
     @State private var displaySnapshot = MatchDisplaySnapshot()
     @AppStorage("bm.fieldPlaybackMode.v1") private var fieldPlaybackRaw = FieldPlaybackMode.system.rawValue
@@ -192,8 +194,9 @@ struct CareerGameView: View {
         guard !presenting, attempt == nil, retrySave == nil, let record, let match = try? record.snapshot(), !match.completed, player.role != .pitcher || match.ownPitcherActive else { return }
         let input: MatchInput = player.role == .pitcher ? .pitch : battingAction
         let actualCode=match.deliveryPitchCode(requested:pitchCode)
-        attempt = Attempt(revision: record.revision, input: input, pitchCode: actualCode)
         let delivery = match.delivery(pitchCode: actualCode)
+        let target = player.role == .pitcher ? pitchTarget ?? PitchTarget(x: delivery.x, y: delivery.y) : nil
+        attempt = Attempt(revision: record.revision, input: input, pitchCode: actualCode, pitchTarget: target)
         let flight = PitchFlightPresentation(delivery: delivery)
         let timeline = MatchInputTimeline(windup: player.role == .batter ? MatchDelivery.windup : 0,
                                           duration: player.role == .batter ? flight.battingDuration : 1.8)
@@ -206,7 +209,7 @@ struct CareerGameView: View {
     }
     private func resolve(timeout: Bool = false) {
         guard let attempt else { return }
-        let control = player.role == .pitcher ? ManualMatchInput(release: timeout ? 0 : clock.phase)
+        let control = player.role == .pitcher ? ManualMatchInput(release: timeout ? 0 : clock.phase, pitchTarget: attempt.pitchTarget)
             : ManualMatchInput(x: aimX, y: aimY, timing: timeout || attempt.input == .watch ? nil : clock.currentPhase)
         self.attempt = nil; clock.stop()
         commit(PendingSave(attempt: attempt, control: control))
@@ -267,7 +270,7 @@ struct CareerGameView: View {
         } catch { retrySave = pending; self.error = error.localizedDescription; scene.cancelDelivery() }
     }
     private func cancelInput() {
-        clock.stop(); battingSwipe = nil; battingGestureRevision = nil; attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;homeRunReplay=nil;homeRunResultPlaying=false;fieldHandoff=nil;fieldResolved=false;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
+        clock.stop(); pitchTarget = nil; battingSwipe = nil; battingGestureRevision = nil; attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;homeRunReplay=nil;homeRunResultPlaying=false;fieldHandoff=nil;fieldResolved=false;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
     }
     private func persist(_ record:CareerMatchRecord,revision:Int,input:MatchInput,pitchCode:String?,control:ManualMatchInput?) throws {
         if let assessmentID {
@@ -389,7 +392,7 @@ struct CareerGameView: View {
         VStack(spacing: 0) {
             ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
                 let mastery = match.mastery[pitch.code] ?? 60
-                Button { pitchCode = pitch.code } label: {
+                Button { pitchCode = pitch.code; pitchTarget = nil } label: {
                     MatchPitchChip(name: pitch.name, mastery: mastery, selected: pitchCode == pitch.code)
                         .frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)
@@ -407,6 +410,9 @@ struct CareerGameView: View {
                     VStack(spacing: 10) {
                         broadcast(arrivedSnapshot ?? match, record: record)
                         arena(match, field: CGSize(width: max(1, available.width - 16), height: max(1, available.width - 16) * (player.role == .batter ? 1 : 1290 / 1219)))
+                        if player.role == .pitcher, match.ownPitcherActive, !match.completed {
+                            pitchCourse(match).frame(maxWidth: 280)
+                        }
                         if record.appearance && match.ownPitcherChange == nil {
                             if player.role == .batter { batterChoices } else { pitcherChoices(match) }
                         }
@@ -511,10 +517,10 @@ struct CareerGameView: View {
                     if player.role == .batter, !match.completed, !fieldCoversArena {
                         battingSurface(field)
                     }
-                    if player.role == .pitcher, replay == nil && homeRunReplay == nil, !typeSize.isAccessibilitySize {
-                        PitchLocationBoard(result: judgment ?? match.lastManual, side: match.opponentBatterSide)
-                            .frame(width: field.width * 0.24)
-                            .position(x: field.width * (match.opponentBatterSide.mapOnRight ? 0.85 : 0.15), y: field.height * 0.20)
+                    if player.role == .pitcher, match.ownPitcherActive, !match.completed, replay == nil && homeRunReplay == nil, !typeSize.isAccessibilitySize {
+                        pitchCourse(match)
+                            .frame(width: 140)
+                            .position(x: field.width * (match.opponentBatterSide.mapOnRight ? 0.80 : 0.20), y: field.height * 0.31)
                     }
                     if let judgment, replay == nil && homeRunReplay == nil, !typeSize.isAccessibilitySize {
                         PitchJudgmentToast(title: DeliveryPresentation.call(judgment.outcome),
@@ -530,17 +536,26 @@ struct CareerGameView: View {
                             .position(x: field.width * 0.5, y: field.height * 0.68)
                             .allowsHitTesting(false).accessibilityHidden(true)
                     } else if judgment == nil && player.role == .pitcher && !match.completed {
-                        let target = match.delivery(pitchCode: pitchCode)
+                        let delivery = match.delivery(pitchCode: pitchCode)
+                        let target = retrySave?.control.pitchTarget ?? attempt?.pitchTarget ?? pitchTarget ?? PitchTarget(x: delivery.x, y: delivery.y)
                         BattingAimZone(x: .constant(target.x), y: .constant(target.y), locked: true, showsGrid:false)
                             .frame(width: field.width * 0.22, height: field.height * 0.24)
                             .position(x: field.width * 0.54, y: field.height * 0.43)
                             .allowsHitTesting(false)
-                            .accessibilityLabel("자동 투구 목표")
+                            .accessibilityHidden(true)
                             .accessibilityIdentifier("pitchingTargetZone")
                     }
                 }
                 .frame(maxWidth: .infinity).background(Color(hex: 0x102a3f))
         }
+    }
+    private func pitchCourse(_ match: CareerMatch) -> some View {
+        let delivery = match.delivery(pitchCode: pitchCode)
+        return PitchCourseControl(recommended: PitchTarget(x: delivery.x, y: delivery.y),
+                                  selection: Binding(get: { retrySave?.control.pitchTarget ?? pitchTarget }, set: { pitchTarget = $0 }),
+                                  locked: inputLocked || match.completed,
+                                  result: presenting ? judgment : match.lastManual, arrived: judgment != nil)
+            .id(pitchCode)
     }
     private func results(_ match: CareerMatch, record: CareerMatchRecord) -> some View {
         let summary = MatchResultSummary(match: match, fatigueBefore: record.fatigueBefore, fatigueAfter: record.fatigueAfter)
@@ -778,6 +793,9 @@ struct CareerGameView: View {
         }
         #endif
         .onChange(of: opponentSide) { _, _ in configureScene() }
+        .onChange(of: presenting) { previous, current in
+            if previous && !current { pitchTarget = nil }
+        }
         .task(id: pulseAt) {
             guard pulse != nil else { return }
             do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }

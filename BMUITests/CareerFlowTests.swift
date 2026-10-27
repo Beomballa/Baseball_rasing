@@ -132,16 +132,15 @@ final class CareerFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
         assertArenaFits(app, button: "gamePitch", ratio: 1219.0 / 1290)
         let initialPitchCount = app.staticTexts["boardPitchCount"].label
-        let location = app.descendants(matching:.any).matching(identifier:"pitchLocationBoard").firstMatch
-        XCTAssertTrue(location.exists); XCTAssertEqual(location.value as? String,"도착 대기")
-        XCTAssertTrue(location.label.contains("우타 상대 · 왼쪽"))
+        let location = app.descendants(matching:.any).matching(identifier:"pitchCoursePad").firstMatch
+        XCTAssertTrue(location.exists); XCTAssertTrue((location.value as? String)?.contains("추천 사용") == true)
         XCTAssertLessThan(location.frame.midX,app.otherElements["careerMatchField"].frame.midX)
         app.buttons["gamePitch"].tap(); app.buttons["gameRelease"].tap()
         let flying=XCTAttachment(screenshot:app.screenshot());flying.name="Pitch ball in flight before receipt";flying.lifetime = .keepAlways;add(flying)
         XCTAssertFalse(app.buttons["gameAutomatic"].isEnabled)
         let toast = app.descendants(matching: .any).matching(identifier: "pitchJudgmentToast").firstMatch
         XCTAssertTrue(toast.waitForExistence(timeout: 3))
-        XCTAssertTrue((location.value as? String)?.contains("실제 도착") == true)
+        XCTAssertTrue((location.value as? String)?.contains("실제 가로") == true)
         XCTAssertFalse(app.buttons["gamePitch"].isEnabled)
         let field = app.otherElements["careerMatchField"].frame
         XCTAssertLessThan(toast.frame.maxY, field.minY + field.height * 0.35)
@@ -862,7 +861,7 @@ final class CareerFlowTests: XCTestCase {
         reveal(app.buttons["openCareerGame"], in: app); openCareerGame(in:app)
         XCTAssertTrue(app.buttons["gamePitch"].waitForExistence(timeout: 5))
         assertArenaFits(app, button: "gamePitch", ratio: 1219.0 / 1290)
-        XCTAssertTrue(app.otherElements["pitchingTargetZone"].exists)
+        XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"pitchCoursePad").firstMatch.exists)
         let pitchShot = XCTAttachment(screenshot: app.screenshot()); pitchShot.name = "Native pitcher game"; pitchShot.lifetime = .keepAlways; add(pitchShot)
         app.buttons["gamePitch"].tap()
         XCTAssertTrue(app.buttons["gameRelease"].waitForExistence(timeout: 2))
