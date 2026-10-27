@@ -444,92 +444,64 @@ struct TraitTrainingArena: View {
     let moving: Bool
     let success: Bool?
     var appearance = PlayerAppearance()
+    var number = 1
+    var hand = "right"
     var body: some View {
         Canvas { context, size in
             context.scaleBy(x: size.width / 320, y: size.height / 220)
-            func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double, _ color: Int) {
-                context.fill(Path(CGRect(x: x.rounded(), y: y.rounded(), width: w, height: h)), with: .color(Color(hex: color)))
+            TrainingFieldArt.background(in: context)
+            func point(_ p: TrainingTarget) -> CGPoint { TrainingFieldArt.point(p) }
+            @MainActor func actor(_ p: CGPoint, _ facing: FieldFacing, _ stage: FieldSpriteStage, runner: Bool = false, coach: Bool = false) {
+                TrainingFieldArt.actor(in: context, at: p, appearance: appearance, number: coach ? 0 : number,
+                    hand: hand, motion: FieldSpriteMotion(facing: facing, stage: stage, progress: stage == .catchBall ? 1 : motion, gait: motion * 24, chestCatch: stage == .catchBall), runner: runner, coach: coach)
             }
-            func line(_ a: CGPoint, _ b: CGPoint, _ color: Int, _ width: Double = 2) {
-                var p = Path(); p.move(to: a); p.addLine(to: b)
-                context.stroke(p, with: .color(Color(hex: color)), lineWidth: width)
-            }
-            func point(_ p: TrainingTarget) -> CGPoint { CGPoint(x: p.x * 320, y: p.y * 220) }
-            func athlete(_ x: Double, _ y: Double, _ kit: Int, _ stride: Bool = false, _ throwing: Bool = false) {
-                box(x - 9, y + 13, 20, 4, 0x22583f)
-                let skin = PlayerAppearance.skinColors[appearance.skin]
-                box(x - 6, y - 18, 12, 4, PlayerAppearance.hairColors[appearance.hair]); box(x - 5, y - 14, 10, 9, skin)
-                box(x - 3, y - 12, 2, 2, 0x132b40); box(x + 2, y - 12, 2, 2, 0x132b40)
-                box(x - 6, y - 6, 12, 13, kit); box(x - 1, y - 5, 3, 11, 0xf3edd5)
-                box(x - 10, y - 4, 4, 9, skin)
-                box(x + 6, y - (throwing ? 13 : 4), 4, 10, skin)
-                box(x - 6, y + 7, 5, stride ? 5 : 8, 0xe6e5d3); box(x + 1, y + 7, 5, stride ? 10 : 8, 0xe6e5d3)
-                box(x - 8, y + (stride ? 11 : 15), 7, 3, 0x14283f); box(x + 1, y + (stride ? 17 : 15), 7, 3, 0x14283f)
-            }
-            box(0, 0, 320, 220, 0x326b4d)
-            for row in 0..<9 { box(0, Double(row * 25), 320, 12, row.isMultiple(of: 2) ? 0x377654 : 0x326b4d) }
-            // Fence, seating, nets and equipment give the drill a distinct place.
-            box(0, 0, 320, 23, 0x132b40)
-            for col in 0..<32 { box(Double(col * 11), 5, 6, 4, col.isMultiple(of: 3) ? 0x8fa59c : 0x385465); box(Double(col * 11 + 3), 13, 6, 4, 0x526e77) }
-            box(0, 23, 320, 10, 0x184a42); box(0, 23, 320, 2, 0xe1c06a)
-            for col in 0..<17 { box(Double(col * 20), 26, 2, 7, 0x73918a) }
-            for row in 0..<6 { line(CGPoint(x: 8, y: 45 + row * 9), CGPoint(x: 44, y: 45 + row * 9), 0x71998a, 1) }
-            for col in 0..<5 { line(CGPoint(x: 8 + col * 9, y: 45), CGPoint(x: 8 + col * 9, y: 90), 0x71998a, 1) }
-            box(284, 45, 22, 6, 0x9b7347); box(286, 51, 3, 7, 0x604e38); box(301, 51, 3, 7, 0x604e38)
-            for col in 0..<3 { box(286 + Double(col * 7), 42, 4, 3, 0xf0e6ca) }
+            let flight = TrainingFieldMotion.flight(motion)
             if trait == .cheetah {
-                box(16, 100, 288, 93, 0x9e7751)
-                for row in 0..<3 { line(CGPoint(x: 16, y: 111 + row * 31), CGPoint(x: 304, y: 111 + row * 31), 0xe4d8b0) }
-                for y in stride(from: 100, to: 193, by: 10) {
-                    for col in 0..<2 { box(280 + Double(col * 5), Double(y), 5, 5, (y / 10 + col).isMultiple(of: 2) ? 0xf1e8cd : 0x17344e) }
+                let lane = CGRect(x: 16, y: 125, width: 288, height: 65)
+                context.fill(Path(lane), with: .color(Color(hex: 0xb78450)))
+                for y in [133.0,160,187] {
+                    var path = Path(); path.move(to: CGPoint(x: 16,y: y)); path.addLine(to: CGPoint(x: 304,y: y))
+                    context.stroke(path, with: .color(Color(hex: 0xf3edcf)), lineWidth: 2)
                 }
-                let runner = 36 + min(1, Double(steps) / 16) * 226
-                for index in 0..<min(steps, 16) { box(29 + Double(index * 14), index.isMultiple(of: 2) ? 161 : 170, 5, 3, 0xd9bb87) }
-                athlete(runner, 143, PlayerAppearance.kitColors[appearance.kit], steps.isMultiple(of: 2) && moving)
-                athlete(302, 81, 0x685a51)
+                for i in 0..<8 { context.fill(Path(CGRect(x: 280 + (i%2)*6,y: 125+i*8,width: 6,height: 8)), with: .color(i%2 == 0 ? .white : GameTheme.navy)) }
+                let x = 38 + Double(min(16,steps)) / 16 * 232
+                actor(CGPoint(x: x,y: 166), .direction(dx: 1,dy: 0), moving ? .run : .ready, runner: true)
+                actor(CGPoint(x: 301,y: 103), .direction(dx: -1,dy: 1), .ready, coach: true)
             } else {
-                let bases = [4, 1, 2, 3, 4].map { point(TrainingRules.basePoint($0)) }
+                let bases = [4,1,2,3,4].map { point(TrainingRules.basePoint($0)) }
                 var dirt = Path(); dirt.addLines(bases); dirt.closeSubpath()
-                context.fill(dirt, with: .color(Color(hex: 0x9b724a)))
-                context.stroke(dirt, with: .color(Color(hex: 0xf0e4c6)), lineWidth: 2)
-                for base in 1...4 { let p = point(TrainingRules.basePoint(base)); box(p.x - 4, p.y - 4, 8, 8, 0xf0e4c6) }
-                let t = point(target)
-                context.stroke(Path(CGRect(x: t.x - 12, y: t.y - 9, width: 24, height: 18)), with: .color(GameTheme.gold), lineWidth: 2)
+                context.fill(dirt, with: .color(Color(hex: 0xba8851)))
+                context.stroke(dirt, with: .color(Color(hex: 0xf3edcf)), lineWidth: 2)
+                for base in 1...4 { let p = point(TrainingRules.basePoint(base)); context.fill(Path(CGRect(x:p.x-4,y:p.y-3,width:8,height:6)),with:.color(.white)) }
+                let goal = point(target)
+                TrainingFieldArt.marker(in: context, at: goal, goal: true)
                 if trait == .strongArm {
-                    let origin = point(TrainingTarget(x: 0.5, y: 0.63)), end = point(endpoint)
-                    athlete(t.x + 8, t.y - 10, 0x96574a)
-                    athlete(origin.x, origin.y + 5, PlayerAppearance.kitColors[appearance.kit], false, moving && motion < 0.2)
-                    for fraction in stride(from: 0.15, through: 1.0, by: 0.15) {
-                        box(origin.x + (end.x - origin.x) * fraction, origin.y + (end.y - origin.y) * fraction, 2, 2, 0xceba72)
-                    }
+                    let origin = point(TrainingTarget(x: 0.5,y: 0.63)), end = point(endpoint)
+                    let facing = FieldFacing.direction(dx: end.x-origin.x,dy: end.y-origin.y)
+                    let throwing = FieldSpriteMotion(facing: facing,stage: .release,progress: 1)
+                    let catchFacing = FieldFacing.direction(dx: origin.x-end.x,dy: origin.y-end.y)
+                    let catching = FieldSpriteMotion(facing: catchFacing,stage: .catchBall,progress: 1,chestCatch: true)
+                    let start = TrainingFieldArt.contact(throwing,origin: origin,hand: true,left: hand == "left")
+                    let finish = TrainingFieldArt.contact(catching,origin: end,hand: false,left: hand == "left")
+                    let receiver = CGPoint(x:goal.x+(end.x-goal.x)*flight,y:goal.y+(end.y-goal.y)*flight)
+                    actor(receiver, catchFacing, moving && flight < 0.8 ? .run : flight >= 0.8 ? .catchBall : .ready, coach: true)
+                    actor(origin,facing,moving ? TrainingFieldMotion.stage(motion) : .ready)
+                    TrainingFieldArt.marker(in: context, at: end, goal: false)
                     if moving || success != nil {
-                        let phase = max(0, min(1, (motion - 0.18) / 0.82))
-                        let hand = CGPoint(x: origin.x + 10, y: origin.y - 7)
-                        let x = hand.x + (end.x - hand.x) * phase
-                        let y = hand.y + (end.y - hand.y) * phase - sin(phase * .pi) * 22
-                        box(x - 3, end.y + 4, 8, 2, 0x245039)
-                        for i in 1...3 {
-                            let trail = max(0, phase - Double(i) * 0.055)
-                            box(hand.x + (end.x - hand.x) * trail, hand.y + (end.y - hand.y) * trail - sin(trail * .pi) * 22, 2, 2, 0xc0c89e)
-                        }
-                        PixelBaseball.draw(in:context,at:CGPoint(x:x,y:y),diameter:9)
+                        let p = CGPoint(x:start.x+(finish.x-start.x)*flight,y:start.y+(finish.y-start.y)*flight-sin(flight * .pi)*20)
+                        if motion >= TrainingFieldMotion.release { PixelBaseball.draw(in:context,at:p,diameter:8) }
                     }
                 } else {
-                    let p = point(player)
-                    athlete(p.x, p.y, PlayerAppearance.kitColors[appearance.kit])
-                    box(p.x + 8, p.y - (moving ? 13 : 3), 8, 7, 0xc99759)
-                    let height = moving || success != nil ? (1 - motion) * 65 : 65
-                    box(t.x - 5, t.y + 4, 11, 3, 0x245039)
-                    PixelBaseball.draw(in:context,at:CGPoint(x:t.x,y:t.y-height-sin(motion * .pi)*30+2),diameter:9)
-                    if moving && motion > 0.82 && hypot(target.x - player.x, target.y - player.y) < 0.1 {
-                        for d in [-1.0, 1] { box(p.x + 11 + d * 10, p.y - 10 + d * 5, 4, 3, 0xecc66b) }
+                    let p = point(player), facing = FieldFacing.direction(dx: 0,dy: 1)
+                    actor(p,facing,moving && flight > 0.8 ? .catchBall : .ready)
+                    TrainingFieldArt.marker(in:context,at:p,goal:false)
+                    if moving || success != nil {
+                        let home = point(TrainingRules.basePoint(4))
+                        PixelBaseball.draw(in:context,at:CGPoint(x:home.x+(goal.x-home.x)*flight,y:home.y+(goal.y-home.y)*flight-sin(flight * .pi)*42-10),diameter:8)
                     }
-                    line(CGPoint(x: t.x, y: t.y - height + 9), CGPoint(x: t.x, y: t.y - 6), 0xc1c99c, 1)
                 }
-                if let success { context.stroke(Path(CGRect(x: t.x - 17, y: t.y - 14, width: 34, height: 28)), with: .color(success ? GameTheme.growth : GameTheme.gold), lineWidth: 3) }
             }
-            for x in [60.0, 265] { box(x, 193, 7, 7, 0xd3ab5b); box(x + 2, 188, 3, 5, 0xe8c56f) }
-        }.drawingGroup().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+        }.clipped().overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
     }
 }
 
@@ -656,21 +628,21 @@ struct TraitDrillExperience: View {
                             .frame(maxWidth: .infinity, minHeight: 44).background(GameTheme.boardPanel)
                             .overlay(Rectangle().strokeBorder(index == attemptIndex ? GameTheme.gold : GameTheme.boardLine))
                     } }.accessibilityElement(children: .combine).accessibilityIdentifier("traitDrillScores")
-                    TimelineView(.animation(minimumInterval: reduced ? 0.1 : 1.0 / 30, paused: !running)) { time in
+                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !running)) { time in
                         let elapsed = max(0, time.date.timeIntervalSince(startedAt))
                         let remaining: Double = running ? max(0, 4.0 - elapsed) : (feedback == nil ? 4.0 : 0.0)
                         let seconds = remaining.formatted(.number.precision(.fractionLength(1)))
                         VStack(spacing: 4) {
                             TraitTrainingArena(trait: trait, target: target, player: TrainingTarget(x: x, y: y), endpoint: endpoint,
-                                               motion: running ? (reduced ? 1 : min(1, elapsed / 0.9)) : (feedback == nil ? 0 : 1), steps: steps,
-                                               moving: running, success: feedback == nil ? nil : scores.last.map { $0 >= 90 }, appearance: player?.appearance ?? PlayerAppearance())
+                                               motion: running ? min(1, elapsed / (trait == .cheetah ? 4 : TrainingFieldMotion.duration)) : (feedback == nil ? 0 : 1), steps: steps,
+                                               moving: running, success: feedback == nil ? nil : scores.last.map { $0 >= 90 }, appearance: player?.appearance ?? PlayerAppearance(), number: player?.jerseyNumber ?? 1, hand: player?.throwingHandRaw ?? "right")
                                 .frame(height: typeSize.isAccessibilitySize ? 210 : max(170, min(260, geometry.size.height - (trait == .strongArm ? 420 : 340))))
                                 .contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
                                     guard trait != .cheetah, !running, feedback == nil, errorMessage == nil else { return }
                                     let reserve: CGFloat = trait == .strongArm ? 420 : 340
                                     let height = typeSize.isAccessibilitySize ? 210 : max(170, min(260, geometry.size.height - reserve))
-                                    let pointX = event.location.x / max(1, geometry.size.width - 24)
-                                    let pointY = event.location.y / height
+                                    let pointX = (event.location.x / max(1, geometry.size.width - 24) * 320 - 32) / 256
+                                    let pointY = (event.location.y / height * 220 - 48) / 140
                                     if trait == .safeHands {
                                         x = min(0.9, max(0.1, pointX)); y = min(0.9, max(0.2, pointY))
                                     } else {
@@ -699,6 +671,7 @@ struct TraitDrillExperience: View {
                             if let training = savedTraining {
                                 Text("진척 \(training.before, specifier: "%.1f") → \(training.after, specifier: "%.1f") · +\(training.gain, specifier: "%.1f")")
                                     .font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("traitTrainingGrowth")
+                                TrainingProjectFeedbackPanel(training: training)
                                 Text(training.after == 100 ? "특성 습득! 다음 날 준비 전에 활성화하세요." : "진척 저장 완료 · 다음 훈련에서 이어집니다.")
                                     .font(.subheadline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("traitAcquired")
                                 Text("피로 \(training.fatigue) → \(min(100, training.fatigue + 6)) · 오늘 행동 사용").font(.caption)
@@ -733,7 +706,7 @@ struct TraitDrillExperience: View {
             .onAppear { loadRecord() }
             .task(id: running) {
                 guard running else { return }
-                do { try await Task.sleep(for: .seconds(trait == .cheetah ? 4 : reduced ? 0.1 : 0.9)) } catch { return }
+                do { try await Task.sleep(for: .seconds(trait == .cheetah ? 4 : TrainingFieldMotion.duration)) } catch { return }
                 guard !Task.isCancelled, running else { return }; resolve()
             }
             .onChange(of: scenePhase) { _, phase in

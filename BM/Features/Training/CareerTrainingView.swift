@@ -46,7 +46,7 @@ struct CareerTrainingView: View {
     @State private var releaseHint = ""
     @State private var feedbackTick = 0
     @State private var judging = false
-    @State private var judgementStarted = Date()
+    @State private var deliveryArrived = false
     @State private var lastDistance: Double?
     @State private var x = 0.5
     @State private var y = 0.5
@@ -140,10 +140,11 @@ struct CareerTrainingView: View {
             return
         }
         if selectedKind == .discipline {
-            judging = true; judgementStarted = Date()
+            judging = true; deliveryArrived = false
             scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
             scene.demonstrate(reduceMotion: reduced, flightDuration: 0.9, x: training.targets[training.scores.count].x,
                               y: training.targets[training.scores.count].y, pitchCode: "four-seam",
+                              onArrival: { deliveryArrived = true; if replay != nil { skillAnimationFinished() } },
                               inputTimeline: MatchInputTimeline(windup: MatchDelivery.windup, duration: 0.9))
             return
         }
@@ -212,6 +213,8 @@ struct CareerTrainingView: View {
                 scene.finishBat(action: input.timing == nil ? "watch" : "swing",
                                 outcome: (contact?.timingScore ?? 0) >= 60 && (contact?.positionScore ?? 0) >= 60 ? "안타" : "헛스윙",
                                 reduced: reduced, onArrival: { showFeedback() }, completion: { finishReplay() })
+            } else if selectedKind == .discipline {
+                if deliveryArrived { skillAnimationFinished() }
             } else { scheduleFeedback() }
         } catch { replay = nil; scene.cancelDelivery(); errorMessage = error.localizedDescription }
     }
@@ -225,7 +228,7 @@ struct CareerTrainingView: View {
     }
     private func continueSession() {
         guard reviewReady else { return }
-        replay = nil; feedbackVisible = false; reviewReady = false; scene.cancelDelivery()
+        replay = nil; feedbackVisible = false; reviewReady = false; deliveryArrived = false; scene.cancelDelivery()
         locationReplay = nil; locationScene.cancel(); tireScene.cancel()
         rhythmTaps = Array(repeating: nil, count: 3); tracePoints = []; traceAnchors = [0.5,0.5,0.5]
         tireScene.prepare(0); if isSkillDrill { locationScene.prepareDrill(phase: 0) }
@@ -244,6 +247,9 @@ struct CareerTrainingView: View {
                     .accessibilityIdentifier("locationPracticeComparison")
                 Text(selectedKind == .control ? "조준한 위치 그대로 판정 · 별도 투구 오차 없음" : "선택한 위치의 정확도만 판정 · 포구 성공/실패 판정 없음")
                     .font(.caption2).foregroundStyle(GameTheme.boardMuted)
+            } else if selectedKind == .arm, let previous = replay {
+                Text("◇ 목표 " + String(format: "가로 %.1f 세로 %.1f", TrainingRules.basePoint(previous.throwBase(previous.scores.count)).x*100, TrainingRules.basePoint(previous.throwBase(previous.scores.count)).y*100) + "\n+ 입력 도착 " + String(format: "가로 %.1f 세로 %.1f", TrainingRules.throwEndpoint(angle: throwAngle, force: throwForce).x*100, TrainingRules.throwEndpoint(angle: throwAngle, force: throwForce).y*100))
+                    .font(.caption.monospacedDigit()).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("throwPracticeComparison")
             } else if !isSkillDrill { TrainingMissionBanner(kind: selectedKind, scores: training?.scores ?? []) }
             Button(training?.completed == true ? "세트 결산 보기" : "다음 시도 · \((training?.scores.count ?? 0) + 1)/5") {
                 continueSession()
@@ -254,14 +260,14 @@ struct CareerTrainingView: View {
     private func scheduleFeedback() {
         replayTask?.cancel()
         replayTask = Task { @MainActor in
-            do { try await Task.sleep(for: .seconds(DeliveryPresentation.trainingMotion(reduced: reduced))) } catch { return }
+            do { try await Task.sleep(for: .seconds(selectedKind == .arm ? TrainingFieldMotion.duration : selectedKind == .mental ? 1.4 : DeliveryPresentation.trainingMotion(reduced: reduced))) } catch { return }
             guard !Task.isCancelled else { return }; showFeedback()
             do { try await Task.sleep(for: .seconds(DeliveryPresentation.trainingRead(reduced: reduced))) } catch { return }
             guard !Task.isCancelled else { return }; finishReplay()
         }
     }
     private func cancelUncommitted() {
-        clock.stop(); scene.cancelDelivery(); judging = false
+        clock.stop(); scene.cancelDelivery(); judging = false; deliveryArrived = false
         replayTask?.cancel(); replayTask = nil; replay = nil; feedbackVisible = false; reviewReady = false; coachNote = nil
         locationScene.cancel(); locationReplay = nil; tireScene.cancel(); tracePoints = []; rhythmTaps = Array(repeating: nil, count: 3)
     }
@@ -283,7 +289,7 @@ struct CareerTrainingView: View {
                                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                                     }
                                     Spacer(minLength: 0)
-                                    Text(displayTraining.map { "\((isLocationDrill || isSkillDrill) ? min(5, $0.scores.count + 1) : $0.scores.count + (feedbackVisible ? 1 : 0)) / 5" } ?? "READY")
+                                    Text(displayTraining.map { "\(min(5, $0.scores.count + 1)) / 5" } ?? "READY")
                                         .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                                 }.padding(10).background(GameTheme.boardPanel)
                                     .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
@@ -396,7 +402,7 @@ struct CareerTrainingView: View {
             } else if selectedKind == .power {
                 powerControls(training)
             } else if selectedKind == .discipline {
-                Text(judging ? "존 안이면 스트라이크 · 밖이면 볼" : "공 보기를 누르고 존 안팎을 판단하세요").font(.caption)
+                Text(judging ? (deliveryArrived ? "도착 위치 확인 · 볼 / 스트라이크 선택" : "공 비행 중 · 도착 위치를 보고 판단하세요") : "공 보기를 누르고 존 안팎을 판단하세요").font(.caption)
             } else {
                 MatchTimingGauge(phase: clock.phase, center: isPitcher ? ManualMatchRules.releaseCenter : MatchDelivery.contactPhase,
                                  good: isPitcher ? ManualMatchRules.goodWidth(mastery: training.controlMastery) : ManualMatchRules.timingWidth(contact: training.before),
@@ -604,16 +610,18 @@ struct CareerTrainingView: View {
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
                 .accessibilityIdentifier("trainingField")
         } else {
-        TimelineView(.animation(minimumInterval: reduced ? 0.1 : 1.0 / 30, paused: replay == nil && !judging && !clock.running)) { timeline in
-        let progress = replay == nil ? 0.0 : reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(replayStarted) / 0.9))
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: replay == nil && !judging && !clock.running)) { timeline in
+        let progress = clock.running && [.speed, .stamina].contains(selectedKind) ? clock.phase : replay == nil ? 0.0 : min(1, max(0, timeline.date.timeIntervalSince(replayStarted) / (selectedKind == .arm ? TrainingFieldMotion.duration : 0.9)))
         let training = displayTraining
         ZStack {
-            if selectedKind.isRaw {
-                RawTrainingBoard(kind: selectedKind, training: training, steps: TrainingRules.steps(footfalls), motion: progress, moving: replay != nil || clock.running, force: force, angle: angle, appearance: player.appearance, x: $x, y: $y, locked: inputLocked)
+            if selectedKind == .mental {
+                MentalPracticeBoard(appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw, round: training?.scores.count ?? 0, reviewing: replay != nil)
+            } else if selectedKind.isRaw {
+                RawTrainingBoard(kind: selectedKind, training: training, steps: TrainingRules.steps(footfalls), motion: progress, moving: replay != nil || clock.running, force: force, angle: angle, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw, x: $x, y: $y, locked: inputLocked)
             } else if selectedKind.isField {
                 FieldTrainingBoard(kind: selectedKind, target: training.flatMap { $0.completed ? nil : $0.targets[$0.scores.count] },
                                    base: training.map { $0.completed ? 1 : TrainingRules.throwBase($0.scores.count) } ?? 1,
-                                   angle: throwAngle, force: throwForce, steps: TrainingRules.steps(footfalls), appearance: player.appearance, x: $x, y: $y, locked: inputLocked, motion: progress, moving: replay != nil || clock.running)
+                                   angle: throwAngle, force: throwForce, steps: TrainingRules.steps(footfalls), appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw, x: $x, y: $y, locked: inputLocked, motion: progress, moving: replay != nil || clock.running)
             } else if selectedKind == .power {
                 PowerPracticeBoard(force: force, angle: angle, round: training?.scores.count ?? 0,
                                    motion: progress, playing: replay != nil, appearance: player.appearance)
@@ -627,27 +635,31 @@ struct CareerTrainingView: View {
                             .position(x: geometry.size.width * target.x, y: geometry.size.height * target.y)
                     }.allowsHitTesting(false).accessibilityHidden(true)
                 }.frame(width: height * 0.55, height: height * 0.55)
-                Text("초록 목표에 노란 조준점을 맞추세요")
+                Text("□ 목표 · + 조준 · 중앙에서 타격")
                     .font(.caption.bold()).padding(6).background(GameTheme.navy)
                     .frame(maxHeight: .infinity, alignment: .top).padding(6).allowsHitTesting(false)
             }
             if selectedKind == .discipline, let training, !training.completed {
-                GeometryReader { geometry in
-                    let target = training.targets[training.scores.count]
-                    ZStack {
-                        Rectangle().fill(GameTheme.navy.opacity(0.25))
-                        Rectangle().strokeBorder(Color(hex: 0xf3edcf), lineWidth: 3)
-                            .frame(width: geometry.size.width * 0.6, height: geometry.size.height * 0.6)
-                        if judging {
-                            Image(uiImage:PixelBaseball.image).interpolation(.none).resizable().frame(width:12,height:12)
-                                .scaleEffect(reduced ? 1 : 0.35 + min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)) * 0.65)
-                                .position(x: geometry.size.width * (0.5 + (target.x - 0.5) * (reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)))),
-                                          y: geometry.size.height * (0.5 + (target.y - 0.5) * (reduced ? 1 : min(1, max(0, timeline.date.timeIntervalSince(judgementStarted) / 0.9)))))
+                VStack(spacing: 3) {
+                    Text(deliveryArrived ? "직전 공 · + 위치" : "도착 코스").font(.caption2.bold())
+                    GeometryReader { geometry in
+                        let target = training.targets[training.scores.count]
+                        ZStack {
+                            Rectangle().fill(GameTheme.navy)
+                            Rectangle().strokeBorder(Color(hex: 0xf3edcf), lineWidth: 2)
+                                .frame(width: geometry.size.width * 0.6, height: geometry.size.height * 0.6)
+                            if deliveryArrived {
+                                Text("+").font(.system(size: 18,weight:.black,design:.monospaced)).foregroundStyle(GameTheme.gold)
+                                    .position(x: geometry.size.width * target.x,y: geometry.size.height * target.y)
+                            }
                         }
-                    }
-                }.frame(width: height * 0.7, height: height * 0.7)
-                    .accessibilityElement(children: .ignore).accessibilityLabel(judging ? "투구 위치" : "스트라이크 존")
-                    .accessibilityValue(judging ? "가로 \(Int(training.targets[training.scores.count].x * 100)), 세로 \(Int(training.targets[training.scores.count].y * 100))" : "공 보기 대기")
+                    }.frame(width: min(100,height*0.32),height: min(100,height*0.32))
+                }.padding(5).background(GameTheme.navy)
+                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
+                    .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topTrailing).padding(8)
+                    .allowsHitTesting(false).accessibilityElement(children: .ignore)
+                    .accessibilityLabel(deliveryArrived ? "직전 도착 코스" : "도착 코스 대기")
+                    .accessibilityValue(deliveryArrived ? "가로 \(Int(training.targets[training.scores.count].x * 100)), 세로 \(Int(training.targets[training.scores.count].y * 100))" : "공 보기로 시작")
             }
             if selectedKind == .power, let training, !training.completed {
                 VStack {
@@ -819,6 +831,7 @@ struct CareerTrainingView: View {
                 TrainingGrowthReceipt(name: pitchName, before: value.before, after: value.after,
                                       gain: value.gain, fatigue: value.fatigue)
             }
+            if !practice { TrainingProjectFeedbackPanel(training: value) }
             if let result = value.lastContact { ContactTrainingFeedback(result: result) }
             Button(practice ? "연습 메뉴로" : "선수 홈으로") { dismiss() }
                 .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingReturnHome")

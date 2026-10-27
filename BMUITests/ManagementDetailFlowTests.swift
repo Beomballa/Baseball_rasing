@@ -2,6 +2,83 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV30ThrowFiveAttemptsResumeAndHistoricalResult() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:15))
+        app.buttons["managementTab-training"].tap();app.buttons["facility-physical"].tap()
+        revealLocationChoice(app.buttons["trainingKind-arm"],app);app.buttons["trainingKind-arm"].tap()
+        reveal(app.buttons["openTraining"],app);app.buttons["openTraining"].tap()
+        reveal(app.buttons["startTraining"],app);app.buttons["startTraining"].tap()
+        for attempt in 1...5 {
+            let send=app.buttons["trainingAttempt"];reveal(send,app)
+            if attempt == 1 {capture(app,"v30-arm-ready")};send.tap()
+            XCTAssertFalse(app.buttons["trainingNext"].exists)
+            XCTAssertFalse(app.staticTexts["throwPracticeComparison"].exists)
+            if attempt == 1 {capture(app,"v30-arm-flight")}
+            XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout:9))
+            XCTAssertTrue(app.staticTexts["throwPracticeComparison"].exists)
+            if attempt == 1 {capture(app,"v30-arm-receive-feedback")}
+            reveal(app.buttons["trainingNext"],app);app.buttons["trainingNext"].tap()
+            if attempt == 2 {
+                app.navigationBars.buttons.element(boundBy:0).tap();reveal(app.buttons["openTraining"],app);app.buttons["openTraining"].tap()
+                XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"trainingProgress").firstMatch.label.contains("3 / 5"))
+                capture(app,"v30-arm-resumed")
+            }
+        }
+        XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout:6))
+        let growth=app.staticTexts["trainingGrowth"].label
+        let receipt=app.descendants(matching:.any).matching(identifier:"trainingProjectFeedback").firstMatch
+        reveal(receipt,app);XCTAssertTrue(receipt.exists);capture(app,"v30-arm-completion")
+        app.navigationBars.buttons.element(boundBy:0).tap();reveal(app.buttons["openTraining"],app);app.buttons["openTraining"].tap()
+        XCTAssertEqual(app.staticTexts["trainingGrowth"].label,growth);capture(app,"v30-arm-reopened")
+    }
+    @MainActor func testV30BattingDisciplineAndConditioningScenes() {
+        continueAfterFailure=false
+        let app=XCUIApplication()
+        for kind in ["contact","discipline","speed","stamina","mental"] {
+            app.terminate();app.launchArguments=["-management-career-verification"];app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:15))
+            if kind == "stamina" {pickPitcher(app)}
+            app.buttons["managementTab-training"].tap();app.buttons[["contact","discipline"].contains(kind) ? "facility-training":"facility-physical"].tap()
+            revealLocationChoice(app.buttons["trainingKind-"+kind],app);app.buttons["trainingKind-"+kind].tap()
+            reveal(app.buttons["openTraining"],app);app.buttons["openTraining"].tap()
+            reveal(app.buttons["startTraining"],app);app.buttons["startTraining"].tap()
+            let send=app.buttons["trainingAttempt"]
+            if kind == "mental" {reveal(app.buttons["mentalChoice-0"],app);capture(app,"v30-mental-ready");app.buttons["mentalChoice-0"].tap()}
+            else {
+                reveal(send,app);capture(app,"v30-"+kind+"-ready");send.tap()
+                if kind == "contact" {send.tap()}
+                else if kind == "discipline" {reveal(app.buttons["trainingCallStrike"],app);app.buttons["trainingCallStrike"].tap()}
+                else { /* Let the unchanged four-second input window expire; steps are unit-tested. */ }
+            }
+            XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout:10));capture(app,"v30-"+kind+"-feedback")
+        }
+    }
+    @MainActor func testV30LargeReducedPracticeAndSpecialDrillsStayIsolated() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-management-reduced-motion-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:15));let before=status(app)
+        app.buttons["managementLargeMenu"].tap();app.buttons["훈련"].tap();reveal(app.buttons["facility-practice"],app);app.buttons["facility-practice"].tap()
+        reveal(app.buttons["openTrainingPractice"],app);app.buttons["openTrainingPractice"].tap()
+        reveal(app.buttons["practiceGeneralTraining"],app);app.buttons["practiceGeneralTraining"].tap()
+        revealLocationChoice(app.buttons["trainingCategory-1"],app);app.buttons["trainingCategory-1"].tap()
+        revealLocationChoice(app.buttons["trainingKind-arm"],app);app.buttons["trainingKind-arm"].tap()
+        reveal(app.buttons["startTraining"],app);app.buttons["startTraining"].tap()
+        for _ in 0..<5 {reveal(app.buttons["trainingAttempt"],app);app.buttons["trainingAttempt"].tap();XCTAssertFalse(app.buttons["trainingNext"].exists);XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout:9));reveal(app.buttons["trainingNext"],app);app.buttons["trainingNext"].tap()}
+        XCTAssertTrue(app.staticTexts["practiceCompleted"].waitForExistence(timeout:5));XCTAssertFalse(app.descendants(matching:.any).matching(identifier:"trainingProjectFeedback").firstMatch.exists);capture(app,"v30-large-practice-result")
+        app.navigationBars.buttons.element(boundBy:0).tap()
+        reveal(app.buttons["practiceTrait-strong-arm"],app);app.buttons["practiceTrait-strong-arm"].tap()
+        reveal(app.buttons["traitDrillSubmit"],app);capture(app,"v30-large-trait-ready");app.buttons["traitDrillSubmit"].tap()
+        XCTAssertFalse(app.staticTexts["traitDrillFeedback"].exists);XCTAssertTrue(app.staticTexts["traitDrillFeedback"].waitForExistence(timeout:7));capture(app,"v30-large-trait-feedback")
+        app.buttons["acquisitionCloseDrill"].tap()
+        reveal(app.buttons["practicePosition-CF"],app);app.buttons["practicePosition-CF"].tap()
+        reveal(app.buttons["positionCatch"],app);app.buttons["positionCatch"].tap();reveal(app.buttons["positionThrow"],app);capture(app,"v30-large-position-ready");app.buttons["positionThrow"].tap()
+        XCTAssertFalse(app.staticTexts["positionFeedback"].exists);XCTAssertTrue(app.staticTexts["positionFeedback"].waitForExistence(timeout:7));capture(app,"v30-large-position-feedback")
+        app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap();app.buttons["closeRoomDetail"].tap()
+        app.buttons["managementLargeMenu"].tap();app.buttons["홈"].tap();XCTAssertEqual(status(app),before)
+    }
+
     @MainActor func testV29CompactDirectFieldsAndActualTraceGesture() {
         continueAfterFailure = false
         let app = XCUIApplication()

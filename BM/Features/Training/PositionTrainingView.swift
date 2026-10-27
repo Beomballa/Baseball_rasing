@@ -272,7 +272,7 @@ struct PositionDrillLiveView: View {
         pendingInput = TrainingInput(x: x, y: y, force: force, angle: angle, base: base); pendingRevision = record.revision
         phase = 2; startedAt = Date()
         flightTask = Task { @MainActor in
-            do { try await Task.sleep(for: .milliseconds(reduced ? 0 : 700)) } catch { return }
+            do { try await Task.sleep(for: .seconds(TrainingFieldMotion.duration)) } catch { return }
             guard !Task.isCancelled else { return }; saveInput()
         }
     }
@@ -303,10 +303,10 @@ struct PositionDrillLiveView: View {
                         HStack(spacing: 6) {
                             ForEach(0..<5) { i in Text(i < training.scores.count ? "\(training.scores[i])" : "·").font(.caption.monospaced()).frame(maxWidth: .infinity, minHeight: 28).background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(GameTheme.boardLine)) }
                         }.accessibilityElement(children: .combine)
-                        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduced || phase == 1 || phase == 3 || errorMessage != nil)) { time in
-                            PositionPracticeField(position: position, phase: phase == 0 ? 0 : phase == 1 ? 1 : 2, overview: false, appearance: player.appearance,
+                        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: phase == 1 || phase == 3 || errorMessage != nil)) { time in
+                            PositionPracticeField(position: position, phase: phase == 0 ? 0 : phase == 1 ? 1 : 2, overview: false, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw,
                                                   location: TrainingTarget(x: x, y: y), target: target, endpoint: endpoint,
-                                                  motion: reduced ? 1 : min(1, max(0, time.date.timeIntervalSince(startedAt) / 0.7)),
+                                                  motion: min(1, max(0, time.date.timeIntervalSince(startedAt) / TrainingFieldMotion.duration)),
                                                   readMotion: reduced ? 0.6 : time.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4)
                         }.frame(height: typeSize.isAccessibilitySize ? 230 : max(170, min(220, geometry.size.height - 390)))
                             .contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { value in
@@ -359,6 +359,7 @@ struct PositionDrillLiveView: View {
                                     Text("숙련 \(training.before, specifier: "%.1f") → \(training.after, specifier: "%.1f") / 잔여 XP \(training.positionAfter.xp, specifier: "%.1f")").font(.subheadline).accessibilityIdentifier("positionGrowth")
                                     Text("피로 \(training.fatigue) → \(min(100, training.fatigue + 6)) · 오늘 행동 완료").font(.caption).accessibilityIdentifier("positionFatigue")
                                     Text("선택 위치만 성장 · 해당 위치로 출전하는 새 경기부터 반영").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                                    TrainingProjectFeedbackPanel(training: training)
                                 }
                                 }
                             } else {

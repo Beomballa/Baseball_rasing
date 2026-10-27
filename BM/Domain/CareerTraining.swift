@@ -84,6 +84,7 @@ struct CareerTraining: Codable, Equatable {
     var positionXP: Double?
     var pitchStudy: PitchStudy?
     var drillVersion: Int?
+    var projectFeedback: TrainingProjectFeedback?
     var isSkillDrill: Bool { drillVersion == 1 && SkillDrillRules.kinds.contains(selectedKind) && trait == nil && position == nil && pitchStudy == nil }
     var selectedKind: TrainingKind { kind ?? (pitchCode == nil ? .contact : .pitch) }
     let before: Double
@@ -385,5 +386,49 @@ enum SkillDrillRules {
             return TrainingTarget(x: points[segment-1].x + (points[segment].x-points[segment-1].x)*t,
                                   y: points[segment-1].y + (points[segment].y-points[segment-1].y)*t)
         }
+    }
+}
+
+
+/// Frozen completion evidence. Reopening this receipt never recomputes today's project.
+struct TrainingProjectFeedback: Codable, Equatable {
+    let version: Int
+    let activityKey: String
+    let project: CareerDevelopmentProject?
+    let clubName: String?
+    let before: CareerProjectProgress?
+    let after: CareerProjectProgress?
+    static func projected(_ before: CareerProjectProgress, project: CareerDevelopmentProject, training: CareerTraining, key: String) -> CareerProjectProgress {
+        let related = training.trait == nil && training.position == nil && training.selectedKind == project.training && !project.baselineTrainings.contains(key)
+        var result = CareerProjectProgress(matchKeys: before.matchKeys, trainingKeys: (before.trainingKeys + (related ? [key] : [])).sorted(),
+            qualitySessions: before.qualitySessions + (related && training.average >= 75 ? 1 : 0), sample: before.sample,
+            growth: TrainingRules.round(before.growth + (related ? training.gain : 0)), requiredSample: before.requiredSample)
+        if let task = before.task {
+            let contributes = training.trait == nil && training.position != nil && training.position?.rawValue == project.assignment?.position && task.metric == .position && !project.baselineTrainings.contains(key)
+            result.task = CareerProjectTaskProgress(metric:task.metric,value:task.value + (contributes ? 1:0),goal:task.goal,
+                keys:(task.keys + (contributes ? [key]:[])).sorted(),trainingGoal:task.trainingGoal,qualityGoal:task.qualityGoal)
+        }
+        return result
+    }
+    func validate(training: CareerTraining) throws {
+        guard version == 1, training.completed, activityKey == "\(training.playerID.uuidString):\(training.date)" else { throw TrainingError.invalidRecord }
+        guard let project else {
+            guard clubName == nil, before == nil, after == nil else { throw TrainingError.invalidRecord }; return
+        }
+        guard let before, let after, let clubName, !clubName.isEmpty,
+              project.role.rawValue == training.role, project.start <= training.date, training.date <= project.end,
+              !before.trainingKeys.contains(activityKey), !(before.task?.keys.contains(activityKey) ?? false),
+              after == Self.projected(before,project:project,training:training,key:activityKey) else { throw TrainingError.invalidRecord }
+    }
+    var trainingContribution: Int { max(0,(after?.trainingKeys.count ?? 0)-(before?.trainingKeys.count ?? 0)) }
+    var qualityContribution: Int { max(0,(after?.qualitySessions ?? 0)-(before?.qualitySessions ?? 0)) }
+    var taskContribution: Int { max(0,(after?.task?.value ?? 0)-(before?.task?.value ?? 0)) }
+    var nextAction: String {
+        guard let project, let after else { return "목표 구단을 고르고 선수 프로젝트를 시작해 보세요." }
+        if after.complete { return "과제 기준 충족 · 다음 관찰 보고서에서 평가를 확인하세요." }
+        if trainingContribution == 0 && taskContribution == 0 { return "이 과제는 \(project.training.label) 훈련과 지정 활동을 집계합니다." }
+        if after.trainingKeys.count < (after.task?.trainingGoal ?? 3) || after.qualitySessions < (after.task?.qualityGoal ?? 2) { return "다음 훈련일에 \(project.training.label) 훈련 · 평균 75점 이상에 도전하세요." }
+        if let task=after.task,task.value < task.goal { return "지정 관찰 과제의 남은 활동을 진행하세요." }
+        return "공식 경기에서 필요한 표본을 더 확보하세요."
     }
 }

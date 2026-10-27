@@ -6,6 +6,25 @@ import SpriteKit
 @testable import BM
 
 @MainActor final class FieldTrainingTests: XCTestCase {
+    func testV30ThrowPhasesKeepTheJudgedEndpointAndWaitThroughReceive() throws {
+        XCTAssertEqual(TrainingFieldMotion.flight(0.1),0)
+        XCTAssertEqual(TrainingFieldMotion.flight(TrainingFieldMotion.arrival),1)
+        XCTAssertFalse(TrainingFieldMotion.readyForFeedback(elapsed:TrainingFieldMotion.duration-0.001))
+        XCTAssertTrue(TrainingFieldMotion.readyForFeedback(elapsed:TrainingFieldMotion.duration))
+        for index in 0..<5 {
+            var training=CareerTraining(playerID:UUID(),date:"2026-04-01",role:"batter",pitchCode:nil,before:60,fatigue:24,age:16,calendarRevision:0,kind:.arm)
+            training.scores=Array(repeating:50,count:index)
+            let base=TrainingRules.throwBase(index),target=TrainingRules.basePoint(base)
+            let angle=(atan2(target.y-0.63,target.x-0.5)*180 / .pi+360).truncatingRemainder(dividingBy:360)
+            let force=hypot(target.x-0.5,target.y-0.63)/0.55*100
+            let endpoint=TrainingRules.throwEndpoint(angle:angle,force:force)
+            XCTAssertEqual(TrainingFieldArt.point(endpoint).x,TrainingFieldArt.point(target).x,accuracy:0.00001)
+            XCTAssertEqual(TrainingFieldArt.point(endpoint).y,TrainingFieldArt.point(target).y,accuracy:0.00001)
+            try training.attempt(TrainingInput(force:force,angle:angle,base:base));XCTAssertEqual(training.scores.last,100)
+            var wrong=training;wrong.scores.removeLast()
+            try wrong.attempt(TrainingInput(force:force,angle:angle,base:base == 1 ? 2:1));XCTAssertEqual(wrong.scores.last,0)
+        }
+    }
     func testV29PreparedPitchFlightWaitsForActualFlightAndReceiveThenCompletesOnce() throws {
         let scene = LocationDrillScene(size: CGSize(width: 320,height: 320))
         scene.configure(kind: .control,appearance: PlayerAppearance(),number: 8,hand: "left")

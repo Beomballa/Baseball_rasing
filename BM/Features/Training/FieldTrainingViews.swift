@@ -258,6 +258,8 @@ struct FieldTrainingBoard: View {
     let force: Double
     let steps: Int
     let appearance: PlayerAppearance
+    var number = 1
+    var hand = "right"
     @Binding var x: Double
     @Binding var y: Double
     let locked: Bool
@@ -269,7 +271,7 @@ struct FieldTrainingBoard: View {
                 TraitTrainingArena(trait: kind == .arm ? .strongArm : kind == .speed ? .cheetah : .safeHands,
                                    target: kind == .arm ? TrainingRules.basePoint(base) : target ?? TrainingTarget(x: 0.5, y: 0.5),
                                    player: TrainingTarget(x: x, y: y), endpoint: TrainingRules.throwEndpoint(angle: angle, force: force),
-                                   motion: motion, steps: steps, moving: moving, success: nil, appearance: appearance)
+                                   motion: motion, steps: steps, moving: moving, success: nil, appearance: appearance, number: number, hand: hand)
                 if kind == .speed {
                     Text("\(steps) / 16 STEP").font(.caption.monospaced().bold())
                         .padding(6).background(GameTheme.navy)
@@ -299,6 +301,8 @@ struct RawTrainingBoard: View {
     var force: Double = 70
     var angle: Double = 35
     let appearance: PlayerAppearance
+    var number = 1
+    var hand = "right"
     @Binding var x: Double
     @Binding var y: Double
     let locked: Bool
@@ -307,7 +311,7 @@ struct RawTrainingBoard: View {
             ZStack {
                 if kind == .stamina {
                     FieldTrainingBoard(kind: .speed, target: nil, base: 1, angle: 0, force: 0,
-                                       steps: steps, appearance: appearance, x: $x, y: $y, locked: locked, motion: motion, moving: moving)
+                                       steps: steps, appearance: appearance, number: number, hand: hand, x: $x, y: $y, locked: locked, motion: motion, moving: moving)
                 } else {
                     Rectangle().fill(Color(hex: 0x2b684b))
                     RawPracticeBackdrop(kind: kind, force: force, angle: angle, motion: motion, playing: moving)
@@ -754,5 +758,98 @@ struct DrillValueControl: View {
             Button("+") { value = min(range.upperBound, value + step) }.accessibilityLabel(name + " 늘리기").frame(minWidth: 44,minHeight: 44)
         }.buttonStyle(MatchPixelButtonStyle())
         }
+    }
+}
+
+
+/// Presentation time only. Neither these phases nor sprite positions are training judgments.
+enum TrainingFieldMotion {
+    static let duration = 2.1
+    static let release = 0.2
+    static let arrival = 0.82
+    static func flight(_ phase: Double) -> Double { min(1,max(0,(phase-release)/(arrival-release))) }
+    static func stage(_ phase: Double) -> FieldSpriteStage { phase < release ? .windup : phase < 0.34 ? .release : .followThrough }
+    static func readyForFeedback(elapsed: Double) -> Bool { elapsed >= duration }
+}
+
+@MainActor enum TrainingFieldArt {
+    nonisolated static func point(_ p: TrainingTarget) -> CGPoint { CGPoint(x: 32+p.x*256,y: 48+p.y*140) }
+    private static func crop(_ rect:CGRect) -> UIImage? {
+        guard let source=MatchArt.image("inplay-stadium-arcade-v1")?.cgImage,
+              let image=source.cropping(to:CGRect(x:rect.minX*Double(source.width),y:rect.minY*Double(source.height),width:rect.width*Double(source.width),height:rect.height*Double(source.height))) else {return nil}
+        return UIImage(cgImage:image)
+    }
+    private static let turf=crop(CGRect(x:0,y:0.23,width:1,height:0.12))
+    private static let fence=crop(CGRect(x:0,y:0.17,width:1,height:0.055))
+    static func background(in context: GraphicsContext) {
+        context.fill(Path(CGRect(x:0,y:0,width:320,height:220)),with:.color(Color(hex:0x326b4d)))
+        if let turf {context.draw(Image(uiImage:turf).interpolation(.none),in:CGRect(x:0,y:30,width:320,height:190))}
+        if let fence {context.draw(Image(uiImage:fence).interpolation(.none),in:CGRect(x:0,y:0,width:320,height:32))}
+    }
+    static func actor(in context:GraphicsContext,at p:CGPoint,appearance:PlayerAppearance,number:Int,hand:String,motion:FieldSpriteMotion,runner:Bool=false,coach:Bool=false) {
+        FieldRasterArt.draw(in:context,at:p,scale:1.45,motion:motion,kind:runner ? "runner":"fielder",
+            kit:coach ? 0x97664a:PlayerAppearance.kitColors[appearance.kit],skin:PlayerAppearance.skinColors[appearance.skin],
+            hair:PlayerAppearance.hairColors[appearance.hair],number:number,left:hand == "left",selected:!coach,out:false)
+    }
+    static func contact(_ motion:FieldSpriteMotion,origin:CGPoint,hand:Bool,left:Bool) -> CGPoint {
+        let p=FieldRasterArt.contact(motion,kind:"fielder",left:left,hand:hand) ?? .zero
+        return CGPoint(x:origin.x+p.x*1.45,y:origin.y+p.y*1.45)
+    }
+    static func marker(in context:GraphicsContext,at p:CGPoint,goal:Bool) {
+        var path=Path()
+        if goal { path.addLines([CGPoint(x:p.x,y:p.y-9),CGPoint(x:p.x+9,y:p.y),CGPoint(x:p.x,y:p.y+9),CGPoint(x:p.x-9,y:p.y)]);path.closeSubpath() }
+        else {path.move(to:CGPoint(x:p.x-7,y:p.y));path.addLine(to:CGPoint(x:p.x+7,y:p.y));path.move(to:CGPoint(x:p.x,y:p.y-7));path.addLine(to:CGPoint(x:p.x,y:p.y+7))}
+        context.stroke(path,with:.color(goal ? Color(hex:0x91dfba):GameTheme.gold),lineWidth:2)
+    }
+}
+
+struct MentalPracticeBoard: View {
+    let appearance:PlayerAppearance
+    var number = 1
+    var hand = "right"
+    let round:Int
+    let reviewing:Bool
+    var body:some View {
+        ZStack(alignment:.topLeading) {
+            Canvas { context,size in
+                context.scaleBy(x:size.width/320,y:size.height/220);TrainingFieldArt.background(in:context)
+                TrainingFieldArt.actor(in:context,at:CGPoint(x:135,y:179),appearance:appearance,number:number,hand:hand,motion:FieldSpriteMotion(facing:.direction(dx:1,dy:0),stage:.ready))
+                TrainingFieldArt.actor(in:context,at:CGPoint(x:204,y:153),appearance:appearance,number:0,hand:"right",motion:FieldSpriteMotion(facing:.direction(dx:-1,dy:0),stage:.ready),coach:true)
+            }
+            VStack(alignment:.leading,spacing:5) {
+                Text("멘탈 루틴 · \(min(5,round+1))/5").font(.subheadline.bold())
+                Text(reviewing ? "선택한 대응 돌아보기":"상황 읽기 → 대응 선택 → 루틴 확인").font(.caption)
+            }.padding(10).background(GameTheme.navy).padding(8)
+        }.accessibilityElement(children:.combine).accessibilityIdentifier("mentalPracticeScene")
+    }
+}
+
+
+struct TrainingProjectFeedbackPanel: View {
+    let training: CareerTraining
+    var body: some View {
+        ManagementPanel("이번 훈련 · 목표 과제", surface: .paper) {
+            if let receipt=training.projectFeedback {
+                if let project=receipt.project,let after=receipt.after {
+                    Text(receipt.clubName ?? project.target.clubID).font(.headline).accessibilityIdentifier("trainingProjectClub")
+                    Text("훈련 +\(receipt.trainingContribution)회 · 우수 +\(receipt.qualityContribution)회 · 지정 활동 +\(receipt.taskContribution)")
+                        .font(.subheadline.bold()).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("trainingProjectContribution")
+                    progress("관련 훈련",value:after.trainingKeys.count,total:after.task?.trainingGoal ?? 3)
+                    progress("평균 75점 이상",value:after.qualitySessions,total:after.task?.qualityGoal ?? 2)
+                    if let task=after.task { progress("지정 관찰 활동",value:task.value,total:task.goal) }
+                    progress(project.role == .batter ? "공식 타석":"공식 투구 아웃",value:after.sample,total:after.requiredSample)
+                    Text(training.date >= project.end ? "기간 마감 · 다음 관찰 보고서에서 확인하세요.":receipt.nextAction)
+                        .font(.subheadline).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("trainingProjectNextAction")
+                    Text("완료일 기준 저장 · 관찰 보고서와 계약 심사에는 기존 규칙으로 반영")
+                        .font(.caption).fixedSize(horizontal:false,vertical:true)
+                } else { Text("완료 당시 진행 중인 선수 프로젝트가 없습니다.").font(.subheadline) }
+            } else { Text("이전 기록 · 완료 당시의 과제 요약이 저장되지 않았습니다.").font(.subheadline) }
+        }.accessibilityIdentifier("trainingProjectFeedback")
+    }
+    private func progress(_ title:String,value:Int,total:Int) -> some View {
+        VStack(alignment:.leading,spacing:3) {
+            Text("\(title) \(value) / \(total) · 남음 \(max(0,total-value))").font(.caption.monospacedDigit())
+            ProgressView(value:Double(min(value,max(1,total))),total:Double(max(1,total))).tint(GameTheme.growth).accessibilityHidden(true)
+        }.accessibilityElement(children:.combine)
     }
 }

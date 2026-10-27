@@ -4890,3 +4890,57 @@ extension CareerCalendarTests {
         XCTAssertNil(old.earnedRuns)
     }
 }
+
+
+extension CareerCalendarTests {
+    func testV30TrainingProjectReceiptFreezesActualContributionAndReopenNeverReaggregates() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try goalSpecialFixture(role),c=store.mainContext
+            try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let owner=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),original=owner.payload
+            let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).activeProject(on:p.gameDate))
+            let row=try CareerTrainingStore.start(player:p,state:s,kind:project.training,in:c)
+            try finishSpecialTraining(row,p,s,c)
+            let training=try row.snapshot(),receipt=try XCTUnwrap(training.projectFeedback),payload=row.payload
+            XCTAssertEqual(receipt.project,project);XCTAssertEqual(receipt.trainingContribution,1);XCTAssertEqual(receipt.qualityContribution,1)
+            XCTAssertEqual(receipt.taskContribution,0);XCTAssertEqual(receipt.after?.sample,receipt.before?.sample)
+            XCTAssertEqual(owner.payload,original)
+            let fatigue=p.fatigue,revision=s.revision
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(),in:c))
+            XCTAssertEqual(row.payload,payload);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+            p.gameDate=try GameDate(p.gameDate).adding(days:1).description;s.actionDate=nil;try c.save()
+            let next=try CareerTrainingStore.start(player:p,state:s,kind:project.training,in:c);try finishSpecialTraining(next,p,s,c)
+            XCTAssertEqual(try row.snapshot().projectFeedback,receipt);XCTAssertEqual(row.payload,payload)
+            XCTAssertEqual(try next.snapshot().projectFeedback?.after?.trainingKeys.count,2)
+        }
+    }
+    func testV30ProjectFeedbackFinalFailureRollsBackAndRetriesOnce() throws {
+        let (store,p,s)=try goalSpecialFixture(.batter),c=store.mainContext
+        try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).activeProject(on:p.gameDate))
+        let row=try CareerTrainingStore.start(player:p,state:s,kind:project.training,in:c)
+        for _ in 0..<4 {let t=try row.snapshot(),goal=t.targets[t.scores.count];try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(x:goal.x,y:goal.y),in:c)}
+        let payload=row.payload,fatigue=p.fatigue,revision=s.revision,ability=p.defense,recordRevision=row.revision
+        let t=try row.snapshot(),goal=t.targets[4],input=TrainingInput(x:goal.x,y:goal.y)
+        XCTAssertThrowsError(try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:recordRevision,input:input,in:c,save:{_ in throw MatchError.invalidRecord}))
+        XCTAssertEqual(row.payload,payload);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(p.defense,ability);XCTAssertEqual(s.revision,revision);XCTAssertNil(try row.snapshot().projectFeedback)
+        try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:recordRevision,input:input,in:c)
+        XCTAssertEqual(try row.snapshot().projectFeedback?.trainingContribution,1);XCTAssertEqual(p.fatigue,fatigue+6)
+    }
+    func testV30ProjectReceiptSeparatesUnrelatedTrainingAndPositionTask() throws {
+        let (store,p,s)=try goalSpecialFixture(.batter),c=store.mainContext
+        try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).activeProject(on:p.gameDate))
+        let unrelated=try CareerTrainingStore.start(player:p,state:s,kind:.mental,in:c)
+        while !unrelated.completed {let t=try unrelated.snapshot(),q=RawTrainingRules.question(targets:t.targets,round:t.scores.count);try CareerTrainingStore.attempt(player:p,state:s,record:unrelated,revision:unrelated.revision,input:TrainingInput(choice:q.answer),in:c)}
+        XCTAssertEqual(try unrelated.snapshot().projectFeedback?.trainingContribution,0)
+        XCTAssertEqual(try unrelated.snapshot().projectFeedback?.qualityContribution,0)
+        if let raw=project.assignment?.position,let position=FieldPosition(rawValue:raw) {
+            p.gameDate=try GameDate(p.gameDate).adding(days:1).description;s.actionDate=nil;try c.save()
+            let row=try CareerTrainingStore.start(player:p,state:s,position:position,in:c)
+            while !row.completed {let t=try row.snapshot(),goal=t.targets[t.scores.count];try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(x:goal.x,y:goal.y,force:0,angle:0,base:position.targetBase),in:c)}
+            let receipt=try XCTUnwrap(row.snapshot().projectFeedback)
+            XCTAssertEqual(receipt.trainingContribution,0);XCTAssertEqual(receipt.qualityContribution,0);XCTAssertEqual(receipt.taskContribution,1)
+        } else {XCTFail("fixture must retain the position assignment")}
+    }
+}

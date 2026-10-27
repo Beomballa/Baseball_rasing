@@ -16,6 +16,21 @@ import SwiftData
         let input = player.role == .batter ? TrainingInput(x: target.x, y: target.y, timing: MatchDelivery.contactPhase) : TrainingInput(release: 0.68)
         try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: record.revision, input: input, in: context)
     }
+    func testV30LegacyReceiptNilAndNoProjectPracticeRemainCompatible() throws {
+        let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
+        let (p,s)=try setup(c, date:"2026-04-02")
+        let practice=try TrainingPractice.round(player:p,calendar:s,kind:.contact,code:"",in:c)
+        XCTAssertNil(practice.projectFeedback)
+        let row=try CareerTrainingStore.start(player:p,state:s,in:c)
+        for _ in 0..<5 {try attempt(p,s,row,c)}
+        var completed=try row.snapshot();XCTAssertNotNil(completed.projectFeedback);XCTAssertNil(completed.projectFeedback?.project)
+        completed.projectFeedback=nil
+        let legacy=try JSONEncoder().encode(completed);row.payload=legacy;try c.save()
+        XCTAssertNil(try row.snapshot().projectFeedback);XCTAssertEqual(row.payload,legacy)
+        var corrupt=completed
+        corrupt.projectFeedback=TrainingProjectFeedback(version:1,activityKey:"wrong",project:nil,clubName:nil,before:nil,after:nil)
+        row.payload=try JSONEncoder().encode(corrupt);XCTAssertThrowsError(try row.snapshot());c.rollback()
+    }
     func testGrowthUsesAgeScoreLevelFatigueAndCap() {
         XCTAssertEqual(TrainingRules.growth(before: 65, score: 100, fatigue: 24, age: 16, pitch: false), 65.2028)
         XCTAssertEqual(TrainingRules.growth(before: 72, score: 100, fatigue: 52, age: 16, pitch: true), 72.1498)

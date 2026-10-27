@@ -248,6 +248,8 @@ struct PositionPracticeField: View {
     let phase: Int
     let overview: Bool
     var appearance = PlayerAppearance()
+    var number = 1
+    var hand = "right"
     var location: TrainingTarget? = nil
     var target: TrainingTarget? = nil
     var endpoint: TrainingTarget? = nil
@@ -264,20 +266,13 @@ struct PositionPracticeField: View {
                 context.stroke(path, with: .color(Color(hex: hex)), lineWidth: width)
             }
             func point(_ value: CGPoint) -> CGPoint { CGPoint(x: value.x * 320, y: value.y * 220) }
-            func player(_ p: CGPoint, selected: Bool, receiving: Bool = false) {
-                box(p.x - 8, p.y + 10, 16, 3, 0x26523d)
-                box(p.x - 5, p.y - 17, 10, 4, selected ? PlayerAppearance.hairColors[appearance.hair] : 0x14283f)
-                box(p.x - 4, p.y - 13, 8, 7, selected ? PlayerAppearance.skinColors[appearance.skin] : 0xe0ae7e)
-                box(p.x - 5, p.y - 6, 10, 11, selected ? PlayerAppearance.kitColors[appearance.kit] : 0xd8e2d0)
-                box(p.x - 5, p.y + 5, 4, 6, 0xf0eddb); box(p.x + 1, p.y + 5, 4, 6, 0xf0eddb)
-                box(p.x - 7, p.y + 11, 6, 2, 0x14283f); box(p.x + 1, p.y + 11, 6, 2, 0x14283f)
-                box(p.x + 5, p.y - (receiving ? 12 : 3), 7, 7, 0xb98248)
+            @MainActor func player(_ p: CGPoint, selected: Bool, receiving: Bool = false) {
+                let direction = FieldFacing.direction(dx: (endpoint?.x ?? 0.5) * 320 - p.x,dy: (endpoint?.y ?? 0.5) * 220 - p.y)
+                let stage: FieldSpriteStage = selected && phase == 2 ? (position == .first ? .catchBall : TrainingFieldMotion.stage(motion)) : receiving ? .catchBall : .ready
+                TrainingFieldArt.actor(in:context,at:p,appearance:appearance,number:selected ? number:0,hand:hand,
+                    motion:FieldSpriteMotion(facing:direction,stage:stage,progress:stage == .catchBall ? 1:motion,chestCatch:stage == .catchBall),coach:!selected)
             }
-            box(0, 0, 320, 220, 0x326b4d)
-            for row in 0..<11 { box(0, Double(row * 22), 320, 11, row.isMultiple(of: 2) ? 0x377654 : 0x326b4d) }
-            box(0, 0, 320, 12, 0x14283f)
-            for col in 0..<40 { box(Double(col * 9), 3, 5, 3, col.isMultiple(of: 3) ? 0x9aa697 : 0x4b666b) }
-            box(0, 12, 320, 6, 0x184a42); box(0, 12, 320, 2, 0xecc66b)
+            TrainingFieldArt.background(in: context)
             let home = CGPoint(x: 160, y: 192), first = CGPoint(x: 246, y: 134), second = CGPoint(x: 160, y: 84), third = CGPoint(x: 74, y: 134)
             var diamond = Path(); diamond.addLines([home, first, second, third]); diamond.closeSubpath()
             context.fill(diamond, with: .color(Color(hex: 0xa07951)))
@@ -308,13 +303,14 @@ struct PositionPracticeField: View {
                         let t = Double(step) / 8
                         box(catchPoint.x + (destination.x - catchPoint.x) * t, catchPoint.y + (destination.y - catchPoint.y) * t, 3, 2, 0xecc66b)
                     }
-                    let flight = position == .first && location != nil ? 1 - motion : motion
+                    let t = TrainingFieldMotion.flight(motion)
+                    let flight = position == .first && location != nil ? 1 - t : t
                     PixelBaseball.draw(in:context,at:CGPoint(x:p.x+(destination.x-p.x)*flight,y:p.y+(destination.y-p.y)*flight-sin(flight * .pi)*20-6),diameter:9)
                     context.stroke(Path(CGRect(x: destination.x - 13, y: destination.y - 12, width: 26, height: 24)), with: .color(GameTheme.growth), lineWidth: 2)
                 }
+                if phase == 2 && position != .first { player(destination, selected: false, receiving: TrainingFieldMotion.flight(motion) >= 0.8) }
                 player(p, selected: true, receiving: phase > 0)
-                if phase == 1 { box(p.x + 7, p.y - 13, 9, 7, 0xb98248) }
-                if phase == 2 && motion < 0.25 { box(p.x + 5, p.y - 18, 5, 11, PlayerAppearance.skinColors[appearance.skin]) }
+
             }
         }.drawingGroup().clipped().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
     }

@@ -30,6 +30,7 @@ enum CareerSchemaV4: VersionedSchema {
                   value.scores.allSatisfy({ (0...100).contains($0) }), value.before.isFinite, (0...100).contains(value.before),
                   value.targets.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }) else { throw TrainingError.invalidRecord }
             try value.pitchStudy?.validate(training: value)
+            try value.projectFeedback?.validate(training: value)
             return value
         }
     }
@@ -82,6 +83,24 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
         guard player.role == .batter, let profile = try PlayerPositionStore.profile(playerID: player.id, in: context) else { throw TrainingError.invalidRecord }
         let loadout = try profile.snapshot()
         return (profile, loadout, try loadout.skill(position))
+    }
+    private static func completionFeedback(_ training: CareerTraining, player: CareerPlayer, state: CareerCalendarState, record: CareerTrainingRecord, in context: ModelContext) throws -> TrainingProjectFeedback {
+        let empty = TrainingProjectFeedback(version:1,activityKey:record.key,project:nil,clubName:nil,before:nil,after:nil)
+        guard context.container.schema.entities.contains(where: { $0.name == "ContractRegistration" }) else { return empty }
+        let owner = try ContractRegistrationStore.journal(player:player,calendar:state,in:context)
+        guard let project = owner.activeProject(on:training.date) else { return empty }
+        guard let report = owner.overseasReports?.first(where: { $0.id == project.target.reportID }),
+              let club = CareerTargetClub.catalog(report).first(where: { $0.id == project.target.clubID }) else { throw TrainingError.invalidRecord }
+        let id=player.id
+        let matches=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate { $0.playerID == id }))
+        let rows=try context.fetch(FetchDescriptor<CareerTrainingRecord>(predicate:#Predicate { $0.playerID == id })).filter { $0.key != record.key }
+        let before=try CareerProjectStore.progress(project,on:training.date,matches:matches,trainings:rows)
+        // A detached row feeds the existing pure aggregator before any persistent reward mutation.
+        let virtual=try CareerTrainingRecord(training); virtual.completed=true; virtual.rulesVersion=record.rulesVersion
+        let after=try CareerProjectStore.progress(project,on:training.date,matches:matches,trainings:rows+[virtual])
+        let receipt=TrainingProjectFeedback(version:1,activityKey:record.key,project:project,clubName:club.name,before:before,after:after)
+        try receipt.validate(training:training)
+        return receipt
     }
     static func start(player: CareerPlayer, state: CareerCalendarState, pitchCode: String? = nil, kind: TrainingKind? = nil, trait: PlayerTrait? = nil, position: FieldPosition? = nil, studyCode: String? = nil, replacing: String? = nil, in context: ModelContext,
                       save: CalendarProgression.Save = { try $0.save() }) throws -> CareerTrainingRecord {
@@ -148,6 +167,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
               !state.hasAction(on: player.gameDate) else { throw TrainingError.stale }
         try training.attempt(input)
         training.calendarRevision = state.revision + 1
+        if training.completed { training.projectFeedback = try completionFeedback(training, player: player, state: state, record: record, in: context) }
         let payload = try JSONEncoder().encode(training)
         if training.completed {
             if let position = training.position, let (profile, original, _) = positions {
