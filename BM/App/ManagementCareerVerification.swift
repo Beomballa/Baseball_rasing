@@ -23,6 +23,13 @@ struct ManagementCareerVerification: View {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"
                     let player = try CareerStore.create(draft, schools: catalog, in: memory.mainContext)
+                    if ProcessInfo.processInfo.arguments.contains("-management-v31-lifecycle") {
+                        let c=memory.mainContext,state=try c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == player.id}!
+                        player.gameDate="2029-04-01";try CareerPathStore.synchronize(player:player,calendar:state,in:c)
+                        player.gameDate="2041-03-31";try CareerPathStore.synchronize(player:player,calendar:state,in:c)
+                        try c.save()
+                        try CalendarProgression.advanceDay(player:player,state:state,revision:state.revision,automaticRest:true,confirmAnniversary:true,in:c)
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-management-stats-verification") {
                         let state = try memory.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }!
                         let fixtures = try state.fixtures(for: player, year: 2026), target = fixtures[5]

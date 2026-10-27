@@ -275,6 +275,19 @@ struct CareerPathVerification: View {
                     if args.contains("-fa-verification"),args.contains("-pro-career-verification") {
                         try seedFA(player:p,calendar:calendar,in:c.mainContext)
                     }
+                    if args.contains("-v31-match-completed") {
+                        let context=c.mainContext
+                        guard let fixture=try calendar.upcoming(for:p).first(where:{$0.isAppearance(for:role)}) else {throw MatchError.noFixture}
+                        p.gameDate=fixture.date.adding(days:-4).description;calendar.actionDate=nil;try context.save()
+                        try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
+                        let report=try ContractRegistrationStore.journal(player:p,calendar:calendar,in:context).overseasReports!.last!
+                        let club=CareerTargetClub.catalog(report).first {$0.roleID == (role == .batter ? "field":"starter")}!
+                        try OverseasContractStore.selectTarget(player:p,calendar:calendar,reportID:report.id,clubID:club.id,date:p.gameDate,revision:calendar.revision,in:context)
+                        try OverseasContractStore.startProject(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
+                        p.gameDate=fixture.date.description;calendar.actionDate=p.gameDate;try context.save()
+                        let row=try CareerMatchStore.start(player:p,state:calendar,in:context)
+                        try CareerMatchStore.advance(player:p,state:calendar,record:row,revision:row.revision,input:.automatic,in:context)
+                    }
                 }
                 self.schools = schools;self.container = c
             } catch { failure = error.localizedDescription }

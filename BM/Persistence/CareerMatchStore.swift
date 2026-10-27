@@ -75,8 +75,10 @@ enum CareerSchemaV3: VersionedSchema {
                 try roster.validate()
                 guard preparation.analysis == MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack) else {throw MatchError.invalidRecord}
             }
+            try match.projectFeedback?.validate(match:match,key:key,date:gameDate)
             try match.validatePitching()
             try match.inningScores?.validate(match: match)
+            try match.pitchLog?.validate(match:match)
             try match.playerRecords?.validate(match:match)
             if let records=match.playerRecords {
                 guard records.careerID == playerID,records.fixtureID == fixtureID,
@@ -178,8 +180,10 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         match.scoutingPerformance = .tracked
         match.inningScores = MatchInningScores()
         if match.npcAttack != nil {match.playerRecords=MatchPlayerRecords.make(match:match,careerID:player.id,fixtureID:fixture.id,trackEarnedRuns:true)}
+        if match.playerRecords != nil {match.pitchLog=MatchPitchLog()}
         if match.appearance { match.settle() }
         try match.inningScores?.validate(match: match)
+        try match.pitchLog?.validate(match:match)
         try match.playerRecords?.validate(match:match)
         try match.validateDetailedField()
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
@@ -191,6 +195,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
     static func advance(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
                         revision: Int, input: MatchInput, pitchCode: String? = nil, control: ManualMatchInput? = nil, in context: ModelContext,
                         save: CalendarProgression.Save = { try $0.save() }) throws {
+        try CareerLifecycleStore.requireActive(player)
         let fixture = try today(player: player, state: state)
         guard record.playerID == player.id, record.key == CareerMatchRecord.key(player.id, fixture.id),
               record.revision == revision, state.hasAction(on: player.gameDate) else { throw MatchError.stale }
@@ -224,6 +229,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             }
             abilityReward = (profile, result)
         }
+        if match.completed {match.projectFeedback = try completionFeedback(match,player:player,state:state,record:record,fixture:fixture,in:context)}
         let payload = try JSONEncoder().encode(match)
         let positionPayload = try positionReward.map { try JSONEncoder().encode($0.1) }
         record.payload = payload
@@ -251,6 +257,23 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         state.revision += 1
         // Result, ability growth, position XP, fatigue and completion share one explicit save.
         do { try save(context) } catch { context.rollback(); throw error }
+    }
+
+    private static func completionFeedback(_ match:CareerMatch,player:CareerPlayer,state:CareerCalendarState,record:CareerMatchRecord,fixture:SeasonFixture,in context:ModelContext) throws -> MatchProjectFeedback {
+        let empty=MatchProjectFeedback(version:1,activityKey:record.key,date:record.gameDate,project:nil,clubName:nil,before:nil,after:nil)
+        guard context.container.schema.entities.contains(where:{$0.name == "ContractRegistration"}) else {return empty}
+        let owner=try ContractRegistrationStore.journal(player:player,calendar:state,in:context)
+        guard let project=owner.activeProject(on:record.gameDate) else {return empty}
+        guard let report=owner.overseasReports?.first(where:{$0.id == project.target.reportID}),let club=CareerTargetClub.catalog(report).first(where:{$0.id == project.target.clubID}) else {throw MatchError.invalidRecord}
+        let id=player.id
+        let rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id})).filter {$0.key != record.key}
+        let trainings=try context.fetch(FetchDescriptor<CareerTrainingRecord>(predicate:#Predicate {$0.playerID == id}))
+        let before=try CareerProjectStore.progress(project,on:record.gameDate,matches:rows,trainings:trainings)
+        let virtual=try CareerMatchRecord(player:player,fixture:fixture,match:match);virtual.completed=true;virtual.rulesVersion=record.rulesVersion
+        let after=try CareerProjectStore.progress(project,on:record.gameDate,matches:rows+[virtual],trainings:trainings)
+        let receipt=MatchProjectFeedback(version:1,activityKey:record.key,date:record.gameDate,project:project,clubName:club.name,before:before,after:after)
+        try receipt.validate(match:match,key:record.key,date:record.gameDate)
+        return receipt
     }
 
     static func annualAbilityXP(playerID: UUID, year: Int, in context: ModelContext) throws -> Double {
@@ -451,9 +474,35 @@ extension CareerMatchStore {
             MatchOpponentSeasonPlayer(id: $0.id, battingGames: $0.battingGames, pitchingGames: $0.pitchingGames,
                 earnedRunGames: $0.earnedRunGames, unscoredPitchingGames: $0.unscoredPitchingGames, batting: $0.batting, pitching: $0.pitching)
         }
-        let snapshot = MatchOpponentSeason(version: 1, year: fixture.date.year, competition: attack.competition, teamID: analysis.teamID,
+        var snapshot = MatchOpponentSeason(version: 1, year: fixture.date.year, competition: attack.competition, teamID: analysis.teamID,
             through: cutoff.description, uncollectedGames: ledger.uncollectedGames, players: rows)
+        snapshot.pitchHistory=try opponentPitchHistory(playerID:player.id,year:fixture.date.year,competition:attack.competition,teamID:analysis.teamID,through:cutoff,in:context)
         try snapshot.validate(analysis: analysis, date: fixture.date)
         return snapshot
+    }
+}
+
+
+extension CareerMatchStore {
+    static func opponentPitchHistory(playerID:UUID,year:Int,competition:String,teamID:String,through:GameDate,in context:ModelContext) throws -> [OpponentPitchHistory] {
+        let official=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == playerID && $0.completed}))
+        let automatic=try AutomaticLeagueStore.records(playerID:playerID,year:year,in:context)
+        var seen=Set<String>(),result:[String:OpponentPitchHistory]=[:]
+        func add(key:String,date:String,match:CareerMatch) throws {
+            let day=try GameDate(date)
+            guard day.year == year,day<=through,(match.competition ?? "highschool") == competition else {return}
+            guard seen.insert(key).inserted,let ledger=match.playerRecords else {return}
+            guard let team=[ledger.home,ledger.away].first(where:{$0.teamID == teamID}) else {return}
+            try match.pitchLog?.validate(match:match)
+            for pitcher in team.pitching where pitcher.counts.pitches>0 {
+                var value=result[pitcher.id] ?? OpponentPitchHistory(pitcherID:pitcher.id)
+                value.games+=1
+                if let log=match.pitchLog {value.recordedGames+=1;for pitch in log.pitches where pitch.pitcherID == pitcher.id {value.add(pitch)}}
+                result[pitcher.id]=value
+            }
+        }
+        for row in official {try add(key:row.fixtureID,date:row.gameDate,match:row.snapshot())}
+        for row in automatic {try add(key:row.fixtureID,date:row.gameDate,match:row.snapshot())}
+        return result.values.sorted {$0.pitcherID<$1.pitcherID}
     }
 }

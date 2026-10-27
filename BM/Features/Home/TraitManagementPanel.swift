@@ -672,6 +672,7 @@ struct TraitDrillExperience: View {
                                 Text("진척 \(training.before, specifier: "%.1f") → \(training.after, specifier: "%.1f") · +\(training.gain, specifier: "%.1f")")
                                     .font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("traitTrainingGrowth")
                                 TrainingProjectFeedbackPanel(training: training)
+                                if let player, let calendar { CareerProjectNextActions(player: player, calendar: calendar) }
                                 Text(training.after == 100 ? "특성 습득! 다음 날 준비 전에 활성화하세요." : "진척 저장 완료 · 다음 훈련에서 이어집니다.")
                                     .font(.subheadline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("traitAcquired")
                                 Text("피로 \(training.fatigue) → \(min(100, training.fatigue + 6)) · 오늘 행동 사용").font(.caption)

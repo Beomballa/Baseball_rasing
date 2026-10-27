@@ -214,7 +214,7 @@ typealias CareerAffiliationRecord = CareerSchemaV9.AffiliationRecord
         let players = try context.fetch(FetchDescriptor<CareerPlayer>())
         let calendars = try context.fetch(FetchDescriptor<CareerCalendarState>())
         do {
-            for player in players {
+            for player in players where !player.isRetired {
                 guard let calendar = calendars.first(where: { $0.playerID == player.id }) else { throw CareerPathError.invalid }
                 try synchronize(player:player,calendar:calendar,in:context)
             }
@@ -255,7 +255,7 @@ enum CareerSchemaV14:VersionedSchema {
                   records.year == (try GameDate(gameDate)).year,roster.year == records.year,
                   fixtureID == gameDate+"-"+roster.home.teamID+"-"+roster.away.teamID,
                   match.fieldPlays?.isEmpty == true,match.homeRuns == nil else {throw LeagueError.invalidRecord}
-            try attack.validate(roster:roster);try match.validatePitching();try match.validateDetailedField();try records.validate(match:match)
+            try attack.validate(roster:roster);try match.validatePitching();try match.validateDetailedField();try records.validate(match:match);try match.pitchLog?.validate(match:match)
             return match
         }
     }
@@ -279,8 +279,9 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         match.npcAttack=MatchNPCAttack.make(roster:match.npcFielders!)
         match.pitching=MatchPitching();match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.playerRecords=MatchPlayerRecords.make(match:match,careerID:playerID,fixtureID:fixture.id,trackEarnedRuns:true)
+        match.pitchLog=MatchPitchLog()
         try match.advance(.automatic)
-        try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match)
+        try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match);try match.pitchLog?.validate(match:match)
         // Automatic games retain their result/rosters/counters, not unused replay geometry.
         match.fieldPlays=[];match.homeRuns=nil
         return match

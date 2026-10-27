@@ -47,6 +47,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
         return try context.fetchCount(FetchDescriptor<CareerTrainingRecord>(predicate: #Predicate { $0.playerID == id && !$0.completed })) > 0
     }
     static func requireNoPending(player: CareerPlayer, in context: ModelContext) throws {
+        try CareerLifecycleStore.requireActive(player)
         guard try !hasPending(player: player, in: context) else { throw TrainingError.pending }
         if try CertificationStore.hasPending(player:player,in:context) {throw CertificationError.pending}
         try GoalSpecialStore.requireNoPending(player:player,in:context)
@@ -147,6 +148,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
     }
     static func attempt(player: CareerPlayer, state: CareerCalendarState, record: CareerTrainingRecord, revision: Int,
                         input: TrainingInput, in context: ModelContext, save: CalendarProgression.Save = { try $0.save() }) throws {
+        try CareerLifecycleStore.requireActive(player)
         guard !record.completed else { throw TrainingError.finished }
         var training = try record.snapshot()
         let profile = try training.trait.map { try traitProfile($0, player: player, in: context) }
@@ -259,7 +261,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
             pitch.code = type.rawValue; pitch.name = type.label; pitch.mastery = mastery
         } else {
             guard player.pitches.count < 5 else { throw TrainingError.limit }
-            let pitch = CareerSchemaV1.PitchMastery(code: type.rawValue, name: type.label, mastery: mastery, order: (player.pitches.map(\.order).max() ?? -1) + 1)
+            let pitch = CareerPitchMastery(code: type.rawValue, name: type.label, mastery: mastery, order: (player.pitches.map(\.order).max() ?? -1) + 1)
             context.insert(pitch); player.pitches.append(pitch)
         }
     }

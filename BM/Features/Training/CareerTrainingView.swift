@@ -831,7 +831,7 @@ struct CareerTrainingView: View {
                 TrainingGrowthReceipt(name: pitchName, before: value.before, after: value.after,
                                       gain: value.gain, fatigue: value.fatigue)
             }
-            if !practice { TrainingProjectFeedbackPanel(training: value) }
+            if !practice { TrainingProjectFeedbackPanel(training: value); CareerProjectNextActions(player: player, calendar: calendar) }
             if let result = value.lastContact { ContactTrainingFeedback(result: result) }
             Button(practice ? "연습 메뉴로" : "선수 홈으로") { dismiss() }
                 .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingReturnHome")
@@ -1054,7 +1054,7 @@ struct PitchRepertoireView: View {
     @State private var selectedCode: String?
     @State private var confirm = false
     @State private var showTraining = false
-    private var ordered: [CareerSchemaV1.PitchMastery] { player.pitches.sorted { $0.order < $1.order } }
+    private var ordered: [CareerPitchMastery] { player.pitches.sorted { $0.order < $1.order } }
     private var choices: [PitchType] { PitchType.allCases.filter { pitch in !player.pitches.contains { $0.code == pitch.rawValue } } }
     private var canStart: Bool { blocked == nil && !pending && (player.pitches.count < 5 || !replacing.isEmpty) }
     private func load() {

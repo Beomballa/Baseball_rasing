@@ -853,3 +853,40 @@ struct TrainingProjectFeedbackPanel: View {
         }.accessibilityElement(children:.combine)
     }
 }
+
+
+struct CareerProjectNextActions: View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    var body:some View {
+        VStack(spacing:8) {
+            NavigationLink {CareerObjectivesView(player:player,calendar:calendar)} label: {Text("현재 선수 프로젝트 보기")}
+                .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("completionProjectAction")
+            NavigationLink {ObservationReviewView(player:player,calendar:calendar)} label: {Text("28일 관찰 결산 보기")}
+                .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("completionObservationAction")
+            Text("과제 상세에서 다음 행동 선택 · 날짜와 행동은 자동으로 진행되지 않습니다.").font(.caption).fixedSize(horizontal:false,vertical:true)
+        }
+    }
+}
+
+struct MatchProjectFeedbackPanel:View {
+    let feedback:MatchProjectFeedback?
+    var body:some View {
+        GamePanel(title:"이번 경기 · 목표 과제",onBoard:true) {
+            if let feedback {
+                if let project=feedback.project,let after=feedback.after {
+                    Text(feedback.clubName ?? project.target.clubID).font(.headline).foregroundStyle(GameTheme.gold)
+                    Text("공식 \(project.role == .batter ? "타석":"투구 아웃") +\(feedback.sampleContribution) · 지정 활동 +\(feedback.taskContribution)")
+                        .font(.subheadline.bold()).accessibilityIdentifier("matchProjectContribution")
+                    Text("공식 표본 \(after.sample) / \(after.requiredSample) · 남음 \(max(0,after.requiredSample-after.sample))").font(.subheadline.monospacedDigit())
+                    let trainingGoal=after.task?.trainingGoal ?? 3,qualityGoal=after.task?.qualityGoal ?? 2
+                    if trainingGoal>0 {Text("관련 훈련 \(after.trainingKeys.count) / \(trainingGoal) · 남음 \(max(0,trainingGoal-after.trainingKeys.count))회").font(.subheadline)}
+                    if qualityGoal>0 {Text("우수 훈련 \(after.qualitySessions) / \(qualityGoal) · 남음 \(max(0,qualityGoal-after.qualitySessions))회").font(.subheadline)}
+                    if let task=after.task,task.goal>0 {Text(task.metric.label+" \(task.value) / \(task.goal)").font(.subheadline)}
+                    Text(after.complete ? "과제 기준 충족 · 다음 관찰 보고서에서 확인":"관련 훈련·공식 출전의 남은 조건은 과제 상세에서 확인하세요.").font(.subheadline)
+                    Text(feedback.date+" 완료 당시 저장 · 추가 XP·계약 가산 없음").font(.caption)
+                } else {Text("완료 당시 진행 중인 선수 프로젝트가 없습니다.").font(.subheadline)}
+            } else {Text("이전 경기 · 완료 당시 과제 요약 미저장").font(.subheadline)}
+        }.accessibilityElement(children:.contain).accessibilityIdentifier("matchProjectFeedback")
+    }
+}

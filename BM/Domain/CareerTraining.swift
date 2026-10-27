@@ -432,3 +432,34 @@ struct TrainingProjectFeedback: Codable, Equatable {
         return "공식 경기에서 필요한 표본을 더 확보하세요."
     }
 }
+
+
+struct MatchProjectFeedback: Codable, Equatable {
+    let version: Int
+    let activityKey: String
+    let date: String
+    let project: CareerDevelopmentProject?
+    let clubName: String?
+    let before: CareerProjectProgress?
+    let after: CareerProjectProgress?
+    static func projected(_ before: CareerProjectProgress,project:CareerDevelopmentProject,match:CareerMatch,key:String) -> CareerProjectProgress {
+        let related=match.completed && match.appearance && match.role == project.role.rawValue && (match.competition ?? "highschool") == project.level && !project.baselineMatches.contains(key)
+        let sample=related ? (project.role == .batter ? match.line.plateAppearances:match.line.pitchingOuts):0
+        var value=CareerProjectProgress(matchKeys:(before.matchKeys+(related ? [key]:[])).sorted(),trainingKeys:before.trainingKeys,
+            qualitySessions:before.qualitySessions,sample:before.sample+sample,growth:before.growth,requiredSample:before.requiredSample)
+        if let task=before.task {
+            let gain=related ? (project.assignment?.metric.value(in:match) ?? 0):0
+            value.task=CareerProjectTaskProgress(metric:task.metric,value:task.value+gain,goal:task.goal,keys:(task.keys+(gain>0 ? [key]:[])).sorted(),trainingGoal:task.trainingGoal,qualityGoal:task.qualityGoal)
+        }
+        return value
+    }
+    func validate(match:CareerMatch,key:String,date:String) throws {
+        guard version == 1,match.completed,activityKey == key,self.date == date else {throw MatchError.invalidRecord}
+        guard let project else {guard clubName == nil,before == nil,after == nil else {throw MatchError.invalidRecord};return}
+        guard let before,let after,let clubName,!clubName.isEmpty,project.role.rawValue == match.role,
+              project.start <= date,date <= project.end,!before.matchKeys.contains(key),!(before.task?.keys.contains(key) ?? false),
+              after == Self.projected(before,project:project,match:match,key:key) else {throw MatchError.invalidRecord}
+    }
+    var sampleContribution:Int {max(0,(after?.sample ?? 0)-(before?.sample ?? 0))}
+    var taskContribution:Int {max(0,(after?.task?.value ?? 0)-(before?.task?.value ?? 0))}
+}

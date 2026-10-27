@@ -97,3 +97,49 @@ import SwiftData
         return player
     }
 }
+
+extension CareerStoreTests {
+    func testV31RealV1AndV14FilesMigrateKeepingIdentityMasteryAndPendingBytes() throws {
+        for old in [CareerSchemaV1.self as any VersionedSchema.Type,CareerSchemaV14.self] {
+            let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+            defer {try? FileManager.default.removeItem(at:folder)}
+            let url=folder.appendingPathComponent("old.store"),schools=try SchoolCatalog.load()
+            let original=try autoreleasepool { () throws -> (UUID,Data?,Data?) in
+                let schema=Schema(versionedSchema:old),db=try ModelContainer(for:schema,configurations:[ModelConfiguration("Career",schema:schema,url:url,cloudKitDatabase:.none)])
+                db.mainContext.autosaveEnabled=false
+                let historical=CareerSchemaV1.Player(draft:draft(.pitcher),school:schools[0])
+                historical.contact=68.1234;historical.pitches[0].mastery=84.25
+                db.mainContext.insert(historical)
+                var trainingBytes:Data?,matchBytes:Data?
+                if old.versionIdentifier == CareerSchemaV14.versionIdentifier {
+                    // Construct dependent records with an uninserted player of the same identity.
+                    let projection=CareerPlayer(draft:draft(.pitcher),school:schools[0]);projection.id=historical.id
+                    let state=CareerCalendarState(player:projection,schools:schools,legacySave:false)
+                    db.mainContext.insert(state)
+                    let memory=try CareerStore.makeContainer(inMemory:true),c=memory.mainContext
+                    let source=try CareerStore.create(draft(.pitcher),schools:schools,in:c)
+                    let sourceState=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                    let row=try CareerTrainingStore.start(player:source,state:sourceState,pitchCode:"four-seam",in:c)
+                    try CareerTrainingStore.attempt(player:source,state:sourceState,record:row,revision:row.revision,input:TrainingInput(release:0.68),in:c)
+                    let bytes=String(decoding:row.payload,as:UTF8.self).replacingOccurrences(of:source.id.uuidString,with:historical.id.uuidString)
+                    let training=try JSONDecoder().decode(CareerTraining.self,from:Data(bytes.utf8))
+                    let copy=try CareerTrainingRecord(training);copy.revision=3;db.mainContext.insert(copy);trainingBytes=copy.payload
+                    let fixture=try XCTUnwrap(state.fixtures(for:projection,year:2026).first)
+                    var match=CareerMatch(random:42,isHome:true,role:"pitcher",appearance:true,contact:65,power:75,discipline:60,mastery:["four-seam":72])
+                    try match.advance(.automatic)
+                    let saved=try CareerMatchRecord(player:projection,fixture:fixture,match:match)
+                    saved.completed=true;saved.revision=17;db.mainContext.insert(saved);matchBytes=saved.payload
+                }
+                try db.mainContext.save();return (historical.id,trainingBytes,matchBytes)
+            }
+            let db=try CareerStore.makeContainer(url:url),c=db.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first)
+            XCTAssertEqual(p.id,original.0);XCTAssertEqual(p.contact,68.1234);XCTAssertEqual(p.pitches.first {$0.order == 0}?.mastery,84.25)
+            XCTAssertNil(p.lifecycleData);XCTAssertEqual(try c.fetchCount(FetchDescriptor<ActiveCareerSlot>()),1)
+            if let bytes=original.1 {let training=try XCTUnwrap(c.fetch(FetchDescriptor<CareerTrainingRecord>()).first);XCTAssertEqual(training.payload,bytes);XCTAssertEqual(training.revision,3);XCTAssertEqual(try training.snapshot().scores.count,1)}
+            if let bytes=original.2 {XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).first?.payload,bytes)}
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:folder.path).contains {$0.hasPrefix("before-v15-")})
+        }
+    }
+}

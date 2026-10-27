@@ -88,7 +88,7 @@ struct MatchView: View {
         copy.gameDate = original.gameDate; copy.startAge = original.startAge; copy.fatigue = 0
         copy.contact = original.contact; copy.power = original.power; copy.discipline = original.discipline
         copy.speed = original.speed; copy.defense = original.defense; copy.arm = original.arm
-        copy.pitches = original.pitches.map { CareerSchemaV1.PitchMastery(code: $0.code, name: $0.name, mastery: $0.mastery, order: $0.order) }
+        copy.pitches = original.pitches.map { CareerPitchMastery(code: $0.code, name: $0.name, mastery: $0.mastery, order: $0.order) }
         let profile = try PlayerAbilities(player: copy, archetype: nil)
         profile.archetypeRaw = abilities.archetypeRaw; profile.productionPresetVersion = abilities.productionPresetVersion
         profile.initialValues = abilities.initialValues; profile.mental = abilities.mental

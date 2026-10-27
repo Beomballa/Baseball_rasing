@@ -2,6 +2,85 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV31AgingRetirementArchiveAndNewCareerFormBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication()
+        for pitcher in [false,true] {
+            app.terminate();app.launchArguments=["-management-career-verification","-management-v31-lifecycle"];app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:20))
+            if pitcher {pickPitcher(app)}
+            app.buttons["managementTab-career"].tap();app.buttons["facility-contracts"].tap()
+            let retire=app.buttons["openRetirementConfirmation"];reveal(retire,app);XCTAssertTrue(retire.isHittable)
+            capture(app,"v31-"+(pitcher ? "pitcher":"batter")+"-aging")
+            retire.tap();let confirm=app.buttons["은퇴하고 기록 보존"].firstMatch;XCTAssertTrue(confirm.waitForExistence(timeout:4));capture(app,"v31-retirement-confirmation");confirm.tap()
+            let archive=app.descendants(matching:.any).matching(identifier:"retirementArchive").firstMatch
+            XCTAssertTrue(archive.waitForExistence(timeout:8));capture(app,"v31-"+(pitcher ? "pitcher":"batter")+"-archive")
+            let create=app.buttons["archiveNewCareer"];reveal(create,app);create.tap()
+            XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout:5));capture(app,"v31-new-career-form")
+        }
+    }
+    @MainActor func testV31ActualOpponentPitchHistoryIsReadOnlyBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-management-stats-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:20))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-game"].tap();app.buttons["facility-analysis"].tap()
+            reveal(app.buttons["hubOpponentAnalysis"],app);app.buttons["hubOpponentAnalysis"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-pitcher"].waitForExistence(timeout:10));app.buttons["opponentTab-pitcher"].tap()
+            let history=app.descendants(matching:.any).matching(identifier:"opponentActualPitchSample").firstMatch
+            reveal(history,app);XCTAssertTrue(history.exists);app.swipeUp();capture(app,"v31-"+(pitcher ? "pitcher":"batter")+"-pitch-history")
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+            XCTAssertEqual(status(app),before)
+        }
+    }
+    @MainActor func testV31ProjectRoutesToAssignedTrainingAndCompletionActions() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification","-goal-special-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:120))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            app.buttons["managementTab-career"].tap();app.buttons["facility-goals"].tap()
+            reveal(app.buttons["openCareerObjectives"],app);app.buttons["openCareerObjectives"].tap()
+            reveal(app.buttons["startCareerProject"],app);app.buttons["startCareerProject"].tap()
+            reveal(app.buttons["projectTrainingAction"],app);let label=app.buttons["projectTrainingAction"].label
+            capture(app,"v31-"+(pitcher ? "pitcher":"batter")+"-project-route");app.buttons["projectTrainingAction"].tap()
+            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout:8))
+            XCTAssertTrue(app.navigationBars.firstMatch.identifier.contains(String(label.split(separator:" ").first!)))
+            capture(app,"v31-"+(pitcher ? "pitcher":"batter")+"-assigned-training")
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+        }
+    }
+    @MainActor func testV31OfficialMatchReceiptAndNextActionsBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification","-goal-special-verification","-v31-match-completed"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:120))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-game"].tap();app.buttons["facility-game"].tap()
+            reveal(app.buttons["openCareerGame"],app);app.buttons["openCareerGame"].tap()
+            let feedback=app.descendants(matching:.any).matching(identifier:"matchProjectContribution").firstMatch
+            reveal(feedback,app);XCTAssertTrue(feedback.exists);capture(app,"v31-"+(pitcher ? "pitcher":"batter")+"-match-contribution")
+            let action=app.buttons["completionObservationAction"];reveal(action,app);action.tap()
+            capture(app,"v31-"+(pitcher ? "pitcher":"batter")+"-next-observation")
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            reveal(app.buttons["gameReturnHome"],app);app.buttons["gameReturnHome"].tap();close(app)
+            XCTAssertEqual(status(app),before)
+        }
+    }
+    @MainActor func testV31LargeTextRetirementArchiveOnSmallPhone() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-management-v31-lifecycle","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:20))
+        app.buttons["managementLargeMenu"].tap();app.buttons["커리어"].tap()
+        reveal(app.buttons["facility-contracts"],app);app.buttons["facility-contracts"].tap()
+        reveal(app.buttons["openRetirementConfirmation"],app);capture(app,"v31-large-aging");app.buttons["openRetirementConfirmation"].tap()
+        app.buttons["은퇴하고 기록 보존"].firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"retirementArchive").firstMatch.waitForExistence(timeout:8));capture(app,"v31-large-archive")
+        let create=app.buttons["archiveNewCareer"];reveal(create,app);XCTAssertTrue(create.isHittable);capture(app,"v31-large-archive-action")
+    }
     @MainActor func testV30ThrowFiveAttemptsResumeAndHistoricalResult() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-management-career-verification"];app.launch()

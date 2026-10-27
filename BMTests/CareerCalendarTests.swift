@@ -4944,3 +4944,184 @@ extension CareerCalendarTests {
         } else {XCTFail("fixture must retain the position assignment")}
     }
 }
+
+extension CareerCalendarTests {
+    func testV31MatchProjectReceiptUsesOfficialCompletionAndStaysFrozenAfterReopen() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try goalSpecialFixture(role),c=store.mainContext
+            p.gameDate="2033-03-28";s.actionDate=nil;try c.save()
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let report=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasReports?.last)
+            let club=try XCTUnwrap(CareerTargetClub.catalog(report).first {$0.roleID == (role == .batter ? "field":"starter")})
+            try OverseasContractStore.selectTarget(player:p,calendar:s,reportID:report.id,clubID:club.id,date:p.gameDate,revision:s.revision,in:c)
+            try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).activeProject(on:p.gameDate))
+            p.gameDate="2033-04-01";s.actionDate=p.gameDate;try c.save()
+            let owner=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
+            let row=try CareerMatchStore.start(player:p,state:s,in:c),original=row.payload,revision=row.revision,fatigue=p.fatigue,calendarRevision=s.revision
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:revision,input:.automatic,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(row.payload,original);XCTAssertEqual(s.revision,calendarRevision);XCTAssertEqual(p.fatigue,fatigue)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:revision,input:.automatic,in:c)
+            let match=try row.snapshot(),feedback=try XCTUnwrap(match.projectFeedback),payload=row.payload
+            XCTAssertEqual(feedback.project,project)
+            XCTAssertEqual(feedback.sampleContribution,role == .batter ? match.line.plateAppearances:match.line.pitchingOuts)
+            XCTAssertEqual(feedback.after?.matchKeys,[row.key]);XCTAssertEqual(feedback.before?.trainingKeys,feedback.after?.trainingKeys)
+            XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,owner)
+            let afterFatigue=p.fatigue,afterRevision=s.revision
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+            XCTAssertEqual(try row.snapshot().projectFeedback,feedback);XCTAssertEqual(row.payload,payload);XCTAssertEqual(p.fatigue,afterFatigue);XCTAssertEqual(s.revision,afterRevision)
+        }
+    }
+    func testV31HighSchoolProjectRecognizesNilCompetitionWithoutChangingFrozenReviews() throws {
+        var match=CareerMatch(random:8,isHome:true,role:"batter",appearance:true,contact:60,power:60,discipline:60,mastery:[:])
+        match.completed=true;match.line.plateAppearances=4
+        let project=CareerDevelopmentProject(id:"qa-project",target:CareerDevelopmentTarget(reportID:"qa-report",clubID:"qa-club",date:"2026-04-01"),start:"2026-04-01",end:"2026-04-28",period:0,role:.batter,level:"highschool",training:.contact,baselineMatches:[],baselineTrainings:[],requiredSample:4)
+        let before=CareerProjectProgress(matchKeys:[],trainingKeys:[],qualitySessions:0,sample:0,growth:0,requiredSample:4)
+        let after=MatchProjectFeedback.projected(before,project:project,match:match,key:"game")
+        XCTAssertEqual(after.sample,4);XCTAssertEqual(after.matchKeys,["game"])
+        match.competition="college"
+        XCTAssertEqual(MatchProjectFeedback.projected(before,project:project,match:match,key:"game"),before)
+    }
+}
+
+extension CareerCalendarTests {
+    func testV31PitchHistoryObservesAllPitchesWithoutChangingTheSimulation() throws {
+        let (store,p,s)=try fixture(date:"2026-04-01",role:.batter),c=store.mainContext
+        s.actionDate=p.gameDate;try c.save()
+        let record=try CareerMatchStore.start(player:p,state:s,in:c)
+        let initial=try record.snapshot();var control=initial;control.pitchLog=nil
+        try control.advance(.automatic)
+        try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c)
+        var observed=try record.snapshot();let log=try XCTUnwrap(observed.pitchLog)
+        XCTAssertFalse(log.pitches.isEmpty);try log.validate(match:observed)
+        XCTAssertEqual(observed.random,control.random);XCTAssertEqual(observed.line,control.line);XCTAssertEqual(observed.fieldPlays,control.fieldPlays);XCTAssertEqual(observed.homeScore,control.homeScore);XCTAssertEqual(observed.awayScore,control.awayScore)
+        XCTAssertTrue(log.pitches.contains {$0.x != nil});XCTAssertTrue(log.pitches.contains {$0.x == nil})
+        XCTAssertTrue(log.pitches.filter {$0.source == "automatic-zone"}.allSatisfy {$0.x == nil && $0.y == nil})
+        let fixture=try XCTUnwrap(s.fixtures(for:p,year:2026).first)
+        let opponent=fixture.opponent(of:p.schoolID)
+        let history=try CareerMatchStore.opponentPitchHistory(playerID:p.id,year:2026,competition:"highschool",teamID:opponent,through:GameDate(p.gameDate),in:c)
+        XCTAssertEqual(history.reduce(0,{$0+$1.total}),log.pitches.filter {$0.home != observed.isHome}.count)
+        for h in history {try h.validate();XCTAssertLessThanOrEqual(h.located,h.total)}
+        observed.pitchLog?.pitches.removeLast();XCTAssertThrowsError(try observed.pitchLog?.validate(match:observed))
+    }
+    func testV31AutomaticPitchLogCountsBothTeamsAndLegacyHistoryStaysUnknown() throws {
+        let fixture=try XCTUnwrap(SeasonSchedule.fixtures(year:2026,schoolIDs:["A","B","C","D","E","F"]).first)
+        let match=try AutomaticLeagueStore.simulate(playerID:UUID(),fixture:fixture,competition:"highschool")
+        let log=try XCTUnwrap(match.pitchLog);try log.validate(match:match)
+        XCTAssertEqual(log.pitches.count,try XCTUnwrap(match.playerRecords).home.pitchingTotal.pitches+XCTUnwrap(match.playerRecords).away.pitchingTotal.pitches)
+        XCTAssertTrue(log.pitches.allSatisfy {$0.x == nil && $0.source == "automatic-zone"})
+        var old=match;old.pitchLog=nil
+        let encoded=try JSONEncoder().encode(old);let restored=try JSONDecoder().decode(CareerMatch.self,from:encoded)
+        XCTAssertNil(restored.pitchLog);XCTAssertEqual(restored.random,match.random)
+    }
+}
+
+extension CareerCalendarTests {
+    func testV31LongCareerGrowthScenariosUseActualRulesWithoutSaturatingAllAbilities() throws {
+        var evidence:[String:[CareerBalanceYear]]=[:]
+        for archetype in PlayerArchetype.allCases {
+            let low=try CareerBalanceSimulation.run(archetype:archetype,score:50,fatigue:60)
+            let base=try CareerBalanceSimulation.run(archetype:archetype)
+            let high=try CareerBalanceSimulation.run(archetype:archetype,score:100,fatigue:0)
+            XCTAssertEqual(base.map(\.age),Array(16...40))
+            for index in base.indices {
+                for key in base[index].values.keys {XCTAssertLessThanOrEqual(low[index].values[key]!,base[index].values[key]!);XCTAssertLessThanOrEqual(base[index].values[key]!,high[index].values[key]!)}
+                XCTAssertTrue(base[index].values.values.allSatisfy {$0.isFinite && (0...100).contains($0)})
+            }
+            XCTAssertFalse(try XCTUnwrap(base.last).values.values.allSatisfy {$0 == 100})
+            evidence[archetype.rawValue+"-conservative"]=low;evidence[archetype.rawValue+"-baseline"]=base;evidence[archetype.rawValue+"-optimistic"]=high
+        }
+        let data=try JSONEncoder().encode(evidence),attachment=XCTAttachment(data:data,uniformTypeIdentifier:"public.json")
+        attachment.name="v31-long-career-growth-scenarios.json";attachment.lifetime = .keepAlways;add(attachment)
+    }
+}
+
+extension CareerCalendarTests {
+    func testV31AgingUsesBirthdayOnceAndRollsBackWithDayFailure() throws {
+        let (db,p,s)=try fixture(date:"2041-03-31"),c=db.mainContext
+        p.gameDate="2029-04-01";try CareerPathStore.synchronize(player:p,calendar:s,in:c);p.gameDate="2041-03-31";try CareerPathStore.synchronize(player:p,calendar:s,in:c);try c.save()
+        let before=try CareerLifecycleStore.values(player:p,in:c),revision=s.revision,fatigue=p.fatigue
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,confirmAnniversary:true,in:c,save:{_ in throw CalendarError.staleState}))
+        XCTAssertEqual(p.gameDate,"2041-03-31");XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(try CareerLifecycleStore.values(player:p,in:c),before);XCTAssertTrue(try p.lifecycle.aging.isEmpty)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:revision,automaticRest:true,confirmAnniversary:true,in:c)
+        let event=try XCTUnwrap(p.lifecycle.aging.first)
+        XCTAssertEqual(event.age,31);XCTAssertEqual(event.after["speed"],before["speed"]!-0.25);XCTAssertEqual(event.after["control"],before["control"]!-0.10);XCTAssertEqual(event.after["mental"],before["mental"])
+        try CareerLifecycleStore.advance(player:p,state:s,previous:GameDate("2041-03-31"),in:c);try c.save()
+        XCTAssertEqual(try p.lifecycle.aging.count,1)
+        XCTAssertEqual(CareerAgingRules.value(0,kind:.speed,age:40),0)
+        XCTAssertEqual(CareerAgingRules.value(55,kind:.arm,age:34),54.5)
+        XCTAssertEqual(CareerAgingRules.value(55,kind:.control,age:37),54.6)
+    }
+    func testV31TraitRetentionCountsCalendarDaysAndRecoveryResetsRisk() async throws {
+        let (db,p,s)=try fixture(date:"2026-10-01",role:.batter),c=db.mainContext
+        let profile=try XCTUnwrap(PlayerTraitStore.profile(playerID:p.id,in:c))
+        profile.payload=try JSONEncoder().encode(TraitLoadout(owned:[.cheetah],active:[.cheetah],progress:[PlayerTrait.cheetah.rawValue:100]));p.speed=57;try c.save()
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
+        XCTAssertEqual(try p.lifecycle.traitRisk[PlayerTrait.cheetah.rawValue],"2026-10-02")
+        let summary=try await CalendarProgression.advanceOffDays(player:p,state:s,in:c)
+        XCTAssertEqual(summary.stop,.traitChange);XCTAssertEqual(p.gameDate,"2026-10-14")
+        p.speed=58;try c.save();try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
+        XCTAssertTrue(try p.lifecycle.traitRisk.isEmpty)
+        p.speed=57;try c.save()
+        for _ in 0..<28 {try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)}
+        let loadout=try profile.snapshot()
+        XCTAssertTrue(loadout.owned.isEmpty);XCTAssertTrue(loadout.active.isEmpty);XCTAssertEqual(loadout.progress[PlayerTrait.cheetah.rawValue],0);XCTAssertEqual(try p.lifecycle.losses.count,1)
+    }
+    func testV31RetirementPreservesCareerAndAllowsOneNewActiveSameRoleOnDisk() throws {
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:folder)}
+        let url=folder.appendingPathComponent("archive.store"),schools=try SchoolCatalog.load()
+        let ids=try autoreleasepool {() throws -> [UUID] in
+            let db=try CareerStore.makeContainer(url:url),c=db.mainContext
+            var draft=PlayerDraft();draft.name="기록선수";draft.schoolID=schools[0].id;draft.role = .pitcher
+            let p=try CareerStore.create(draft,schools:schools,in:c),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            XCTAssertThrowsError(try CareerLifecycleStore.retire(player:p,state:s,date:p.gameDate,revision:s.revision,in:c))
+            p.gameDate="2030-10-01";try c.save()
+            let before=try CareerLifecycleStore.values(player:p,in:c),date=p.gameDate,fatigue=p.fatigue,revision=s.revision
+            XCTAssertThrowsError(try CareerLifecycleStore.retire(player:p,state:s,date:date,revision:revision,in:c,save:{_ in throw CalendarError.staleState}))
+            XCTAssertFalse(p.isRetired);XCTAssertEqual(try c.fetchCount(FetchDescriptor<ActiveCareerSlot>()),1)
+            try CareerLifecycleStore.retire(player:p,state:s,date:date,revision:revision,in:c)
+            let journal=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),payload=try XCTUnwrap(p.lifecycleData)
+            XCTAssertEqual(journal.retiredOn,date);XCTAssertNil(try journal.current(on:GameDate(date)))
+            XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(try CareerLifecycleStore.values(player:p,in:c),before)
+            try CareerLifecycleStore.retire(player:p,state:s,date:date,revision:revision,in:c);XCTAssertEqual(p.lifecycleData,payload)
+            XCTAssertThrowsError(try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c))
+            let new=try CareerStore.create(draft,schools:schools,in:c);XCTAssertNotEqual(new.id,p.id)
+            XCTAssertThrowsError(try CareerStore.create(draft,schools:schools,in:c))
+            XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerPlayer>()),2);XCTAssertEqual(try c.fetchCount(FetchDescriptor<ActiveCareerSlot>()),1)
+            return [p.id,new.id]
+        }
+        let reopened=try CareerStore.makeContainer(url:url),c=reopened.mainContext,players=try c.fetch(FetchDescriptor<CareerPlayer>())
+        XCTAssertEqual(Set(players.map(\.id)),Set(ids));XCTAssertTrue(try XCTUnwrap(players.first {$0.id == ids[0]}).isRetired);XCTAssertFalse(try XCTUnwrap(players.first {$0.id == ids[1]}).isRetired)
+    }
+    func testV31AgeLimitAndPendingTrainingPreventUnexpectedCareerChanges() throws {
+        let (db,p,s)=try fixture(date:"2051-03-31"),c=db.mainContext
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,confirmAnniversary:true,in:c)
+        XCTAssertTrue(p.isRetired);XCTAssertEqual(try p.lifecycle.retirement?.reason,"age-limit");XCTAssertEqual(p.gameDate,"2051-04-01")
+        let (db2,p2,s2)=try fixture(date:"2030-10-01"),c2=db2.mainContext
+        let row=try CareerTrainingStore.start(player:p2,state:s2,pitchCode:"four-seam",in:c2)
+        let bytes=row.payload
+        XCTAssertThrowsError(try CareerLifecycleStore.retire(player:p2,state:s2,date:p2.gameDate,revision:s2.revision,in:c2))
+        XCTAssertEqual(row.payload,bytes);XCTAssertFalse(p2.isRetired)
+        XCTAssertThrowsError(try CareerLifecycleStore.requireContractEnd("2051-04-01",player:p2,calendar:s2))
+        XCTAssertNoThrow(try CareerLifecycleStore.requireContractEnd("2051-03-31",player:p2,calendar:s2))
+    }
+}
+
+extension CareerCalendarTests {
+    func testV31RetirementKeepsAcceptedOverseasAndDomesticProofsAndOfferHorizonIsFrozen() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s,offer)=try overseasOfferFixture(role),c=db.mainContext
+            try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            let before=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            try CareerLifecycleStore.retire(player:p,state:s,date:p.gameDate,revision:s.revision,in:c)
+            let after=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertEqual(after.decisions,before.decisions);XCTAssertEqual(after.memberships,before.memberships);XCTAssertEqual(after.overseasCareer,before.overseasCareer)
+            XCTAssertNil(try after.current(on:GameDate(p.gameDate)));XCTAssertEqual(after.retiredOn,p.gameDate)
+            let evaluation=try XCTUnwrap(before.overseasCareer?.evaluations.last)
+            let limited=try evaluation.limited(to:offer.effective)
+            XCTAssertTrue(limited.offers.isEmpty);XCTAssertTrue(limited.reasons.contains {$0.contains("41세")})
+            XCTAssertEqual(try evaluation.limited(to:nil),evaluation)
+        }
+    }
+}

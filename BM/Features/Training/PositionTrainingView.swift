@@ -360,6 +360,7 @@ struct PositionDrillLiveView: View {
                                     Text("피로 \(training.fatigue) → \(min(100, training.fatigue + 6)) · 오늘 행동 완료").font(.caption).accessibilityIdentifier("positionFatigue")
                                     Text("선택 위치만 성장 · 해당 위치로 출전하는 새 경기부터 반영").font(.caption).foregroundStyle(GameTheme.boardMuted)
                                     TrainingProjectFeedbackPanel(training: training)
+                                    CareerProjectNextActions(player: player, calendar: calendar)
                                 }
                                 }
                             } else {

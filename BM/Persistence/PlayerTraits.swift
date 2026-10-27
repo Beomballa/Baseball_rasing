@@ -38,6 +38,7 @@ typealias PlayerTraits = CareerSchemaV6.PlayerTraits
         } catch { context.rollback(); throw error }
     }
     static func requireEditable(player: CareerPlayer, state: CareerCalendarState, in context: ModelContext) throws {
+        try CareerLifecycleStore.requireActive(player)
         guard state.playerID == player.id else { throw TraitError.stale }
         _ = try state.fixtures(for: player, year: GameDate(player.gameDate).year)
         guard !state.hasAction(on: player.gameDate), try !CareerTrainingStore.hasPending(player: player, in: context) else { throw TraitError.locked }

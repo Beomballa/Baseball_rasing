@@ -684,6 +684,8 @@ struct CareerGameView: View {
                     }
                 }
             }
+            MatchProjectFeedbackPanel(feedback:match.projectFeedback)
+            CareerProjectNextActions(player:player,calendar:calendar)
             Button("선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("gameReturnHome")
             Text("홈에서 다음 날로 진행할 수 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }.accessibilityElement(children: .contain)
@@ -1250,6 +1252,7 @@ struct MatchOpponentCenter:View {
             GamePanel(title:"무엇을 던지는 투수인가",onBoard:true,contentSpacing:14) {
                 Text(pitcher.id == team?.starter.id ? "선발 투수":"현재 구원 투수").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("opponentPitcherRole")
                 Text(String(format:"포심 %.0f km/h · 제구 %.1f / 100",pitcher.fastball,pitcher.control)).font(.subheadline.bold()).accessibilityIdentifier("opponentPitcherRatings")
+                if let histories=season?.pitchHistory {OpponentPitchHistoryPanel(history:histories.first(where:{$0.pitcherID == pitcher.id}) ?? OpponentPitchHistory(pitcherID:pitcher.id))}
                 let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:14)):AnyLayout(HStackLayout(spacing:14))
                 layout {
                     OpponentPitchDonut(shares:shares).frame(width:110,height:110)
@@ -1625,5 +1628,36 @@ private struct OpponentRadar:View {
                 }
             }.accessibilityElement(children:.ignore).accessibilityLabel(values.map {$0.0+String(format:" %.1f",$0.1)}.joined(separator:", "))
         }
+    }
+}
+
+
+struct OpponentPitchHistoryPanel:View {
+    let history:OpponentPitchHistory
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body:some View {
+        VStack(alignment:.leading,spacing:10) {
+            Text("실제 시즌 투구 기록").font(.headline).foregroundStyle(GameTheme.gold)
+            Text("기록 \(history.recordedGames)/\(history.games)경기 · \(history.total)구 · 경기 전날까지 고정").font(.caption).accessibilityIdentifier("opponentActualPitchSample")
+            ForEach(history.usage) {u in
+                VStack(alignment:.leading,spacing:4) {
+                    Text((PitchType(rawValue:u.code)?.label ?? u.code)+String(format:" · %d구 / %.1f%% · 평균 %.1f km/h",u.count,Double(u.count)*100/Double(max(1,history.total)),u.average)).font(.subheadline)
+                    ProgressView(value:Double(u.count),total:Double(max(1,history.total))).tint(GameTheme.gold).accessibilityHidden(true)
+                }.accessibilityElement(children:.combine)
+            }
+            Text("좌표 기록 \(history.located)/\(history.total)구 · 존 안 \(history.zoneInside)구").font(.caption)
+            if history.located>0 {
+            if typeSize.isAccessibilitySize {
+                ForEach(0..<9) {i in Text("\(i/3+1)행 \(i%3+1)열 · \(history.zone[i])구").font(.body).fixedSize(horizontal:false,vertical:true)}
+            } else {
+            LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:4),count:3),spacing:4) {
+                ForEach(0..<9) {i in Text("\(history.zone[i])구").font(.caption.monospacedDigit().bold()).frame(maxWidth:.infinity,minHeight:36)
+                    .background(history.zone[i]>0 ? GameTheme.growth.opacity(0.35):GameTheme.board)
+                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine)).accessibilityLabel("\(i/3+1)행 \(i%3+1)열 \(history.zone[i])구")}
+            }
+            }
+            } else {Text("코스 좌표 미집계 · 좌표가 저장된 투구부터 분포 표시").font(.subheadline)}
+            Text("존 밖 좌표 \(history.zone[9])구 · 자동 투구의 좌표 미생성 \(history.total-history.located)구는 코스 분포에서 제외").font(.caption).fixedSize(horizontal:false,vertical:true)
+        }.padding(10).background(GameTheme.board).accessibilityElement(children:.contain).accessibilityIdentifier("opponentActualPitchHistory")
     }
 }

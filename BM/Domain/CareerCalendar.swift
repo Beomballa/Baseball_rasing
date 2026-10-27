@@ -367,3 +367,108 @@ enum ContractEvaluationError: LocalizedError {
         }
     }
 }
+
+/// Initial game balance, not a claim about real athletes' aging.
+enum CareerAgingRules {
+    static func loss(_ kind:TrainingKind,age:Int) -> Double {
+        guard (31...40).contains(age),kind != .mental else {return 0}
+        let physical:[TrainingKind]=[.power,.speed,.arm,.velocity,.stamina]
+        return age <= 33 ? (physical.contains(kind) ? 0.25:0.10):age <= 36 ? (physical.contains(kind) ? 0.50:0.25):(physical.contains(kind) ? 0.75:0.40)
+    }
+    static func value(_ before:Double,kind:TrainingKind,age:Int,pitch:Bool=false) -> Double {
+        let loss=loss(kind,age:age)
+        return TrainingRules.round(min(before,max(pitch ? 0:1,before-loss)))
+    }
+    static let homeIDs:[TrainingKind:String]=[.contact:"homeContact",.power:"homePower",.discipline:"homeDiscipline",.speed:"homeSpeed",.defense:"homeDefense",.arm:"homeArm",.mental:"homeMental",.velocity:"homeVelocity",.control:"homeControl",.stuff:"homeStuff",.stamina:"homeStamina"]
+}
+
+struct CareerBalanceYear:Codable {
+    let age:Int
+    let values:[String:Double]
+    let pitches:[String:Double]
+    let roleGrades:[String:Double]
+    let domesticAbilityRoles:Int
+}
+enum CareerBalanceSimulation {
+    static func run(archetype:PlayerArchetype,score:Double=75,fatigue:Int=40,annualTrainings:Int=180) throws -> [CareerBalanceYear] {
+        guard (0...100).contains(score),(0...100).contains(fatigue),(0...365).contains(annualTrainings) else {throw TrainingError.invalidInput}
+        let initial=archetype.values,role=archetype.role
+        var values:[TrainingKind:Double]=[.contact:initial.contact,.power:initial.power,.discipline:initial.discipline,.speed:initial.speed,.defense:initial.defense,.arm:initial.arm,.mental:initial.mental]
+        if role == .pitcher {values[.velocity]=initial.velocity;values[.control]=initial.control;values[.stuff]=initial.stuff;values[.stamina]=initial.stamina}
+        var pitches=initial.pitches,output:[CareerBalanceYear]=[]
+        let selected:[TrainingKind]=role == .batter ? [.contact,.power,.discipline,.speed,.defense,.arm,.mental]:[.velocity,.control,.stuff,.stamina,.mental]
+        let pitchKeys=pitches.keys.sorted()
+        for age in 16...40 {
+            for (kind,value) in values {values[kind]=CareerAgingRules.value(value,kind:kind,age:age)}
+            for (key,value) in pitches {pitches[key]=CareerAgingRules.value(value,kind:.pitch,age:age,pitch:true)}
+            for step in 0..<annualTrainings {
+                let i=step%(selected.count+pitchKeys.count)
+                if i<selected.count {let kind=selected[i];values[kind]=TrainingRules.growth(before:values[kind]!,score:score,fatigue:fatigue,age:age,pitch:false)}
+                else {let key=pitchKeys[i-selected.count];pitches[key]=TrainingRules.growth(before:pitches[key]!,score:score,fatigue:fatigue,age:age,pitch:true)}
+            }
+            let raw=Dictionary(uniqueKeysWithValues:values.map {(CareerAgingRules.homeIDs[$0.key]!,$0.value)})
+            let summary=HomeAbilitySummary(axes:[],originals:raw.map {HomeAbilityValue(id:$0.key,label:$0.key,current:$0.value,initial:nil)},pitches:pitches.map {HomeAbilityValue(id:$0.key,label:$0.key,current:$0.value,initial:nil)},hasInitialValues:false)
+            let grades=try ScoutingRoleEvaluation.grades(role:role,abilities:summary,positionMastery:60)
+            let gradeValues=Dictionary(uniqueKeysWithValues:grades.compactMap {g in g.score.map {(g.id,$0)}})
+            output.append(CareerBalanceYear(age:age,values:raw,pitches:pitches,roleGrades:gradeValues,
+                domesticAbilityRoles:grades.filter {grade in grade.score.map {$0 >= DomesticSelection.minimum(grade.id,route:.rookie)} ?? false}.count))
+        }
+        return output
+    }
+}
+
+
+struct CareerAgeEvent:Codable,Equatable,Identifiable {
+    let id:String
+    let date:String
+    let age:Int
+    let before:[String:Double]
+    let after:[String:Double]
+}
+struct CareerTraitLoss:Codable,Equatable,Identifiable {
+    let id:String
+    let date:String
+    let trait:PlayerTrait
+}
+struct CareerRetirement:Codable,Equatable {
+    let date:String
+    let age:Int
+    let reason:String
+    let affiliation:String
+    let games:Int
+    let line:MatchLine
+    let finalValues:[String:Double]
+    let finalPitches:[String:Double]
+}
+struct CareerLifecycleState:Codable,Equatable {
+    var version=1
+    var adopted:String?
+    var enforceAgeLimit=true
+    var aging:[CareerAgeEvent]=[]
+    var traitRisk:[String:String]=[:]
+    var losses:[CareerTraitLoss]=[]
+    var retirement:CareerRetirement?
+    func validate(playerID:UUID,today:String) throws {
+        guard version == 1,Set(aging.map(\.id)).count == aging.count,Set(losses.map(\.id)).count == losses.count else {throw CareerLifecycleError.invalid}
+        if let adopted {guard try GameDate(adopted) <= GameDate(today) else {throw CareerLifecycleError.invalid}}
+        for event in aging {
+            guard (31...40).contains(event.age),event.date <= today,event.id == playerID.uuidString+":aging-v1:"+event.date,
+                  Set(event.before.keys) == Set(event.after.keys),event.before.values.allSatisfy({$0.isFinite && (0...100).contains($0)}),
+                  event.after.allSatisfy({k,v in v.isFinite && v>=0 && v <= event.before[k]!}) else {throw CareerLifecycleError.invalid}
+        }
+        for (key,date) in traitRisk {guard PlayerTrait(rawValue:key) != nil,date <= today,adopted.map({$0 <= date}) ?? false else {throw CareerLifecycleError.invalid}}
+        if let retired=retirement {guard retired.date == today,retired.age>=20,retired.games>=0,["voluntary","age-limit"].contains(retired.reason) else {throw CareerLifecycleError.invalid}}
+    }
+}
+enum CareerLifecycleError:LocalizedError {
+    case invalid,retired,pending,tooYoung,horizon
+    var errorDescription:String? {
+        switch self {
+        case .invalid:"커리어 변화 기록을 확인할 수 없습니다. 기존 저장은 유지됩니다."
+        case .retired:"은퇴한 커리어는 기록 열람만 가능합니다. 새 커리어를 시작해 주세요."
+        case .pending:"진행 중인 경기·훈련·평가전을 먼저 마쳐 주세요."
+        case .tooYoung:"자율 은퇴는 게임 나이 20세부터 가능합니다."
+        case .horizon:"41세 기념일 이후까지 이어지는 새 계약은 체결할 수 없습니다."
+        }
+    }
+}

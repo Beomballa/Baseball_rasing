@@ -25,7 +25,7 @@ struct PlayerHomeView: View {
                 if players.count > 1 {
                     let roleLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
                     roleLayout {
-                        ForEach(players) { candidate in
+                        ForEach(players.filter {!$0.isRetired}) { candidate in
                             Button { select(candidate.id) } label: {
                                 VStack(spacing: 2) {
                                     Text(candidate.role.label).font(.subheadline.bold())
@@ -37,6 +37,11 @@ struct PlayerHomeView: View {
                             }.buttonStyle(.plain).accessibilityIdentifier("homeRole-" + candidate.roleRaw)
                                 .accessibilityAddTraits(candidate.id == player.id ? .isSelected : [])
                         }
+                    }
+                    if players.contains(where:{$0.isRetired}) {
+                        Menu("은퇴 선수 기록실") {
+                            ForEach(players.filter { $0.isRetired }) {archived in Button(archived.name+" · "+archived.role.label) {select(archived.id)}}
+                        }.frame(minHeight:44).accessibilityIdentifier("openRetiredCareers")
                     }
                 }
     }
@@ -84,7 +89,7 @@ struct PlayerHomeView: View {
                                         Text(affiliationLabel).managementFont(.body)
                                         Text("\(age)세 · \(player.role.label) · \(player.roleDetail)").managementFont(.body)
                                     }
-                                    if players.count < PlayerRole.allCases.count {
+                                    if players.filter {!$0.isRetired}.count < PlayerRole.allCases.count {
                                         Button("다른 역할 선수 만들기") { leaveRoom(for: .create) }.buttonStyle(ManagementButtonStyle())
                                     }
                                 case .gameEntry: Text("일정 자료를 확인할 수 없습니다.")
@@ -333,7 +338,7 @@ struct PlayerHomeView: View {
                     .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("playerOpenSeason")
             }
         }
-        if players.count < PlayerRole.allCases.count {
+        if players.filter {!$0.isRetired}.count < PlayerRole.allCases.count {
             Button("다른 역할 선수 만들기") { leaveRoom(for: .create) }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("createOtherRole")
         }
     }
@@ -364,7 +369,7 @@ struct PlayerHomeView: View {
                 if player.role == .pitcher { pitchLibrary(calendar) }
                 else { PositionHomePanel(player: player, calendar: calendar) }
             case .practice:
-                NavigationLink { TrainingPracticeView(sourcePlayers: players, initialRole: player.role) } label: { Text("자유 연습 · 성장/날짜/피로 변화 없음") }
+                NavigationLink { TrainingPracticeView(sourcePlayers: players.filter {!$0.isRetired}, initialRole: player.role) } label: { Text("자유 연습 · 성장/날짜/피로 변화 없음") }
                     .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("openTrainingPractice")
                 Button("투구 연습장 입장") { leaveRoom(for: .practice) }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openMatch")
             }
@@ -484,6 +489,7 @@ struct PlayerHomeView: View {
                 ContractEvaluationHomePanel(player: player, calendar: calendar).id(player.id)
                 CareerContractStatusPanel(player: player, calendar: calendar).id(player.id)
                 CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
+                CareerLifecyclePanel(player:player,calendar:calendar)
             }
         }
     }
@@ -2027,9 +2033,9 @@ struct CareerProjectPanel:View {
                 taskRow("시작 소속 수준 공식 출전",value:progress.sample,total:project.requiredSample,unit:project.role == .batter ? "타석":"아웃")
             } else {Text("비출전 일정 · 이번 프로젝트는 훈련 집중 관찰입니다. 공식 출전 과제는 부여하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.gold)}
             Text("실제 해당 훈련 성장 합계 +"+String(format:"%.1f",progress.growth)+" · 기존 성장 기록").font(.subheadline).foregroundStyle(GameTheme.growth)
-            NavigationLink {CareerTrainingView(player:player,calendar:calendar)} label: {Text(project.training.label+" 훈련 선택 / 이어하기")}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("projectTrainingAction")
+            NavigationLink {CareerTrainingView(player:player,calendar:calendar,initialKind:project.training)} label: {Text(project.training.label+" 훈련 선택 / 이어하기")}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("projectTrainingAction")
             if project.assignment?.metric == .position {
-                NavigationLink {PositionTrainingView(player:player,calendar:calendar)} label: {Text("시작 포지션 "+(project.assignment?.position ?? "")+" 숙련 훈련")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("projectPositionAction")
+                NavigationLink {PositionTrainingView(player:player,calendar:calendar,initialPosition:project.assignment?.position.flatMap(FieldPosition.init(rawValue:)))} label: {Text("시작 포지션 "+(project.assignment?.position ?? "")+" 숙련 훈련")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("projectPositionAction")
             }
             Text("훈련 종류: "+project.training.label+" / 경기 수준: "+project.level+". 연습 모드·인증 평가전·미완료 경기·다른 수준 경기는 제외합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             ForEach((owner.developmentReviews ?? []).filter {$0.projectID == project.id}) {review in
@@ -2063,6 +2069,7 @@ struct CareerObjectivesHomeLabel:View {
     let player:CareerPlayer
     let calendar:CareerCalendarState
     @Environment(\.modelContext) private var context
+    @State private var lastActivity:String?
     var body:some View {
         VStack(alignment:.leading,spacing:6) {
             Text("커리어 목표 · 준비 현황").font(.headline)
@@ -2074,9 +2081,26 @@ struct CareerObjectivesHomeLabel:View {
                     Text(owner.activeProject(on:player.gameDate) == nil ? "관찰 과제 · 결과/새 프로젝트 확인":"28일 프로젝트 진행 중").font(.caption)
                 } else {Text("목표 구단·역할을 선택하세요").font(.caption)}
             }
-        }.frame(maxWidth:.infinity,alignment:.leading)
+            if let lastActivity {Text(lastActivity).font(.caption).accessibilityIdentifier("homeProjectLastActivity")}
+        }.frame(maxWidth:.infinity,alignment:.leading).task(id:calendar.revision) {loadLastActivity()}
+    }
+    private func loadLastActivity() {
+        do {
+            let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+            guard let project=owner.activeProject(on:player.gameDate) else {lastActivity=nil;return}
+            let id=player.id
+            var values:[(String,Int,String)]=[]
+            for row in try context.fetch(FetchDescriptor<CareerTrainingRecord>(predicate:#Predicate {$0.playerID == id && $0.completed})) {
+                if let receipt=try row.snapshot().projectFeedback,receipt.project?.id == project.id {values.append((row.gameDate,0,"최근 훈련 · 관련 +\(receipt.trainingContribution)회 / 우수 +\(receipt.qualityContribution)회"))}
+            }
+            for row in try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.completed})) {
+                if let receipt=try row.snapshot().projectFeedback,receipt.project?.id == project.id {values.append((row.gameDate,1,"최근 경기 · 공식 표본 +\(receipt.sampleContribution) / 과제 +\(receipt.taskContribution)"))}
+            }
+            lastActivity=values.sorted {($0.0,$0.1)<($1.0,$1.1)}.last?.2
+        } catch {lastActivity="최근 과제 기여 조회 실패 · 상세에서 다시 확인"}
     }
 }
+
 struct CareerProjectReportEvidence:View {
     let playerID:UUID
     let period:Int

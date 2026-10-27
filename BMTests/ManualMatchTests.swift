@@ -310,9 +310,9 @@ import SwiftUI
             let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: real.mainContext)
             player.contact = 81.2345; player.speed = 77.3456
             if role == .pitcher {
-                player.pitches = [CareerSchemaV1.PitchMastery(code: "knuckle", name: "너클", mastery: 88.1234, order: 2),
-                                  CareerSchemaV1.PitchMastery(code: "slider", name: "슬라이더", mastery: 32.5678, order: 1),
-                                  CareerSchemaV1.PitchMastery(code: "four-seam", name: "포심", mastery: 93.4567, order: 0)]
+                player.pitches = [CareerPitchMastery(code: "knuckle", name: "너클", mastery: 88.1234, order: 2),
+                                  CareerPitchMastery(code: "slider", name: "슬라이더", mastery: 32.5678, order: 1),
+                                  CareerPitchMastery(code: "four-seam", name: "포심", mastery: 93.4567, order: 0)]
             }
             let profile = try XCTUnwrap(PlayerAbilityStore.profile(playerID: player.id, in: real.mainContext))
             profile.mental = 78.4321

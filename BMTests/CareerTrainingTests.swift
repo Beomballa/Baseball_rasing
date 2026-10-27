@@ -493,7 +493,7 @@ import SwiftData
         XCTAssertThrowsError(try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: revision,
             input: TrainingInput(release: 0.68), in: context, save: { _ in throw Injected.failure }))
         XCTAssertEqual(try PitchStudyStore.roster(player), original)
-        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerSchemaV1.PitchMastery>()), original.count)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPitchMastery>()), original.count)
         XCTAssertEqual(record.revision, revision); XCTAssertFalse(record.completed)
         try attempt(player, state, record, context)
         XCTAssertEqual(try record.snapshot().after, 100)
@@ -509,7 +509,7 @@ import SwiftData
     func testPitchStudyReplacementArchivesSkillAndReregistrationRestoresOriginalMastery() throws {
         let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
         let (player, state) = try setup(context, role: .pitcher, date: "2026-04-02")
-        let extra = CareerSchemaV1.PitchMastery(code: "curve", name: "커브", mastery: 61.75, order: 4)
+        let extra = CareerPitchMastery(code: "curve", name: "커브", mastery: 61.75, order: 4)
         context.insert(extra); player.pitches.append(extra); try context.save()
         let original = try PitchStudyStore.roster(player)
         let old = try XCTUnwrap(player.pitches.first { $0.code == "four-seam" }), oldID = old.persistentModelID
@@ -588,7 +588,7 @@ import SwiftData
             if count == 2 { player.pitches = Array(player.pitches.sorted { $0.order < $1.order }.prefix(2)) }
             else {
                 for (offset, code) in ["curve", "two-seam"].enumerated() {
-                    let pitch = CareerSchemaV1.PitchMastery(code: code, name: code, mastery: 44.1234, order: offset + 4)
+                    let pitch = CareerPitchMastery(code: code, name: code, mastery: 44.1234, order: offset + 4)
                     context.insert(pitch); player.pitches.append(pitch)
                 }
             }

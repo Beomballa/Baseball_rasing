@@ -363,7 +363,7 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
             guard let original=packets.flatMap(\.offers).first(where:{$0.id == member.offerID}) else {throw ContractEvaluationError.invalid}
             let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
             let key=CareerContractEvaluation.key(player.id,window.id)
-            let review=try DomesticRenewalReview.make(observation:observation,member:member,roleID:original.roleID,key:key,window:window)
+            let review=try DomesticRenewalReview.make(observation:observation,member:member,roleID:original.roleID,key:key,window:window).limited(to:CareerLifecycleStore.horizon(player:player,calendar:calendar))
             let value=ContractEvaluationSnapshot(version:3,rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
                 calendarRevision:calendar.revision,affiliation:history.current,routes:["국내 육성팀 재계약"],observation:observation,
                 pending:["성인 경기 비교 기준 미검증 · 성적 보정 P=0 중립","권리 해제/방출은 별도 결정이며 경제 만료로 자동 처리하지 않습니다."],renewal:review)
@@ -442,7 +442,7 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         guard !context.hasChanges else {throw ContractEvaluationError.pendingChanges}
         do {
             let calendars = try context.fetch(FetchDescriptor<CareerCalendarState>())
-            for player in try context.fetch(FetchDescriptor<CareerPlayer>()) {
+            for player in try context.fetch(FetchDescriptor<CareerPlayer>()) where !player.isRetired {
                 guard let calendar = calendars.first(where:{$0.playerID == player.id}) else {throw ContractEvaluationError.invalid}
                 _ = try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
                 _ = try captureIfDue(player:player,calendar:calendar,in:context)
@@ -506,7 +506,7 @@ typealias CareerContractOffer = CareerSchemaV11.ContractOffer
               let evaluation=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context).first(where:{$0.key == key}) else {return false}
         let snapshot=try evaluation.snapshot(player:player,calendar:calendar)
         guard [2,4,5,6].contains(snapshot.version) else {return false}
-        let value=try DomesticOfferPacket.make(evaluation:snapshot,key:key,on:date)
+        let value=try DomesticOfferPacket.make(evaluation:snapshot,key:key,on:date).limited(to:CareerLifecycleStore.horizon(player:player,calendar:calendar))
         try value.validate(evaluation:snapshot,key:key,today:date)
         context.insert(try CareerContractOffer(playerID:player.id,value:value));return true
     }
@@ -533,7 +533,11 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
     static func journal(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> CareerContractJournal {
         guard calendar.playerID == player.id else {throw ContractRegistrationError.invalid}
         guard let row=try row(player:player,in:context) else {return CareerContractJournal(playerID:player.id)}
-        guard let value=try? JSONDecoder().decode(CareerContractJournal.self,from:row.payload) else {throw ContractRegistrationError.invalid}
+        guard var value=try? JSONDecoder().decode(CareerContractJournal.self,from:row.payload) else {throw ContractRegistrationError.invalid}
+        let retiredOn=value.retiredOn
+        if let retiredOn {guard try player.lifecycle.retirement?.date == retiredOn else {throw ContractRegistrationError.invalid}}
+        // Historical eligibility is evaluated before the later retirement overlay.
+        value.retiredOn=nil
         let evaluations=try ContractEvaluationStore.records(player:player,calendar:calendar,in:context)
         let offers=try ContractOfferStore.records(player:player,calendar:calendar,in:context).flatMap {row in
             guard let evaluation=evaluations.first(where:{$0.key == row.key}) else {throw ContractRegistrationError.invalid}
@@ -566,6 +570,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             try value.validateSpecial(origin:calendar.originDate,today:GameDate(player.gameDate),reports:sources)
             try GoalSpecialStore.validateTrainings(owner:value,player:player,in:context)
         }
+        value.retiredOn=retiredOn
         return value
     }
     static func releaseCandidate(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> (key:String,review:DomesticRenewalReview,eligible:Bool)? {
@@ -637,6 +642,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         guard today >= (try GameDate(terms.issuedDate)) else {throw ContractRegistrationError.stale}
         guard today <= (try GameDate(terms.expiresDate)) else {throw ContractRegistrationError.expired}
         guard try value.current(on:today) == review.membership else {throw ContractRegistrationError.stale}
+        try CareerLifecycleStore.requireContractEnd(terms.economicEnd,player:player,calendar:calendar)
         var accepted=value.renewals ?? []
         accepted.append(DomesticRenewalAcceptance(membershipOfferID:review.membership.offerID,date:date,terms:terms))
         value.renewals=accepted;value.revision += 1
@@ -670,6 +676,8 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         guard let offer=offers.first(where:{$0.id == offerID}) else {throw ContractRegistrationError.invalid}
         guard !(try offer.isExpired(on:today)) else {throw ContractRegistrationError.expired}
         if accept {
+            let member=try CareerMembership.make(offer:offer,on:offer.collegeEntry.map {try GameDate($0.effectiveDate)} ?? today,origin:GameDate(calendar.originDate),startAge:player.startAge)
+            try CareerLifecycleStore.requireContractEnd(member.economicEnd,player:player,calendar:calendar)
             guard value.overseasCareer?.hasPending(on:date) != true else {throw ContractRegistrationError.registered}
             if let entry=offer.collegeEntry {
                 guard let member=try value.current(on:today),member.offerID == entry.membershipOfferID,
@@ -818,7 +826,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
             let proof=OverseasProContext(consent:consent,service:value.service ?? [])
             evaluation=try OverseasOfferEvaluation.makeProfessional(report:report,window:window,on:GameDate(date),registrationDate:value.registrationDate,member:member,context:proof,reserved:reserved || owner.renewals?.contains {$0.membershipOfferID == member.offerID && $0.terms.effectiveDate > date} == true)
         } else {evaluation=try OverseasOfferEvaluation.make(report:report,window:window,on:GameDate(date),registrationDate:value.registrationDate,member:member,reserved:reserved)}
-        value.evaluations.append(evaluation);owner.overseasCareer=value;owner.revision += 1
+        value.evaluations.append(try evaluation.limited(to:CareerLifecycleStore.horizon(player:player,calendar:calendar)));owner.overseasCareer=value;owner.revision += 1
         try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
     static func decide(player:CareerPlayer,calendar:CareerCalendarState,offerID:String,accept:Bool,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
@@ -829,6 +837,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         guard let evaluation=value.evaluations.first(where:{$0.offers.contains {$0.id == offerID}}),let offer=evaluation.offers.first(where:{$0.id == offerID}) else {throw ContractRegistrationError.invalid}
         guard date >= offer.issued,date <= offer.expires else {throw ContractRegistrationError.expired}
         if accept {
+            try CareerLifecycleStore.requireContractEnd(offer.economicEnd,player:player,calendar:calendar)
             guard owner.renewals?.contains(where:{$0.membershipOfferID == evaluation.sourceMembershipID && $0.terms.effectiveDate > date}) != true,
                   !value.hasPending(on:date),!value.hasPendingRenewal(on:date),owner.collegeTransitions?.contains(where:{$0.source.effectiveDate > date}) != true,
                   try owner.current(on:GameDate(date))?.offerID == evaluation.sourceMembershipID else {throw ContractRegistrationError.registered}
@@ -892,6 +901,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
 
 @MainActor extension OverseasContractStore {
     static func needsEvaluation(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> Bool {
+        guard !player.isRetired else {return false}
         guard let window=ContractEvaluationWindow.containing(try GameDate(player.gameDate)),try calendar.age(of:player) >= 20 else {return false}
         let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
         if let member=try owner.current(on:GameDate(player.gameDate)),try OverseasRenewalReview.eligible(member,on:GameDate(player.gameDate)),window.month == 11,owner.overseasCareer?.hasPendingFA(on:player.gameDate) != true,owner.overseasCareer?.hasPending(on:player.gameDate) != true {
@@ -934,7 +944,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         guard let initial=value.evaluations.flatMap(\.offers).first(where:{$0.id == member.offerID}) else {throw ContractRegistrationError.invalid}
         let role=value.promotions?.last(where:{$0.sourceOfferID == member.offerID && $0.effective <= date})?.roleID ?? initial.roleID
         let reserved=value.hasPending(on:date) || value.hasPendingRenewal(on:date) || value.hasPendingFA(on:date) || (value.promotions ?? []).contains {$0.sourceOfferID == member.offerID && $0.effective > date}
-        let review=try OverseasRenewalReview.make(report:report,member:member,roleID:role,window:window,on:GameDate(date),reserved:reserved)
+        let review=try OverseasRenewalReview.make(report:report,member:member,roleID:role,window:window,on:GameDate(date),reserved:reserved).limited(to:CareerLifecycleStore.horizon(player:player,calendar:calendar))
         value.renewalReviews=(value.renewalReviews ?? [])+[review];owner.overseasCareer=value;owner.revision += 1
         try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
@@ -948,6 +958,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         guard !value.renewalClosedByTransfer(offer,on:date) else {throw ContractRegistrationError.closed}
         guard let member=try owner.current(on:GameDate(date)),member == review.source else {throw ContractRegistrationError.stale}
         if accept {
+            try CareerLifecycleStore.requireContractEnd(offer.economicEnd,player:player,calendar:calendar)
             guard !value.hasPending(on:date),!value.hasPendingRenewal(on:date),!value.hasPendingFA(on:date),!(value.promotions ?? []).contains(where:{$0.sourceOfferID == member.offerID && $0.effective > date}) else {throw ContractRegistrationError.registered}
             for other in value.evaluations.flatMap(\.offers) where other.issued <= date && other.expires >= date && !value.decisions.contains(where:{$0.offerID == other.id}) {
                 value.decisions.append(OverseasDecision(offerID:other.id,kind:.closed,date:date))
@@ -1047,7 +1058,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         var matchKeys:[String]=[],trainingKeys:[String]=[],taskKeys:[String]=[],quality=0,sample=0,growth=0.0,taskValue=0
         for row in matches where row.gameDate >= project.start && row.gameDate <= end && row.completed && row.appearance && !project.baselineMatches.contains(row.key) {
             let match=try row.snapshot()
-            guard match.completed,match.appearance,match.role == project.role.rawValue,match.competition == project.level else {continue}
+            guard match.completed,match.appearance,match.role == project.role.rawValue,(match.competition ?? "highschool") == project.level else {continue}
             matchKeys.append(row.key);sample += project.role == .batter ? match.line.plateAppearances:match.line.pitchingOuts
             if let assignment=project.assignment {
                 let value=assignment.metric.value(in:match);taskValue += value;if value>0 {taskKeys.append(row.key)}

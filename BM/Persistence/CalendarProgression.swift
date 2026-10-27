@@ -3,6 +3,8 @@ import SwiftData
 
 struct CalendarAdvanceSummary: Equatable, Sendable {
     enum Stop: String, Sendable {
+        case traitChange = "특성 유지 경고·상실 전 · 하루 진행으로 확인"
+        case retirement = "은퇴 완료 · 기록 열람 가능"
         case evaluation = "계약 평가 자료 도착 · 홈에서 확인 후 계속"
         case fixture = "경기일 도착 · 경기 진행/완료 확인"
         case anniversary = "나이·학적 변경 전 · 하루 진행으로 확인"
@@ -88,9 +90,12 @@ struct CalendarAdvanceFailure: LocalizedError {
             player.gameDate = nextDate
             state.actionDate = nil
             state.revision += 1
-            try CareerPathStore.synchronize(player: player, calendar: state, in: context)
-            _ = try ContractEvaluationStore.captureIfDue(player:player,calendar:state,in:context)
-            if observationDue { _ = try ScoutingObservationStore.insertIfNeeded(player: player, calendar: state, in: context) }
+            try CareerLifecycleStore.advance(player:player,state:state,previous:today,in:context)
+            if !player.isRetired {
+                try CareerPathStore.synchronize(player: player, calendar: state, in: context)
+                _ = try ContractEvaluationStore.captureIfDue(player:player,calendar:state,in:context)
+                if observationDue { _ = try ScoutingObservationStore.insertIfNeeded(player: player, calendar: state, in: context) }
+            }
             try save(context)
         } catch { context.rollback(); throw error }
     }
@@ -108,6 +113,8 @@ struct CalendarAdvanceFailure: LocalizedError {
                 if Task.isCancelled { stop = .cancelled; break }
                 try validate(player, state, revision: expectedRevision)
                 if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
+                if player.isRetired {stop = .retirement;break}
+                if try CareerLifecycleStore.traitEventTomorrow(player:player,in:context) {stop = .traitChange;break}
                 if try hasGameToday(player: player, state: state) { stop = .fixture; break }
                 if try isAnniversaryTomorrow(player: player, state: state) { stop = .anniversary; break }
                 let needsRest = !state.hasAction(on: player.gameDate)
@@ -119,6 +126,7 @@ struct CalendarAdvanceFailure: LocalizedError {
                 if needsRest { rests += 1 }
                 await onDaySaved?(player.gameDate)
                 await Task.yield()
+                if player.isRetired {stop = .retirement;break}
                 if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
             }
             if stop == .limit {
@@ -161,6 +169,8 @@ extension CalendarProgression {
                 guard player.gameDate == lastDate else { throw CalendarError.staleState }
                 if try GameDate(player.gameDate) >= plan.target { stop = .seasonOpening; break }
                 if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
+                if player.isRetired {stop = .retirement;break}
+                if try CareerLifecycleStore.traitEventTomorrow(player:player,in:context) {stop = .traitChange;break}
                 if try hasGameToday(player: player, state: state) { stop = .fixture; break }
                 let birthday = try isAnniversaryTomorrow(player: player, state: state)
                 if birthday && !(confirmAnniversary && days == 0) { stop = .anniversary; break }
@@ -172,6 +182,7 @@ extension CalendarProgression {
                 if needsRest { rests += 1 }
                 await onDaySaved?(lastDate)
                 await Task.yield()
+                if player.isRetired {stop = .retirement;break}
                 if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
             }
             if stop == .limit {
@@ -186,5 +197,118 @@ extension CalendarProgression {
         }
         return CalendarAdvanceSummary(days: days, restDays: rests, fatigueBefore: before,
             fatigueAfter: lastFatigue, stop: stop, lastSavedDate: lastDate)
+    }
+}
+
+
+@MainActor enum CareerLifecycleStore {
+    static func requireActive(_ player:CareerPlayer) throws {
+        guard try player.lifecycle.retirement == nil else {throw CareerLifecycleError.retired}
+    }
+    static func values(player:CareerPlayer,in context:ModelContext) throws -> [String:Double] {
+        var values:[String:Double]=["contact":player.contact,"power":player.power,"discipline":player.discipline,"speed":player.speed,"defense":player.defense,"arm":player.arm]
+        if let profile=try PlayerAbilityStore.profile(playerID:player.id,in:context) {
+            for kind in [TrainingKind.mental,.velocity,.control,.stuff,.stamina] where kind.allows(player.roleRaw) {values[kind.rawValue]=try profile.value(for:kind)}
+        }
+        for pitch in player.pitches {values["pitch/"+pitch.code]=pitch.mastery}
+        return values
+    }
+    static func apply(_ values:[String:Double],player:CareerPlayer,in context:ModelContext) throws {
+        player.contact=values["contact"] ?? player.contact;player.power=values["power"] ?? player.power
+        player.discipline=values["discipline"] ?? player.discipline;player.speed=values["speed"] ?? player.speed
+        player.defense=values["defense"] ?? player.defense;player.arm=values["arm"] ?? player.arm
+        if let profile=try PlayerAbilityStore.profile(playerID:player.id,in:context) {
+            for kind in [TrainingKind.mental,.velocity,.control,.stuff,.stamina] {
+                if let value=values[kind.rawValue] {try profile.grow(kind,to:value)}
+            }
+        }
+        for pitch in player.pitches {if let value=values["pitch/"+pitch.code] {pitch.mastery=value}}
+    }
+    static func belowRetention(_ trait:PlayerTrait,player:CareerPlayer) -> Bool {
+        switch trait {case .strongArm:player.arm < 58;case .cheetah:player.speed < 58;case .safeHands:player.defense < 48}
+    }
+    static func traitEventTomorrow(player:CareerPlayer,in context:ModelContext) throws -> Bool {
+        let life=try player.lifecycle,tomorrow=try GameDate(player.gameDate).adding(days:1)
+        return try life.traitRisk.contains {key,since in
+            guard let trait=PlayerTrait(rawValue:key),belowRetention(trait,player:player) else {return false}
+            return [14,28].contains(try GameDate(since).days(to:tomorrow)+1)
+        }
+    }
+    // The caller commits this with the date. Replaying a view never calls this command.
+    static func advance(player:CareerPlayer,state:CareerCalendarState,previous:GameDate,in context:ModelContext) throws {
+        var life=try player.lifecycle
+        guard life.retirement == nil else {throw CareerLifecycleError.retired}
+        if life.adopted == nil {life.adopted=previous.description;life.enforceAgeLimit=try GameDate(state.originDate).age(startingAt:player.startAge,on:previous)<41}
+        let today=try GameDate(player.gameDate),origin=try GameDate(state.originDate),age=try state.age(of:player)
+        let id=player.id.uuidString+":aging-v1:"+player.gameDate
+        if today == origin.anniversary(in:today.year),(31...40).contains(age),!life.aging.contains(where:{$0.id == id}) {
+            let before=try values(player:player,in:context)
+            let after=before.mapValues {$0}
+            var adjusted=after
+            for (key,value) in before {
+                let isPitch=key.hasPrefix("pitch/")
+                if let kind=isPitch ? TrainingKind.pitch:TrainingKind(rawValue:key) {adjusted[key]=CareerAgingRules.value(value,kind:kind,age:age,pitch:isPitch)}
+            }
+            try apply(adjusted,player:player,in:context)
+            life.aging.append(CareerAgeEvent(id:id,date:player.gameDate,age:age,before:before,after:adjusted))
+        }
+        if let profile=try PlayerTraitStore.profile(playerID:player.id,in:context) {
+            var loadout=try profile.snapshot();var changed=false
+            for trait in loadout.owned {
+                if belowRetention(trait,player:player) {
+                    let since=life.traitRisk[trait.rawValue] ?? player.gameDate;life.traitRisk[trait.rawValue]=since
+                    if try GameDate(since).days(to:today)+1 >= 28 {
+                        loadout.owned.removeAll {$0 == trait};loadout.active.removeAll {$0 == trait}
+                        loadout.progress[trait.rawValue]=0
+                        life.losses.append(CareerTraitLoss(id:player.id.uuidString+":trait-loss-v1:"+trait.rawValue+":"+player.gameDate,date:player.gameDate,trait:trait))
+                        life.traitRisk.removeValue(forKey:trait.rawValue);changed=true
+                    }
+                } else {life.traitRisk.removeValue(forKey:trait.rawValue)}
+            }
+            if changed {try loadout.validate();profile.payload=try JSONEncoder().encode(loadout);profile.revision += 1}
+        }
+        try life.validate(playerID:player.id,today:player.gameDate)
+        player.lifecycleData=try JSONEncoder().encode(life)
+        if life.enforceAgeLimit,age>=41 {try finalize(player:player,state:state,reason:"age-limit",in:context)}
+    }
+    static func retire(player:CareerPlayer,state:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        if player.isRetired {return}
+        guard !context.hasChanges,date == player.gameDate,state.playerID == player.id,state.revision == revision else {throw CalendarError.staleState}
+        guard try state.age(of:player)>=20 else {throw CareerLifecycleError.tooYoung}
+        try CareerTrainingStore.requireNoPending(player:player,in:context)
+        let id=player.id
+        guard try context.fetchCount(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && !$0.completed})) == 0 else {throw CareerLifecycleError.pending}
+        do {try finalize(player:player,state:state,reason:"voluntary",in:context);state.revision += 1;try save(context)} catch {context.rollback();throw error}
+    }
+    private static func finalize(player:CareerPlayer,state:CareerCalendarState,reason:String,in context:ModelContext) throws {
+        var life=try player.lifecycle
+        guard life.retirement == nil else {return}
+        var owner=try ContractRegistrationStore.journal(player:player,calendar:state,in:context)
+        let schools=try SchoolCatalog.load(),date=try GameDate(player.gameDate),age=try state.age(of:player)
+        let member=try owner.current(on:date)
+        let affiliation=member.map {CareerTeamDirectory.name($0.teamID,schools:schools)} ?? (age<=18 ? player.schoolName:"무소속")
+        let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.completed}))
+        var total=MatchLine();var games=0
+        for row in rows {let match=try row.snapshot();guard match.appearance else {continue};games += 1
+            total.plateAppearances += match.line.plateAppearances;total.atBats += match.line.atBats;total.hits += match.line.hits;total.homeRuns += match.line.homeRuns
+            total.walks += match.line.walks;total.rbi += match.line.rbi;total.pitchingOuts += match.line.pitchingOuts;total.pitches += match.line.pitches
+            total.strikeouts += match.line.strikeouts;total.runsAllowed += match.line.runsAllowed
+            total.pitchingStrikeouts += match.line.pitchingStrikeouts;total.pitchingWalks += match.line.pitchingWalks;total.hitsAllowed += match.line.hitsAllowed
+        }
+        let final=try values(player:player,in:context)
+        life.retirement=CareerRetirement(date:player.gameDate,age:age,reason:reason,affiliation:affiliation,games:games,line:total,finalValues:final.filter {!$0.key.hasPrefix("pitch/")},finalPitches:Dictionary(uniqueKeysWithValues:player.pitches.map {($0.code,$0.mastery)}))
+        try life.validate(playerID:player.id,today:player.gameDate);player.lifecycleData=try JSONEncoder().encode(life)
+        owner.retiredOn=player.gameDate;owner.revision += 1
+        if let row=try ContractRegistrationStore.row(player:player,in:context) {row.payload=try JSONEncoder().encode(owner)}
+        else {context.insert(try CareerContractRegistration(owner))}
+        for slot in try context.fetch(FetchDescriptor<ActiveCareerSlot>()) where slot.playerID == player.id {context.delete(slot)}
+    }
+    static func horizon(player:CareerPlayer,calendar:CareerCalendarState) throws -> String {
+        let origin=try GameDate(calendar.originDate)
+        return origin.anniversary(in:origin.year+max(0,41-player.startAge)).description
+    }
+    static func requireContractEnd(_ end:String,player:CareerPlayer,calendar:CareerCalendarState) throws {
+        let horizon=try GameDate(horizon(player:player,calendar:calendar))
+        guard try GameDate(end)<horizon else {throw CareerLifecycleError.horizon}
     }
 }

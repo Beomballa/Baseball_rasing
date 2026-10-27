@@ -21,7 +21,7 @@ extension PlayerAbilitiesTests {
                 let player = try CareerStore.create(value, schools: SchoolCatalog.load(), in: context)
                 XCTAssertEqual(player.pitches.sorted { $0.order < $1.order }.map(\.code), codes)
                 XCTAssertEqual(Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }), initial.pitches)
-                XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerSchemaV1.PitchMastery>()), codes.count)
+                XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPitchMastery>()), codes.count)
                 let abilities = try profile(player, context)
                 XCTAssertEqual(abilities.archetypeRaw, value.isCustom ? "custom" : "control")
                 XCTAssertEqual(abilities.productionPresetVersion, value.isCustom ? "custom-v1" : "production-v1")
@@ -48,7 +48,7 @@ extension PlayerAbilitiesTests {
             }
             XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPlayer>()), 0)
             XCTAssertEqual(try context.fetchCount(FetchDescriptor<PlayerAbilities>()), 0)
-            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerSchemaV1.PitchMastery>()), 0)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPitchMastery>()), 0)
             XCTAssertFalse(context.hasChanges)
         }
         var batter = draft(.contact); batter.pitchCodes = ["unavailable"]
@@ -70,7 +70,7 @@ extension PlayerAbilitiesTests {
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPlayer>()), 1)
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<PlayerAbilities>()), 1)
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerCalendarState>()), 1)
-        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerSchemaV1.PitchMastery>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerPitchMastery>()), 0)
         XCTAssertFalse(context.hasChanges)
         let created = try CareerStore.create(pitcher, schools: SchoolCatalog.load(), in: context)
         XCTAssertEqual(created.pitches.count, 3)

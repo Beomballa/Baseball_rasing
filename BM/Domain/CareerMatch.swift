@@ -76,6 +76,8 @@ struct CareerMatch: Codable, Equatable {
     var npcAttack:MatchNPCAttack? = nil
     var playerRecords:MatchPlayerRecords? = nil
     var inningScores: MatchInningScores? = nil
+    var projectFeedback: MatchProjectFeedback? = nil
+    var pitchLog: MatchPitchLog? = nil
     var fieldPlays: [MatchDetailedPlay]?
     var homeRuns: [MatchHomeRun]?
     var runnerProfiles: [FieldRunnerProfile?]?
@@ -181,6 +183,21 @@ struct CareerMatch: Codable, Equatable {
     private mutating func step(_ input: MatchInput, pitchCode: String?, control: ManualMatchInput? = nil, direct: Bool = false) {
         let defendingHome = half % 2 == 0, previousHalf = half
         let previousOrder = homeOrder + awayOrder
+        let personalPitch=appearance && (role == "batter" ? ownAtBat:ownPitcherActive && !offense)
+        let observedPitch=pitchLog == nil ? nil:ObservedPitch.preparation(match:self,pitchCode:pitchCode)
+        var observedZone:Bool?
+        defer {
+            if var observedPitch {
+                if personalPitch && controlVersion == 2,let actual=lastManual {
+                    observedPitch.x=actual.x;observedPitch.y=actual.y;observedPitch.speed=Double(actual.speed)
+                    observedPitch.code=actual.pitchCode ?? observedPitch.code
+                    observedPitch.inZone=ManualMatchRules.isStrike(x:actual.x,y:actual.y)
+                    observedPitch.source=direct ? "direct":"automatic-position"
+                } else {observedPitch.inZone=observedZone;observedPitch.source="automatic-zone"}
+                observedPitch.outcome=message
+                pitchLog?.pitches.append(observedPitch)
+            }
+        }
         playerRecords?.recordPitch(home:defendingHome,relief:pitching?.change(home:defendingHome) != nil)
         pitching?.recordPitch(home:defendingHome)
         defer {
@@ -201,6 +218,7 @@ struct CareerMatch: Codable, Equatable {
         if personalPitcher { line.pitches += 1; fatigueCost += 0.3 + 0.002 * (100 - 60) }
         let quality = personalPitcher ? (mastery[pitchCode ?? ""] ?? 60) : 60
         let inZone = roll() < (personalPitcher ? (0.5 + quality * 0.002):(npcActivePitcher?.zoneChance ?? (0.5 + quality * 0.002)))
+        observedZone=inZone
         let swing:Bool
         if personalBatter {swing=input != .watch}
         else if let batter=npcBatter {swing=roll()<batter.swingChance(inZone:inZone)}
@@ -1133,5 +1151,47 @@ struct MatchEarnedState:Codable,Equatable {
         for token in awarded {
             guard let run=actual.first(where:{$0.token == token}),views.first(where:{$0.pitcher == run.pitcher})?.scored.contains(token) == true else {throw MatchError.invalidRecord}
         }
+    }
+}
+
+
+/// Exact observed inputs/engine decisions. Unknown automatic coordinates remain nil.
+struct MatchPitchLog:Codable,Equatable {
+    var version=1
+    var pitches:[ObservedPitch]=[]
+    func validate(match:CareerMatch) throws {
+        guard version == 1,let records=match.playerRecords,pitches.count <= 20000 else {throw MatchError.invalidRecord}
+        let players=records.home.pitching+records.away.pitching
+        guard pitches.count == players.reduce(0,{$0+$1.counts.pitches}) else {throw MatchError.invalidRecord}
+        for (i,p) in pitches.enumerated() {
+            guard p.sequence == i+1,players.contains(where:{$0.id == p.pitcherID}),PitchType(rawValue:p.code) != nil,
+                  p.speed.isFinite,(1...300).contains(p.speed),(0...3).contains(p.balls),(0...2).contains(p.strikes),
+                  ["direct","automatic-position","automatic-zone"].contains(p.source),p.inZone != nil,
+                  (p.x == nil) == (p.y == nil) else {throw MatchError.invalidRecord}
+            if let x=p.x,let y=p.y {guard x.isFinite,y.isFinite,p.inZone == ManualMatchRules.isStrike(x:x,y:y),p.source != "automatic-zone" else {throw MatchError.invalidRecord}}
+            else if p.source != "automatic-zone" {throw MatchError.invalidRecord}
+        }
+        for player in players {guard pitches.filter({$0.pitcherID == player.id}).count == player.counts.pitches else {throw MatchError.invalidRecord}}
+    }
+}
+struct ObservedPitch:Codable,Equatable {
+    let sequence:Int
+    let pitcherID:String
+    let home:Bool
+    var code:String
+    var speed:Double
+    let balls:Int
+    let strikes:Int
+    var x:Double?
+    var y:Double?
+    var inZone:Bool?
+    var source:String
+    var outcome:String
+    static func preparation(match:CareerMatch,pitchCode:String?) -> Self? {
+        guard let log=match.pitchLog,let records=match.playerRecords else {return nil}
+        let home=match.half%2 == 0,team=home ? records.home:records.away
+        let index=match.pitching?.change(home:home) == nil ? 0:1
+        let code=match.deliveryPitchCode(requested:pitchCode),delivery=match.delivery(pitchCode:pitchCode)
+        return Self(sequence:log.pitches.count+1,pitcherID:team.pitching[index].id,home:home,code:code,speed:Double(delivery.speed),balls:match.balls,strikes:match.strikes,source:"automatic-zone",outcome:"")
     }
 }
