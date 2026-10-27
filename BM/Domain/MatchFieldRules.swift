@@ -7,6 +7,7 @@ struct MatchNPCPlayer:Codable,Equatable {
     var speed:Double
     var defense:Double
     var arm:Double
+    var positionMastery:Double? = nil
 }
 struct MatchNPCTeam:Codable,Equatable {
     let teamID:String
@@ -45,7 +46,7 @@ struct MatchNPCFielders:Codable,Equatable {
               !home.teamID.isEmpty,!away.teamID.isEmpty,home.teamID != away.teamID else {throw MatchError.invalidRecord}
         for team in [home,away] {
             guard team.strength.isFinite,(0...100).contains(team.strength),team.players.map(\.position) == DetailedFieldRules.names,
-                  team.players.allSatisfy({$0.id == "npc-v1/\(competition)/\(year)/\(team.teamID)/\($0.position)" && [$0.speed,$0.defense,$0.arm].allSatisfy {$0.isFinite && (0...100).contains($0)}}) else {throw MatchError.invalidRecord}
+                  team.players.allSatisfy({$0.positionMastery == nil && $0.id == "npc-v1/\(competition)/\(year)/\(team.teamID)/\($0.position)" && [$0.speed,$0.defense,$0.arm].allSatisfy {$0.isFinite && (0...100).contains($0)}}) else {throw MatchError.invalidRecord}
         }
     }
 }
@@ -442,7 +443,7 @@ enum DetailedFieldRules {
                 return Skill(speed:clamp(stats.speed),defense:clamp(stats.defense),arm:clamp(stats.arm),traits:stats.activeTraits ?? [],
                     positionDelay:stats.positionMastery.map {0.25*(1-clamp($0)/100)} ?? 0)
             }
-            if let npc {return Skill(speed:npc[index].speed,defense:npc[index].defense,arm:npc[index].arm)}
+            if let npc {return Skill(speed:npc[index].speed,defense:npc[index].defense,arm:npc[index].arm,positionDelay:npc[index].positionMastery.map {0.25*(1-clamp($0)/100)} ?? 0)}
             return Skill()
         }
     }
@@ -932,11 +933,13 @@ struct MatchNPCPitcher:Codable,Equatable {
     var velocity:Double
     var control:Double
     let pitches:[String]
-    func speed(_ code:String) -> Double {MatchAbilityStats(mental:60,velocity:velocity,control:control,stuff:nil,stamina:nil,fatigue:0).speedValue(code:code)}
+    var profile:MatchNPCPitchingProfile? = nil
+    func speed(_ code:String) -> Double {MatchAbilityStats(mental:profile?.mental ?? 60,velocity:velocity,control:control,stuff:profile?.stuff,stamina:profile?.stamina,fatigue:0).speedValue(code:code)}
     var zoneChance:Double {0.5+control*0.0025}
     var hitAdjustment:Double {-(control-60)*0.001-(velocity-60)*0.0007}
     var fastball:Double {speed("four-seam")}
     func validate() throws {
+        try profile?.validate(pitches:pitches)
         guard [velocity,control].allSatisfy({$0.isFinite && (0...100).contains($0)}),
               (3...4).contains(pitches.count),pitches.first == "four-seam",Set(pitches).count == pitches.count,
               pitches.allSatisfy({["four-seam","slider","changeup","fork"].contains($0)}) else {throw MatchError.invalidRecord}
@@ -948,9 +951,14 @@ struct MatchNPCBatter:Codable,Equatable,Identifiable {
     var contact:Double
     var power:Double
     var discipline:Double
+    var profile:MatchNPCFieldProfile? = nil
     var onBase:Double {0.45*contact+0.55*discipline}
     var slugging:Double {0.2*contact+0.8*power}
-    func swingChance(inZone:Bool) -> Double {inZone ? 0.92:max(0.05,min(0.4,0.38-discipline*0.003))}
+    func execution(pressure:Bool) -> Double {
+        guard let profile else {return 1}
+        return MatchAbilityStats(mental:profile.mental,velocity:nil,control:nil,stuff:nil,stamina:nil,fatigue:0).execution(currentFatigue:0,pressure:pressure)
+    }
+    func swingChance(inZone:Bool,pressure:Bool=false) -> Double {inZone ? 0.92:max(0.05,min(0.4,0.38-discipline*execution(pressure:pressure)*0.003))}
 }
 struct MatchNPCAttackTeam:Codable,Equatable {
     let teamID:String
@@ -963,7 +971,11 @@ struct MatchNPCAttackTeam:Codable,Equatable {
     var onBase:Double {batters.reduce(0){$0+$1.onBase}/Double(batters.count)}
     var slugging:Double {batters.reduce(0){$0+$1.slugging}/Double(batters.count)}
     var ordered:[MatchNPCBatter] {Self.lineup.map {batters[$0]}}
-    func validate() throws {
+    func validate(complete:Bool?=nil) throws {
+        let populated=batters.filter {$0.profile != nil}.count
+        guard (populated == 0 && starter.profile == nil && relief.profile == nil) || (populated == 9 && starter.profile != nil && relief.profile != nil),
+              complete.map({$0 == (populated == 9)}) ?? true else {throw MatchError.invalidRecord}
+        for batter in batters {try batter.profile?.validate()}
         let prefix="npc-v1/\(competition)/\(year)/\(teamID)"
         guard (1...9999).contains(year),!teamID.isEmpty,
               ["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(competition),
@@ -1001,10 +1013,10 @@ struct MatchNPCAttack:Codable,Equatable {
         return Self(year:roster.year,competition:roster.competition,home:team(roster.home),away:team(roster.away))
     }
     func validate(roster:MatchNPCFielders) throws {
-        guard version == 1,year == roster.year,competition == roster.competition,
+        guard [1,2].contains(version),year == roster.year,competition == roster.competition,
               home.teamID == roster.home.teamID,away.teamID == roster.away.teamID,
               [home,away].allSatisfy({$0.year == year && $0.competition == competition}) else {throw MatchError.invalidRecord}
-        try home.validate();try away.validate()
+        try home.validate(complete:version == 2);try away.validate(complete:version == 2)
     }
 }
 
@@ -1016,5 +1028,70 @@ extension MatchNPCPitcher {
         let secondary=pitches.count-1
         guard secondary>0 else {return [100]}
         return [50]+(0..<secondary).map {50/secondary+($0<50%secondary ? 1:0)}
+    }
+}
+
+
+// Complete fictional profiles are a new rules version. IDs and previously generated abilities stay intact.
+struct MatchNPCPitchingProfile: Codable, Equatable {
+    let mental: Double
+    let stuff: Double
+    let stamina: Double
+    let mastery: [String: Double]
+    func validate(pitches:[String]) throws {
+        guard [mental,stuff,stamina].allSatisfy({$0.isFinite && (0...100).contains($0)}),
+              Set(mastery.keys) == Set(pitches), mastery.values.allSatisfy({$0.isFinite && (0...100).contains($0)}) else {throw MatchError.invalidRecord}
+    }
+}
+struct MatchNPCFieldProfile: Codable, Equatable {
+    let mental: Double
+    let positionMastery: Double
+    func validate() throws {
+        guard [mental,positionMastery].allSatisfy({$0.isFinite && (0...100).contains($0)}) else {throw MatchError.invalidRecord}
+    }
+}
+extension MatchNPCAttack {
+    static func makeComplete(roster:MatchNPCFielders) -> Self {
+        var result=make(roster:roster);result.version=2
+        func team(_ base:MatchNPCAttackTeam,strength:Double) -> MatchNPCAttackTeam {
+            var result=base
+            func value(_ id:String,_ stat:String,_ offset:Double=0) -> Double {
+                min(95,max(20,strength+offset+Double(Int(MatchNPCFielders.hash(id+"/complete-v1/"+stat)%19)-9)))
+            }
+            for i in result.batters.indices {
+                let id=result.batters[i].id
+                result.batters[i].profile=MatchNPCFieldProfile(mental:value(id,"mental"),positionMastery:value(id,"position"))
+            }
+            func pitcher(_ base:MatchNPCPitcher,starter:Bool) -> MatchNPCPitcher {
+                var result=base
+                result.profile=MatchNPCPitchingProfile(mental:value(base.id,"mental"),stuff:value(base.id,"stuff",starter ? 0:4),stamina:value(base.id,"stamina",starter ? 8:-12),
+                    mastery:Dictionary(uniqueKeysWithValues:base.pitches.enumerated().map {index,code in (code,value(base.id,"mastery/"+code,index == 0 ? 6:0))}))
+                return result
+            }
+            result.starter=pitcher(base.starter,starter:true);result.relief=pitcher(base.relief,starter:false)
+            return result
+        }
+        result.home=team(result.home,strength:roster.home.strength);result.away=team(result.away,strength:roster.away.strength)
+        return result
+    }
+}
+extension MatchNPCPitcher {
+    func execution(pressure:Bool) -> Double {
+        guard let profile else {return 1}
+        return MatchAbilityStats(mental:profile.mental,velocity:velocity,control:control,stuff:profile.stuff,stamina:profile.stamina,fatigue:0).execution(currentFatigue:0,pressure:pressure)
+    }
+    func zoneChance(pressure:Bool) -> Double {profile == nil ? zoneChance:0.5+control*execution(pressure:pressure)*0.0025}
+    func hitAdjustment(code:String,pressure:Bool) -> Double {
+        guard let profile else {return hitAdjustment}
+        let stats=MatchAbilityStats(mental:profile.mental,velocity:velocity,control:control,stuff:profile.stuff,stamina:profile.stamina,fatigue:0)
+        let baseline=MatchAbilityStats(mental:60,velocity:velocity,control:control,stuff:60,stamina:60,fatigue:0)
+        let quality=(profile.mastery[code] ?? 60)/100*execution(pressure:pressure)
+        return hitAdjustment+stats.hitChance(quality:quality)-baseline.hitChance(quality:0.6)
+    }
+    func homeRunAdjustment(code:String,pressure:Bool) -> Double {
+        guard let profile else {return 0}
+        let stats=MatchAbilityStats(mental:profile.mental,velocity:velocity,control:control,stuff:profile.stuff,stamina:profile.stamina,fatigue:0)
+        let baseline=MatchAbilityStats(mental:60,velocity:velocity,control:control,stuff:60,stamina:60,fatigue:0)
+        return stats.homeRunChance(quality:(profile.mastery[code] ?? 60)/100*execution(pressure:pressure))-baseline.homeRunChance(quality:0.6)
     }
 }

@@ -171,7 +171,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         match.detailedFieldVersion=5;match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.battedBallVersion=1
         match.npcFielders=MatchNPCFielders.make(year:fixture.date.year,competition:match.competition ?? "highschool",homeID:fixture.homeID,awayID:fixture.awayID)
-        if let roster=match.npcFielders {match.npcAttack=MatchNPCAttack.make(roster:roster)}
+        if let roster=match.npcFielders {match.npcAttack=MatchNPCAttack.makeComplete(roster:roster)}
         if let planChoice {
             guard match.appearance,MatchPlanChoice.choices(match.role).contains(planChoice),let roster=match.npcFielders else {throw MatchError.invalidInput}
             match.preparation=MatchPreparation(version:2,fixtureID:fixture.id,choice:planChoice,analysis:MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack))
@@ -403,7 +403,7 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
     static func opposition(player:CareerPlayer,state:CareerCalendarState) throws -> MatchOppositionAnalysis {
         let fixture=try today(player:player,state:state),competition=try state.competition(for:player,year:fixture.date.year)
         let roster=MatchNPCFielders.make(year:fixture.date.year,competition:competition.membership?.level ?? "highschool",homeID:fixture.homeID,awayID:fixture.awayID)
-        return MatchOppositionAnalysis.make(roster:roster,isHome:fixture.homeID == competition.teamID,attack:MatchNPCAttack.make(roster:roster))
+        return MatchOppositionAnalysis.make(roster:roster,isHome:fixture.homeID == competition.teamID,attack:MatchNPCAttack.makeComplete(roster:roster))
     }
 }
 

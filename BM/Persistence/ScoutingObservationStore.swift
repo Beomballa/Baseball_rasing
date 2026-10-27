@@ -1422,7 +1422,7 @@ enum GoalSpecialError:LocalizedError {
         guard plan.teamID == member.teamID, plan.membership?.level == member.level,
               let opponent = plan.teamIDs.first(where: { $0 != member.teamID }) else { return nil }
         let fielders = MatchNPCFielders.make(year: date.year, competition: member.level, homeID: member.teamID, awayID: opponent)
-        let team = fielders.team(home: true), attack = MatchNPCAttack.make(roster: fielders).home
+        let team = fielders.team(home: true), attack = MatchNPCAttack.makeComplete(roster: fielders).home
         let offers = try ContractOfferStore.records(player:player,calendar:calendar,in:context).flatMap { row -> [DomesticContractOffer] in
             guard let evaluation = try ContractEvaluationStore.records(player:player,calendar:calendar,in:context).first(where: {$0.key == row.key}) else { throw ContractRegistrationError.invalid }
             return try row.snapshot(evaluation:evaluation,player:player,calendar:calendar).offers
@@ -1437,21 +1437,26 @@ enum GoalSpecialError:LocalizedError {
         let own = ClubSelectionCandidate(id:player.id.uuidString,h:h,p:performance.p,readiness:Double(100-player.fatigue),evidence:performance.source,
             note:(role.roleID == nil ? "모집 역할 미확인 · 주 포지션 수비/선발 기준. " : "수락/승격 역할 기준. ") + performance.note)
         let rival: ClubSelectionCandidate
+        let values:PlayerInitialValues
+        let rivalMastery:Double
         if player.role == .pitcher {
             let npc = attack.starter
-            var values = PlayerInitialValues(contact:60,power:60,discipline:60,speed:60,defense:60,arm:60,mental:60,
-                velocity:npc.velocity,control:npc.control,stuff:60,stamina:60)
-            values.pitches = Dictionary(uniqueKeysWithValues:npc.pitches.map {($0,60.0)})
-            guard let rating = try ScoutingRoleEvaluation.grades(role:.pitcher,abilities:ScoutingClubCatalog.abilities(values,role:.pitcher),positionMastery:nil).first?.score else { throw ContractRegistrationError.invalid }
-            rival = ClubSelectionCandidate(id:npc.id,h:rating,p:0,readiness:100,evidence:nil,note:"기존 가상 선발의 구속·제구·구종. 미수집 구위·지구력·멘탈·숙련은 게임 기준60, 피로 원장 없음·준비100, 성과 P0 중립")
+            guard let profile=npc.profile,let field=team.players.first(where:{$0.position == "P"}),let bat=attack.batters.first(where:{$0.position == "P"}),let position=bat.profile else {throw ContractRegistrationError.invalid}
+            var raw=PlayerInitialValues(contact:bat.contact,power:bat.power,discipline:bat.discipline,speed:field.speed,defense:field.defense,arm:field.arm,mental:profile.mental,
+                velocity:npc.velocity,control:npc.control,stuff:profile.stuff,stamina:profile.stamina)
+            raw.pitches=profile.mastery;values=raw;rivalMastery=position.positionMastery
+            guard let rating=try ScoutingRoleEvaluation.grades(role:.pitcher,abilities:ScoutingClubCatalog.abilities(values,role:.pitcher),positionMastery:nil).first?.score else {throw ContractRegistrationError.invalid}
+            rival=ClubSelectionCandidate(id:npc.id,h:rating,p:0,readiness:100,evidence:nil,note:"선수별 고정 프로필2 · 멘탈·구위·지구력·보유 구종 숙련을 함께 반영. 피로 원장 없음·준비100, 검증 성과 P0 중립")
         } else {
-            guard let npc = team.players.first(where: {$0.position == position}), let bat = attack.batters.first(where: {$0.id == npc.id}) else { throw ContractRegistrationError.invalid }
-            let values = PlayerInitialValues(contact:bat.contact,power:bat.power,discipline:bat.discipline,speed:npc.speed,defense:npc.defense,arm:npc.arm,mental:60)
-            guard let rating = try ScoutingRoleEvaluation.grades(role:.batter,abilities:ScoutingClubCatalog.abilities(values,role:.batter),positionMastery:60).first(where: {$0.id == roleID})?.score else { throw ContractRegistrationError.invalid }
-            rival = ClubSelectionCandidate(id:npc.id,h:rating,p:0,readiness:100,evidence:nil,note:"기존 같은 포지션 가상 선수의 공격·주루·수비·송구. 미수집 멘탈·숙련은 게임 기준60, 피로 원장 없음·준비100, 성과 P0 중립")
+            guard let npc=team.players.first(where:{$0.position == position}),let bat=attack.batters.first(where:{$0.id == npc.id}),let profile=bat.profile else {throw ContractRegistrationError.invalid}
+            values=PlayerInitialValues(contact:bat.contact,power:bat.power,discipline:bat.discipline,speed:npc.speed,defense:npc.defense,arm:npc.arm,mental:profile.mental)
+            rivalMastery=profile.positionMastery
+            guard let rating=try ScoutingRoleEvaluation.grades(role:.batter,abilities:ScoutingClubCatalog.abilities(values,role:.batter),positionMastery:rivalMastery).first(where:{$0.id == roleID})?.score else {throw ContractRegistrationError.invalid}
+            rival=ClubSelectionCandidate(id:npc.id,h:rating,p:0,readiness:100,evidence:nil,note:"같은 자리 선수별 고정 프로필2 · 공격·주루·수비·송구·멘탈/위치 숙련. 피로 원장 없음·준비100, 검증 성과 P0 중립")
         }
-        return try ClubSelectionReview.make(context:contextID,membershipID:member.offerID,teamID:member.teamID,level:member.level,position:position,roleID:roleID,date:date,own:own,rival:rival,previous:previous)
+        return try ClubSelectionReview.make(context:contextID,membershipID:member.offerID,teamID:member.teamID,level:member.level,position:position,roleID:roleID,date:date,own:own,rival:rival,previous:previous,rivalAbilities:values,rivalPositionMastery:rivalMastery)
     }
+
     static func frozenPerformance(player:CareerPlayer,calendar:CareerCalendarState,level:String,owner:CareerContractJournal,in context:ModelContext) throws -> (p:Double,source:String?,note:String) {
         let today = try GameDate(player.gameDate)
         // Adult comparisons have their own fixed reference; never relabel a high-school reference.

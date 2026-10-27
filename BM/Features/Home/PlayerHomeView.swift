@@ -2822,6 +2822,17 @@ struct ClubSelectionScreen: View {
                     candidate(review.own,title:player.name,isOwn:true)
                     candidate(review.rival,title:"같은 자리 가상 선수",isOwn:false)
                 }
+                if let values=review.rivalAbilities {
+                    GamePanel(title:"경쟁자의 고정 능력",onBoard:true,contentSpacing:12) {
+                        Text("평가 당시 프로필2 · "+review.position).font(.subheadline).foregroundStyle(GameTheme.gold)
+                        DisclosureGroup {
+                            NPCSelectionAbilityRows(values:values,role:player.role,mastery:review.rivalPositionMastery).padding(.top,12)
+                        } label: {
+                            Text("고정 능력·구종 펼치기").accessibilityIdentifier("selectionRivalAbilities")
+                        }.font(.headline).tint(GameTheme.gold)
+                        Text("새 경기와 같은 생성 자료입니다. 이미 확정한 주간 평가와 시작한 경기는 재계산하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    }
+                }
                 GamePanel(title:"기용을 준비하는 방법",onBoard:true,contentSpacing:12) {
                     Text("기량 H60% · 성과25% · 준비도15%").font(.headline)
                     Text("성과는 50+10P(10~90), 준비도는 평가 당시100−피로입니다. 미검증 성과는 P0 중립입니다.").font(.subheadline)
@@ -2846,5 +2857,31 @@ struct ClubSelectionScreen: View {
             Text(value.note).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             if let evidence=value.evidence {DisclosureGroup("고정 성적 출처") {Text(evidence).font(.caption).textSelection(.enabled)}}
         }.frame(maxWidth:.infinity,alignment:.topLeading)
+    }
+}
+
+
+private struct NPCSelectionAbilityRows: View {
+    let values:PlayerInitialValues
+    let role:PlayerRole
+    let mastery:Double?
+    private var rows:[HomeAbilityValue] {
+        let labels=["homeContact":"컨택","homePower":"파워","homeDiscipline":"선구안","homeSpeed":"스피드","homeDefense":"수비","homeArm":"송구","homeMental":"멘탈","homeVelocity":"구속 능력","homeControl":"제구","homeStuff":"구위","homeStamina":"지구력"]
+        let originals=ScoutingClubCatalog.abilities(values,role:role).originals.map {HomeAbilityValue(id:$0.id,label:labels[$0.id] ?? $0.id,current:$0.current,initial:nil)}
+        let pitches=values.pitches.keys.sorted().map {HomeAbilityValue(id:"pitch-"+$0,label:(PitchType(rawValue:$0)?.label ?? $0)+" 숙련",current:values.pitches[$0]!,initial:nil)}
+        let position=mastery.map {[HomeAbilityValue(id:"position",label:"위치 숙련",current:$0,initial:nil)]} ?? []
+        return originals+pitches+position
+    }
+    var body:some View {
+        VStack(alignment:.leading,spacing:12) {
+            ForEach(rows) {row in
+                HStack {
+                    Text(row.label).font(.subheadline)
+                    Spacer()
+                    Text(String(format:"%.1f",row.current)).font(.headline.monospacedDigit()).foregroundStyle(GameTheme.gold)
+                }.accessibilityElement(children:.combine).accessibilityIdentifier("selectionRival-"+row.id)
+                ProgressView(value:row.current,total:100).tint(GameTheme.growth).accessibilityHidden(true)
+            }
+        }
     }
 }

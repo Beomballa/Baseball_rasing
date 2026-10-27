@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 import SwiftData
 @testable import BM
 
@@ -5287,5 +5288,149 @@ extension CareerCalendarTests {
             XCTAssertEqual(restored.payload,final);XCTAssertTrue(restored.completed)
             XCTAssertEqual(try d.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}?.fatigue,fatigue)
         }
+    }
+}
+
+
+extension CareerCalendarTests {
+    func testV33CompleteNPCProfilesKeepOldAbilitiesAndHaveStableValidatedExtras() throws {
+        for level in ["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"] {
+            let roster=MatchNPCFielders.make(year:2030,competition:level,homeID:"A",awayID:"B"),legacy=MatchNPCAttack.make(roster:roster),full=MatchNPCAttack.makeComplete(roster:roster)
+            XCTAssertEqual(full,MatchNPCAttack.makeComplete(roster:roster));try full.validate(roster:roster)
+            XCTAssertEqual(full.home,MatchNPCAttack.makeComplete(roster:MatchNPCFielders.make(year:2030,competition:level,homeID:"B",awayID:"A")).away)
+            XCTAssertEqual(full.version,2);XCTAssertEqual(legacy.version,1)
+            for home in [true,false] {
+                let old=legacy.team(home:home),team=full.team(home:home)
+                XCTAssertEqual(team.starter.id,old.starter.id);XCTAssertEqual(team.starter.velocity,old.starter.velocity);XCTAssertEqual(team.starter.control,old.starter.control);XCTAssertEqual(team.starter.pitches,old.starter.pitches)
+                let profile=try XCTUnwrap(team.starter.profile)
+                XCTAssertEqual(Set(profile.mastery.keys),Set(team.starter.pitches));XCTAssertGreaterThan(Set(profile.mastery.values).count,1)
+                for (before,after) in zip(old.batters,team.batters) {
+                    XCTAssertEqual(before.id,after.id);XCTAssertEqual(before.contact,after.contact);XCTAssertEqual(before.power,after.power);XCTAssertEqual(before.discipline,after.discipline)
+                    XCTAssertNotNil(after.profile);XCTAssertNil(before.profile)
+                }
+            }
+            var bad=full;bad.home.starter.profile=nil;XCTAssertThrowsError(try bad.validate(roster:roster))
+            bad=full;bad.version=1;XCTAssertThrowsError(try bad.validate(roster:roster))
+            bad=full;let profile=try XCTUnwrap(bad.away.relief.profile)
+            bad.away.relief.profile=MatchNPCPitchingProfile(mental:profile.mental,stuff:profile.stuff,stamina:profile.stamina,mastery:[:]);XCTAssertThrowsError(try bad.validate(roster:roster))
+        }
+    }
+    func testV33NewAbilitiesUseExistingPitchAndFieldRulesWithoutExtraRandomDraws() throws {
+        var game=ScoutingReferenceSimulation.fixture(role:.batter,position:"CF",values:PlayerArchetype.initial(for:.batter).values,seed:91,home:false,tracked:true,battedBallVersion:1,npcFieldersVersion:1,npcAttackVersion:2)
+        let original=try XCTUnwrap(game.npcAttack?.home.starter),random=game.random
+        var low=original,high=original
+        low.profile=MatchNPCPitchingProfile(mental:20,stuff:20,stamina:20,mastery:Dictionary(uniqueKeysWithValues:original.pitches.map {($0,20.0)}))
+        high.profile=MatchNPCPitchingProfile(mental:90,stuff:90,stamina:90,mastery:Dictionary(uniqueKeysWithValues:original.pitches.map {($0,90.0)}))
+        XCTAssertGreaterThan(low.hitAdjustment(code:"four-seam",pressure:true),high.hitAdjustment(code:"four-seam",pressure:true))
+        XCTAssertGreaterThan(low.homeRunAdjustment(code:"four-seam",pressure:true),high.homeRunAdjustment(code:"four-seam",pressure:true))
+        XCTAssertLessThan(low.zoneChance(pressure:true),high.zoneChance(pressure:true))
+        XCTAssertEqual(low.speed("four-seam"),high.speed("four-seam"),"이번 범위에서 구속/비행 규칙은 재산정하지 않음")
+        _=game.delivery();XCTAssertEqual(game.random,random)
+        var strong=game
+        game.npcAttack?.home.starter=low;strong.npcAttack?.home.starter=high
+        game.pitching?.homePitches=90;strong.pitching?.homePitches=90
+        game.finishPitcherPlate(home:true,previousHalf:0);strong.finishPitcherPlate(home:true,previousHalf:0)
+        XCTAssertNotNil(game.pitching?.homeChange);XCTAssertNil(strong.pitching?.homeChange)
+        let raw=try XCTUnwrap(strong.npcDefenders)
+        let skills=DetailedFieldRules.skills(stats:nil,defending:false,npc:raw)
+        for i in raw.indices {XCTAssertEqual(skills[i].positionDelay,0.25*(1-raw[i].positionMastery!/100),accuracy:0.00001)}
+        XCTAssertEqual(game.random,random);XCTAssertEqual(strong.random,random)
+    }
+    func testV33SelectionUsesSavedNPCAbilityBasisAndKeepsPreviousWeeklyReview() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try v32Fixture(role),c=store.mainContext
+            let review=try XCTUnwrap(ClubSelectionStore.projection(player:p,calendar:s,in:c)),basis=try XCTUnwrap(review.rivalAbilities)
+            try review.validateRivalBasis();XCTAssertNotNil(review.rivalPositionMastery)
+            let plan=try s.competition(for:p,year:2030),other=try XCTUnwrap(plan.teamIDs.first {$0 != plan.teamID})
+            let roster=MatchNPCFielders.make(year:2030,competition:review.level,homeID:plan.teamID,awayID:other),team=MatchNPCAttack.makeComplete(roster:roster).home
+            if role == .pitcher {XCTAssertEqual(basis.stuff,team.starter.profile?.stuff);XCTAssertEqual(basis.pitches,team.starter.profile?.mastery)}
+            else {XCTAssertEqual(basis.mental,team.batters.first {$0.id == review.rival.id}?.profile?.mental)}
+            var legacy=review;legacy.rivalAbilities=nil;legacy.rivalPositionMastery=nil
+            var owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c);owner.clubSelections=[legacy]
+            let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c));row.payload=try JSONEncoder().encode(owner);try c.save();let bytes=row.payload
+            XCTAssertEqual(try ClubSelectionStore.projection(player:p,calendar:s,in:c),legacy);XCTAssertEqual(row.payload,bytes)
+            p.gameDate="2030-04-08";try c.save()
+            let next=try XCTUnwrap(ClubSelectionStore.projection(player:p,calendar:s,in:c))
+            XCTAssertNotNil(next.rivalAbilities);XCTAssertEqual(next.incumbent,legacy.selected);XCTAssertEqual(row.payload,bytes)
+        }
+    }
+    func testV33CompleteProfileDiskResumeAndCompletionOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+            let url=dir.appendingPathComponent("npc-full.store");var id:UUID!,bytes:Data!,reports:[Data]=[]
+            do {
+                let (store,p,s)=try v32Fixture(role,url:url),c=store.mainContext;id=p.id
+                p.contact=99;p.power=99;p.discipline=99;p.speed=99;p.defense=99;p.arm=99
+                let abilities=try PlayerAbilityStore.profile(playerID:p.id,in:c)!
+                abilities.mental=99
+                if role == .pitcher {abilities.velocity=99;abilities.control=99;abilities.stuff=99;abilities.stamina=99;for pitch in p.pitches {pitch.mastery=99}}
+                try c.save();try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let row=try CareerMatchStore.startPrepared(player:p,state:s,choice:role == .batter ? .contact:.control,date:p.gameDate,revision:s.revision,in:c)
+                XCTAssertTrue(row.appearance);XCTAssertEqual(try row.snapshot().npcAttack?.version,2)
+                try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:role == .batter ? .watch:.pitch,pitchCode:p.pitches.first?.code,control:role == .batter ? ManualMatchInput():ManualMatchInput(release:0.68),in:c)
+                bytes=row.payload;reports=try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload)
+            }
+            let store=try CareerStore.makeContainer(url:url),c=store.mainContext
+            let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+            let row=try CareerMatchStore.start(player:p,state:s,in:c);XCTAssertEqual(row.payload,bytes)
+            let attack=try row.snapshot().npcAttack
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(row.payload,bytes)
+            try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            XCTAssertEqual(try row.snapshot().npcAttack,attack)
+            let final=row.payload,fatigue=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+            XCTAssertEqual(row.payload,final);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reports)
+        }
+    }
+    func testV33ReferencesSeparateCompleteProfilesAndKeepStandardInputRoutesEquivalent() throws {
+        for role in PlayerRole.allCases {for level in ["highschool","domestic-development"] {
+            let ids=level == "highschool" ? ["hs-ref-001","hs-ref-002"]:Array(CareerTeamDirectory.teams(level:level).prefix(2))
+            let roster=MatchNPCFielders.make(year:2026,competition:level,homeID:ids[0],awayID:ids[1])
+            let game=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "CF":"P",values:PlayerArchetype.initial(for:role).values,seed:77,home:true,tracked:true,battedBallVersion:1,npcFieldersVersion:1,assessmentRoster:roster,npcAttackVersion:2,competition:level == "highschool" ? nil:level)
+            let environment=try XCTUnwrap(game.scoutingEnvironment);XCTAssertTrue(environment.contains("-attack2-"))
+            var references:[ScoutingReference]=[]
+            for mode in ScoutingInputMode.allCases {
+                let key=environment.replacingOccurrences(of:ScoutingInputMode.automatic.suffix,with:mode.suffix)
+                let reference=try XCTUnwrap(level == "highschool" ? ScoutingReferenceSimulation.make(environment:key,role:role,position:game.fieldStats!.position):ScoutingReferenceSimulation.adult(environment:key,role:role,position:game.fieldStats!.position))
+                try reference.validate();XCTAssertEqual(reference.environment,key);references.append(reference)
+            }
+            XCTAssertEqual(references[0].totals,references[1].totals);XCTAssertEqual(references[0].totals,references[2].totals)
+        }}
+    }
+}
+
+
+extension CareerCalendarTests {
+    func testV33LegacyGamesMatchV32GoldenEventAndRNGHashes() throws {
+        let expected:[String:String] = [
+            "batter|highschool|automatic|0":"699ea6894c91dac895b7b25c93deabaf657fe7efd616c655361764a079594f03",
+            "batter|highschool|automatic|1":"4aeaebf182cd69466baaefc0ff53e14268217ae9dac23f4ef249aacdf8cea162",
+            "batter|highschool|mixed|0":"9b8b3d1bf6e8a05d42bfe8817bcbe8f8214977a57fcfb2f58373a93853d33781",
+            "batter|highschool|mixed|1":"ce10c0b3a26412fb059a19ee1cb837f0c2e40f9ed320adb11428595535f00cab",
+            "batter|domestic-development|automatic|0":"8ae971ad86391720f07e84e7a6990e3cf383c05e16fc7a5d0066371f8b94953f",
+            "batter|domestic-development|automatic|1":"80b49b99a13cb6bc8211cdcc39f4110ea5788632a1ad7f26d9616d2757017922",
+            "batter|domestic-development|mixed|0":"e2880c3ced6a49b69c67733b28aa8ca432c62179ae3f98de7084e63ad3d759b2",
+            "batter|domestic-development|mixed|1":"afd3a92696d8579d3c3dde087e83bcfdea8813e630aabfcd3400dc51d764e060",
+            "pitcher|highschool|automatic|0":"fc93fb451d555512d384b84f9c8aed55d4285c73e33f312932b438cbb385c009",
+            "pitcher|highschool|automatic|1":"e4c94f408777b4fda28e6edc95b3296d3f57d3edad258106760411a2be505dd3",
+            "pitcher|highschool|mixed|0":"d824012c46f5014d38d3aebb7ad24955069f93ea202184d7289fedf92caab80e",
+            "pitcher|highschool|mixed|1":"dd672f4e9e4ed85d6972e86d46bc967f2cd3d6e2f64a46b8bdfbe3d0aaed5ed5",
+            "pitcher|domestic-development|automatic|0":"ff7bc4140b7d35fe2b8be3beb60afec2b779e2af2792c88f1dd80ace4a1cca1a",
+            "pitcher|domestic-development|automatic|1":"37c7a1cb3d39942a4d229bd008109be91a4999bd3cd983d1cdd93d561cf81e0b",
+            "pitcher|domestic-development|mixed|0":"2c0a7761f450e6596f99340b6a7f6274b206c4102efa26884d6750844e13d500",
+            "pitcher|domestic-development|mixed|1":"c45ab0714bf9d672405d153ea6421fc65b07750bb473b64ed87a9557ab061026"
+        ]
+        for role in PlayerRole.allCases {for level in ["highschool","domestic-development"] {for mode in [ScoutingInputMode.automatic,.mixed] {for version in [0,1] {
+            let ids=level == "highschool" ? ["hs-ref-001","hs-ref-002"]:Array(CareerTeamDirectory.teams(level:level).prefix(2))
+            let roster=MatchNPCFielders.make(year:2026,competition:level,homeID:ids[0],awayID:ids[1])
+            var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "CF":"P",values:PlayerArchetype.initial(for:role).values,seed:771234,home:true,tracked:true,battedBallVersion:1,npcFieldersVersion:1,assessmentRoster:roster,npcAttackVersion:version == 1 ? 1:nil,competition:level == "highschool" ? nil:level)
+            try ScoutingReferenceSimulation.run(&match,mode:mode)
+            let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+            let hash=SHA256.hash(data:try encoder.encode(match)).map {String(format:"%02x",$0)}.joined()
+            let key="\(role.rawValue)|\(level)|\(mode.rawValue)|\(version)"
+            XCTAssertEqual(hash,expected[key],key)
+        }}}}
     }
 }

@@ -506,6 +506,8 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
     let incumbent: String
     let selected: String
     let holdUntil: String?
+    var rivalAbilities:PlayerInitialValues? = nil
+    var rivalPositionMastery:Double? = nil
     var id: String { context + "/" + week }
     var isStarter: Bool { selected == own.id }
     var nextReview: String {
@@ -517,21 +519,30 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
         return "동률 또는 점수 차 5 미만 · 기존 기용 유지"
     }
     static func make(context: String, membershipID: String, teamID: String, level: String, position: String, roleID: String,
-                     date: GameDate, own: ClubSelectionCandidate, rival: ClubSelectionCandidate, previous: Self?) throws -> Self {
+                     date: GameDate, own: ClubSelectionCandidate, rival: ClubSelectionCandidate, previous: Self?, rivalAbilities:PlayerInitialValues?=nil, rivalPositionMastery:Double?=nil) throws -> Self {
         let incumbent = previous?.selected ?? own.id
         let held = previous?.holdUntil.map { date.description < $0 } ?? false
         let current = incumbent == own.id ? own : rival
         let challenger = incumbent == own.id ? rival : own
         let selected = !held && challenger.score >= current.score + 5 ? challenger.id : incumbent
         let until = selected != incumbent ? date.adding(days: 14).description : previous?.holdUntil
-        let value = Self(context: context, membershipID: membershipID, teamID: teamID, level: level, position: position, roleID: roleID,
+        var value = Self(context: context, membershipID: membershipID, teamID: teamID, level: level, position: position, roleID: roleID,
                          date: date.description, week: date.monday.description, own: own, rival: rival, incumbent: incumbent, selected: selected, holdUntil: until)
+        value.rivalAbilities=rivalAbilities;value.rivalPositionMastery=rivalPositionMastery
         try value.validate(previous: previous)
         return value
     }
+    func validateRivalBasis() throws {
+        guard let values=rivalAbilities else {guard rivalPositionMastery == nil else {throw ContractRegistrationError.invalid};return}
+        guard let mastery=rivalPositionMastery,mastery.isFinite,(0...100).contains(mastery),
+              roleID != "starter" || [values.velocity,values.control,values.stuff,values.stamina].allSatisfy({$0 != nil}) else {throw ContractRegistrationError.invalid}
+        let role:PlayerRole=roleID == "starter" ? .pitcher:.batter
+        let score=try ScoutingRoleEvaluation.grades(role:role,abilities:ScoutingClubCatalog.abilities(values,role:role),positionMastery:mastery).first {$0.id == roleID}?.score
+        guard score == rival.h else {throw ContractRegistrationError.invalid}
+    }
     func validate(previous: Self?) throws {
         let day = try GameDate(date)
-        try own.validate(); try rival.validate()
+        try own.validate(); try rival.validate();try validateRivalBasis()
         guard version == 1, week == day.monday.description,
               context == [membershipID,teamID,level,String(day.year),position].joined(separator:"/"),
               !membershipID.isEmpty, !teamID.isEmpty,
@@ -551,7 +562,7 @@ struct MatchClubSelection: Codable, Equatable {
     let rotationDay: Bool
     var appearance: Bool { rotationDay && review.isStarter }
     func validate(fixtureID: String, playerID: UUID, date: String, competition: String?, appearance: Bool, role: String) throws {
-        try review.own.validate(); try review.rival.validate()
+        try review.own.validate(); try review.rival.validate();try review.validateRivalBasis()
         let day=try GameDate(date), opening=try GameDate("\(day.year)-04-01")
         let expectedTurn=role == "batter" || (opening.days(to:day)/6).isMultiple(of:5)
         guard review.version == 1, review.week == day.monday.description, rotationDay == expectedTurn,

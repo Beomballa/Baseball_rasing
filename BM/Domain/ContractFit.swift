@@ -170,14 +170,14 @@ struct ScoutingReference: Codable, Equatable {
         let tracked=mode != nil
         guard (tracked || environment.hasSuffix("/auto-v1")), role == .pitcher ? position == "P" : FieldPosition(rawValue:position) != nil else { return nil }
         if environment.contains("-npc1-") && !environment.contains("-batted1-") {return nil}
-        if environment.contains("-attack"),!environment.contains("-attack1-") || !environment.contains("-npc1-") {return nil}
+        if environment.contains("-attack"),(!environment.contains("-attack1-") && !environment.contains("-attack2-")) || !environment.contains("-npc1-") {return nil}
         if let found = cache[environment] { return found }
         let profiles = PlayerArchetype.choices(for:role).map(\.values), count = role == .batter ? 20:6
         var totals = PersonalSeasonTotals(), performance = tracked ? MatchScoutingPerformance.tracked:MatchScoutingPerformance()
         for (index, profile) in profiles.enumerated() {
             for game in 0..<count {
                 var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0,tracked:tracked,
-                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,npcAttackVersion:environment.contains("-attack1-") ? 1:nil)
+                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,npcAttackVersion:environment.contains("-attack2-") ? 2:environment.contains("-attack1-") ? 1:nil)
                 // Empty input counts initially identify automatic; match rules/position must still match exactly.
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
                 try run(&match,mode:mode ?? .automatic)
@@ -216,7 +216,7 @@ struct ScoutingReference: Codable, Equatable {
         }
         if let assessmentRoster {match.npcFielders=assessmentRoster}
         match.competition=competition
-        if npcAttackVersion == 1,let roster=match.npcFielders {match.npcAttack=MatchNPCAttack.make(roster:roster)}
+        if let version=npcAttackVersion,[1,2].contains(version),let roster=match.npcFielders {match.npcAttack=version == 2 ? MatchNPCAttack.makeComplete(roster:roster):MatchNPCAttack.make(roster:roster)}
         match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.abilityStats=MatchAbilityStats(mental:values.mental,velocity:values.velocity,control:values.control,stuff:values.stuff,stamina:values.stamina,fatigue:fatigue)
         match.fieldStats=MatchFieldStats(speed:values.speed,defense:values.defense,arm:values.arm,position:position)
@@ -1289,7 +1289,7 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
         guard let level=environment.components(separatedBy:"/").first,["college","domestic-development","domestic-first-team","mlb-development","npb-first-team","mlb-first-team"].contains(level),
               let mode=ScoutingInputMode.allCases.first(where:{environment.hasSuffix("/"+$0.suffix)}),
               role == .pitcher ? position == "P":FieldPosition(rawValue:position) != nil else {return nil}
-        if environment.contains("-attack"),!environment.contains("-attack1-") || !environment.contains("-npc1-") || !environment.contains("-batted1-") {return nil}
+        if environment.contains("-attack"),(!environment.contains("-attack1-") && !environment.contains("-attack2-")) || !environment.contains("-npc1-") || !environment.contains("-batted1-") {return nil}
         let key="adult-reference-v1/"+environment
         if let found=cache[key] {return found}
         let profiles=adultProfiles(level:level,role:role),count=role == .batter ? 20:6
@@ -1297,11 +1297,11 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
         for (index,profile) in profiles.enumerated() {
             for game in 0..<count {
                 let seed=UInt64(1_211_001+index*1_000+game),home=game%2 == 0
-                let modern=environment.contains("-attack1-"),ids=CareerTeamDirectory.teams(level:level)
+                let modern=environment.contains("-attack1-") || environment.contains("-attack2-"),ids=CareerTeamDirectory.teams(level:level)
                 let roster=MatchNPCFielders.make(year:2026,competition:level,homeID:home ? ids[0]:ids[1+Int(seed%5)],awayID:home ? ids[1+Int(seed%5)]:ids[0])
                 var match=fixture(role:role,position:position,values:profile,seed:seed,home:home,tracked:true,
                     battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,
-                    assessmentRoster:modern ? roster:nil,npcAttackVersion:modern ? 1:nil,competition:modern ? level:nil)
+                    assessmentRoster:modern ? roster:nil,npcAttackVersion:modern ? (environment.contains("-attack2-") ? 2:1):nil,competition:modern ? level:nil)
                 match.competition=level
                 if !modern,match.npcFielders != nil {match.npcFielders=roster}
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}

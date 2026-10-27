@@ -2,6 +2,48 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV33OpponentAndCompetitionShowStoredCompleteProfilesBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-game"].tap();app.buttons["facility-analysis"].tap()
+            reveal(app.buttons["hubOpponentAnalysis"],app);app.buttons["hubOpponentAnalysis"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-pitcher"].waitForExistence(timeout:10));app.buttons["opponentTab-pitcher"].tap()
+            let profile=app.descendants(matching:.any).matching(identifier:"opponentCompletePitcher").firstMatch;reveal(profile,app);XCTAssertTrue(profile.exists)
+            let mastery=app.descendants(matching:.any).matching(identifier:"opponentPitchMastery-four-seam").firstMatch;reveal(mastery,app);XCTAssertTrue(mastery.exists)
+            capture(app,"v33-"+(pitcher ? "pitcher":"batter")+"-opponent-pitcher")
+            app.buttons["opponentTab-batter"].tap()
+            let batter=app.descendants(matching:.any).matching(identifier:"opponentCompleteBatter").firstMatch;reveal(batter,app);XCTAssertTrue(batter.exists)
+            capture(app,"v33-"+(pitcher ? "pitcher":"batter")+"-opponent-batter")
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before)
+            app.buttons["facility-game"].tap();reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+            let values=app.descendants(matching:.any).matching(identifier:"selectionRivalAbilities").firstMatch;reveal(values,app);XCTAssertTrue(values.exists);values.tap()
+            let mental=app.descendants(matching:.any).matching(identifier:"selectionRival-homeMental").firstMatch;reveal(mental,app);XCTAssertTrue(mental.exists)
+            capture(app,"v33-"+(pitcher ? "pitcher":"batter")+"-rival-abilities")
+            if pitcher {
+                let pitch=app.descendants(matching:.any).matching(identifier:"selectionRival-pitch-four-seam").firstMatch;reveal(pitch,app);XCTAssertTrue(pitch.exists)
+                capture(app,"v33-pitcher-rival-mastery")
+            }
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before)
+        }
+    }
+    @MainActor func testV33LargeTextCompletePitcherAndRivalProfileOnSmallPhone() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        app.buttons["managementLargeMenu"].tap();app.buttons["경기"].tap();reveal(app.buttons["facility-analysis"],app);app.buttons["facility-analysis"].tap()
+        reveal(app.buttons["hubOpponentAnalysis"],app);app.buttons["hubOpponentAnalysis"].tap();app.buttons["opponentTab-pitcher"].tap()
+        let mastery=app.descendants(matching:.any).matching(identifier:"opponentPitchMastery-four-seam").firstMatch;reveal(mastery,app);XCTAssertTrue(mastery.isHittable)
+        capture(app,"v33-large-opponent-mastery")
+        app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+        reveal(app.buttons["facility-game"],app);app.buttons["facility-game"].tap();reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+        let values=app.descendants(matching:.any).matching(identifier:"selectionRivalAbilities").firstMatch;reveal(values,app);values.tap()
+        let mental=app.descendants(matching:.any).matching(identifier:"selectionRival-homeMental").firstMatch;reveal(mental,app);XCTAssertTrue(mental.isHittable)
+        capture(app,"v33-large-rival-mental")
+    }
     @MainActor func testV32BenchCompetitionAndTeamResultBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench"];app.launch()

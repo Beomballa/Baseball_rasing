@@ -94,7 +94,14 @@ struct CareerMatch: Codable, Equatable {
     var opponentScore: Int { isHome ? awayScore : homeScore }
     var inningLabel: String { completed ? "경기 종료" : "\(half / 2 + 1)회 \(half % 2 == 0 ? "초" : "말")" }
 
-    var npcDefenders:[MatchNPCPlayer]? {npcFielders?.team(home:half % 2 == 0).players}
+    var npcDefenders:[MatchNPCPlayer]? {
+        guard let players=npcFielders?.team(home:half % 2 == 0).players else {return nil}
+        let batters=npcAttack?.team(home:half % 2 == 0).batters ?? []
+        return players.map {player in var value=player;value.positionMastery=batters.first {$0.id == player.id}?.profile?.positionMastery;return value}
+    }
+    var npcPressure:Bool {bases[1] || bases[2] || (half >= 12 && abs(homeScore-awayScore) <= 2)}
+    var npcContact:Double {guard let batter=npcBatter else {return 60};return batter.contact*batter.execution(pressure:npcPressure)}
+    var npcPower:Double {guard let batter=npcBatter else {return 60};return batter.power*batter.execution(pressure:npcPressure)}
     var npcBatterSpeed:Double {
         guard let roster=npcFielders else {return 60}
         let home=half % 2 == 1,team=roster.team(home:home)
@@ -127,7 +134,7 @@ struct CareerMatch: Codable, Equatable {
         let x = copy.roll(), y = copy.roll()
         if let pitcher=npcActivePitcher,!(role == "pitcher" && ownPitcherActive && !offense) {
             let code=deliveryPitchCode(requested:pitchCode),speed=pitcher.speed(code)
-            let width=0.6/sqrt(pitcher.zoneChance)
+            let width=0.6/sqrt(pitcher.zoneChance(pressure:npcPressure))
             return MatchDelivery(x:0.5+(x-0.5)*width,y:0.5+(y-0.5)*width,speed:Int(speed.rounded()),exactSpeed:speed)
         }
         let actualSpeed = ownPitcherActive && abilityStats?.version == 1 ? abilityStats?.speedValue(code: pitchCode ?? "four-seam") : nil
@@ -184,6 +191,7 @@ struct CareerMatch: Codable, Equatable {
     private mutating func step(_ input: MatchInput, pitchCode: String?, control: ManualMatchInput? = nil, direct: Bool = false) {
         let defendingHome = half % 2 == 0, previousHalf = half
         let previousOrder = homeOrder + awayOrder
+        let npcPitchCode=deliveryPitchCode(requested:pitchCode)
         let personalPitch=appearance && (role == "batter" ? ownAtBat:ownPitcherActive && !offense)
         let observedPitch=pitchLog == nil ? nil:ObservedPitch.preparation(match:self,pitchCode:pitchCode)
         var observedZone:Bool?
@@ -218,23 +226,24 @@ struct CareerMatch: Codable, Equatable {
         // Endurance is not yet stored; use the documented formula with a provisional 60.
         if personalPitcher { line.pitches += 1; fatigueCost += 0.3 + 0.002 * (100 - 60) }
         let quality = personalPitcher ? (mastery[pitchCode ?? ""] ?? 60) : 60
-        let inZone = roll() < (personalPitcher ? (0.5 + quality * 0.002):(npcActivePitcher?.zoneChance ?? (0.5 + quality * 0.002)))
+        let inZone = roll() < (personalPitcher ? (0.5 + quality * 0.002):(npcActivePitcher?.zoneChance(pressure:npcPressure) ?? (0.5 + quality * 0.002)))
         observedZone=inZone
         let swing:Bool
         if personalBatter {swing=input != .watch}
-        else if let batter=npcBatter {swing=roll()<batter.swingChance(inZone:inZone)}
+        else if let batter=npcBatter {swing=roll()<batter.swingChance(inZone:inZone,pressure:npcPressure)}
         else {swing=inZone || roll()<0.22}
         if !swing {
             if inZone { strikes += 1; message = "루킹 스트라이크" }
             else { balls += 1; message = "볼" }
         } else {
             let baseHit = personalBatter ? 0.14 + contact * 0.002 : 0.27
-            let hitChance=npcAttack == nil ? baseHit:max(0.04,min(0.65,baseHit+(personalBatter ? 0:((npcBatter?.contact ?? 60)-60)*0.002)+(personalPitcher ? 0:(npcActivePitcher?.hitAdjustment ?? 0))))
+            let hitChance=npcAttack == nil ? baseHit:max(0.04,min(0.65,baseHit+(personalBatter ? 0:(npcContact-60)*0.002)+(personalPitcher ? 0:(npcActivePitcher?.hitAdjustment(code:npcPitchCode,pressure:npcPressure) ?? 0))))
             let value = roll()
             if value < hitChance {
                 let baseHR=personalBatter ? power/500:0.12
-                let chance=npcAttack == nil ? baseHR:max(0.01,min(0.35,baseHR+(personalBatter ? 0:((npcBatter?.power ?? 60)-60)*0.001)))
-                let homeRun = input != .bunt && roll() < chance
+                let chance=npcAttack == nil ? baseHR:max(0.01,min(0.35,baseHR+(personalBatter ? 0:(npcPower-60)*0.001)))
+                let npcHR = personalPitcher ? 0:(npcActivePitcher?.homeRunAdjustment(code:npcPitchCode,pressure:npcPressure) ?? 0)
+                let homeRun = input != .bunt && roll() < (npcActivePitcher?.profile == nil ? chance:max(0.01,min(0.35,chance+npcHR)))
                 endPlate(homeRun ? "홈런" : "안타", batter: personalBatter, pitcher: personalPitcher, bunt:input == .bunt)
             } else if value < hitChance + 0.35 {
                 endPlate("범타", batter: personalBatter, pitcher: personalPitcher, bunt:input == .bunt)
@@ -270,7 +279,7 @@ struct CareerMatch: Codable, Equatable {
         else if input != .watch { fatigueCost += 1 }
         let swing:Bool
         if !pitcher {swing=input != .watch}
-        else if let batter=npcBatter {swing=roll()<batter.swingChance(inZone:inZone)}
+        else if let batter=npcBatter {swing=roll()<batter.swingChance(inZone:inZone,pressure:npcPressure)}
         else {swing=inZone || roll()<0.22}
         if !swing {
             if inZone { strikes += 1; message = "루킹 스트라이크" }
@@ -279,13 +288,14 @@ struct CareerMatch: Codable, Equatable {
             strikes += 1; message = "헛스윙"
         } else {
             let baseHit = pitcher ? (abilityStats?.hitChance(quality: quality) ?? (0.36 - quality * 0.20)) : 0.10 + contact * 0.001 + quality * 0.35
-            let adjustment=pitcher ? ((npcBatter?.contact ?? 60)-60)*0.002:(npcActivePitcher?.hitAdjustment ?? 0)
+            let adjustment=pitcher ? (npcContact-60)*0.002:(npcActivePitcher?.hitAdjustment(code:actualCode,pressure:npcPressure) ?? 0)
             let hitChance=npcAttack == nil ? baseHit:max(0.04,min(0.65,baseHit+adjustment))
             let value = roll()
             if value < hitChance {
                 let baseHR=pitcher ? (abilityStats?.homeRunChance(quality: quality) ?? (0.16 - quality * 0.10)):power/500*quality
-                let chance=npcAttack == nil ? baseHR:max(0.01,min(0.35,baseHR+(pitcher ? ((npcBatter?.power ?? 60)-60)*0.001:0)))
-                let homeRun = input != .bunt && roll() < chance
+                let chance=npcAttack == nil ? baseHR:max(0.01,min(0.35,baseHR+(pitcher ? (npcPower-60)*0.001:0)))
+                let npcHR = pitcher ? 0:(npcActivePitcher?.homeRunAdjustment(code:actualCode,pressure:npcPressure) ?? 0)
+                let homeRun = input != .bunt && roll() < (npcActivePitcher?.profile == nil ? chance:max(0.01,min(0.35,chance+npcHR)))
                 endPlate(homeRun ? "홈런" : "안타", batter: !pitcher, pitcher: pitcher, bunt:input == .bunt,
                     battingQuality:pitcher ? nil:quality,pitchingQuality:pitcher ? quality:nil,
                     offsetX:pitcher ? 0:control.x-plan.x,offsetY:pitcher ? 0:control.y-plan.y,
@@ -317,7 +327,7 @@ struct CareerMatch: Codable, Equatable {
             let ownIndex = !offense && appearance && (role != "pitcher" || ownPitcherActive) ? DetailedFieldRules.names.firstIndex(of:fieldStats?.position ?? ""):nil
             let speeds=DetailedFieldRules.names.indices.map {index in index == ownIndex ? fieldStats?.speed ?? 60:npcDefenders?[index].speed ?? 60}
             let event=MatchHomeRun(half:half,order:half%2 == 1 ? homeOrder:awayOrder,seed:random,
-                power:batter ? power:(npcBatter?.power ?? 60),quality:battingQuality ?? 0.65,directionOffset:offsetX,
+                power:batter ? power:npcPower,quality:battingQuality ?? 0.65,directionOffset:offsetX,
                 before:before,batter:newRunner,defenderSpeeds:speeds,ownDefender:ownIndex)
             if homeRuns == nil {homeRuns=[]};homeRuns?.append(event)
         }
@@ -327,7 +337,7 @@ struct CareerMatch: Codable, Equatable {
             if battedBallVersion == 1 {
                 let a=roll(),b=roll(),c=roll()
                 let quality=battingQuality ?? max(0.05,0.3+a*0.55-(pitchingQuality ?? 0)*0.35)
-                let ball=MatchBattedBall.make(quality:quality,contact:batter ? contact:(npcBatter?.contact ?? 60),power:batter ? power:(npcBatter?.power ?? 60),bunt:bunt,
+                let ball=MatchBattedBall.make(quality:quality,contact:batter ? contact:npcContact,power:batter ? power:npcPower,bunt:bunt,
                     offsetX:offsetX,offsetY:offsetY,timing:timing,speedDraw:a,angleDraw:b,directionDraw:c)
                 shot=ball;flyBall=ball.kind.airborne;landing=ball.landing;flight=ball.flight
             } else {
@@ -527,7 +537,7 @@ extension CareerMatch {
     mutating func finishPitcherPlate(home:Bool,previousHalf:Int) {
         guard var staff=pitching,staff.change(home:home) == nil else {return}
         let own=role == "pitcher" && appearance && home == isHome
-        let stamina=own ? abilityStats?.stamina ?? 60:60
+        let stamina=own ? abilityStats?.stamina ?? 60:npcAttack?.team(home:home).starter.profile?.stamina ?? 60
         let fatigue=own ? min(100,Double(staff.startingFatigue)+fatigueCost):0
         guard staff.count(home:home) >= MatchPitching.limit(stamina:stamina) || fatigue >= 100 else {return}
         let sameHalf=half == previousHalf

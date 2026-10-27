@@ -1283,6 +1283,17 @@ struct MatchOpponentCenter:View {
             GamePanel(title:"투구 능력",onBoard:true,contentSpacing:14) {
                 OpponentAbilityBar(label:"구속 능력",value:pitcher.velocity)
                 OpponentAbilityBar(label:"제구",value:pitcher.control)
+                if let profile=pitcher.profile {
+                    VStack(spacing:12) {
+                        OpponentAbilityBar(label:"구위",value:profile.stuff)
+                        OpponentAbilityBar(label:"지구력",value:profile.stamina)
+                        OpponentAbilityBar(label:"멘탈",value:profile.mental)
+                    }.accessibilityIdentifier("opponentCompletePitcher")
+                    Text("선수별 고정 프로필2 · 구위/숙련은 승부, 지구력은 투구 수 한도, 멘탈은 압박 상황에 반영합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    ForEach(pitcher.pitches,id:\.self) {code in
+                        OpponentAbilityBar(label:pitchName(code)+" 숙련",value:profile.mastery[code] ?? 0).accessibilityIdentifier("opponentPitchMastery-"+code)
+                    }
+                } else {Text("이전 경기 · 추가 능력/구종 숙련 미기록. 당시 기준을 유지합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)}
                 Text("0~100 능력 · 구속은 실제 비행 시간, 제구는 코스와 승부에 반영됩니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
             }
             unrecordedZone
@@ -1351,6 +1362,10 @@ struct MatchOpponentCenter:View {
                     OpponentRadar(values:batterAxes(batter)).frame(height:240).accessibilityIdentifier("opponentBatterRadar")
                 }
                 ForEach(Array(batterAxes(batter).enumerated()),id:\.offset) {_,axis in OpponentAbilityBar(label:axis.0,value:axis.1)}
+                if let profile=batter.profile {
+                    OpponentAbilityBar(label:"위치 숙련",value:profile.positionMastery).accessibilityIdentifier("opponentPositionMastery")
+                    Text("선수별 고정 프로필2 · 멘탈과 현재 위치 숙련을 기록합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("opponentCompleteBatter")
+                }
                 Text("경기 시작 시 고정하는 실제 NPC 능력입니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
             }
             GamePanel(title:"타석 공략 참고",onBoard:true,contentSpacing:12) {
@@ -1362,7 +1377,8 @@ struct MatchOpponentCenter:View {
     }
     private func batterAxes(_ batter:MatchNPCBatter) -> [(String,Double)] {
         var axes=[("컨택",batter.contact),("파워",batter.power),("선구안",batter.discipline)]
-        if let field=fielders?.players.first(where:{$0.id == batter.id}) {axes += [("스피드",field.speed),("수비",field.defense)]}
+        if let field=fielders?.players.first(where:{$0.id == batter.id}) {axes += [("스피드",field.speed),("수비",field.defense),("송구",field.arm)]}
+        if let profile=batter.profile {axes.append(("멘탈",profile.mental))}
         return axes
     }
     private func positionName(_ raw:String) -> String {FieldPosition(rawValue:raw)?.label ?? (raw == "P" ? "투수":raw)}

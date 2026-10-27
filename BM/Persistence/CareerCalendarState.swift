@@ -276,7 +276,7 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         match.competition=competition == "highschool" ? nil:competition
         match.controlVersion=2;match.detailedFieldVersion=5;match.battedBallVersion=1
         match.npcFielders=MatchNPCFielders.make(year:fixture.date.year,competition:competition,homeID:fixture.homeID,awayID:fixture.awayID)
-        match.npcAttack=MatchNPCAttack.make(roster:match.npcFielders!)
+        match.npcAttack=MatchNPCAttack.makeComplete(roster:match.npcFielders!)
         match.pitching=MatchPitching();match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.playerRecords=MatchPlayerRecords.make(match:match,careerID:playerID,fixtureID:fixture.id,trackEarnedRuns:true)
         match.pitchLog=MatchPitchLog()
