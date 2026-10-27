@@ -3457,6 +3457,11 @@ extension CareerCalendarTests {
     private func finishSpecialTraining(_ row:CareerTrainingRecord,_ p:CareerPlayer,_ s:CareerCalendarState,_ c:ModelContext) throws {
         while !row.completed {
             let value=try row.snapshot(),target=value.targets[value.scores.count]
+            if value.isSkillDrill {
+                let drill = value.selectedKind == .power ? SkillDrillInput(phase:0.5) : value.selectedKind == .velocity ? SkillDrillInput(beats:[0.65,1.35,2.05]) : SkillDrillInput(trace:SkillDrillRules.curve(target))
+                try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(drill:drill),in:c)
+                continue
+            }
             try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(x:target.x,y:target.y),in:c)
         }
     }

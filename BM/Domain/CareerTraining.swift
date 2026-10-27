@@ -27,6 +27,7 @@ struct TrainingInput: Codable, Equatable {
     var footfalls: [SprintFoot]?
     var base: Int?
     var choice: Int?
+    var drill: SkillDrillInput?
 }
 
 struct TrainingTarget: Codable, Equatable {
@@ -82,6 +83,8 @@ struct CareerTraining: Codable, Equatable {
     var positionRevision: Int?
     var positionXP: Double?
     var pitchStudy: PitchStudy?
+    var drillVersion: Int?
+    var isSkillDrill: Bool { drillVersion == 1 && SkillDrillRules.kinds.contains(selectedKind) && trait == nil && position == nil && pitchStudy == nil }
     var selectedKind: TrainingKind { kind ?? (pitchCode == nil ? .contact : .pitch) }
     let before: Double
     let fatigue: Int
@@ -126,6 +129,14 @@ struct CareerTraining: Codable, Equatable {
         guard !completed else { throw TrainingError.finished }
         let numbers = [input.x, input.y] + [input.timing, input.release].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { throw TrainingError.invalidInput }
+        if drillVersion != nil {
+            guard isSkillDrill, selectedKind.allows(role), pitchCode == nil, input.timing == nil, input.release == nil,
+                  input.force == nil, input.angle == nil, input.calledStrike == nil, input.footfalls == nil,
+                  input.base == nil, input.choice == nil, let drill = input.drill else { throw TrainingError.invalidInput }
+            scores.append(try SkillDrillRules.score(kind: selectedKind, target: targets[scores.count], input: drill))
+            return
+        }
+        guard input.drill == nil else { throw TrainingError.invalidInput }
         if let position {
             guard role == "batter", selectedKind == .defense, trait == nil, pitchCode == nil else { throw TrainingError.invalidInput }
             scores.append(try PositionTrainingRules.score(position: position, target: targets[scores.count], input: input))
@@ -302,5 +313,77 @@ enum RawTrainingRules {
         let difference = abs(angle - goal.angle).truncatingRemainder(dividingBy: 360)
         let error = min(difference, 360 - difference)
         return max(0, 1 - max(abs(force - goal.force) / 40, error / (kind == .velocity ? 35 : 90))) * 100
+    }
+}
+
+struct SkillDrillInput: Codable, Equatable {
+    var phase: Double?
+    var beats: [Double?]?
+    var trace: [TrainingTarget]?
+}
+
+enum SkillDrillRules {
+    static let kinds: [TrainingKind] = [.power, .velocity, .stuff]
+    static let beats = [0.65, 1.35, 2.05]
+    static let rhythmDuration = 2.4
+    static let beatWindow = 0.22
+    static let perfectWindow = 0.04
+    static func recordBeat(_ index: Int, elapsed: Double, taps: inout [Double?]) -> Bool {
+        guard taps.count == 3, beats.indices.contains(index), elapsed.isFinite, taps[index] == nil,
+              abs(elapsed - beats[index]) <= beatWindow else { return false }
+        taps[index] = elapsed; return true
+    }
+    static func powerDuration(_ target: TrainingTarget) -> Double { 2.4 + target.x * 0.8 }
+    static func curve(_ target: TrainingTarget) -> [TrainingTarget] {
+        let bend = (target.y < 0.5 ? -1.0 : 1.0) * (0.18 + target.x * 0.12)
+        return (0...24).map { i in
+            let t = Double(i) / 24
+            return TrainingTarget(x: 0.5 + sin(t * .pi) * bend, y: 0.85 - 0.7 * t)
+        }
+    }
+    static func score(kind: TrainingKind, target: TrainingTarget, input: SkillDrillInput) throws -> Int {
+        let value: Double
+        switch kind {
+        case .power:
+            guard let phase = input.phase, phase.isFinite, (0...1).contains(phase), input.beats == nil, input.trace == nil else { throw TrainingError.invalidInput }
+            value = max(0, 1 - max(0, abs(phase - 0.5) - 0.025) / 0.475)
+        case .velocity:
+            guard input.phase == nil, input.trace == nil, let taps = input.beats, taps.count == 3,
+                  taps.compactMap({ $0 }).allSatisfy({ $0.isFinite && (0...rhythmDuration).contains($0) }) else { throw TrainingError.invalidInput }
+            let actual = taps.compactMap { $0 }
+            guard zip(actual, actual.dropFirst()).allSatisfy({ $0 < $1 }) else { return 0 }
+            value = zip(taps, beats).reduce(0) { sum, pair in
+                guard let tap = pair.0 else { return sum }
+                return sum + max(0, 1 - max(0, abs(tap - pair.1) - perfectWindow) / (beatWindow - perfectWindow)) / 3
+            }
+        case .stuff:
+            guard input.phase == nil, input.beats == nil, let trace = input.trace, trace.count <= 256,
+                  trace.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }) else { throw TrainingError.invalidInput }
+            let reference = curve(target)
+            guard let first = trace.first, let last = trace.last, distance(first, reference[0]) <= 0.18,
+                  distance(last, reference[24]) <= 0.18, let a = resample(trace), let b = resample(reference) else { return 0 }
+            let error = zip(a, b).reduce(0) { $0 + distance($1.0, $1.1) } / Double(a.count)
+            let shape = max(0, 1 - max(0, error - 0.015) / 0.16)
+            let coverage = Double(b.filter { point in a.contains { distance(point, $0) <= 0.08 } }.count) / Double(b.count)
+            value = shape * 0.7 + coverage * 0.3
+        default: throw TrainingError.invalidInput
+        }
+        return Int((min(1, max(0, value)) * 100).rounded())
+    }
+    private static func distance(_ a: TrainingTarget, _ b: TrainingTarget) -> Double { hypot(a.x - b.x, a.y - b.y) }
+    private static func resample(_ points: [TrainingTarget]) -> [TrainingTarget]? {
+        guard points.count >= 2 else { return nil }
+        var lengths = [0.0]
+        for i in 1..<points.count { lengths.append(lengths[i-1] + distance(points[i-1], points[i])) }
+        guard let total = lengths.last, total >= 0.02 else { return nil }
+        var segment = 1
+        return (0...32).map { index in
+            let at = total * Double(index) / 32
+            while segment < points.count - 1 && lengths[segment] < at { segment += 1 }
+            let span = lengths[segment] - lengths[segment-1]
+            let t = span > 0 ? (at - lengths[segment-1]) / span : 0
+            return TrainingTarget(x: points[segment-1].x + (points[segment].x-points[segment-1].x)*t,
+                                  y: points[segment-1].y + (points[segment].y-points[segment-1].y)*t)
+        }
     }
 }

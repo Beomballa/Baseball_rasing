@@ -7,6 +7,9 @@ struct MatchTimingGauge: View {
     let perfect: Double
     let label: String
     var batting = false
+    var centerLabel = "정타"
+    var earlyLabel = "빠름"
+    var lateLabel = "늦음"
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -31,22 +34,22 @@ struct MatchTimingGauge: View {
             if batting {
                 if typeSize.isAccessibilitySize {
                     HStack {
-                        Text("빠름").foregroundStyle(Color(hex: 0x8cc6f2))
+                        Text(earlyLabel).foregroundStyle(Color(hex: 0x8cc6f2))
                         Spacer(minLength: 4)
-                        Text("정타").foregroundStyle(GameTheme.gold)
-                        Text("늦음").foregroundStyle(Color(hex: 0xf3a97a))
+                        Text(centerLabel).foregroundStyle(GameTheme.gold)
+                        Text(lateLabel).foregroundStyle(Color(hex: 0xf3a97a))
                     }.font(.caption2.bold()).accessibilityHidden(true)
                 } else {
                     GeometryReader { size in
-                        Text("빠름").foregroundStyle(Color(hex: 0x8cc6f2)).position(x: 16, y: 7)
-                        Text("정타").foregroundStyle(GameTheme.gold).position(x: size.size.width * center, y: 7)
-                        Text("늦음").foregroundStyle(Color(hex: 0xf3a97a)).position(x: size.size.width - 16, y: 7)
+                        Text(earlyLabel).foregroundStyle(Color(hex: 0x8cc6f2)).position(x: 16, y: 7)
+                    Text(centerLabel).foregroundStyle(GameTheme.gold).position(x: size.size.width * center, y: 7)
+                        Text(lateLabel).foregroundStyle(Color(hex: 0xf3a97a)).position(x: size.size.width - 16, y: 7)
                     }.font(.caption2.bold()).frame(height: 14).accessibilityHidden(true)
                 }
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label + (batting ? " · 파랑 빠름, 초록 정타 근처, 금색 정타 타이밍, 주황 늦음" : " · 초록 구간 GOOD, 노란 구간 PERFECT"))
+        .accessibilityLabel(label + (batting ? " · 파랑 \(earlyLabel), 초록 \(centerLabel) 근처, 금색 \(centerLabel) 타이밍, 주황 \(lateLabel)" : " · 초록 구간 GOOD, 노란 구간 PERFECT"))
     }
 }
 

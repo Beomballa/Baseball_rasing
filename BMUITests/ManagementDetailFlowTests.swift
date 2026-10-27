@@ -2,6 +2,159 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV29CompactDirectFieldsAndActualTraceGesture() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for kind in ["power","velocity","stuff"] {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if kind != "power" { pickPitcher(app) }
+            app.buttons["managementTab-training"].tap(); app.buttons[kind == "power" ? "facility-training" : "facility-physical"].tap()
+            revealLocationChoice(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            let field = app.descendants(matching: .any).matching(identifier: "skillPracticeField").firstMatch
+            let action = kind == "power" ? app.staticTexts["skillPowerHold"] : app.buttons[kind == "velocity" ? "skillRhythmStart" : "skillTraceConfirm"]
+            XCTAssertTrue(action.waitForExistence(timeout: 5)); XCTAssertTrue(app.frame.contains(field.frame)); XCTAssertTrue(app.frame.contains(action.frame))
+            capture(app, "v29-small-\(kind)-ready")
+            if kind == "power" { action.press(forDuration: 1.4) }
+            else if kind == "velocity" { action.tap() }
+            else {
+                let trace = app.descendants(matching: .any).matching(identifier: "skillTraceBoard").firstMatch
+                XCTAssertTrue(trace.exists)
+                let before = trace.value as? String
+                field.coordinate(withNormalizedOffset: CGVector(dx: 0.5,dy: 0.794)).press(forDuration: 0.05,
+                    thenDragTo: field.coordinate(withNormalizedOffset: CGVector(dx: 0.5,dy: 0.206)))
+                XCTAssertNotEqual(trace.value as? String,before)
+                capture(app,"v29-small-stuff-drawn")
+                action.tap()
+            }
+            XCTAssertFalse(app.buttons["trainingNext"].exists)
+            XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout: 9)); reveal(app.buttons["trainingNext"],app)
+            XCTAssertTrue(app.buttons["trainingNext"].isHittable); capture(app,"v29-small-\(kind)-feedback")
+        }
+    }
+
+    @MainActor func testV29ThreeSkillDrillsFiveAttemptsResumeAndOneReward() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for kind in ["power","velocity","stuff"] {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if kind != "power" { pickPitcher(app) }
+            let before = status(app)
+            app.buttons["managementTab-training"].tap(); app.buttons[kind == "power" ? "facility-training" : "facility-physical"].tap()
+            revealLocationChoice(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            capture(app, "v29-\(kind)-direct-ready")
+            for round in 1...5 {
+                let progress = app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch
+                XCTAssertTrue(progress.waitForExistence(timeout: 6)); XCTAssertTrue(progress.label.contains("\(round) / 5"))
+                configureSkillButtons(kind, app)
+                let confirm = app.buttons[kind == "power" ? "skillPowerConfirm" : kind == "velocity" ? "skillRhythmConfirm" : "skillTraceConfirm"]
+                revealLocationChoice(confirm, app)
+                if round == 1 { capture(app, "v29-\(kind)-button-ready") }
+                confirm.tap(); XCTAssertFalse(app.buttons["trainingNext"].exists)
+                XCTAssertFalse(app.buttons["skillInputMode"].isEnabled)
+                if round == 1 { capture(app, "v29-\(kind)-motion") }
+                XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout: 8))
+                let grade = app.descendants(matching: .any).matching(identifier: "trainingGrade").firstMatch
+                XCTAssertTrue(grade.exists); XCTAssertTrue(grade.label.contains("점"), grade.label)
+                if round == 1 { capture(app, "v29-\(kind)-feedback") }
+                reveal(app.buttons["trainingNext"], app); app.buttons["trainingNext"].tap()
+                if round == 2 {
+                    app.navigationBars.buttons.element(boundBy: 0).tap()
+                    reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+                    XCTAssertTrue(progress.waitForExistence(timeout: 5)); XCTAssertTrue(progress.label.contains("3 / 5"))
+                    capture(app, "v29-\(kind)-resume")
+                }
+            }
+            XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 6)); capture(app, "v29-\(kind)-result")
+            let growth = app.staticTexts["trainingGrowth"].label
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            XCTAssertTrue(app.staticTexts["trainingCompleted"].waitForExistence(timeout: 6)); XCTAssertEqual(app.staticTexts["trainingGrowth"].label, growth)
+            app.navigationBars.buttons.element(boundBy: 0).tap(); app.buttons["closeRoomDetail"].tap(); app.buttons["managementTab-home"].tap()
+            let after = status(app); XCTAssertEqual(before[0],after[0]); XCTAssertEqual(after[2],"행동 0/1"); XCTAssertNotEqual(before[1],after[1])
+        }
+    }
+
+    @MainActor func testV29DirectPowerHoldAndRhythmTimeout() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for kind in ["power","velocity"] {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if kind != "power" { pickPitcher(app) }
+            app.buttons["managementTab-training"].tap(); app.buttons[kind == "power" ? "facility-training" : "facility-physical"].tap()
+            revealLocationChoice(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            if kind == "power" {
+                let hold = app.staticTexts["skillPowerHold"]
+                revealLocationChoice(hold, app); hold.press(forDuration: 1.4)
+            } else { reveal(app.buttons["skillRhythmStart"], app); app.buttons["skillRhythmStart"].tap() }
+            XCTAssertFalse(app.buttons["trainingNext"].exists)
+            XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout: 9))
+            let grade = app.descendants(matching: .any).matching(identifier: "trainingGrade").firstMatch
+            XCTAssertTrue(grade.exists)
+            if kind == "velocity" { XCTAssertTrue(grade.label.contains("0점")) }
+            capture(app, "v29-\(kind)-direct-feedback")
+        }
+    }
+
+    @MainActor func testV29LargeReducedPracticeAllThreeDrills() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for kind in ["power","velocity","stuff"] {
+            app.terminate(); app.launchArguments = ["-management-career-verification", "-management-reduced-motion-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if kind != "power" { pickPitcher(app) }
+            let before = status(app)
+            app.buttons["managementLargeMenu"].tap(); app.buttons["훈련"].tap()
+            reveal(app.buttons["facility-practice"], app); app.buttons["facility-practice"].tap()
+            reveal(app.buttons["openTrainingPractice"], app); app.buttons["openTrainingPractice"].tap()
+            reveal(app.buttons["practiceGeneralTraining"], app); app.buttons["practiceGeneralTraining"].tap()
+            let category = app.buttons[kind == "power" ? "trainingCategory-0" : "trainingCategory-2"]
+            revealLocationChoice(category, app); category.tap()
+            revealLocationChoice(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            configureSkillButtons(kind, app)
+            let confirm = app.buttons[kind == "power" ? "skillPowerConfirm" : kind == "velocity" ? "skillRhythmConfirm" : "skillTraceConfirm"]
+            revealLocationChoice(confirm, app); XCTAssertTrue(confirm.isHittable); capture(app, "v29-large-\(kind)-ready")
+            confirm.tap(); XCTAssertFalse(app.buttons["trainingNext"].exists)
+            XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout: 9)); reveal(app.buttons["trainingNext"], app)
+            XCTAssertTrue(app.buttons["trainingNext"].isHittable); capture(app, "v29-large-\(kind)-feedback")
+            app.buttons["trainingNext"].tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap(); app.navigationBars.buttons.element(boundBy: 0).tap(); app.buttons["closeRoomDetail"].tap()
+            app.buttons["managementLargeMenu"].tap(); app.buttons["홈"].tap(); XCTAssertEqual(status(app),before)
+        }
+    }
+
+    @MainActor private func configureSkillButtons(_ kind: String, _ app: XCUIApplication) {
+        let mode = app.buttons["skillInputMode"]
+        revealLocationChoice(mode, app)
+        if mode.label.contains("버튼 조작으로") { mode.tap() }
+        if kind == "power" {
+            let slider = app.sliders["skillSlider-힘 풀기 위치"]
+            revealLocationChoice(slider, app); slider.adjust(toNormalizedSliderPosition: 0.5)
+        } else if kind == "velocity" {
+            for (i,time) in [0.65,1.35,2.05].enumerated() {
+                let slider = app.sliders["skillSlider-\(i+1)박 초"]
+                revealLocationChoice(slider, app); slider.adjust(toNormalizedSliderPosition: time / 2.4)
+            }
+        } else {
+            for i in 0..<3 {
+                let goal = app.staticTexts["skillAnchorGoal-\(i)"]
+                revealLocationChoice(goal, app)
+                let percent = Double(goal.label.components(separatedBy: " ").last ?? "") ?? 50
+                let slider = app.sliders["skillSlider-\(i+1)번 가로"]
+                revealLocationChoice(slider, app); slider.adjust(toNormalizedSliderPosition: percent / 100)
+            }
+        }
+    }
+
     @MainActor func testV28SmallLocationTrainingFieldAndControlsFit() {
         continueAfterFailure = false
         let app = XCUIApplication()

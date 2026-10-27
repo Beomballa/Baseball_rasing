@@ -172,6 +172,13 @@ import SwiftData
     }
     private func perfectInput(_ training: CareerTraining) -> TrainingInput {
         let target = training.targets[training.scores.count]
+        if training.isSkillDrill {
+            switch training.selectedKind {
+            case .power: return TrainingInput(drill: SkillDrillInput(phase: 0.5))
+            case .velocity: return TrainingInput(drill: SkillDrillInput(beats: [0.65,1.35,2.05]))
+            default: return TrainingInput(drill: SkillDrillInput(trace: SkillDrillRules.curve(target)))
+            }
+        }
         switch training.selectedKind {
         case .power: return TrainingInput(force: TrainingRules.powerTarget(training.scores.count) / 1.35, angle: 45)
         case .discipline: return TrainingInput(calledStrike: ManualMatchRules.isStrike(x: target.x, y: target.y))
@@ -214,7 +221,7 @@ import SwiftData
             let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
             let (player, calendar) = try setup(context)
             let record = try CareerTrainingStore.start(player: player, state: calendar, kind: kind, in: context)
-            XCTAssertEqual(record.rulesVersion, "native-training-v2")
+            XCTAssertEqual(record.rulesVersion, kind == .power ? "native-skill-drills-v1" : "native-training-v2")
             for _ in 0..<5 {
                 let input = perfectInput(try record.snapshot())
                 try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: record.revision, input: input, in: context)

@@ -39,7 +39,7 @@ struct LocationDrillReplay: Equatable {
     private var frames: [SKTexture] = [], catchFrames: [SKTexture] = []
     private var actorKey = "", receiverKey = ""
     private var target = TrainingTarget(x: 0.5, y: 0.5), selected = TrainingTarget(x: 0.5, y: 0.5)
-    private var playback: (replay: LocationDrillReplay, started: Double, completion: @MainActor () -> Void)?
+    private var playback: (replay: LocationDrillReplay, started: Double, flight: Double, curve: Double, completion: @MainActor () -> Void)?
     private var movement: (from: CGPoint, to: CGPoint, started: Double)?
     private(set) var playing = false
     private(set) var finished = false
@@ -60,7 +60,7 @@ struct LocationDrillReplay: Equatable {
         node.position = point(CGPoint(x: rect.midX, y: rect.midY)); addChild(node)
     }
     func configure(kind: TrainingKind, appearance: PlayerAppearance, number: Int, hand: String) {
-        cancel(); removeAllChildren(); self.kind = kind; self.appearance = appearance; self.number = number; self.hand = hand; actorKey = ""; receiverKey = ""
+        cancel(); removeAllChildren(); self.kind = kind; self.appearance = appearance; self.number = number; self.hand = hand; actorKey = ""; receiverKey = ""; goal.isHidden = false; aim.isHidden = false
         actor.name = "locationActor"; ball.name = "locationBall"; goal.name = "locationGoal"; aim.name = "locationAim"
         backgroundColor = UIColor(Color(hex: 0x163b32))
         if kind == .control {
@@ -121,10 +121,10 @@ struct LocationDrillReplay: Equatable {
             if movement == nil { actor.position = destination }
         }
     }
-    func play(_ replay: LocationDrillReplay, at now: Double = ProcessInfo.processInfo.systemUptime, completion: @escaping @MainActor () -> Void) {
+    func play(_ replay: LocationDrillReplay, at now: Double = ProcessInfo.processInfo.systemUptime, preparedRelease: Bool = false, flightDuration: Double = 1, curve: Double = 0, completion: @escaping @MainActor () -> Void) {
         movement = nil
         preview(target: replay.target, input: replay.input, animated: false)
-        playback = (replay, now, completion); playing = true; finished = false; advance(at: now)
+        playback = (replay, now - (preparedRelease ? LocationDrillReplay.windup : 0), flightDuration, curve, completion); playing = true; finished = false; advance(at: now)
     }
     override func update(_ currentTime: TimeInterval) { advance(at: ProcessInfo.processInfo.systemUptime) }
     func advance(at now: Double) {
@@ -136,7 +136,7 @@ struct LocationDrillReplay: Equatable {
             if progress == 1 { self.movement = nil }
         }
         guard let playback else { return }
-        let elapsed = max(0, now - playback.started), p = min(1, max(0, (elapsed - LocationDrillReplay.windup) / LocationDrillReplay.flight))
+        let elapsed = max(0, now - playback.started), p = min(1, max(0, (elapsed - LocationDrillReplay.windup) / playback.flight))
         let destination = point(LocationDrillReplay.point(kind == .control ? playback.replay.input : playback.replay.target, kind: kind))
         if kind == .control {
             let frame = elapsed < 0.2 ? 1 : elapsed < LocationDrillReplay.windup ? 2 : p < 0.3 ? 3 : p < 1 ? 4 : 5
@@ -144,7 +144,7 @@ struct LocationDrillReplay: Equatable {
             let anchors = [(0.42, 0.56), (0.38, 0.52), (0.72, 0.37), (0.78, 0.11)]
             let held = anchors[min(3, frame)]
             let release = CGPoint(x: actor.position.x + (0.78 - 0.5) * actor.size.width * actor.xScale, y: actor.position.y + (1 - 0.11 - 0.05) * actor.size.height)
-            ball.position = elapsed < LocationDrillReplay.windup ? CGPoint(x: actor.position.x + (held.0 - 0.5) * actor.size.width * actor.xScale, y: actor.position.y + (1 - held.1 - 0.05) * actor.size.height) : CGPoint(x: release.x + (destination.x - release.x) * p, y: release.y + (destination.y - release.y) * p)
+            ball.position = elapsed < LocationDrillReplay.windup ? CGPoint(x: actor.position.x + (held.0 - 0.5) * actor.size.width * actor.xScale, y: actor.position.y + (1 - held.1 - 0.05) * actor.size.height) : CGPoint(x: release.x + (destination.x - release.x) * p + sin(p * .pi) * playback.curve, y: release.y + (destination.y - release.y) * p)
             mitt.position = CGPoint(x: goal.position.x + (destination.x - goal.position.x) * p, y: goal.position.y + (destination.y - goal.position.y) * p)
             if p == 1, catchFrames.count == 4 { receiver.texture = catchFrames[1]; mitt.texture = catchFrames[3] }
         } else {
@@ -157,9 +157,19 @@ struct LocationDrillReplay: Equatable {
             setFieldActor(actor, motion: FieldSpriteMotion(facing: facing(from: actor.position, to: receiver.position), stage: p < 0.8 ? .ready : .catchBall, progress: p, chestCatch: true), number: number)
         }
         ball.isHidden = elapsed < LocationDrillReplay.windup && kind == .defense
-        if LocationDrillReplay.finished(elapsed: elapsed) {
+        if elapsed >= LocationDrillReplay.windup + playback.flight + LocationDrillReplay.receive {
             self.playback = nil; playing = false; finished = true; playback.completion()
         }
+    }
+    func prepareDrill(phase: Double) {
+        guard !playing else { return }
+        goal.isHidden = true; aim.isHidden = true
+        let frame = phase < 0.27 ? 0 : phase < 0.56 ? 1 : 2
+        if frames.indices.contains(frame) { actor.texture = frames[frame] }
+        let anchors = [(0.42, 0.56), (0.38, 0.52), (0.72, 0.37)], held = anchors[frame]
+        ball.isHidden = false
+        ball.position = CGPoint(x: actor.position.x + (held.0 - 0.5) * actor.size.width * actor.xScale,
+                                y: actor.position.y + (1 - held.1 - 0.05) * actor.size.height)
     }
     func cancel() { playback = nil; movement = nil; playing = false; removeAllActions(); actor.removeAllActions(); ball.isHidden = true }
 }
@@ -545,6 +555,21 @@ struct TrainingCoachNote: Equatable {
 
 enum TrainingSessionGuide {
     static func note(round: CareerTraining, input: TrainingInput, score: Int) -> TrainingCoachNote {
+        if round.isSkillDrill {
+            switch round.selectedKind {
+            case .power:
+                let phase = input.drill?.phase ?? 1
+                return TrainingCoachNote(observation: score >= 99 ? "MAX에서 힘을 실었어요" : phase < 0.5 ? "힘을 일찍 풀었어요" : "MAX를 지나 힘을 풀었어요",
+                    next: score >= 99 ? "같은 힘 모으기를 다음 타격에서도 이어가세요" : phase < 0.5 ? "다음에는 중앙까지 조금 더 모으세요" : "다음에는 조금 더 일찍 손을 떼세요")
+            case .velocity:
+                let taps = input.drill?.beats ?? [], count = taps.compactMap { $0 }.count
+                return TrainingCoachNote(observation: "3단계 중 \(count)단계 입력 · 박자 \(score)점",
+                    next: score >= 90 ? "준비·회전·릴리스의 리듬을 유지하세요" : "밝아진 노드를 한 번씩, 박자에 맞춰 누르세요")
+            default:
+                return TrainingCoachNote(observation: "훈련 궤적 일치 점수 \(score)점",
+                    next: score >= 90 ? "시작부터 끝까지 같은 곡선을 이어가세요" : "시작과 끝을 연결하고 곡선의 가운데를 따라가세요")
+            }
+        }
         let kind = round.selectedKind, index = min(4, round.scores.count)
         let target = round.targets[index]
         func result(_ observation: String, _ next: String) -> TrainingCoachNote {
@@ -629,5 +654,105 @@ struct TrainingMissionBanner: View {
         }.padding(8).background(GameTheme.boardPanel)
             .overlay(Rectangle().strokeBorder(mission.achieved ? GameTheme.gold : GameTheme.boardLine, lineWidth: 1))
             .accessibilityElement(children: .combine).accessibilityIdentifier("trainingMission")
+    }
+}
+
+@MainActor final class TirePowerScene: SKScene {
+    private let player = SKSpriteNode(), tire = SKShapeNode(), flash = SKSpriteNode(color: .yellow, size: CGSize(width: 12, height: 12))
+    private var frames: [SKTexture] = []
+    private var playback: (started: Double, score: Int, reduced: Bool, completion: @MainActor () -> Void)?
+    override init(size: CGSize) { super.init(size: size); scaleMode = .aspectFit }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func configure(player source: CareerPlayer) {
+        cancel(); removeAllChildren(); tire.removeAllChildren(); backgroundColor = UIColor(Color(hex: 0x285446))
+        if let image = MatchArt.image("stadium-clean") {
+            let texture = SKTexture(image: image)
+            for (crop, rect) in [(CGRect(x: 0.78, y: 0.24, width: 0.2, height: 0.15), CGRect(x: 0, y: 0, width: 320, height: 320)),
+                                 (CGRect(x: 0.8, y: 0.59, width: 0.2, height: 0.19), CGRect(x: 0, y: 235, width: 320, height: 85)),
+                                 (CGRect(x: 0.5, y: 0.12, width: 0.05, height: 0.03), CGRect(x: 0, y: 0, width: 320, height: 140))] {
+                let piece = SKTexture(rect: crop, in: texture); piece.filteringMode = .nearest
+                let node = SKSpriteNode(texture: piece, size: rect.size); node.position = CGPoint(x: rect.midX, y: rect.midY); addChild(node)
+            }
+        }
+        let support = SKSpriteNode(color: UIColor(Color(hex: 0x8d6848)), size: CGSize(width: 13, height: 55))
+        support.position = CGPoint(x: 245, y: 44); addChild(support)
+        let path = CGMutablePath()
+        let points: [CGPoint] = [CGPoint(x: -22,y: -32),CGPoint(x: 22,y: -32),CGPoint(x: 22,y: -25),CGPoint(x: 32,y: -25),CGPoint(x: 32,y: 25),CGPoint(x: 22,y: 25),CGPoint(x: 22,y: 32),CGPoint(x: -22,y: 32),CGPoint(x: -22,y: 25),CGPoint(x: -32,y: 25),CGPoint(x: -32,y: -25),CGPoint(x: -22,y: -25)]
+        path.addLines(between: points); path.closeSubpath(); tire.path = path
+        tire.fillColor = UIColor(Color(hex: 0x15252d)); tire.strokeColor = UIColor(Color(hex: 0x718b92)); tire.lineWidth = 4
+        tire.position = CGPoint(x: 245, y: 100); tire.zPosition = 2; addChild(tire)
+        let hole = SKShapeNode(rectOf: CGSize(width: 22, height: 32)); hole.fillColor = .black; hole.strokeColor = UIColor(Color(hex: 0x42565e)); hole.lineWidth = 3; tire.addChild(hole)
+        frames = PlayerMotionArt.textures(role: .batter, appearance: source.appearance, number: source.jerseyNumber, hand: source.throwingHandRaw)
+        player.anchorPoint = CGPoint(x: 0.5, y: 0.05); player.size = CGSize(width: 230, height: 230); player.position = CGPoint(x: 115, y: 18)
+        player.texture = frames.first; player.zPosition = 3; addChild(player)
+        flash.position = CGPoint(x: 220, y: 112); flash.isHidden = true; flash.zPosition = 4; addChild(flash)
+    }
+    func prepare(_ phase: Double) {
+        guard playback == nil else { return }
+        let index = phase < 0.25 ? 0 : phase < 0.5 ? 1 : 2
+        if frames.indices.contains(index) { player.texture = frames[index] }
+    }
+    func strike(score: Int, reduced: Bool, completion: @escaping @MainActor () -> Void) { playback = (ProcessInfo.processInfo.systemUptime, score, reduced, completion) }
+    override func update(_ currentTime: TimeInterval) {
+        guard let playback else { return }
+        let t = ProcessInfo.processInfo.systemUptime - playback.started
+        let index = t < 0.2 ? 2 : t < 0.42 ? 3 : t < 0.7 ? 4 : 5
+        if frames.indices.contains(index) { player.texture = frames[index] }
+        flash.isHidden = playback.reduced || t < 0.2 || t > 0.36
+        tire.xScale = playback.reduced ? 1 : 1 - max(0, (0.04 + Double(playback.score) * 0.0012) * sin(min(1, max(0, (t - 0.2) / 0.5)) * .pi))
+        if t >= 1.1 { self.playback = nil; flash.isHidden = true; tire.xScale = 1; playback.completion() }
+    }
+    func cancel() { playback = nil; flash.isHidden = true; tire.xScale = 1 }
+}
+
+struct SkillTraceBoard: View {
+    let target: TrainingTarget?
+    @Binding var points: [TrainingTarget]
+    let locked: Bool
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Rectangle().fill(GameTheme.board.opacity(0.94))
+                if let target {
+                    let reference = SkillDrillRules.curve(target)
+                    Path { path in
+                        path.addLines(reference.map { CGPoint(x: $0.x * geometry.size.width, y: $0.y * geometry.size.height) })
+                    }.stroke(GameTheme.growth, style: StrokeStyle(lineWidth: 5, dash: [8, 5]))
+                    ForEach([0,24], id: \.self) { i in
+                        Text(i == 0 ? "① 시작" : "② 끝").font(.caption.bold())
+                            .position(x: reference[i].x * geometry.size.width, y: reference[i].y * geometry.size.height + (i == 0 ? 18 : -18))
+                    }
+                    Path { path in path.addLines(points.map { CGPoint(x: $0.x * geometry.size.width, y: $0.y * geometry.size.height) }) }
+                        .stroke(GameTheme.gold, lineWidth: 3)
+                } else { Text("세트 시작 후 훈련 궤적 확인").font(.caption) }
+            }.contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
+                guard !locked, target != nil else { return }
+                if event.translation == .zero { points = [] }
+                let point = TrainingTarget(x: min(1,max(0,event.location.x / geometry.size.width)), y: min(1,max(0,event.location.y / geometry.size.height)))
+                if let last = points.last, hypot(last.x-point.x,last.y-point.y) < 0.005 { return }
+                if points.count >= 255 { points = points.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element) }
+                points.append(point)
+            }, including: locked ? .none : .all)
+        }.accessibilityElement(children: .ignore).accessibilityLabel("구위 궤적 연습판")
+            .accessibilityValue("점선이 목표, 실선이 입력, \(points.count)개 지점. 버튼 조작도 사용할 수 있습니다.")
+            .accessibilityIdentifier("skillTraceBoard")
+    }
+}
+
+struct DrillValueControl: View {
+    let name: String
+    @Binding var value: Double
+    var range: ClosedRange<Double> = 0...1
+    var step = 0.01
+    var body: some View {
+        VStack(spacing: 4) {
+            Text("\(name) \(value, specifier: "%.2f")").font(.caption.monospacedDigit())
+        HStack(spacing: 8) {
+            Button("−") { value = max(range.lowerBound, value - step) }.accessibilityLabel(name + " 줄이기").frame(minWidth: 44,minHeight: 44)
+            Slider(value: $value, in: range, step: step).tint(GameTheme.gold)
+                .accessibilityLabel(name + ", 값 " + String(format: "%.2f", value)).accessibilityIdentifier("skillSlider-" + name)
+            Button("+") { value = min(range.upperBound, value + step) }.accessibilityLabel(name + " 늘리기").frame(minWidth: 44,minHeight: 44)
+        }.buttonStyle(MatchPixelButtonStyle())
+        }
     }
 }

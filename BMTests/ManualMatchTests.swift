@@ -351,7 +351,9 @@ import SwiftUI
                         switch kind {
                         case .contact: input = TrainingInput(x: 0.5, y: 0.5, timing: 0.82)
                         case .pitch: input = TrainingInput(release: 0.68)
-                        case .power, .velocity, .stuff: input = TrainingInput(force: 70, angle: 35)
+                        case .power: input = TrainingInput(drill: SkillDrillInput(phase: 0.5))
+                        case .velocity: input = TrainingInput(drill: SkillDrillInput(beats: [0.65,1.35,2.05]))
+                        case .stuff: input = TrainingInput(drill: SkillDrillInput(trace: SkillDrillRules.curve(round.targets[round.scores.count])))
                         case .discipline: input = TrainingInput(calledStrike: true)
                         case .mental: input = TrainingInput(choice: 0)
                         case .speed, .stamina: input = TrainingInput(footfalls: [])

@@ -14,17 +14,18 @@ enum CareerSchemaV4: VersionedSchema {
         var rulesVersion: String
         init(_ training: CareerTraining) throws {
             key = Self.key(training.playerID, training.date); playerID = training.playerID; gameDate = training.date
-            payload = try JSONEncoder().encode(training); revision = 0; completed = false; rulesVersion = training.pitchStudy != nil ? "native-pitch-study-v1" : training.position != nil ? "native-position-training-v1" : training.trait != nil ? "native-trait-training-v1" : training.selectedKind.isRaw ? "native-training-v4" : training.selectedKind.isField ? "native-training-v3" : training.kind == nil ? "native-training-v1" : "native-training-v2"
+            payload = try JSONEncoder().encode(training); revision = 0; completed = false; rulesVersion = training.isSkillDrill ? "native-skill-drills-v1" : training.pitchStudy != nil ? "native-pitch-study-v1" : training.position != nil ? "native-position-training-v1" : training.trait != nil ? "native-trait-training-v1" : training.selectedKind.isRaw ? "native-training-v4" : training.selectedKind.isField ? "native-training-v3" : training.kind == nil ? "native-training-v1" : "native-training-v2"
         }
         static func key(_ player: UUID, _ date: String) -> String { "\(player.uuidString):\(date)" }
         func snapshot() throws -> CareerTraining {
-            guard ["native-training-v1", "native-training-v2", "native-training-v3", "native-training-v4", "native-trait-training-v1", "native-position-training-v1", "native-pitch-study-v1"].contains(rulesVersion), let value = try? JSONDecoder().decode(CareerTraining.self, from: payload),
+            guard ["native-training-v1", "native-training-v2", "native-training-v3", "native-training-v4", "native-trait-training-v1", "native-position-training-v1", "native-pitch-study-v1", "native-skill-drills-v1"].contains(rulesVersion), let value = try? JSONDecoder().decode(CareerTraining.self, from: payload),
                   value.playerID == playerID, value.date == gameDate, key == Self.key(playerID, gameDate),
                   value.completed == completed,
+                  (rulesVersion == "native-skill-drills-v1" ? value.isSkillDrill : value.drillVersion == nil),
                   (rulesVersion == "native-position-training-v1" ? value.position != nil && value.role == "batter" && value.selectedKind == .defense && (value.positionRevision ?? -1) >= 0 && value.positionXP.map { $0.isFinite && (0..<100).contains($0) } == true : value.position == nil && value.positionRevision == nil && value.positionXP == nil),
                   (rulesVersion == "native-trait-training-v1" ? value.trait != nil && value.selectedKind == value.trait?.trainingKind && (value.traitRevision ?? -1) >= 0 : value.trait == nil && value.traitRevision == nil),
                   (rulesVersion == "native-pitch-study-v1" ? value.pitchStudy != nil && value.kind == nil : value.pitchStudy == nil),
-                  (rulesVersion == "native-training-v1" || rulesVersion == "native-pitch-study-v1" ? value.kind == nil : rulesVersion == "native-training-v2" ? (value.kind == .power || value.kind == .discipline) : ["native-training-v3", "native-trait-training-v1", "native-position-training-v1"].contains(rulesVersion) ? value.selectedKind.isField : value.selectedKind.isRaw),
+                  (rulesVersion == "native-skill-drills-v1" ? value.isSkillDrill : rulesVersion == "native-training-v1" || rulesVersion == "native-pitch-study-v1" ? value.kind == nil : rulesVersion == "native-training-v2" ? (value.kind == .power || value.kind == .discipline) : ["native-training-v3", "native-trait-training-v1", "native-position-training-v1"].contains(rulesVersion) ? value.selectedKind.isField : value.selectedKind.isRaw),
                   (value.selectedKind == .pitch ? value.role == "pitcher" && value.pitchCode != nil : value.selectedKind.allows(value.role) && value.pitchCode == nil), value.targets.count == 5, value.scores.count <= 5,
                   value.scores.allSatisfy({ (0...100).contains($0) }), value.before.isFinite, (0...100).contains(value.before),
                   value.targets.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }) else { throw TrainingError.invalidRecord }
@@ -119,6 +120,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
         training.trait = trait; training.traitRevision = profile?.0.revision
         training.position = position; training.positionRevision = positions?.0.revision; training.positionXP = positions?.2.xp
         training.pitchStudy = study
+        if trait == nil && position == nil && study == nil && SkillDrillRules.kinds.contains(selected) { training.drillVersion = 1 }
         try study?.validate(training: training)
         let saved = try CareerTrainingRecord(training); context.insert(saved); state.revision += 1
         do { try save(context) } catch { context.rollback(); throw error }

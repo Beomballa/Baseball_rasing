@@ -54,6 +54,13 @@ struct CareerTrainingView: View {
     @State private var scene = BallparkScene(size: CGSize(width: 320, height: 320))
     @State private var locationScene = LocationDrillScene(size: CGSize(width: 320, height: 320))
     @State private var locationReplay: LocationDrillReplay?
+    @State private var tireScene = TirePowerScene(size: CGSize(width: 320, height: 320))
+    @State private var rhythmTaps: [Double?] = Array(repeating: nil, count: 3)
+    @State private var tracePoints: [TrainingTarget] = []
+    @State private var traceAnchors = [0.5, 0.5, 0.5]
+    @State private var buttonInput = false
+    @State private var chosenPhase = 0.25
+    @State private var chosenBeats = [0.5, 1.2, 1.9]
     @State private var errorMessage: String?
     @State private var preparationValue: Double?
     @State private var preparationError: String?
@@ -67,6 +74,14 @@ struct CareerTrainingView: View {
     private var selectedKind: TrainingKind { training?.selectedKind ?? (category == 0 && isPitcher ? .pitch : kind) }
     private var studying: Bool { training?.pitchStudy != nil || initialPitchStudyCode != nil }
     private var isLocationDrill: Bool { [.control, .defense].contains(selectedKind) && training?.position == nil && training?.trait == nil }
+    private var isSkillDrill: Bool { displayTraining?.isSkillDrill ?? (SkillDrillRules.kinds.contains(selectedKind) && !studying) }
+    private var skillHint: String {
+        switch selectedKind {
+        case .power: "타이어 · MAX 중앙에서 손 떼기"
+        case .velocity: "준비 → 회전 → 릴리스 · 3박자"
+        default: "점선 궤적을 시작부터 끝까지"
+        }
+    }
     private var locationTarget: TrainingTarget? { displayTraining.flatMap { $0.completed ? nil : $0.targets[$0.scores.count] } }
     private var title: String { training?.title ?? (studying ? "구종 습득 훈련" : selectedKind.label + " 훈련") }
     private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? PitchType(rawValue: training?.pitchCode ?? code)?.label ?? "구종") : selectedKind.label }
@@ -160,11 +175,20 @@ struct CareerTrainingView: View {
                 try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: revision, input: input, in: context)
                 training = try record.snapshot()
             }
-            if selectedKind == .power, let force = input.force, let angle = input.angle { lastDistance = TrainingRules.distance(force: force, angle: angle) }
+            if !isSkillDrill, selectedKind == .power, let force = input.force, let angle = input.angle { lastDistance = TrainingRules.distance(force: force, angle: angle) }
             retryInput = nil; retryRevision = nil; errorMessage = nil
             replayScore = training?.scores.last
             if let previous = replay, let score = replayScore { coachNote = TrainingSessionGuide.note(round: previous, input: input, score: score) }
-            if isLocationDrill, let previous = replay, let score = replayScore {
+            if isSkillDrill, let previous = replay, let score = replayScore {
+                if selectedKind == .power { tireScene.strike(score: score, reduced: reduced, completion: skillAnimationFinished) }
+                else {
+                    let point = TrainingTarget(x: 0.5, y: 0.5)
+                    let flight = PitchFlightPresentation(delivery: delivery(code: "four-seam")).flightDuration
+                    let bend = selectedKind == .stuff ? (SkillDrillRules.curve(previous.targets[previous.scores.count])[12].x - 0.5) * 100 : 0
+                    locationScene.play(LocationDrillReplay(kind: .control, target: point, input: point, score: score), preparedRelease: selectedKind == .velocity,
+                                       flightDuration: flight, curve: bend, completion: skillAnimationFinished)
+                }
+            } else if isLocationDrill, let previous = replay, let score = replayScore {
                 let resolved = LocationDrillReplay(kind: selectedKind, target: previous.targets[previous.scores.count], input: TrainingTarget(x: input.x, y: input.y), score: score)
                 locationReplay = resolved
                 locationScene.play(resolved) {
@@ -202,7 +226,9 @@ struct CareerTrainingView: View {
     private func continueSession() {
         guard reviewReady else { return }
         replay = nil; feedbackVisible = false; reviewReady = false; scene.cancelDelivery()
-        locationReplay = nil; locationScene.cancel()
+        locationReplay = nil; locationScene.cancel(); tireScene.cancel()
+        rhythmTaps = Array(repeating: nil, count: 3); tracePoints = []; traceAnchors = [0.5,0.5,0.5]
+        tireScene.prepare(0); if isSkillDrill { locationScene.prepareDrill(phase: 0) }
         if let target = locationTarget { locationScene.preview(target: target, input: TrainingTarget(x: x, y: y)) }
     }
     private var reviewControls: some View {
@@ -218,7 +244,7 @@ struct CareerTrainingView: View {
                     .accessibilityIdentifier("locationPracticeComparison")
                 Text(selectedKind == .control ? "조준한 위치 그대로 판정 · 별도 투구 오차 없음" : "선택한 위치의 정확도만 판정 · 포구 성공/실패 판정 없음")
                     .font(.caption2).foregroundStyle(GameTheme.boardMuted)
-            } else { TrainingMissionBanner(kind: selectedKind, scores: training?.scores ?? []) }
+            } else if !isSkillDrill { TrainingMissionBanner(kind: selectedKind, scores: training?.scores ?? []) }
             Button(training?.completed == true ? "세트 결산 보기" : "다음 시도 · \((training?.scores.count ?? 0) + 1)/5") {
                 continueSession()
             }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingNext")
@@ -237,7 +263,7 @@ struct CareerTrainingView: View {
     private func cancelUncommitted() {
         clock.stop(); scene.cancelDelivery(); judging = false
         replayTask?.cancel(); replayTask = nil; replay = nil; feedbackVisible = false; reviewReady = false; coachNote = nil
-        locationScene.cancel(); locationReplay = nil
+        locationScene.cancel(); locationReplay = nil; tireScene.cancel(); tracePoints = []; rhythmTaps = Array(repeating: nil, count: 3)
     }
 
     var body: some View {
@@ -253,11 +279,11 @@ struct CareerTrainingView: View {
                                     PixelPlayer(appearance: player.appearance).frame(width: 28, height: 36).accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(pitchName).font(.headline)
-                                        Text(isLocationDrill && training != nil ? (locationTarget.map { "◇ 목표 " + LocationDrillReplay.coordinate($0) } ?? "훈련 완료") : practice ? "자유 연습 · 성장·날짜·피로 변화 없음" : training == nil ? "5회 도전 · 피로 +6 · 하루 행동 1회" : "도전 기록은 시도마다 저장됩니다")
+                                        Text(isSkillDrill ? skillHint : isLocationDrill && training != nil ? (locationTarget.map { "◇ 목표 " + LocationDrillReplay.coordinate($0) } ?? "훈련 완료") : practice ? "자유 연습 · 성장·날짜·피로 변화 없음" : training == nil ? "5회 도전 · 피로 +6 · 하루 행동 1회" : "도전 기록은 시도마다 저장됩니다")
                                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                                     }
                                     Spacer(minLength: 0)
-                                    Text(displayTraining.map { "\(isLocationDrill ? min(5, $0.scores.count + 1) : $0.scores.count + (feedbackVisible ? 1 : 0)) / 5" } ?? "READY")
+                                    Text(displayTraining.map { "\((isLocationDrill || isSkillDrill) ? min(5, $0.scores.count + 1) : $0.scores.count + (feedbackVisible ? 1 : 0)) / 5" } ?? "READY")
                                         .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                                 }.padding(10).background(GameTheme.boardPanel)
                                     .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
@@ -267,7 +293,7 @@ struct CareerTrainingView: View {
                                     if !studying { selection }
                                     preparationBoard
                                 }
-                                if let training, !reviewReady, !isLocationDrill { TrainingMissionBanner(kind: selectedKind, scores: (feedbackVisible ? self.training : displayTraining)?.scores ?? training.scores) }
+                                if let training, !reviewReady, !isLocationDrill, !isSkillDrill { TrainingMissionBanner(kind: selectedKind, scores: (feedbackVisible ? self.training : displayTraining)?.scores ?? training.scores) }
                                 if dynamicTypeSize.isAccessibilitySize {
                                     Button("훈련 버튼으로 이동") { scroll.scrollTo("trainingControls", anchor: .bottom) }
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("trainingJumpControls")
@@ -291,7 +317,7 @@ struct CareerTrainingView: View {
         .toolbarBackground(GameTheme.boardPanel, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         .onAppear {
             scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
-            load()
+            load(); if dynamicTypeSize.isAccessibilitySize { buttonInput = true }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: feedbackTick)
         .onDisappear { cancelUncommitted() }
@@ -300,6 +326,10 @@ struct CareerTrainingView: View {
         }
         .onChange(of: preparationKey) { _, _ in if training == nil { loadPreparation() } }
         .onChange(of: clock.phase) { _, phase in
+            if isSkillDrill && clock.running {
+                if selectedKind == .power { tireScene.prepare(phase) }
+                else { locationScene.prepareDrill(phase: phase) }
+            }
             if selectedKind == .pitch && clock.running { scene.preparePitch(phase: phase, reduced: reduced) }
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { cancelUncommitted() } }
@@ -355,6 +385,10 @@ struct CareerTrainingView: View {
     }
     @ViewBuilder private var playControls: some View {
         if let training = displayTraining {
+            if training.isSkillDrill {
+                skillControls(training)
+                scores((feedbackVisible || replay == nil ? self.training : replay) ?? training)
+            } else {
             if selectedKind.isRaw {
                 rawControls(training).disabled(retryInput != nil)
             } else if selectedKind.isField {
@@ -411,10 +445,139 @@ struct CareerTrainingView: View {
                 }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(retryInput != nil)
                     .accessibilityIdentifier("trainingAttempt")
             }
+            }
         } else {
             Button(practice ? "연습 시작" : "훈련 시작") { start() }.buttonStyle(MatchPixelButtonStyle(primary: true))
                 .disabled(errorMessage != nil).accessibilityIdentifier("startTraining")
         }
+    }
+    private func skillAnimationFinished() {
+        guard replay != nil else { return }
+        showFeedback()
+        replayTask = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(DeliveryPresentation.trainingRead(reduced: reduced))) } catch { return }
+            guard !Task.isCancelled else { return }; finishReplay()
+        }
+    }
+    private func beginPower() {
+        guard !clock.running, !inputLocked, training?.completed == false, let target = locationTarget else { return }
+        clock.start(windup: 0, duration: SkillDrillRules.powerDuration(target)) {
+            submit(TrainingInput(drill: SkillDrillInput(phase: 1)))
+        }
+    }
+    private func releasePower() {
+        guard clock.running, !inputLocked else { return }
+        submit(TrainingInput(drill: SkillDrillInput(phase: clock.currentPhase)))
+    }
+    private func beginRhythm() {
+        guard !clock.running, !inputLocked, training?.completed == false else { return }
+        rhythmTaps = Array(repeating: nil, count: 3)
+        clock.start(windup: 0, duration: SkillDrillRules.rhythmDuration) {
+            submit(TrainingInput(drill: SkillDrillInput(beats: rhythmTaps)))
+        }
+    }
+    private func tapBeat(_ index: Int) {
+        guard clock.running, !inputLocked, rhythmTaps[index] == nil else { return }
+        let elapsed = clock.currentPhase * SkillDrillRules.rhythmDuration
+        guard SkillDrillRules.recordBeat(index, elapsed: elapsed, taps: &rhythmTaps) else { return }
+        if rhythmTaps.allSatisfy({ $0 != nil }) { submit(TrainingInput(drill: SkillDrillInput(beats: rhythmTaps))) }
+    }
+    private func buttonTrace(_ target: TrainingTarget) -> [TrainingTarget] {
+        let reference = SkillDrillRules.curve(target)
+        return [reference[0]] + (1...3).map { TrainingTarget(x: traceAnchors[$0-1], y: reference[$0*6].y) } + [reference[24]]
+    }
+    @ViewBuilder private func skillControls(_ round: CareerTraining) -> some View {
+        let locked = inputLocked || clock.running
+        if selectedKind == .power {
+            MatchTimingGauge(phase: buttonInput ? chosenPhase : clock.running || replay != nil ? clock.phase : 0, center: 0.5, good: 0.13, perfect: 0.025, label: "MAX 중앙 · 힘 모아 손 떼기", batting: true, centerLabel: "MAX", earlyLabel: "덜 모음", lateLabel: "넘침")
+                .accessibilityIdentifier("skillPowerGauge")
+            if buttonInput {
+                DrillValueControl(name: "힘 풀기 위치", value: $chosenPhase).disabled(locked)
+                Button("위치 확정 · 타이어 치기") { submit(TrainingInput(drill: SkillDrillInput(phase: chosenPhase))) }
+                    .buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(inputLocked).accessibilityIdentifier("skillPowerConfirm")
+            } else {
+                Text(clock.running ? "MAX에서 손을 떼세요" : "누르고 힘 모으기 · MAX에서 떼기")
+                    .font(.subheadline.bold()).frame(maxWidth: .infinity, minHeight: 58).background(GameTheme.green)
+                    .overlay(Rectangle().strokeBorder(GameTheme.gold, lineWidth: 2)).contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0).onChanged { _ in beginPower() }.onEnded { _ in releasePower() })
+                    .accessibilityLabel("길게 눌러 힘을 모으고 중앙에서 손 떼기. 버튼 조작으로도 선택할 수 있습니다.")
+                    .accessibilityIdentifier("skillPowerHold").disabled(inputLocked)
+            }
+        } else if selectedKind == .velocity {
+            Text("구속 능력 기준 \(delivery(code: "four-seam").speed) km/h · 리듬 점수는 별도")
+                .font(.caption.monospacedDigit()).accessibilityIdentifier("skillVelocityBaseline")
+            if buttonInput {
+                Text("목표 박자 0.65 · 1.35 · 2.05초").font(.caption.monospacedDigit())
+                ForEach(0..<3) { i in
+                    DrillValueControl(name: "\(i+1)박 초", value: $chosenBeats[i], range: 0...SkillDrillRules.rhythmDuration, step: 0.05).disabled(locked)
+                }
+                Button("박자 배치 확정 · 투구") { submit(TrainingInput(drill: SkillDrillInput(beats: chosenBeats.map { Optional($0) }))) }
+                    .buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(inputLocked).accessibilityIdentifier("skillRhythmConfirm")
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(0..<3) { i in
+                        let elapsed = clock.phase * SkillDrillRules.rhythmDuration
+                        let active = clock.running && abs(elapsed - SkillDrillRules.beats[i]) <= SkillDrillRules.perfectWindow
+                        let progress = min(1, max(0, (elapsed - SkillDrillRules.beats[i] + SkillDrillRules.beatWindow) / (2 * SkillDrillRules.beatWindow)))
+                        Button { tapBeat(i) } label: {
+                            VStack(spacing: 4) {
+                                Text(rhythmTaps[i] != nil ? "✓" : active ? "지금" : "\(i+1)")
+                                Text(["준비","회전","릴리스"][i]).font(.caption)
+                                GeometryReader { track in
+                                    ZStack(alignment: .leading) {
+                                        Rectangle().fill(GameTheme.boardLine)
+                                        Rectangle().fill(GameTheme.gold).frame(width: 3).offset(x: track.size.width * 0.5 - 1.5)
+                                        Rectangle().fill(GameTheme.boardInk).frame(width: 2).offset(x: max(0,track.size.width - 2) * progress)
+                                    }
+                                }.frame(height: 8).accessibilityHidden(true)
+                            }.frame(maxWidth: .infinity, minHeight: 50)
+                        }.buttonStyle(MatchPixelButtonStyle(selected: active)).disabled(!clock.running || inputLocked || rhythmTaps[i] != nil)
+                            .accessibilityValue(rhythmTaps[i] != nil ? "입력 완료" : active ? "지금 입력" : "대기").accessibilityIdentifier("skillBeat-\(i)")
+                    }
+                }
+                Button(clock.running ? "밝아진 노드를 순서대로" : "3박자 투구 시작") { beginRhythm() }
+                    .buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(clock.running || inputLocked).accessibilityIdentifier("skillRhythmStart")
+            }
+        } else if let target = locationTarget {
+            if buttonInput {
+                ForEach(0..<3) { i in
+                    let goal = SkillDrillRules.curve(target)[(i+1)*6]
+                    Text("\(i+1)번 지점 목표 가로 \(Int((goal.x*100).rounded()))").font(.caption.monospacedDigit()).accessibilityIdentifier("skillAnchorGoal-\(i)")
+                    DrillValueControl(name: "\(i+1)번 가로", value: $traceAnchors[i]).disabled(locked)
+                }
+            }
+            Button("궤적 확정 · 투구") {
+                submit(TrainingInput(drill: SkillDrillInput(trace: buttonInput ? buttonTrace(target) : tracePoints)))
+            }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(inputLocked).accessibilityIdentifier("skillTraceConfirm")
+            if !buttonInput {
+                Button("경로 다시 그리기") { tracePoints = [] }.buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked).accessibilityIdentifier("skillTraceClear")
+            }
+        }
+        if replay != nil { Text(replayLabel).font(.caption).accessibilityIdentifier("skillPlaybackState") }
+        Button(buttonInput ? "직접 조작으로" : "버튼 조작으로 · 시간 제한 없음") { buttonInput.toggle() }
+            .font(.caption).frame(minHeight: 44).disabled(locked).accessibilityIdentifier("skillInputMode")
+    }
+    private func skillArena(height: CGFloat) -> some View {
+        ZStack(alignment: .top) {
+            SpriteView(scene: selectedKind == .power ? tireScene : locationScene, preferredFramesPerSecond: 30)
+                .allowsHitTesting(false).accessibilityHidden(true)
+            if selectedKind == .stuff, replay == nil || feedbackVisible {
+                SkillTraceBoard(target: locationTarget, points: buttonInput ? .constant(locationTarget.map(buttonTrace) ?? []) : $tracePoints,
+                                locked: inputLocked || buttonInput)
+                    .padding(height * 0.08)
+            }
+            Text(selectedKind == .power ? "POWER · 타이어 타격장" : selectedKind == .velocity ? "VELOCITY · 리듬 불펜" : replay != nil && !feedbackVisible ? "STUFF · 목표 궤적 시연" : "STUFF · 점선 목표 / 실선 입력")
+                .font(.caption.bold()).padding(6).background(GameTheme.navy).allowsHitTesting(false)
+        }.frame(width: height, height: height).clipped().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("skillPracticeField")
+            .onAppear {
+                if selectedKind == .power { tireScene.configure(player: player) }
+                else { locationScene.configure(kind: .control, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw); locationScene.prepareDrill(phase: 0) }
+            }
+            .onChange(of: selectedKind) { _, _ in
+                if selectedKind == .power { tireScene.configure(player: player) }
+                else { locationScene.configure(kind: .control, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw); locationScene.prepareDrill(phase: 0) }
+            }
     }
     @ViewBuilder private var errorControls: some View {
     if let errorMessage {
@@ -433,7 +596,9 @@ struct CareerTrainingView: View {
                                  failure: preparationError, practice: practice, studying: studying)
     }
     @ViewBuilder private func arena(height: CGFloat) -> some View {
-        if isLocationDrill, let target = locationTarget {
+        if isSkillDrill {
+            skillArena(height: height)
+        } else if isLocationDrill, let target = locationTarget {
             LocationPracticeBoard(kind: selectedKind, target: target, scene: locationScene, player: player, x: $x, y: $y, locked: inputLocked)
                 .frame(width: height, height: height).clipped()
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))

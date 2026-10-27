@@ -6,6 +6,22 @@ import SpriteKit
 @testable import BM
 
 @MainActor final class FieldTrainingTests: XCTestCase {
+    func testV29PreparedPitchFlightWaitsForActualFlightAndReceiveThenCompletesOnce() throws {
+        let scene = LocationDrillScene(size: CGSize(width: 320,height: 320))
+        scene.configure(kind: .control,appearance: PlayerAppearance(),number: 8,hand: "left")
+        scene.prepareDrill(phase: 0.85)
+        let point = TrainingTarget(x: 0.5,y: 0.5)
+        var callbacks = 0
+        scene.play(LocationDrillReplay(kind: .control,target: point,input: point,score: 100),at: 100,
+                   preparedRelease: true,flightDuration: 0.9,curve: 22) { callbacks += 1 }
+        let ball = try XCTUnwrap(scene.childNode(withName:"locationBall")), release = ball.position
+        scene.advance(at:100.8); XCTAssertEqual(callbacks,0); XCTAssertNotEqual(ball.position,release)
+        scene.advance(at:100.9); XCTAssertEqual(callbacks,0)
+        let destination = LocationDrillReplay.point(point,kind:.control)
+        XCTAssertEqual(ball.position.x,destination.x,accuracy:0.0001)
+        scene.advance(at:101.201); XCTAssertEqual(callbacks,1)
+        scene.advance(at:110); XCTAssertEqual(callbacks,1)
+    }
     func testV28LocationProjectionAndFeedbackKeepOriginalDistanceScores() throws {
         for kind in [TrainingKind.control, .defense] {
             for value in [0.0, 0.25, 0.5, 0.75, 1] {

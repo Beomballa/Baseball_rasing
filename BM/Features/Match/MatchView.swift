@@ -70,6 +70,7 @@ struct MatchView: View {
                                    pitchCode: kind == .pitch ? code : nil, before: before, fatigue: 0,
                                    age: try calendar.age(of: player), calendarRevision: 0, kind: kind, position: position)
         if position != nil { round.positionRevision = 0; round.positionXP = 0 }
+        else if SkillDrillRules.kinds.contains(kind) { round.drillVersion = 1 }
         return round
     }
     static func copy(_ original: CareerPlayer, from source: ModelContext, into memory: ModelContext) throws -> CareerPlayer {

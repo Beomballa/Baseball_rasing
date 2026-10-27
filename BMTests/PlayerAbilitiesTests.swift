@@ -344,6 +344,9 @@ extension PlayerAbilitiesTests {
     }
     private func input(_ training: CareerTraining) -> TrainingInput {
         let target = training.targets[training.scores.count]
+        if training.isSkillDrill {
+            return TrainingInput(drill: training.selectedKind == .velocity ? SkillDrillInput(beats: SkillDrillRules.beats.map { Optional($0) }) : SkillDrillInput(trace: SkillDrillRules.curve(target)))
+        }
         switch training.selectedKind {
         case .control: return TrainingInput(x: target.x, y: target.y)
         case .stamina: return TrainingInput(footfalls: (0..<16).map { $0.isMultiple(of: 2) ? .left : .right })
@@ -389,7 +392,7 @@ extension PlayerAbilitiesTests {
             let base = [player.contact,player.power,player.discipline,player.speed,player.defense,player.arm]
             let pitches = Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) })
             let record = try CareerTrainingStore.start(player: player, state: state, kind: kind, in: context)
-            XCTAssertEqual(record.rulesVersion, "native-training-v4")
+            XCTAssertEqual(record.rulesVersion, SkillDrillRules.kinds.contains(kind) ? "native-skill-drills-v1" : "native-training-v4")
             XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context))
             XCTAssertThrowsError(try CareerMatchStore.start(player: player, state: state, in: context))
             for _ in 0..<5 { try attempt(player, state, record, context) }
@@ -1456,4 +1459,141 @@ extension PlayerAbilitiesTests {
         }
     }
 
+}
+
+@MainActor final class SkillDrillTests: XCTestCase {
+    private func perfect(_ round: CareerTraining) -> TrainingInput {
+        switch round.selectedKind {
+        case .power: TrainingInput(drill: SkillDrillInput(phase: 0.5))
+        case .velocity: TrainingInput(drill: SkillDrillInput(beats: SkillDrillRules.beats.map { Optional($0) }))
+        default: TrainingInput(drill: SkillDrillInput(trace: SkillDrillRules.curve(round.targets[round.scores.count])))
+        }
+    }
+    private func setup(_ kind: TrainingKind, context: ModelContext) throws -> (CareerPlayer, CareerCalendarState) {
+        var draft = PlayerDraft(); draft.name = "기량훈련"; draft.schoolID = "hs-ref-001"; draft.role = kind == .power ? .batter : .pitcher
+        let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
+        return (player, try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }))
+    }
+    func testPowerCenterPerfectAndEdgesZeroRejectInvalidInputs() throws {
+        let target = TrainingTarget(x: 0.5,y: 0.5)
+        for phase in [0.475,0.5,0.525] { XCTAssertEqual(try SkillDrillRules.score(kind: .power, target: target, input: SkillDrillInput(phase: phase)),100) }
+        for phase in [0.0,1] { XCTAssertEqual(try SkillDrillRules.score(kind: .power, target: target, input: SkillDrillInput(phase: phase)),0) }
+        XCTAssertLessThan(try SkillDrillRules.score(kind: .power,target: target,input: SkillDrillInput(phase: 0.7)),75)
+        for phase in [Double.nan, .infinity, -1, 2] { XCTAssertThrowsError(try SkillDrillRules.score(kind: .power,target: target,input: SkillDrillInput(phase: phase))) }
+        XCTAssertThrowsError(try SkillDrillRules.score(kind: .power,target: target,input: SkillDrillInput(phase: 0.5, beats: [])))
+    }
+    func testRhythmPerfectMissingAndRepeatedTapsCannotAddScore() throws {
+        var taps: [Double?] = [nil,nil,nil]
+        XCTAssertFalse(SkillDrillRules.recordBeat(0,elapsed:0.1,taps:&taps))
+        XCTAssertTrue(SkillDrillRules.recordBeat(0,elapsed:0.65,taps:&taps))
+        XCTAssertFalse(SkillDrillRules.recordBeat(0,elapsed:0.7,taps:&taps)); XCTAssertEqual(taps[0],0.65)
+        XCTAssertFalse(SkillDrillRules.recordBeat(1,elapsed:0.7,taps:&taps))
+        XCTAssertTrue(SkillDrillRules.recordBeat(1,elapsed:1.35,taps:&taps))
+        XCTAssertTrue(SkillDrillRules.recordBeat(2,elapsed:2.05,taps:&taps))
+        let target = TrainingTarget(x: 0.5,y: 0.5)
+        XCTAssertEqual(try SkillDrillRules.score(kind: .velocity,target: target,input: SkillDrillInput(beats: [0.65,1.35,2.05])),100)
+        XCTAssertEqual(try SkillDrillRules.score(kind: .velocity,target: target,input: SkillDrillInput(beats: [nil,1.35,nil])),33)
+        XCTAssertEqual(try SkillDrillRules.score(kind: .velocity,target: target,input: SkillDrillInput(beats: [nil,nil,nil])),0)
+        XCTAssertEqual(try SkillDrillRules.score(kind: .velocity,target: target,input: SkillDrillInput(beats: [0.65,0.65,0.65])),0)
+        XCTAssertThrowsError(try SkillDrillRules.score(kind: .velocity,target: target,input: SkillDrillInput(beats: [0.65,1.35,2.05,2.2])))
+    }
+    func testTraceSamplingDensityAndDirectionCoverage() throws {
+        let target = TrainingTarget(x: 0.4,y: 0.7), path = SkillDrillRules.curve(target)
+        XCTAssertEqual(try SkillDrillRules.score(kind: .stuff,target: target,input: SkillDrillInput(trace: path)),100)
+        let doubled = path.flatMap { [$0,$0] }
+        XCTAssertEqual(try SkillDrillRules.score(kind: .stuff,target: target,input: SkillDrillInput(trace: doubled)),100)
+        let sparse = stride(from: 0,through: 24,by: 3).map { path[$0] }
+        XCTAssertEqual(try SkillDrillRules.score(kind: .stuff,target: target,input: SkillDrillInput(trace: sparse)),100)
+        XCTAssertEqual(try SkillDrillRules.score(kind: .stuff,target: target,input: SkillDrillInput(trace: path.reversed())),0)
+        XCTAssertEqual(try SkillDrillRules.score(kind: .stuff,target: target,input: SkillDrillInput(trace: [path[0],path[0]])),0)
+        XCTAssertLessThan(try SkillDrillRules.score(kind: .stuff,target: target,input: SkillDrillInput(trace: [path[0],path[24]])),75)
+        XCTAssertThrowsError(try SkillDrillRules.score(kind: .stuff,target: target,input: SkillDrillInput(trace: Array(repeating:path[0],count:257))))
+        XCTAssertThrowsError(try SkillDrillRules.score(kind: .stuff,target: target,input: SkillDrillInput(trace: [TrainingTarget(x:.nan,y:0)])))
+    }
+    func testLegacyPayloadAndVersionKeepOldScoringUntilSetCompletes() throws {
+        for kind in SkillDrillRules.kinds {
+            var round = CareerTraining(playerID: UUID(),date:"2026-04-01",role:kind == .power ? "batter":"pitcher",pitchCode:nil,before:60,fatigue:24,age:16,calendarRevision:0,kind:kind)
+            let record = try CareerTrainingRecord(round)
+            XCTAssertEqual(record.rulesVersion, kind == .power ? "native-training-v2":"native-training-v4")
+            let payload = record.payload
+            XCTAssertNil(try record.snapshot().drillVersion)
+            let restored = try JSONDecoder().decode(CareerTraining.self,from: payload); XCTAssertEqual(restored,round)
+            XCTAssertThrowsError(try round.attempt(perfect(round)))
+            for _ in 0..<5 {
+                let goal = kind == .power ? (force:TrainingRules.powerTarget(round.scores.count)/1.35,angle:45.0) : RawTrainingRules.goal(kind:kind,target:round.targets[round.scores.count])
+                try round.attempt(TrainingInput(force:goal.force,angle:goal.angle))
+            }
+            XCTAssertEqual(round.scores,[100,100,100,100,100]); XCTAssertEqual(round.after,60.2028)
+            record.rulesVersion = "native-skill-drills-v1"; XCTAssertThrowsError(try record.snapshot())
+        }
+    }
+    func testNewSkillAttemptsRejectLegacyInputAndInvalidVersion() throws {
+        var round = CareerTraining(playerID:UUID(),date:"2026-04-01",role:"batter",pitchCode:nil,before:60,fatigue:24,age:16,calendarRevision:0,kind:.power)
+        round.drillVersion = 1
+        XCTAssertThrowsError(try round.attempt(TrainingInput(force:75,angle:45)))
+        XCTAssertThrowsError(try round.attempt(TrainingInput(timing:0.5,drill:SkillDrillInput(phase:0.5))))
+        round.drillVersion = 2; XCTAssertThrowsError(try round.attempt(perfect(round)))
+        let record = try CareerTrainingRecord(round); XCTAssertThrowsError(try record.snapshot())
+    }
+    func testStartAttemptAndFinalFailuresRollbackThenPayOnce() throws {
+        enum Failure: Error { case injected }
+        for kind in SkillDrillRules.kinds {
+            let container = try CareerStore.makeContainer(inMemory:true), context = container.mainContext
+            let (player,state) = try setup(kind,context:context), before = try CareerTrainingStore.value(player:player,code:nil,kind:kind,in:context)
+            let fatigue = player.fatigue
+            XCTAssertThrowsError(try CareerTrainingStore.start(player:player,state:state,kind:kind,in:context,save:{_ in throw Failure.injected}))
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerTrainingRecord>()),0)
+            let record = try CareerTrainingStore.start(player:player,state:state,kind:kind,in:context)
+            XCTAssertEqual(record.rulesVersion,"native-skill-drills-v1")
+            let original = try record.snapshot(), bytes = record.payload
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player:player,state:state,record:record,revision:record.revision,input:perfect(original),in:context,save:{_ in throw Failure.injected}))
+            XCTAssertEqual(record.payload,bytes); XCTAssertFalse(context.hasChanges)
+            for i in 0..<5 {
+                let round = try record.snapshot()
+                if i == 4 {
+                    let fourth = record.payload
+                    XCTAssertThrowsError(try CareerTrainingStore.attempt(player:player,state:state,record:record,revision:record.revision,input:perfect(round),in:context,save:{_ in throw Failure.injected}))
+                    XCTAssertEqual(record.payload,fourth); XCTAssertFalse(state.hasAction(on:player.gameDate)); XCTAssertEqual(player.fatigue,fatigue)
+                }
+                try CareerTrainingStore.attempt(player:player,state:state,record:record,revision:record.revision,input:perfect(round),in:context)
+            }
+            let done = try record.snapshot(); XCTAssertEqual(done.scores,[100,100,100,100,100]); XCTAssertEqual(done.targets,original.targets)
+            XCTAssertEqual(try CareerTrainingStore.value(player:player,code:nil,kind:kind,in:context),done.after)
+            XCTAssertEqual(done.after,TrainingRules.growth(before:before,score:100,fatigue:fatigue,age:16,pitch:false))
+            XCTAssertEqual(player.fatigue,fatigue+6); XCTAssertTrue(state.hasAction(on:player.gameDate))
+            let final = record.payload
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player:player,state:state,record:record,revision:record.revision,input:perfect(original),in:context))
+            XCTAssertEqual(record.payload,final); XCTAssertEqual(try record.snapshot().after,done.after)
+        }
+    }
+    func testDiskResumeBothNewAndLegacyPendingPreservesTargetsAndScores() throws {
+        for legacy in [false,true] { for kind in SkillDrillRules.kinds {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString+".store")
+            defer { for suffix in ["","-shm","-wal"] { try? FileManager.default.removeItem(atPath:url.path+suffix) } }
+            var id: UUID!, savedTargets: [TrainingTarget] = [], savedScores: [Int] = []
+            do {
+                let c = try CareerStore.makeContainer(url:url), context = c.mainContext, pair = try setup(kind,context:context)
+                let (player,state) = pair; id = player.id
+                let record: CareerTrainingRecord
+                if legacy {
+                    let round = CareerTraining(playerID:player.id,date:player.gameDate,role:player.roleRaw,pitchCode:nil,before:try CareerTrainingStore.value(player:player,code:nil,kind:kind,in:context),fatigue:player.fatigue,age:16,calendarRevision:state.revision,kind:kind)
+                    record = try CareerTrainingRecord(round); context.insert(record); try context.save()
+                } else { record = try CareerTrainingStore.start(player:player,state:state,kind:kind,in:context) }
+                for _ in 0..<2 {
+                    let round = try record.snapshot()
+                    let oldGoal = kind == .power ? (force:TrainingRules.powerTarget(round.scores.count)/1.35,angle:45.0) : RawTrainingRules.goal(kind:kind,target:round.targets[round.scores.count])
+                    let input = legacy ? TrainingInput(force:oldGoal.force,angle:oldGoal.angle) : perfect(round)
+                    try CareerTrainingStore.attempt(player:player,state:state,record:record,revision:record.revision,input:input,in:context)
+                }
+                savedTargets = try record.snapshot().targets; savedScores = try record.snapshot().scores
+            }
+            do {
+                let c = try CareerStore.makeContainer(url:url), context = c.mainContext
+                let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == id })
+                let record = try XCTUnwrap(CareerTrainingStore.record(player:player,in:context)), restored = try record.snapshot()
+                XCTAssertEqual(restored.targets,savedTargets); XCTAssertEqual(restored.scores,savedScores)
+                XCTAssertEqual(restored.isSkillDrill,!legacy); XCTAssertFalse(record.completed)
+            }
+        }}
+    }
 }

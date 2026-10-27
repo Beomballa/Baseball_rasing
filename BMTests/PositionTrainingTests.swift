@@ -128,7 +128,7 @@ import SwiftData
             try CareerMatchStore.advance(player:p,state:s,record:game,revision:game.revision,input:.automatic,in:c)
             try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,in:c)
             let r=try CareerTrainingStore.start(player:p,state:s,kind:.power,in:c)
-            try CareerTrainingStore.attempt(player:p,state:s,record:r,revision:r.revision,input:TrainingInput(force:80,angle:35),in:c)
+            try CareerTrainingStore.attempt(player:p,state:s,record:r,revision:r.revision,input:TrainingInput(drill:SkillDrillInput(phase:0.5)),in:c)
             let traits=try XCTUnwrap(PlayerTraitStore.profile(playerID:p.id,in:c))
             return (r.payload,game.payload,traits.payload,[p.contact,p.power,p.speed,p.defense,p.arm],p.fatigue,p.gameDate,s.revision)
         }
