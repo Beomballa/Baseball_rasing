@@ -464,7 +464,7 @@ private struct SchoolPicker: View {
                             SchoolCrest(school: school).frame(width: 38, height: 42)
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(school.name).fontWeight(.bold).fixedSize(horizontal: false, vertical: true)
-                                Text(school.region).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                                Text(school.locationLabel).font(.caption).foregroundStyle(GameTheme.boardMuted)
                                 SchoolReputationLabels(school: school)
                             }.frame(maxWidth: .infinity, alignment: .leading)
                             Text(selected == school.id ? "■" : "□").foregroundStyle(GameTheme.gold).accessibilityHidden(true)

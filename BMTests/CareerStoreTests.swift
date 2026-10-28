@@ -3,20 +3,55 @@ import SwiftData
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV50SchoolIdentitiesHaveDistinctRegionalNamesAndValidEmblems() throws {
+        let schools = try SchoolCatalog.load()
+        XCTAssertEqual(Set(schools.map(\.name)).count, 50)
+        XCTAssertTrue(schools.allSatisfy { !$0.name.hasSuffix("체육학교") && $0.locality?.isEmpty == false })
+        let emblems = try schools.map { try XCTUnwrap($0.emblem) }
+        XCTAssertTrue(emblems.allSatisfy(\.isValid))
+        XCTAssertEqual(Set(emblems.map(\.pixels)).count, 50)
+        XCTAssertGreaterThanOrEqual(Set(emblems.map(\.style)).count, 15)
+        XCTAssertGreaterThanOrEqual(Set(emblems.map(\.motif)).count, 25)
+        XCTAssertGreaterThanOrEqual(emblems.filter { $0.glyph != nil }.count, 8)
+        XCTAssertEqual(schools.first?.emblem?.glyph, "北")
+        XCTAssertEqual(schools.first { $0.id == "hs-ref-023" }?.name, "남양주정산고")
+        XCTAssertEqual(schools.filter(\.openingWorldChampion).count, 1)
+    }
+
+    func testV50ThreeFieldSchoolDecodeKeepsLegacyCompatibilityAndEmblemValidation() throws {
+        let legacy = try JSONDecoder().decode(School.self, from: Data(#"{"id":"custom-school","region":"기존 지역","name":"기존 학교"}"#.utf8))
+        XCTAssertNil(legacy.emblem)
+        XCTAssertEqual(legacy.locationLabel, "기존 지역")
+        let sample = try XCTUnwrap(SchoolCatalog.load().first?.emblem)
+        let encoded = try JSONEncoder().encode(sample)
+        XCTAssertEqual(try JSONDecoder().decode(SchoolEmblem.self, from: encoded), sample)
+        XCTAssertFalse(SchoolEmblem(version: 1, style: "seal", motif: "hanzi", symbol: "북", glyph: "北", palette: sample.palette, pixels: ["0"]).isValid)
+        XCTAssertFalse(SchoolEmblem(version: 1, style: "seal", motif: "hanzi", symbol: "북", glyph: "北", palette: [0], pixels: sample.pixels).isValid)
+        XCTAssertFalse(SchoolEmblem(version: 1, style: "seal", motif: "hanzi", symbol: "북", glyph: "北", palette: sample.palette, pixels: Array(repeating: String(repeating: "z", count: 32), count: 32)).isValid)
+    }
+
+    func testV50SelectionQueriesIncludeSpecificLocalityWithoutChangingRegion() throws {
+        let schools = try SchoolCatalog.load()
+        let matches = SchoolCatalog.filtered(schools, query: "  종로  북악 ", region: "서울")
+        XCTAssertEqual(matches.map(\.id), ["hs-ref-001"])
+        XCTAssertEqual(matches.first?.name, "서울북악고")
+        XCTAssertTrue(SchoolCatalog.filtered(schools, query: "북악", region: "경기").isEmpty)
+    }
+
     func testV49FictionalSchoolsKeepIDsAndLegacyStoredIdentity() throws {
         let schools = try SchoolCatalog.load()
         XCTAssertEqual(Set(schools.map(\.name)).count, 50)
         XCTAssertEqual(schools.filter(\.openingWorldChampion).count, 1)
         XCTAssertTrue(schools.allSatisfy { (1...63).contains($0.crestNumber) })
         XCTAssertEqual(Set(schools.map(\.crestNumber)).count, 50)
-        XCTAssertEqual(schools.first?.name, "달여울체육고")
+        XCTAssertEqual(schools.first?.name, "서울북악고")
         XCTAssertFalse(schools.contains { $0.name == "경기고" })
         let db = try CareerStore.makeContainer(inMemory: true)
         let player = try CareerStore.create(draft(.batter), schools: schools, in: db.mainContext)
         player.schoolName = "경기고"
         try db.mainContext.save()
         let identity = player.id, pitches = player.pitches.map(\.code), date = player.gameDate
-        XCTAssertEqual(player.displaySchoolName, "달여울체육고")
+        XCTAssertEqual(player.displaySchoolName, "서울북악고")
         XCTAssertEqual(CareerTeamDirectory.name(player.schoolID), player.displaySchoolName)
         XCTAssertEqual(CareerTeamDirectory.name(player.schoolID, schools: schools), player.displaySchoolName)
         XCTAssertEqual(SchoolCatalog.displayName(id: "custom-school", fallback: "기존 사용자 학교"), "기존 사용자 학교")

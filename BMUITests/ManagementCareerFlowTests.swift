@@ -2,22 +2,56 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV50RegionalSchoolEmblemsCreationAndHomeBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate()
+            app.launchArguments = ["-management-career-verification", "-management-empty-verification"]
+            app.launch()
+            XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 15))
+            if pitcher { reveal(app.buttons["role-pitcher"], app); app.buttons["role-pitcher"].tap() }
+            app.buttons["creationSection-information"].tap()
+            let name = app.textFields["playerName"]; name.tap(); name.typeText(pitcher ? "SchoolPitch" : "SchoolBat")
+            app.buttons["입력 완료"].tap()
+            reveal(app.buttons["schoolPicker"], app); app.buttons["schoolPicker"].tap()
+            capture(app, pitcher ? "v50-pitcher-school-list" : "v50-batter-school-list")
+            let search = app.textFields["schoolSearch"]; search.tap(); search.typeText(pitcher ? "잠실" : "종로")
+            app.buttons["검색 완료"].tap()
+            let row = app.buttons[pitcher ? "hs-ref-005" : "hs-ref-001"]
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            XCTAssertTrue(row.label.contains(pitcher ? "가람 호랑이" : "북악의 북"))
+            capture(app, pitcher ? "v50-tiger-school" : "v50-hanja-school")
+            row.tap()
+            app.buttons["creationSection-review"].tap()
+            XCTAssertTrue(app.staticTexts["creationReadiness"].waitForExistence(timeout: 5))
+            capture(app, pitcher ? "v50-pitcher-school-review" : "v50-batter-school-review")
+            reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
+            XCTAssertTrue(app.staticTexts["homeSchool"].waitForExistence(timeout: 10))
+            XCTAssertEqual(app.staticTexts["homeSchool"].label, pitcher ? "잠실가람고" : "서울북악고")
+            capture(app, pitcher ? "v50-pitcher-school-home" : "v50-batter-school-home")
+        }
+    }
+
     @MainActor func testV49FictionalChampionSchoolAtLargestText() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-management-career-verification", "-management-empty-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
         XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 15))
-        reveal(app.buttons["schoolPicker"], app); app.buttons["schoolPicker"].tap()
-        let search = app.textFields["schoolSearch"]; search.tap(); search.typeText("별나루체육고")
+        reveal(app.buttons["schoolPicker"], app)
+        capture(app, "v50-large-school-entry")
+        app.buttons["schoolPicker"].tap()
+        XCTAssertTrue(app.textFields["schoolSearch"].waitForExistence(timeout: 5))
+        let search = app.textFields["schoolSearch"]; search.tap(); search.typeText("남양주정산고")
         app.buttons["검색 완료"].tap()
         let row = app.buttons["hs-ref-023"]
         XCTAssertTrue(row.waitForExistence(timeout: 5)); XCTAssertTrue(row.isHittable)
         XCTAssertTrue(row.label.contains("2025 우승"))
-        XCTAssertTrue(row.label.contains("별나루체육고"))
+        XCTAssertTrue(row.label.contains("남양주정산고"))
         capture(app, "v49-fictional-champion-large")
         row.tap()
-        XCTAssertTrue(app.buttons["schoolPicker"].label.contains("별나루체육고"))
+        XCTAssertTrue(app.buttons["schoolPicker"].label.contains("남양주정산고"))
     }
 
     @MainActor func testV49CreationReviewNavigationAndSavedIdentityBothRoles() {
@@ -67,7 +101,7 @@ final class ManagementCareerFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["schoolSearchEmpty"].exists)
         XCTAssertFalse(app.buttons["randomFilteredSchool"].isEnabled)
         capture(app, "v49-school-empty")
-        app.buttons["검색 지우기"].tap(); search.tap(); search.typeText("달여울체육고")
+        app.buttons["검색 지우기"].tap(); search.tap(); search.typeText("서울북악고")
         app.buttons["검색 완료"].tap()
         XCTAssertTrue(app.buttons["randomFilteredSchool"].isEnabled)
         capture(app, "v49-school-search")
@@ -79,7 +113,7 @@ final class ManagementCareerFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["creationError"].waitForExistence(timeout: 5))
         app.buttons["creationSection-information"].tap()
         let name = app.textFields["playerName"]; name.tap(); name.typeText("RetryPlayer"); app.buttons["입력 완료"].tap()
-        reveal(app.buttons["schoolPicker"], app); XCTAssertTrue(app.buttons["schoolPicker"].label.contains("달여울체육고"))
+        reveal(app.buttons["schoolPicker"], app); XCTAssertTrue(app.buttons["schoolPicker"].label.contains("서울북악고"))
         app.buttons["creationSection-review"].tap(); reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("RetryPlayer"))
@@ -316,11 +350,14 @@ final class ManagementCareerFlowTests: XCTestCase {
     }
     @MainActor private func reveal(_ element: XCUIElement, _ app: XCUIApplication) {
         for _ in 0..<12 {
-            if element.isHittable { return }
             let detail = app.scrollViews["roomDetailScroll"]
             let calendar = app.scrollViews["calendarDetailScroll"]
             let scroll = detail.exists ? detail : calendar.exists ? calendar : app.scrollViews.firstMatch
-            if element.exists && element.frame.minY < scroll.frame.minY { scroll.swipeDown() }
+            let shortcuts = ["information", "abilities", "appearance", "review"].map { app.buttons["creationSection-" + $0] }.filter(\.exists)
+            let visibleTop = max(scroll.frame.minY, shortcuts.map(\.frame.maxY).max() ?? scroll.frame.minY)
+            // SwiftUI may report a partially occluded button as hittable behind the fixed shortcuts.
+            if element.isHittable && (shortcuts.isEmpty || element.frame.midY > visibleTop + 8 && element.frame.midY < app.frame.maxY - 44) { return }
+            if element.exists && element.frame.midY < visibleTop + 8 { scroll.swipeDown() }
             else { scroll.swipeUp() }
         }
     }
