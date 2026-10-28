@@ -80,10 +80,8 @@ struct PlayerNotebookHighlights: View {
                 Spacer(minLength: 4)
                 Text(value.current, format: .number.precision(.fractionLength(1))).font(.title2.monospacedDigit().bold())
             }
-            if let gain = value.growth {
-                Text("시작 대비 " + (gain > 0 ? "+" : "") + gain.formatted(.number.precision(.fractionLength(1))))
-                    .font(.caption.monospacedDigit()).foregroundStyle(GameTheme.boardMuted)
-            } else { Text("시작 값 미기록").font(.caption).foregroundStyle(GameTheme.boardMuted) }
+            Text(value.growthFeedback).font(.caption.monospacedDigit())
+                .foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
         }.padding(12).foregroundStyle(GameTheme.boardInk).frame(maxWidth: .infinity, alignment: .leading)
             .background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(color.opacity(0.8), lineWidth: 1))
             .accessibilityElement(children: .combine).accessibilityIdentifier(id)
@@ -92,15 +90,14 @@ struct PlayerNotebookHighlights: View {
 
 struct NotebookAbilityStrip: View {
     let value: HomeAbilityValue
-    private var gained: String { value.growth.map { ($0 > 0 ? "+" : "") + $0.formatted(.number.precision(.fractionLength(1))) } ?? "미기록" }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(value.label).font(.subheadline.bold())
                 Spacer()
                 Text(value.current, format: .number.precision(.fractionLength(1))).font(.headline.monospacedDigit()).foregroundStyle(GameTheme.gold)
-                Text(gained).font(.caption.monospacedDigit()).foregroundStyle(GameTheme.growth)
             }
+            Text(value.growthFeedback).font(.caption).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 3) {
                 ForEach(0..<10, id: \.self) { index in
                     Rectangle().fill(Double(index) < min(10, max(0, value.current / 10)) ? GameTheme.growth : GameTheme.boardLine.opacity(0.24))

@@ -78,6 +78,17 @@ struct CareerCalendarPanel: View {
             if let life=try? player.lifecycle,!life.traitRisk.isEmpty {
                 Text("! 특성 유지 주의 · 커리어의 변화 기록을 확인하세요").font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("calendarTraitWarning")
             }
+            if !compact, status.errorMessage == nil {
+                let guidance = EarlyPlayGuidance.make(trainingPending: trainingPending,
+                    gamePending: gameRecords.contains { $0.playerID == player.id && !$0.completed },
+                    actionUsed: hasAction, gameDue: today != nil, gameCompleted: gameCompleted)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(guidance.title).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("earlyPlayGuidance")
+                    Text(guidance.detail).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("earlyPlayDetail")
+                }
+            }
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
             if !compact {
             layout {

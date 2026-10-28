@@ -2,6 +2,37 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV42GuidanceBothRolesReadOnly() {
+        continueAfterFailure = false
+        let app = launch()
+        for role in 0..<2 {
+            if role == 1 { pickPitcher(app) }
+            app.buttons["managementTab-game"].tap()
+            app.buttons["facility-calendar"].tap()
+            let guide = app.descendants(matching: .any).matching(identifier: "earlyPlayGuidance").firstMatch
+            XCTAssertTrue(guide.waitForExistence(timeout: 8))
+            reveal(guide, app)
+            let detail = app.staticTexts["earlyPlayDetail"]
+            XCTAssertTrue(detail.waitForExistence(timeout: 5))
+            reveal(detail, app); capture(app, "v42-guidance-\(role)")
+            app.swipeDown()
+            app.buttons["닫기"].firstMatch.tap()
+            app.buttons["managementTab-player"].tap(); app.buttons["facility-abilities"].tap()
+            let feedback = app.staticTexts["homeGrowthFeedback"]
+            reveal(feedback, app); XCTAssertTrue(feedback.exists); capture(app, "v42-growth-\(role)")
+            close(app)
+        }
+    }
+
+    @MainActor func testV42LargestGuidance() {
+        continueAfterFailure = false
+        let app = launch(large: true)
+        app.buttons["managementLargeMenu"].tap(); app.buttons["경기"].tap()
+        reveal(app.buttons["facility-calendar"], app); app.buttons["facility-calendar"].tap()
+        let detail = app.staticTexts["earlyPlayDetail"]
+        reveal(detail, app); XCTAssertTrue(detail.isHittable); capture(app, "v42-large-guidance")
+    }
+
     @MainActor func testV41PositionAdviceCompareTrainingAndCatcherStayReadOnly() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v41-position-verification"];app.launch()

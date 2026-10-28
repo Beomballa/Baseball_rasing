@@ -66,6 +66,15 @@ struct HomeRadarChart: View {
                     .accessibilityLabel("주요 능력치 그래프, 최대 100. " + values.map { "\($0.label) \($0.current.formatted(.number.precision(.fractionLength(1))))" }.joined(separator: ", "))
                     .accessibilityIdentifier("homeAbilityRadar")
             }
+            if let changed = values.filter({ ($0.growth ?? 0) > 0 }).max(by: { ($0.growth ?? 0) < ($1.growth ?? 0) }) {
+                Text(changed.label + " · " + changed.growthFeedback)
+                    .font(.subheadline).foregroundStyle(chartGrowth)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeGrowthFeedback")
+            } else {
+                Text(hasBaseline ? "시작 대비 성장 변화는 아직 없습니다" : "시작 기록 없음 · 현재 능력만 표시")
+                    .font(.subheadline).foregroundStyle(onPaper ? GameTheme.navy : GameTheme.boardMuted)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeGrowthFeedback")
+            }
             HStack(spacing: 16) {
                 Text("■ 현재").foregroundStyle(chartGrowth)
                 if hasBaseline { Text("┄ 시작").foregroundStyle(onPaper ? Color(hex: 0x8b431b) : GameTheme.gold) }
@@ -102,7 +111,7 @@ struct HomeGrowthRow: View {
                 HStack {
                     Text("시작 \(initial, specifier: "%.1f")")
                     Spacer()
-                    Text(gain == 0 ? "변화 없음" : "\(gain > 0 ? "+" : "")\(gain.formatted(.number.precision(.fractionLength(1))))")
+                    Text(value.growthFeedback)
                         .foregroundStyle(gain > 0 ? growthColor : muted)
                 }.font(.caption).foregroundStyle(muted)
             }

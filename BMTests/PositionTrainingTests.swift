@@ -3,6 +3,18 @@ import SwiftData
 @testable import BM
 
 @MainActor final class PositionTrainingTests: XCTestCase {
+    func testV42GuidancePriorityAndGrowthPrecision() {
+        let pending = EarlyPlayGuidance.make(trainingPending: true, gamePending: true, actionUsed: true, gameDue: true, gameCompleted: false)
+        XCTAssertEqual(pending.title, "진행 중인 훈련부터 이어가세요")
+        XCTAssertEqual(EarlyPlayGuidance.make(trainingPending: false, gamePending: true, actionUsed: true, gameDue: true, gameCompleted: false).title, "진행 중인 경기를 이어가세요")
+        XCTAssertEqual(EarlyPlayGuidance.make(trainingPending: false, gamePending: false, actionUsed: true, gameDue: true, gameCompleted: false).title, "오늘 경기를 준비하세요")
+        XCTAssertEqual(EarlyPlayGuidance.make(trainingPending: false, gamePending: false, actionUsed: true, gameDue: true, gameCompleted: true).title, "오늘 행동을 마쳤습니다")
+        XCTAssertTrue(EarlyPlayGuidance.make(trainingPending: false, gamePending: false, actionUsed: false, gameDue: false, gameCompleted: false).detail.contains("자유 연습"))
+        XCTAssertEqual(HomeAbilityValue(id: "x", label: "컨택", current: 40.001, initial: 40).growthFeedback, "소폭 성장 누적 중 · 0.1 미만")
+        XCTAssertEqual(HomeAbilityValue(id: "x", label: "컨택", current: 39.999, initial: 40).growthFeedback, "소폭 감소 · 0.1 미만")
+        XCTAssertEqual(HomeAbilityValue(id: "x", label: "컨택", current: 40, initial: nil).growthFeedback, "시작 기록 없음 · 현재 능력만 표시")
+    }
+
     private func setup(_ context: ModelContext, role: PlayerRole = .batter, date: String = "2026-04-02") throws -> (CareerPlayer, CareerCalendarState) {
         var draft = PlayerDraft(); draft.name = "위치훈련"; draft.schoolID = "hs-ref-001"; draft.position = .shortstop; draft.role = role
         let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
