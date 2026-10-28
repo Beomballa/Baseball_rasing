@@ -25,6 +25,30 @@ struct PositionHomePanel: View {
                         if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                         Text("주 포지션 · " + player.positionRaw).font(.subheadline.bold())
                     }
+                    if let primary=FieldPosition(rawValue:player.positionRaw) {
+                        switch Result(catching:{try PositionAdvice.make(abilities:HomeAbilitySummary(player:player,abilities:PlayerAbilityStore.profile(playerID:player.id,in:context)),loadout:value,primary:primary)}) {
+                        case .success(let advice):
+                            VStack(alignment:.leading,spacing:10) {
+                                Text("COACH · 위치 적합도").font(.headline).foregroundStyle(GameTheme.gold)
+                                if let target=advice.recommendation,let row=advice.rows.first(where:{$0.position == target}) {
+                                    Text(target.label+(row.skill.mastery>=40 ? " · 전환 검토 후보":" · 체험 훈련 추천")).font(.headline).accessibilityIdentifier("positionRecommendation")
+                                    Text("현재 위치보다 기초 적합도5 이상 높습니다. 숙련과 실제 전환 조건은 별도로 확인하세요.").font(.subheadline)
+                                    Button("추천 위치 비교 · "+target.label) {selection=target}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("compareRecommendedPosition")
+                                } else {
+                                    Text(primary == .catcher ? "포수 전문 기술 자료 부족 · 자동 전환 판단 보류":"현재 위치 유지 검토 · 뚜렷한 대안 차이가 없습니다.").font(.subheadline).accessibilityIdentifier("positionRecommendation")
+                                }
+                                if let row=advice.rows.first(where:{$0.position == selected}),let fit=row.fit,let weights=PositionAdvice.weights(selected) {
+                                    Text("\(selected.label) 기초 적합도 \(fit,specifier:"%.1f") / 100").font(.headline.monospacedDigit()).accessibilityIdentifier("positionFit")
+                                    PositionMeter(value:fit,color:GameTheme.gold)
+                                    Text("비중 · 주력 \(Int((weights[0]*100).rounded())) / 수비 \(Int((weights[1]*100).rounded())) / 송구 \(Int((weights[2]*100).rounded())) / 멘탈 \(Int((weights[3]*100).rounded()))").font(.subheadline)
+                                    Text("현재 숙련 \(row.skill.mastery,specifier:"%.1f") · 전환 준비40까지 \(max(0,40-row.skill.mastery),specifier:"%.1f")").font(.subheadline).accessibilityIdentifier("positionAdviceReadiness")
+                                } else {Text("포수 전문 포구·리드 자료가 없어 기초 지수를 계산하지 않습니다.").font(.subheadline).accessibilityIdentifier("positionFitUnavailable")}
+                                Text("코치용 비교 지수 · 경기/계약 점수나 성공 확률이 아닙니다. 특성·피로·상대·기용은 별도이며 전환 자체의 능력 보너스는 없습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                            }.padding(12).background(GameTheme.boardPanel,in:ManagementStepFrame()).overlay(ManagementStepFrame().strokeBorder(GameTheme.gold,lineWidth:2))
+                        case .failure:
+                            Text("적합도 자료를 읽지 못했습니다. 없는 능력을 추정하지 않습니다.").font(.subheadline).accessibilityIdentifier("positionAdviceError")
+                        }
+                    }
                     if !typeSize.isAccessibilitySize {
                         PositionNotebookField(selected: selected, primary: player.positionRaw, value: value) { selection = $0 }
                             .frame(height: 248).accessibilityElement(children: .contain).accessibilityIdentifier("homePositionMap")

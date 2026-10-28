@@ -706,3 +706,44 @@ import SwiftData
         }
     }
 }
+
+extension PositionTrainingTests {
+    private func v41Values(_ speed:Double,_ defense:Double,_ arm:Double,_ mental:Double) -> HomeAbilitySummary {
+        HomeAbilitySummary(axes:[],originals:zip(["homeSpeed","homeDefense","homeArm","homeMental"],[speed,defense,arm,mental]).map {HomeAbilityValue(id:$0.0,label:$0.0,current:$0.1,initial:nil)},pitches:[],hasInitialValues:false)
+    }
+    func testV41AdviceSeparatesRawFitMasteryAndNoSpecialistClaims() throws {
+        let skills=PositionLoadout(primary:.shortstop),abilities=v41Values(95,50,80,55)
+        let advice=try PositionAdvice.make(abilities:abilities,loadout:skills,primary:.shortstop)
+        XCTAssertEqual(advice.recommendation,.center);XCTAssertEqual(advice.rows.count,8)
+        XCTAssertEqual(advice.rows.first {$0.position == .center}?.fit,76)
+        XCTAssertEqual(advice.rows.first {$0.position == .center}?.skill.mastery,10)
+        var trained=skills;trained.skills["CF"]=PositionSkill(mastery:45,xp:30)
+        let next=try PositionAdvice.make(abilities:abilities,loadout:trained,primary:.shortstop)
+        XCTAssertEqual(next.rows.map(\.fit),advice.rows.map(\.fit));XCTAssertEqual(next.recommendation,.center)
+        XCTAssertNil(advice.rows.first {$0.position == .catcher}?.fit)
+        XCTAssertNil(try PositionAdvice.make(abilities:abilities,loadout:skills,primary:.catcher).recommendation)
+        XCTAssertNil(try PositionAdvice.make(abilities:v41Values(60,60,60,60),loadout:skills,primary:.shortstop).recommendation)
+        for p in FieldPosition.allCases where p != .catcher {XCTAssertEqual(PositionAdvice.weights(p)!.reduce(0,+),1,accuracy:0.0001)}
+    }
+    func testV41MissingOrCorruptAbilityNeverCreatesAdvice() throws {
+        let skills=PositionLoadout(primary:.shortstop)
+        XCTAssertThrowsError(try PositionAdvice.make(abilities:v41Values(.nan,50,50,50),loadout:skills,primary:.shortstop))
+        XCTAssertThrowsError(try PositionAdvice.make(abilities:v41Values(101,50,50,50),loadout:skills,primary:.shortstop))
+        let partial=HomeAbilitySummary(axes:[],originals:[],pitches:[],hasInitialValues:false)
+        XCTAssertThrowsError(try PositionAdvice.make(abilities:partial,loadout:skills,primary:.shortstop))
+        var bad=skills;bad.skills["CF"]=nil
+        XCTAssertThrowsError(try PositionAdvice.make(abilities:v41Values(60,60,60,60),loadout:bad,primary:.shortstop))
+    }
+    func testV41AdviceReadsWithoutWritingOrChangingPendingTraining() throws {
+        let db=try CareerStore.makeContainer(inMemory:true),c=db.mainContext,(p,s)=try setup(c)
+        let row=try CareerTrainingStore.start(player:p,state:s,position:.center,in:c);try attempt(p,s,row,c)
+        let bytes=row.payload,life=p.lifecycleData,revision=s.revision,profile=try XCTUnwrap(PlayerPositionStore.profile(playerID:p.id,in:c)),positions=profile.payload,stats=[p.speed,p.defense,p.arm,Double(p.fatigue)]
+        let abilities=HomeAbilitySummary(player:p,abilities:try PlayerAbilityStore.profile(playerID:p.id,in:c))
+        let a=try PositionAdvice.make(abilities:abilities,loadout:profile.snapshot(),primary:.shortstop)
+        XCTAssertEqual(try PositionAdvice.make(abilities:abilities,loadout:profile.snapshot(),primary:.shortstop).rows,a.rows)
+        XCTAssertEqual(row.payload,bytes);XCTAssertEqual(p.lifecycleData,life);XCTAssertEqual(profile.payload,positions);XCTAssertEqual(s.revision,revision);XCTAssertEqual([p.speed,p.defense,p.arm,Double(p.fatigue)],stats);XCTAssertFalse(c.hasChanges)
+        XCTAssertThrowsError(try DevelopmentStore.changePosition(player:p,calendar:s,to:.center,date:p.gameDate,revision:s.revision,in:c))
+        for _ in 0..<4 {try attempt(p,s,row,c)}
+        XCTAssertThrowsError(try attempt(p,s,row,c));XCTAssertTrue(row.completed)
+    }
+}

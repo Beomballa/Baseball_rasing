@@ -2,6 +2,28 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV41PositionAdviceCompareTrainingAndCatcherStayReadOnly() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v41-position-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:25));let before=status(app)
+        app.buttons["managementTab-player"].tap();app.buttons["facility-positions"].tap()
+        reveal(app.buttons["compareRecommendedPosition"],app);XCTAssertTrue(app.staticTexts["positionRecommendation"].label.contains("중견수"));capture(app,"v41-position-recommendation")
+        app.buttons["compareRecommendedPosition"].tap();reveal(app.staticTexts["positionFit"],app);XCTAssertTrue(app.staticTexts["positionFit"].label.contains("76.0"));capture(app,"v41-center-comparison")
+        reveal(app.buttons["homePositionSelect-C"],app);app.buttons["homePositionSelect-C"].tap();reveal(app.staticTexts["positionFitUnavailable"],app);XCTAssertTrue(app.staticTexts["positionFitUnavailable"].exists);capture(app,"v41-catcher-unavailable")
+        reveal(app.buttons["compareRecommendedPosition"],app);app.buttons["compareRecommendedPosition"].tap();reveal(app.buttons["openPositionTraining"],app);app.buttons["openPositionTraining"].tap()
+        XCTAssertTrue(app.buttons["startPositionTraining"].waitForExistence(timeout:8));capture(app,"v41-training-preparation")
+        app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before)
+        pickPitcher(app);app.buttons["managementTab-player"].tap();XCTAssertTrue(app.buttons["facility-positions"].label.contains("구종 보관함"));app.buttons["facility-positions"].tap();XCTAssertFalse(app.staticTexts["positionRecommendation"].exists);capture(app,"v41-pitcher-existing-library")
+    }
+    @MainActor func testV41SmallLargestTextPositionAdvice() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v41-position-verification","-management-reduced-motion-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:25));let before=status(app)
+        app.buttons["managementLargeMenu"].tap();app.buttons["선수"].tap();reveal(app.buttons["facility-positions"],app);app.buttons["facility-positions"].tap()
+        let compare=app.buttons["compareRecommendedPosition"];for _ in 0..<25 {if compare.isHittable {break};app.swipeUp()};XCTAssertTrue(compare.isHittable);capture(app,"v41-small-recommendation");compare.tap()
+        reveal(app.staticTexts["positionAdviceReadiness"],app);XCTAssertTrue(app.staticTexts["positionAdviceReadiness"].isHittable);capture(app,"v41-small-readiness");close(app);XCTAssertEqual(status(app),before)
+    }
+
     @MainActor func testV40OverseasReturnCoachingBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-v40-bench-verification"];app.launch()

@@ -114,3 +114,42 @@ struct MatchPositionExperience: Codable, Equatable {
         }
     }
 }
+
+// Coaching comparison only; never used by match, scouting or reward calculations.
+struct PositionAdviceRow:Equatable,Identifiable {
+    let position:FieldPosition
+    let fit:Double?
+    let skill:PositionSkill
+    var id:String {position.rawValue}
+}
+struct PositionAdvice {
+    let rows:[PositionAdviceRow]
+    let primary:FieldPosition
+    let recommendation:FieldPosition?
+    static func weights(_ p:FieldPosition) -> [Double]? {
+        switch p {
+        case .catcher:nil
+        case .first:[0.10,0.55,0.15,0.20]
+        case .second:[0.35,0.40,0.15,0.10]
+        case .third:[0.10,0.40,0.40,0.10]
+        case .shortstop:[0.25,0.40,0.25,0.10]
+        case .left:[0.40,0.35,0.15,0.10]
+        case .center:[0.50,0.30,0.10,0.10]
+        case .right:[0.30,0.30,0.30,0.10]
+        }
+    }
+    static func make(abilities:HomeAbilitySummary,loadout:PositionLoadout,primary:FieldPosition) throws -> Self {
+        try loadout.validate()
+        let ids=["homeSpeed","homeDefense","homeArm","homeMental"]
+        let values=try ids.map {id -> Double in
+            let found=abilities.originals.filter {$0.id == id}
+            guard found.count == 1,let n=found.first?.current,n.isFinite,(0...100).contains(n) else {throw TrainingError.invalidRecord}
+            return n
+        }
+        let rows=try FieldPosition.allCases.map {p in PositionAdviceRow(position:p,fit:weights(p).map {TrainingRules.round(zip($0,values).reduce(0) {$0+$1.0*$1.1})},skill:try loadout.skill(p))}
+        let current=rows.first {$0.position == primary}!.fit
+        let candidates=rows.filter {$0.position != primary && $0.fit != nil}.sorted {$0.fit == $1.fit ? $0.id<$1.id:$0.fit!>$1.fit!}
+        let recommendation=current.flatMap {score in candidates.first.flatMap {$0.fit!>=score+5 ? $0.position:nil}}
+        return Self(rows:rows,primary:primary,recommendation:recommendation)
+    }
+}
