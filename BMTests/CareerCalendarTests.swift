@@ -5843,3 +5843,199 @@ extension CareerCalendarTests {
         }
     }
 }
+
+// Bounded balance diagnostics: growth curves are not a simulated contract probability.
+private struct V37BalanceYear:Codable {
+    let archetype:String,policy:String,roleID:String
+    let age:Int,trainings:Int
+    let h:Double,minimum:Double,maximum:Double
+    let saturated:Int
+    let grades:[String:Double]
+}
+private struct V37SelectionProbe:Codable {
+    let archetype:String,policy:String,level:String,team:String,roleID:String
+    let age:Int
+    let h:Double,rivalH:Double,entryMargin:Double,returnMargin:Double
+    let wouldKeepStart:Bool,wouldRegainStart:Bool
+}
+extension CareerCalendarTests {
+    private func v37Values(_ initial:PlayerInitialValues) -> [TrainingKind:Double] {
+        var result:[TrainingKind:Double]=[.contact:initial.contact,.power:initial.power,.discipline:initial.discipline,.speed:initial.speed,.defense:initial.defense,.arm:initial.arm,.mental:initial.mental]
+        if let v=initial.velocity {result[.velocity]=v};if let v=initial.control {result[.control]=v};if let v=initial.stuff {result[.stuff]=v};if let v=initial.stamina {result[.stamina]=v}
+        return result
+    }
+    private func v37Grades(_ values:[TrainingKind:Double],pitches:[String:Double],role:PlayerRole) throws -> [String:Double] {
+        let summary=HomeAbilitySummary(axes:[],originals:values.map {HomeAbilityValue(id:CareerAgingRules.homeIDs[$0.key]!,label:$0.key.label,current:$0.value,initial:nil)},pitches:pitches.map {HomeAbilityValue(id:$0.key,label:$0.key,current:$0.value,initial:nil)},hasInitialValues:false)
+        return Dictionary(uniqueKeysWithValues:try ScoutingRoleEvaluation.grades(role:role,abilities:summary,positionMastery:60).compactMap {g in g.score.map {(g.id,$0)}})
+    }
+    private func v37Rival(level:String,teamID:String,role:PlayerRole,roleID:String) throws -> Double {
+        let ids=CareerTeamDirectory.teams(level:level),opponent=try XCTUnwrap(ids.first {$0 != teamID})
+        let roster=MatchNPCFielders.make(year:2030,competition:level,homeID:teamID,awayID:opponent),attack=MatchNPCAttack.makeComplete(roster:roster).home
+        let field=try XCTUnwrap(roster.home.players.first {$0.position == (role == .pitcher ? "P":"CF")}),bat=try XCTUnwrap(attack.batters.first {$0.id == field.id})
+        var values=PlayerInitialValues(contact:bat.contact,power:bat.power,discipline:bat.discipline,speed:field.speed,defense:field.defense,arm:field.arm,mental:try XCTUnwrap(bat.profile).mental)
+        if role == .pitcher {
+            let p=attack.starter,profile=try XCTUnwrap(p.profile)
+            values.velocity=p.velocity;values.control=p.control;values.stuff=profile.stuff;values.stamina=profile.stamina;values.mental=profile.mental;values.pitches=profile.mastery
+        }
+        return try XCTUnwrap(v37Grades(v37Values(values),pitches:values.pitches,role:role)[roleID])
+    }
+    func testV37GrowthAndLeagueSelectionMatrixUsesActualRulesAndSeparatesContractGates() throws {
+        var years:[V37BalanceYear]=[],probes:[V37SelectionProbe]=[]
+        for archetype in PlayerArchetype.allCases {
+            let role=archetype.role,roleID=role == .pitcher ? "starter":archetype == .slugger ? "slugger":"onBase"
+            for (policy,count,score,focused) in [("conservative",90,50.0,false),("balanced",180,75.0,false),("role-focused",180,90.0,true)] {
+                var values=v37Values(archetype.values),pitches=archetype.values.pitches,fatigue=24,round=0
+                let kinds=TrainingKind.allCases.filter {role == .batter ? [.contact,.power,.discipline,.speed,.defense,.arm,.mental].contains($0):[.velocity,.control,.stuff,.stamina,.mental].contains($0)}
+                let keys=pitches.keys.sorted()
+                for age in 16...40 {
+                    for kind in values.keys {values[kind]=CareerAgingRules.value(values[kind]!,kind:kind,age:age)}
+                    for code in keys {pitches[code]=CareerAgingRules.value(pitches[code]!,kind:.pitch,age:age,pitch:true)}
+                    var trained=0
+                    for day in 0..<365 {
+                        if (day+1)*count/365 > day*count/365 {
+                            let choices=kinds.map {($0.rawValue,$0,false)}+keys.map {($0,TrainingKind.pitch,true)}
+                            let selected:Int
+                            if focused {
+                                let current=try XCTUnwrap(v37Grades(values,pitches:pitches,role:role)[roleID])
+                                let deltas=try choices.map {code,kind,pitch -> Double in
+                                    var v=values,p=pitches
+                                    if pitch {p[code]=TrainingRules.growth(before:p[code]!,score:score,fatigue:fatigue,age:age,pitch:true)}
+                                    else {v[kind]=TrainingRules.growth(before:v[kind]!,score:score,fatigue:fatigue,age:age,pitch:false)}
+                                    return try XCTUnwrap(v37Grades(v,pitches:p,role:role)[roleID])-current
+                                }
+                                selected=try XCTUnwrap(deltas.indices.max {deltas[$0] == deltas[$1] ? $0>$1:deltas[$0]<deltas[$1]})
+                            } else {selected=round%choices.count}
+                            let (code,kind,pitch)=choices[selected]
+                            if pitch {pitches[code]=TrainingRules.growth(before:pitches[code]!,score:score,fatigue:fatigue,age:age,pitch:true)}
+                            else {values[kind]=TrainingRules.growth(before:values[kind]!,score:score,fatigue:fatigue,age:age,pitch:false)}
+                            fatigue=min(100,fatigue+TrainingRules.fatigueCost);trained += 1;round += 1
+                        } else {fatigue=DailyRecovery.recover(fatigue,by:DailyRecovery.rest)}
+                        fatigue=DailyRecovery.recover(fatigue,by:DailyRecovery.sleep)
+                    }
+                    XCTAssertEqual(trained,count);XCTAssertTrue(values.values.allSatisfy {$0.isFinite && (0...100).contains($0)})
+                    let grades=try v37Grades(values,pitches:pitches,role:role),h=try XCTUnwrap(grades[roleID])
+                    years.append(V37BalanceYear(archetype:archetype.rawValue,policy:policy,roleID:roleID,age:age,trainings:trained,h:h,minimum:values.values.min()!,maximum:values.values.max()!,saturated:values.values.filter {$0>=99}.count,grades:grades))
+                    if [19,23,27,30,35,40].contains(age) {
+                        for level in ["domestic-development","npb-first-team","mlb-first-team"] {
+                            for team in CareerTeamDirectory.teams(level:level) {
+                                let rival=try v37Rival(level:level,teamID:team,role:role,roleID:roleID)
+                                let ownScore=ClubSelectionCandidate(id:"probe-own",h:h,p:0,readiness:100,evidence:nil,note:"diagnostic neutral").score
+                                let rivalScore=ClubSelectionCandidate(id:"probe-rival",h:rival,p:0,readiness:100,evidence:nil,note:"diagnostic neutral").score
+                                probes.append(V37SelectionProbe(archetype:archetype.rawValue,policy:policy,level:level,team:team,roleID:roleID,age:age,h:h,rivalH:rival,entryMargin:ownScore-rivalScore+5,returnMargin:ownScore-rivalScore-5,wouldKeepStart:rivalScore<ownScore+5,wouldRegainStart:ownScore>=rivalScore+5))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(years.count,450);XCTAssertFalse(years.filter {$0.age==40}.contains {$0.saturated>=7})
+        let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+        for (name,data) in [("v37-growth-curves.json",try encoder.encode(years)),("v37-neutral-selection-probes.json",try encoder.encode(probes))] {
+            let attachment=XCTAttachment(data:data,uniformTypeIdentifier:"public.json");attachment.name=name;attachment.lifetime = .keepAlways;add(attachment)
+        }
+    }
+    private func v37SetRating(_ rating:Double,player:CareerPlayer,in context:ModelContext) throws {
+        var values=PlayerInitialValues(contact:rating,power:rating,discipline:rating,speed:rating,defense:rating,arm:rating,mental:rating)
+        if player.role == .pitcher {values.velocity=rating;values.control=rating;values.stuff=rating;values.stamina=rating}
+        PlayerAbilityStore.apply(values,to:player)
+        let p=try XCTUnwrap(PlayerAbilityStore.profile(playerID:player.id,in:context));p.mental=rating
+        if player.role == .pitcher {p.velocity=rating;p.control=rating;p.stuff=rating;p.stamina=rating;for pitch in player.pitches {pitch.mastery=rating}}
+    }
+    func testV37ActualFullTeamSeasonSeparatesBenchFromStrongParticipationAndCapsRewardsBothRoles() throws {
+        var summary:[[String:String]]=[]
+        for role in PlayerRole.allCases {for rating in [20.0,90.0] {
+            let (db,p,s)=try v32Fixture(role),c=db.mainContext
+            try v37SetRating(rating,player:p,in:c);p.fatigue=0;try c.save()
+            let fixtures=try s.fixtures(for:p,year:2030);var starts=0,bench=0,rotation=0
+            for fixture in fixtures {
+                // Independent annual fixture probe; skipped days are not claimed as a full career playthrough.
+                p.gameDate=fixture.date.description;s.actionDate=nil;try c.save()
+                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+                let row=try CareerMatchStore.start(player:p,state:s,in:c)
+                try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+                let match=try row.snapshot()
+                if match.appearance {starts += 1} else if match.clubSelection?.rotationDay == true {bench += 1} else {rotation += 1}
+                let bytes=row.payload,fatigue=p.fatigue
+                XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c))
+                XCTAssertEqual(row.payload,bytes);XCTAssertEqual(p.fatigue,fatigue)
+            }
+            let xp=try CareerMatchStore.annualAbilityXP(playerID:p.id,year:2030,in:c),season=try CareerSeasonStore.load(player:p,state:s,year:2030,in:c)
+            XCTAssertLessThanOrEqual(xp,MatchAbilityExperience.annualCap)
+            XCTAssertEqual(starts+bench+rotation,30);XCTAssertEqual(season.totals.games,starts)
+            if rating==20 {XCTAssertEqual(starts,0);XCTAssertEqual(xp,0)} else {XCTAssertGreaterThan(starts,0);XCTAssertGreaterThan(xp,0)}
+            summary.append(["role":role.rawValue,"rating":String(rating),"starts":String(starts),"bench":String(bench),"rotationRest":String(rotation),"pa":String(season.totals.line.plateAppearances),"outs":String(season.totals.line.pitchingOuts),"rawXP":String(xp)])
+        }}
+        let a=XCTAttachment(data:try JSONEncoder().encode(summary),uniformTypeIdentifier:"public.json");a.name="v37-actual-season-probes.json";a.lifetime = .keepAlways;add(a)
+    }
+    func testV37TemporaryFatigueBenchCanRecoverThroughRealRestAndWeeklyHoldBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try v32Fixture(role),c=db.mainContext
+            let rival=try XCTUnwrap(ClubSelectionStore.projection(player:p,calendar:s,in:c)).rival
+            try v37SetRating(min(95,rival.h+12.5),player:p,in:c);p.fatigue=100;try c.save()
+            let training=try CareerTrainingStore.start(player:p,state:s,kind:.mental,in:c)
+            for _ in 0..<5 {
+                let t=try training.snapshot();let answer=RawTrainingRules.question(targets:t.targets,round:t.scores.count).answer
+                try CareerTrainingStore.attempt(player:p,state:s,record:training,revision:training.revision,input:TrainingInput(x:0.5,y:0.5,choice:answer),in:c)
+            }
+            let game=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertFalse(try game.snapshot().appearance)
+            try CareerMatchStore.advance(player:p,state:s,record:game,revision:game.revision,input:.automatic,in:c)
+            let frozenGame=game.payload,trainingBytes=training.payload
+            while p.gameDate < "2030-04-15" {
+                if try CalendarProgression.hasGameToday(player:p,state:s),try !CareerMatchStore.isCompleted(player:p,fixture:CareerMatchStore.today(player:p,state:s),in:c) {
+                    if !s.hasAction(on:p.gameDate) {try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)}
+                    let row=try CareerMatchStore.start(player:p,state:s,in:c);try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+                }
+                try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
+            }
+            let recovered=try XCTUnwrap(ClubSelectionStore.projection(player:p,calendar:s,in:c))
+            XCTAssertTrue(recovered.isStarter);XCTAssertEqual(recovered.date,"2030-04-15")
+            XCTAssertEqual(game.payload,frozenGame);XCTAssertEqual(training.payload,trainingBytes)
+            XCTAssertGreaterThan(recovered.own.readiness,90)
+        }
+    }
+}
+
+extension CareerCalendarTests {
+    func testV37GrownHighschoolEntryUsesCurrentGameEvidenceWithoutInventedAdmissionOrRerolls() throws {
+        var results:[[String:String]]=[]
+        for (index,archetype) in PlayerArchetype.allCases.enumerated() {
+            let db=try CareerStore.makeContainer(inMemory:true),c=db.mainContext
+            var draft=PlayerDraft();draft.name="경로검증";draft.schoolID="hs-ref-001";draft.role=archetype.role;draft.archetype=archetype
+            let p=try CareerStore.create(draft,schools:SchoolCatalog.load(),in:c),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            s.schoolIDs=(1...6).map {String(format:"hs-ref-%03d",$0)};try c.save()
+            let curve=try CareerBalanceSimulation.run(archetype:archetype)
+            let senior=try XCTUnwrap(curve.first {$0.age == 17}),entry=try XCTUnwrap(curve.first {$0.age == 19})
+            func raw(_ year:CareerBalanceYear) -> [String:Double] {
+                var value=Dictionary(uniqueKeysWithValues:CareerAgingRules.homeIDs.compactMap {kind,id in year.values[id].map {(kind.rawValue,$0)}})
+                for (code,n) in year.pitches {value["pitch/"+code]=n};return value
+            }
+            try CareerLifecycleStore.apply(raw(senior),player:p,in:c)
+            var values=archetype.values
+            values=PlayerInitialValues(contact:p.contact,power:p.power,discipline:p.discipline,speed:p.speed,defense:p.defense,arm:p.arm,mental:senior.values["homeMental"]!,velocity:senior.values["homeVelocity"],control:senior.values["homeControl"],stuff:senior.values["homeStuff"],stamina:senior.values["homeStamina"],pitches:senior.pitches)
+            for (i,fixture) in try s.fixtures(for:p,year:2028).filter({$0.isAppearance(for:p.role)}).enumerated() {
+                p.gameDate=fixture.date.description
+                let roster=MatchNPCFielders.make(year:2028,competition:"highschool",homeID:fixture.homeID,awayID:fixture.awayID)
+                var match=ScoutingReferenceSimulation.fixture(role:p.role,position:p.role == .batter ? p.positionRaw:"P",values:values,seed:UInt64(370_000+index*1000+i),home:fixture.homeID == p.schoolID,tracked:true,battedBallVersion:1,assessmentRoster:roster,npcAttackVersion:2)
+                try match.advance(.automatic)
+                let row=try CareerMatchRecord(player:p,fixture:fixture,match:match);row.completed=true;row.rulesVersion="native-match-v2";c.insert(row)
+            }
+            p.gameDate="2029-04-01";try CareerPathStore.synchronize(player:p,calendar:s,in:c)
+            p.gameDate="2030-04-01";try CareerPathStore.synchronize(player:p,calendar:s,in:c)
+            try CareerLifecycleStore.apply(raw(entry),player:p,in:c);try c.save()
+            let oldReports=try ScoutingObservationStore.reports(player:p,calendar:s,in:c).map(\.payload),matches=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            try ContractEvaluationStore.registerCurrent(in:c)
+            let row=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first),bytes=row.payload
+            let evaluation=try row.snapshot(player:p,calendar:s),selection=try XCTUnwrap(evaluation.selection),sample=try XCTUnwrap(selection.sample)
+            XCTAssertEqual(evaluation.observation.age,20)
+            XCTAssertGreaterThanOrEqual(p.role == .batter ? sample.comparison.totals.line.plateAppearances:sample.comparison.totals.line.pitchingOuts,p.role == .batter ? 40:45)
+            XCTAssertTrue(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).memberships.isEmpty)
+            try ContractEvaluationStore.registerCurrent(in:c,save:{_ in XCTFail("same window rerolled")})
+            XCTAssertEqual(row.payload,bytes);XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matches)
+            let nowReports=try ScoutingObservationStore.reports(player:p,calendar:s,in:c).map(\.payload)
+            XCTAssertTrue(oldReports.allSatisfy {nowReports.contains($0)})
+            results.append(["archetype":archetype.rawValue,"source":"age18 current-engine season; balanced training-only age20 boundary","pa":String(sample.comparison.totals.line.plateAppearances),"outs":String(sample.comparison.totals.line.pitchingOuts),"rookieSelected":String(selection.results.contains {$0.route == .rookie && $0.selected}),"collegeSelected":String(selection.results.contains {$0.route == .college && $0.selected}),"selectedRoles":selection.results.filter(\.selected).map(\.role).joined(separator:","),"blockedReasons":Set(selection.results.filter {!$0.selected}.flatMap(\.reasons)).sorted().joined(separator:" / ")])
+        }
+        let a=XCTAttachment(data:try JSONEncoder().encode(results),uniformTypeIdentifier:"public.json");a.name="v37-grown-entry-boundaries.json";a.lifetime = .keepAlways;add(a)
+    }
+}
