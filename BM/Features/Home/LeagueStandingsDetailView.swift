@@ -23,10 +23,10 @@ struct AnnualLeagueHomePanel: View {
         VStack(alignment: .leading, spacing: 20) {
             if let league {
                 LeagueSeasonMasthead(league: league, date: player.gameDate)
-                if let own = league.standings.first(where: { $0.id == ownTeamID }) {
+                if let own = league.displayStandings.first(where: { $0.id == ownTeamID }) {
                     LeagueOwnScorecard(row: own, name: CareerTeamDirectory.name(own.id, schools: schools))
                 }
-                LeagueStandingsBoard(rows: league.standings, ownTeamID: ownTeamID, schools: schools)
+                LeagueStandingsBoard(rows: league.displayStandings, ownTeamID: ownTeamID, schools: schools)
             } else if let error {
                 GamePanel(title: "리그 기록 확인 필요", onBoard: true) {
                     Text(error).font(.body).accessibilityIdentifier("homeLeagueError")
@@ -44,7 +44,7 @@ struct AnnualLeagueHomePanel: View {
             if let season {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("MY SEASON · 내 시즌 기록").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                    SeasonPersonalRecord(totals: season.totals, role: player.role, compact: true)
+                    SeasonPersonalRecord(totals: season.totals, role: player.role, compact: true,coverage:season.coverage)
                     NavigationLink { CareerSeasonScreen(player: player, state: state, schools: schools, transition: transition) } label: {
                         Text(season.finalized ? "시즌 결산 · 최종 성적" : "시즌 성적 · 결산 보기")
                     }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openSeasonSummary")
@@ -96,10 +96,10 @@ struct AnnualLeagueScreen: View {
                 if let league {
                     yearControls(league)
                     LeagueSeasonMasthead(league: league, date: player.gameDate)
-                    if let own = league.standings.first(where: { $0.id == ownTeamID }) {
+                    if let own = league.displayStandings.first(where: { $0.id == ownTeamID }) {
                         LeagueOwnScorecard(row: own, name: name(own.id))
                     }
-                    LeagueStandingsBoard(rows: league.standings, ownTeamID: ownTeamID, schools: schools)
+                    LeagueStandingsBoard(rows: league.displayStandings, ownTeamID: ownTeamID, schools: schools)
                     let today = league.fixtures.filter { $0.date.description == player.gameDate }
                     if !today.isEmpty {
                         matchSection("TODAY", title: "오늘 대진") {
@@ -173,6 +173,10 @@ private struct LeagueSeasonMasthead: View {
                     Text("6팀 조별리그 · 팀당 연 30경기").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 }
             }
+            Text(league.isComplete ? "FINAL · 최종 기록 보존" : league.fixtures.count<90 ? "PARTIAL · 부분 시즌":"LIVE · 연간 리그")
+                .font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("leagueSeasonState")
+            Text("팀 순위는 전체 팀 결과 · 개인 성적은 내 출전 원장만")
+                .font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("leagueRecordScope")
             Text("완료 \(league.results.count) / 대상 \(league.fixtures.count)경기 · \(ManagementDisplay.date(date)) 기준")
                 .font(.subheadline.monospacedDigit()).accessibilityIdentifier("leagueProgress")
             GeometryReader { geometry in
@@ -322,7 +326,7 @@ private struct LeagueMatchTicket: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(ManagementDisplay.date(fixture.date.description)).font(.caption.monospacedDigit())
                 Spacer(minLength: 0)
-                Text(result.map { $0.automatic ? "자동 결과" : "실제 경기" } ?? (pending ? "경기 진행 중" : "경기 대기"))
+                Text(result.map {LeagueRecordSource.label(automatic:$0.automatic,ownTeam:ownMatch)} ?? (pending ? "경기 진행 중":"경기 대기"))
                     .font(.caption.bold()).foregroundStyle(result != nil ? GameTheme.gold : GameTheme.boardMuted)
             }
             if typeSize.isAccessibilitySize {

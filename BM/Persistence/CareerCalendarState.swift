@@ -136,12 +136,13 @@ typealias CareerCalendarState = CareerSchemaV2.CalendarState
     }
     static func snapshot(player: CareerPlayer, state: CareerCalendarState, year: Int, records: [CareerMatchRecord]) throws -> CareerSeasonSummary {
         let league = try AnnualLeagueStore.snapshot(player: player, state: state, year: year, records: records)
-        var totals = PersonalSeasonTotals()
+        var totals = PersonalSeasonTotals(), coverage=PersonalSeasonCoverage()
         for record in records where record.playerID == player.id && record.completed && record.appearance {
             guard try GameDate(record.gameDate).year == year else { continue }
-            try totals.add(record.snapshot().line)
+            let match=try record.snapshot()
+            try totals.add(match.line);coverage.include(match,playerID:player.id)
         }
-        return CareerSeasonSummary(league: league, totals: totals)
+        return CareerSeasonSummary(league: league, totals: totals, coverage:coverage)
     }
 }
 

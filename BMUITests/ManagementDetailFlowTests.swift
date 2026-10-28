@@ -1611,3 +1611,70 @@ extension ManagementDetailFlowTests {
         XCTAssertNotEqual(count.label,before);capture(app,"v52-live-batter-no-input")
     }
 }
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV53DailyStatusPartialSaveRetryAndAnnualRulesBothRoles() {
+        let app=XCUIApplication()
+        for pitcher in [false,true] {
+            app.terminate();app.launchArguments=["-management-career-verification","-v53-calendar-save-failure"]
+            if pitcher {app.launchArguments += ["-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"]}
+            app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:15))
+            if pitcher {pickPitcher(app)}
+            XCTAssertTrue(app.staticTexts["homeDailyStatus"].label.contains("팀 경기 없음"));capture(app,pitcher ? "v53-large-pitcher-offday":"v53-batter-offday")
+            if pitcher {app.buttons["managementLargeMenu"].tap();app.buttons["경기"].tap()}
+            else {app.buttons["managementTab-game"].tap()}
+            reveal(app.buttons["facility-calendar"],app);app.buttons["facility-calendar"].tap()
+            let scroll=app.scrollViews["calendarDetailScroll"]
+            reveal(app.buttons["showSeasonSchedule"],app);app.buttons["showSeasonSchedule"].tap()
+            XCTAssertTrue(app.staticTexts["calendarYearRule"].waitForExistence(timeout:5));capture(app,pitcher ? "v53-large-pitcher-year-rules":"v53-batter-year-rules")
+            app.navigationBars["연간 일정"].buttons["닫기"].tap()
+            reveal(app.buttons["advanceOffDays"],app);app.buttons["advanceOffDays"].tap()
+            let title=app.staticTexts["calendarReceiptTitle"];XCTAssertTrue(title.waitForExistence(timeout:10));reveal(title,app)
+            XCTAssertTrue(title.label.contains("일부 진행 저장 완료"))
+            XCTAssertTrue(app.staticTexts["calendarReceiptTotals"].label.contains("완료 1일"));XCTAssertTrue(app.staticTexts["calendarReceiptTotals"].label.contains("90 → 68"))
+            XCTAssertEqual(scroll.staticTexts["calendarDate"].label,"4월 3일 (금)")
+            capture(app,pitcher ? "v53-large-pitcher-partial-receipt":"v53-batter-partial-receipt")
+            let retry=app.buttons["retryCalendarProgress"];reveal(retry,app);XCTAssertTrue(retry.isEnabled);retry.tap()
+            let date=scroll.staticTexts["calendarDate"]
+            let arrived=XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","4월 7일 (화)"),object:date)
+            XCTAssertEqual(XCTWaiter.wait(for:[arrived],timeout:12),.completed)
+            reveal(app.staticTexts["calendarTodayStatus"],app)
+            XCTAssertTrue(app.staticTexts["calendarTodayStatus"].label.contains(pitcher ? "비등판일":"타자 출전 예정"))
+            capture(app,pitcher ? "v53-large-pitcher-rotation-day":"v53-batter-game-day")
+        }
+    }
+    @MainActor func testV53SeasonMetricsCoverageAndReadOnlyReopenBothRoles() {
+        let app=XCUIApplication()
+        for legacy in [false,true] {for pitcher in [false,true] {
+            app.terminate();app.launchArguments=["-management-career-verification","-v53-season-records"]
+            if legacy {app.launchArguments.append("-v53-season-legacy")}
+            app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:15))
+            if pitcher {pickPitcher(app)}
+            let date=app.staticTexts["calendarDate"].firstMatch.label
+            app.buttons["managementTab-game"].tap();app.buttons["facility-gameRecords"].tap()
+            XCTAssertTrue(app.staticTexts["recentRecordsScope"].waitForExistence(timeout:5));capture(app,"v53-\(pitcher ? "pitcher":"batter")-recent-source-\(legacy ? "legacy":"full")")
+            reveal(app.buttons["gameOpenSeason"],app);app.buttons["gameOpenSeason"].tap()
+            let metric=app.descendants(matching:.any).matching(identifier: "seasonMetric-"+(pitcher ? "ERA":"OPS")).firstMatch
+            reveal(metric,app);XCTAssertTrue(metric.exists)
+            XCTAssertEqual(metric.label.contains("미집계"),legacy)
+            capture(app,"v53-\(pitcher ? "pitcher":"batter")-season-metrics-\(legacy ? "legacy":"full")")
+            let coverage=app.staticTexts["seasonCoverage"];reveal(coverage,app)
+            XCTAssertTrue(coverage.label.contains(legacy ? "미수집 1":"미수집 0"));capture(app,"v53-\(pitcher ? "pitcher":"batter")-season-coverage-\(legacy ? "legacy":"full")")
+            app.navigationBars.buttons.element(boundBy:0).tap();app.buttons["closeRoomDetail"].tap();app.buttons["managementTab-home"].tap()
+            XCTAssertEqual(app.staticTexts["calendarDate"].firstMatch.label,date)
+        }}
+    }
+    @MainActor func testV53LeagueSourceScopeRemainsSeparateBothRoles() {
+        let app=XCUIApplication()
+        for pitcher in [false,true] {
+            app.terminate();app.launchArguments=["-management-career-verification","-management-stats-verification"];app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:15));if pitcher {pickPitcher(app)}
+            app.buttons["managementTab-game"].tap();app.buttons["facility-standings"].tap()
+            XCTAssertTrue(app.staticTexts["leagueRecordScope"].waitForExistence(timeout:8))
+            reveal(app.buttons["openAnnualLeague"],app);app.buttons["openAnnualLeague"].tap()
+            XCTAssertTrue(app.staticTexts["leagueSeasonState"].waitForExistence(timeout:5));capture(app,pitcher ? "v53-pitcher-league-scope":"v53-batter-league-scope")
+            let source=app.staticTexts["다른 팀 자동 경기"].firstMatch;reveal(source,app);XCTAssertTrue(source.exists)
+            capture(app,pitcher ? "v53-pitcher-auto-source":"v53-batter-auto-source")
+        }
+    }
+}

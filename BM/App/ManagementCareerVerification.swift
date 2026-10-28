@@ -28,6 +28,25 @@ struct ManagementCareerVerification: View {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"
                     let player = try CareerStore.create(draft, schools: catalog, in: memory.mainContext)
+                    if ProcessInfo.processInfo.arguments.contains("-v53-calendar-save-failure") {
+                        player.gameDate="2026-04-02";player.fatigue=90;try memory.mainContext.save()
+                    }
+                    if ProcessInfo.processInfo.arguments.contains("-v53-season-records") {
+                        let c=memory.mainContext,state=try c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == player.id}!
+                        let fixtures=try state.fixtures(for:player,year:2026)
+                        for index in [0,5] {
+                            player.gameDate=fixtures[index].date.description;state.actionDate=nil;try c.save()
+                            try CalendarProgression.rest(player:player,state:state,revision:state.revision,in:c)
+                            let row=try CareerMatchStore.start(player:player,state:state,in:c)
+                            try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:.automatic,in:c)
+                            if index == 5,ProcessInfo.processInfo.arguments.contains("-v53-season-legacy") {
+                                var game=try row.snapshot();game.playerRecords=nil;game.pitchLog=nil;game.npcReadiness=nil
+                                row.payload=try JSONEncoder().encode(game);try c.save()
+                                _ = try row.snapshot()
+                            }
+                        }
+                        player.gameDate=fixtures[6].date.description;state.actionDate=nil;try c.save()
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-v41-position-verification"),role == .batter {
                         let c=memory.mainContext
                         player.positionRaw=FieldPosition.shortstop.rawValue;player.speed=95;player.defense=50;player.arm=80

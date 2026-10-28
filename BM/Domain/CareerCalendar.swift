@@ -102,7 +102,7 @@ enum CalendarError: LocalizedError {
         case .invalidDate: "저장된 날짜를 확인할 수 없습니다. 저장 데이터를 유지한 채 진행을 중단합니다."
         case .invalidGroup: "6팀 일정 정보를 확인할 수 없습니다."
         case .actionUsed: "오늘 행동을 이미 사용했습니다."
-        case .preparationRequired: "오늘의 휴식을 먼저 선택해 주세요. 훈련은 다음 구현에서 연결합니다."
+        case .preparationRequired: "오늘 훈련 또는 휴식 1회를 먼저 마쳐 주세요. 진행 중인 훈련은 이어서 완료해 주세요."
         case .fixturePending: "오늘 경기를 먼저 완료하고 결과를 저장해 주세요."
         case .anniversaryConfirmation: "다음 날은 나이·학적 변경일입니다. 하루 진행으로 확인해 주세요."
         case .staleState: "선수 또는 날짜 상태가 바뀌었습니다. 현재 화면에서 다시 진행해 주세요."
@@ -241,15 +241,10 @@ struct PersonalSeasonTotals: Equatable, Codable {
 struct CareerSeasonSummary: Equatable {
     let league: AnnualLeague
     let totals: PersonalSeasonTotals
+    var coverage:PersonalSeasonCoverage? = nil
     // A legacy partial season is not a completed 30-game season.
-    var finalized: Bool {
-        league.fixtures.count == 90 && league.results.count == 90 && league.pendingIDs.isEmpty &&
-        league.standings.count == 6 && league.standings.allSatisfy { $0.games == 30 }
-    }
-    var finalStandings: [LeagueStanding] {
-        guard finalized, league.standings.allSatisfy({ $0.decided == 0 }) else { return league.standings }
-        return league.standings.map { var row = $0; row.rank = 1; return row }
-    }
+    var finalized:Bool {league.isComplete}
+    var finalStandings:[LeagueStanding] {league.displayStandings}
     var champions: [LeagueStanding] { finalized ? finalStandings.filter { $0.rank == 1 } : [] }
 }
 
@@ -765,5 +760,82 @@ enum ClubCoachActionState: Equatable {
         case .used:"오늘 행동을 사용했습니다. 오늘 경기를 마치거나 다음 일정으로 진행한 뒤 준비하세요."
         case .blocked(let reason):reason
         }
+    }
+}
+
+// Read-only daily copy: team schedule, personal appearance and the daily action are independent.
+enum CalendarSavedMatch: Equatable {
+    case none, playing(Bool), completed(Bool), invalid
+    @MainActor static func read(_ record: CareerMatchRecord?) -> Self {
+        guard let record else {return .none}
+        guard let game=try? record.snapshot() else {return .invalid}
+        return game.completed ? .completed(game.appearance):.playing(game.appearance)
+    }
+}
+struct CalendarDayPresentation: Equatable {
+    let team: String
+    let participation: String
+    let action: String
+    let entry: String
+    var summary: String { [team,participation,action].joined(separator:" · ") }
+    init(role:PlayerRole,fixture:SeasonFixture?,saved:CalendarSavedMatch,starter:Bool?,selectionFailed:Bool,actionUsed:Bool,trainingPending:Bool) {
+        action=trainingPending ? "훈련 진행 중":actionUsed ? "행동 0/1":"행동 1/1"
+        guard let fixture else {team="팀 경기 없음";participation="훈련·휴식일";entry="다음 일정 확인";return}
+        switch saved {
+        case .completed(let appeared):team="팀 경기 완료";participation=appeared ? "내 출전 완료":"내 출전 없음";entry="경기 결과 보기"
+        case .playing(let appeared):team="팀 경기 진행 중";participation=appeared ? "내 경기 이어하기":"내 출전 없음";entry=appeared ? "경기 이어하기":"팀 경기 이어하기"
+        case .invalid:team="팀 경기 있음";participation="경기 기록 확인 필요";entry="경기 기록 확인"
+        case .none:
+            team="팀 경기 있음"
+            if selectionFailed {participation="기용 확인 필요";entry="기용 다시 확인"}
+            else if !fixture.isAppearance(for:role) {participation="비등판일";entry="팀 경기 진행"}
+            else if starter == false {participation="오늘 벤치";entry="팀 경기 진행"}
+            else {participation=role == .pitcher ? "선발 등판 예정":"타자 출전 예정";entry="오늘 경기 준비"}
+        }
+    }
+}
+
+struct PersonalSeasonCoverage: Equatable {
+    private(set) var games=0,collectedGames=0,earnedRunGames=0,unscoredPitchingGames=0
+    private(set) var batting=MatchBattingCounts()
+    private(set) var pitching=MatchPitchingCounts(earnedRuns:0)
+    var missingGames:Int {games-collectedGames}
+    var complete:Bool {games>0 && games == collectedGames}
+    mutating func include(_ match:CareerMatch,playerID:UUID) {
+        games += 1
+        guard let ledger=match.playerRecords else {return}
+        let team=match.isHome ? ledger.home:ledger.away,id=playerID.uuidString
+        if match.role == "batter",let counts=team.batting.first(where:{$0.id == id})?.counts {
+            collectedGames += 1;batting.add(counts)
+        } else if match.role == "pitcher",let counts=team.pitching.first(where:{$0.id == id})?.counts {
+            collectedGames += 1;pitching.add(counts)
+            if counts.earnedRuns == nil {unscoredPitchingGames += 1} else {earnedRunGames += 1}
+        }
+    }
+    func value(_ code:String,partial:Bool=false) -> String {
+        guard (partial ? collectedGames>0:complete) else {return "미집계"}
+        return MatchOpponentSeasonPlayer(id:"personal",battingGames:collectedGames,pitchingGames:collectedGames,
+            earnedRunGames:earnedRunGames,unscoredPitchingGames:unscoredPitchingGames,batting:batting,pitching:pitching).value(code)
+    }
+    var label:String {"개인 출전 \(games)경기 · 상세 수집 \(collectedGames) · 미수집 \(missingGames)"}
+}
+
+extension AnnualLeague {
+    var isComplete:Bool {fixtures.count == 90 && results.count == 90 && pendingIDs.isEmpty && standings.count == 6 && standings.allSatisfy {$0.games == 30}}
+    var displayStandings:[LeagueStanding] {
+        guard isComplete,standings.allSatisfy({$0.decided == 0}) else {return standings}
+        return standings.map {var row=$0;row.rank=1;return row}
+    }
+}
+enum LeagueRecordSource {
+    static func label(automatic:Bool,ownTeam:Bool) -> String {
+        automatic ? (ownTeam ? "내 팀 자동 결과":"다른 팀 자동 경기") : "내 팀 경기 원장"
+    }
+}
+extension OffseasonPlan {
+    var transitionNotice:String? {
+        if age<=18 && targetAge>=19 {return "고교 졸업·진로준비 시기입니다. 프로·대학 입단은 별도 선발과 계약이 필요합니다."}
+        if age<20 && targetAge>=20 {return "20세 진로 심사 시기입니다. 현재 소속·보유 권리와 실제 제의에 따라 진로가 결정됩니다."}
+        return nil
     }
 }

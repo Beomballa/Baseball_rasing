@@ -276,16 +276,19 @@ struct PlayerHomeView: View {
             if let calendar {
                 let status = CalendarScheduleStatus(player: player, state: calendar)
                 let saved = status.schedule?.today.flatMap { fixture in gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id } }
+                let todayState=CalendarDayPresentation(role:player.role,fixture:status.schedule?.today,saved:CalendarSavedMatch.read(saved),
+                    starter:clubSelection?.isStarter,selectionFailed:clubSelectionFailure != nil,
+                    actionUsed:calendar.hasAction(on:player.gameDate),trainingPending:todayTraining?.completed == false)
                 if status.schedule == nil {
                     roomActionButton("일정 확인 필요", "일정 다시 확인", id: "homeCalendar") { showCalendar = true }
                 } else if todayTraining?.completed == false {
                     roomActionButton("진행 중인 훈련", "훈련 이어하기", id: "homeResumeTraining") { trainingSection = .abilities; roomDetail = .training(trainingSection) }
                 } else if saved?.completed == false || (status.schedule?.today != nil && calendar.hasAction(on: player.gameDate)) {
-                    roomActionButton(clubSelectionFailure != nil && saved == nil ? "기용 조회 실패 · 경기 준비에서 확인" : (saved?.appearance == false || (saved == nil && clubSelection?.isStarter == false)) ? "오늘 벤치 · 팀 경기" : "오늘의 경기", saved?.completed == true ? "경기 결과 보기" : saved == nil ? "오늘 경기 준비" : "경기 이어하기", id: "homeTodayGame") { roomDetail = .gameEntry }
+                    roomActionButton(todayState.summary,todayState.entry,id:"homeTodayGame") {roomDetail = .gameEntry}
                 } else if calendar.hasAction(on: player.gameDate) {
                     roomActionButton("오늘 행동 완료", "다음 일정 확인", id: "homeCalendar") { showCalendar = true }
                 } else {
-                    roomActionButton("오늘: 훈련 또는 휴식", "훈련장 가기", id: "homeGoTraining") { selectedTab = .training }
+                    roomActionButton(todayState.summary, "훈련장 가기", id: "homeGoTraining") { selectedTab = .training }
                 }
             } else { roomActionButton("일정 자료 확인 필요", "선수 정보 확인", id: "homeCalendar") { roomDetail = .profile } }
         case .player: roomActionButton("나의 성장", "능력치 확인", id: "roomPrimary") { playerSection = .abilities; roomDetail = .player(playerSection) }
@@ -296,8 +299,13 @@ struct PlayerHomeView: View {
         }
     }
     private func roomActionButton(_ caption: String, _ title: String, id: String, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 8) {
-            if !typeSize.isAccessibilitySize { Text(caption).font(.caption).foregroundStyle(GameTheme.boardInk).frame(maxWidth: .infinity, alignment: .leading) }
+        let layout=typeSize.isAccessibilitySize && selectedTab == .home ? AnyLayout(VStackLayout(alignment:.leading,spacing:8)):AnyLayout(HStackLayout(spacing:8))
+        return layout {
+            if !typeSize.isAccessibilitySize || selectedTab == .home {
+                Text(caption).font(typeSize.isAccessibilitySize ? .subheadline:.caption).foregroundStyle(GameTheme.boardInk)
+                    .fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading)
+                    .accessibilityIdentifier(selectedTab == .home ? "homeDailyStatus":"roomActionCaption")
+            }
             Button(title, action: action).buttonStyle(ManagementButtonStyle()).accessibilityIdentifier(id)
         }
     }
@@ -578,6 +586,8 @@ struct PlayerHomeView: View {
     private var recentGames: some View {
         ManagementPanel("최근 5경기 · 스코어북") {
             let recent = recentRecords
+            Text("내 팀 경기 원장 · 비출전 팀 경기 포함\n개인 시즌 성적은 완료한 내 출전만 합산합니다.")
+                .font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("recentRecordsScope")
             if recent.isEmpty {
                 Text("완료한 경기가 없습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             } else {
@@ -619,7 +629,7 @@ struct PlayerHomeView: View {
                 Text(CareerTeamDirectory.name(record.opponentID, schools: schools)).font(.headline)
                 Text(record.appearance ? (player.role == .batter
                     ? "\(match.line.atBats)타수 \(match.line.hits)안타 · \(match.line.homeRuns)홈런"
-                    : "\(match.line.pitchingOuts / 3).\(match.line.pitchingOuts % 3)이닝 · \(match.line.pitchingStrikeouts)K") : "비등판 · 팀 경기")
+                    : "\(match.line.pitchingOuts / 3).\(match.line.pitchingOuts % 3)이닝 · \(match.line.pitchingStrikeouts)K") : "비출전 · 팀 경기")
                     .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             }
             if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
@@ -648,6 +658,7 @@ struct SeasonPersonalRecord: View {
     let totals: PersonalSeasonTotals
     let role: PlayerRole
     var compact = false
+    var coverage:PersonalSeasonCoverage? = nil
     @Environment(\.dynamicTypeSize) private var typeSize
     private var values: [(String, String)] {
         let l = totals.line
@@ -663,7 +674,26 @@ struct SeasonPersonalRecord: View {
             }.accessibilityElement(children: .ignore)
                 .accessibilityLabel(values.map { "\($0.0) \($0.1)" }.joined(separator: " · "))
                 .accessibilityIdentifier(compact ? "homeSeasonTotals" : "seasonTotals")
+            Text("선택 연도의 완료한 내 공식 출전만 · 소속/리그 합산\n미완료·비출전·다른 팀 자동 경기·평가전 제외")
+                .font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("personalSeasonScope")
             if !compact {
+                let codes=role == .batter ? ["OBP","SLG","OPS"]:["ER","ERA","WHIP"]
+                LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:8),count:typeSize.isAccessibilitySize ? 1:2),spacing:8) {
+                    ForEach(codes,id:\.self) {code in
+                        SeasonRecordTile(label:code,value:code == "WHIP" ? totals.whip:coverage?.value(code) ?? "미집계")
+                            .accessibilityElement(children:.combine).accessibilityIdentifier("seasonMetric-"+code)
+                    }
+                }
+                Text(coverage?.label ?? "상세 기록 수집 범위를 확인할 수 없습니다.")
+                    .font(.subheadline.monospacedDigit()).accessibilityIdentifier("seasonCoverage")
+                if let coverage,coverage.missingGames>0,coverage.collectedGames>0 {
+                    DisclosureGroup("상세 수집 \(coverage.collectedGames)경기만 별도 보기") {
+                        Text(codes.map {"\($0) \(coverage.value($0,partial:true))"}.joined(separator:" · "))
+                            .font(.subheadline.monospacedDigit()).fixedSize(horizontal:false,vertical:true)
+                        Text("위의 전체 시즌 지표와 표본이 다릅니다. 미수집 경기를 0으로 채우지 않습니다.").font(.subheadline)
+                    }.tint(GameTheme.gold)
+                }
+                Text("WAR · 후속 지표").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 let l = totals.line
                 DisclosureGroup("전체 원기록 · 집계 범위") {
                     Text(role == .batter
@@ -672,7 +702,7 @@ struct SeasonPersonalRecord: View {
                         .font(.subheadline.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("seasonRecordDetails")
                     if role == .pitcher {
-                        Text("이 개인 요약은 실점(R) 기준입니다. 자책점(ER)·ERA 계산과 상대 성적판 연결은 구현돼 있으나 이 요약의 지표에는 포함되지 않습니다. 투수 승패도 별도입니다.")
+                        Text("실점(R)과 자책점(ER)은 다릅니다. ER/ERA는 상세 수집·ER 채점이 모두 있는 시즌만 표시합니다. \(coverage?.earnedRunGames ?? 0)경기 ER 채점 · \(coverage?.unscoredPitchingGames ?? 0)경기 ER 미채점. 투수 승패는 별도입니다.")
                             .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                     }
                     Text(totals.games == 0 ? "완료한 개인 출전 기록이 없습니다." : "종료한 개인 출전만 합산 · 미완료/비등판·자동 팀 경기 제외")
@@ -736,7 +766,7 @@ struct CareerSeasonScreen: View {
                         Text("\(player.name) · \(name(ownTeamID)) · \(player.role.label)").font(.caption).accessibilityIdentifier("seasonPlayer")
                     }
                     GamePanel(title: "MY RECORD · 내 시즌 성적", onBoard: true) {
-                        SeasonPersonalRecord(totals: summary.totals, role: player.role)
+                        SeasonPersonalRecord(totals: summary.totals, role: player.role,coverage:summary.coverage)
                     }
                     if summary.finalized {
                         SeasonOffseasonPanel(player: player, state: state, seasonYear: league.year, transition: transition)
@@ -798,7 +828,8 @@ struct SeasonOffseasonPanel: View {
     @Environment(\.dismiss) private var dismiss
     @State private var plan: OffseasonPlan?
     @State private var loadError: String?
-    @State private var progress = ""
+    @State private var receipt:CalendarAdvanceSummary?
+    @State private var receiptFailure:String?
     @State private var failure: String?
     @State private var confirmBirthday = false
     private func reload() {
@@ -815,15 +846,15 @@ struct SeasonOffseasonPanel: View {
             }
             let revision = state.revision, date = player.gameDate
             transition.perform(date: date, label: "오프시즌 진행", reduced: reduced, cancellable: true) {
-                progress = ""
+                receiptFailure=nil
                 do {
-                    progress = try await CalendarProgression.advanceOffseason(player: player, state: state, seasonYear: plan.seasonYear,
+                    receipt = try await CalendarProgression.advanceOffseason(player: player, state: state, seasonYear: plan.seasonYear,
                         revision: revision, expectedDate: date, confirmAnniversary: confirmed, in: context, onDaySaved: { saved in
                             transition.arrive(on: saved, reduced: reduced)
                             try? await Task.sleep(for: .milliseconds(reduced ? 0 : 35))
-                        }).message
+                        })
                 } catch let error as CalendarAdvanceFailure {
-                    progress = error.summary.message; failure = error.localizedDescription
+                    receipt = error.summary; receiptFailure = error.reason
                     transition.arrive(on: error.summary.lastSavedDate, reduced: reduced)
                 } catch { failure = error.localizedDescription }
                 reload()
@@ -838,12 +869,12 @@ struct SeasonOffseasonPanel: View {
             } else if let plan {
                 Text("\(plan.date.description) → \(plan.target.description)").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
                     .accessibilityIdentifier("offseasonDates")
-                Text("남은 \(plan.remainingDays)일 · \(plan.age)세 → \(plan.targetAge)세 · \(SeasonSchedule.academicStatus(age: plan.targetAge))")
+                Text("남은 \(plan.remainingDays)일 · \(plan.age)세 → \(plan.targetAge)세 · \(plan.targetAge<=19 ? SeasonSchedule.academicStatus(age:plan.targetAge):"성인 시즌 · 소속/계약 별도 확인")")
                     .font(.caption).accessibilityIdentifier("offseasonAge")
                 Text("하루씩 저장 · 미사용 행동은 휴식 −\(DailyRecovery.rest) · 수면 −\(DailyRecovery.sleep)\n최대 30일 진행 후 계속 · 나이 변경 전 확인")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                if plan.targetAge >= 19 {
-                    Text("고교 졸업·진로준비로 전환합니다. 고교 경기나 프로·대학 계약을 자동 생성하지 않습니다.")
+                if let notice=plan.transitionNotice {
+                    Text(notice)
                         .font(.caption).foregroundStyle(GameTheme.gold)
                 }
                 Button("다음 연도까지 · 최대 \(min(30, plan.remainingDays))일 진행") { proceed() }
@@ -853,7 +884,11 @@ struct SeasonOffseasonPanel: View {
                     .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("offseasonUnavailable")
                 Button("선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("offseasonReturnHome")
             }
-            if !progress.isEmpty { Text(progress).font(.caption).accessibilityIdentifier("offseasonSummary") }
+            if let receipt {
+                CalendarProgressReceipt(summary:receipt,failure:receiptFailure,
+                    retryEnabled:plan != nil && transition.display == nil && receipt.lastSavedDate == player.gameDate,retry:{proceed()})
+                    .accessibilityIdentifier("offseasonSummary")
+            }
         }
         .task(id: "\(seasonYear):\(player.gameDate):\(state.revision):\(transition.display == nil)") {
             if transition.display == nil { reload() }
