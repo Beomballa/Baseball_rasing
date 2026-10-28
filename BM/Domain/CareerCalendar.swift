@@ -687,3 +687,71 @@ struct NPCSelectionEvidence: Codable, Equatable {
         }
     }
 }
+
+
+// Read-only coaching: saved decision scores and live training advice have separate time bases.
+struct ClubCoachDeficit: Equatable, Identifiable {
+    let kind: TrainingKind
+    let current: Double
+    let reference: Double
+    let roleImpact: Double
+    var id:String {kind.rawValue}
+    var gap:Double {reference-current}
+}
+struct ClubCoachFeedback {
+    let review:ClubSelectionReview
+    let nextEvaluation:String
+    let reconsideration:String
+    let deficits:[ClubCoachDeficit]
+    var scoreGap:Double {review.own.score-review.rival.score}
+    var pointsToChallenge:Double {max(0,review.rival.score+5-review.own.score)}
+    var hasAbilityBasis:Bool {review.rivalAbilities != nil}
+    static func dates(review:ClubSelectionReview,on date:GameDate) throws -> (next:String,change:String) {
+        func scheduled(_ day:GameDate) throws -> GameDate {
+            let opening=try GameDate("\(day.year)-04-01"),closing=try GameDate("\(day.year)-09-22")
+            if day<opening {return opening}
+            return day>closing ? try GameDate("\(day.year+1)-04-01"):day
+        }
+        guard date >= (try GameDate(review.date)) else {throw ContractRegistrationError.invalid}
+        let upcoming=max(try GameDate(review.nextReview),date.monday.adding(days:7))
+        let next=try scheduled(upcoming)
+        var change=next
+        if let hold=review.holdUntil {
+            while change < (try GameDate(hold)) {change=try scheduled(change.adding(days:7))}
+        }
+        return (next.description,change.description)
+    }
+    static func make(review:ClubSelectionReview,abilities:HomeAbilitySummary,role:PlayerRole,mastery:Double?,on date:GameDate) throws -> Self {
+        try review.own.validate();try review.rival.validate();try review.validateRivalBasis()
+        guard (role == .pitcher) == (review.roleID == "starter") else {throw ContractRegistrationError.invalid}
+        let dates=try dates(review:review,on:date)
+        guard let reference=review.rivalAbilities else {return Self(review:review,nextEvaluation:dates.next,reconsideration:dates.change,deficits:[])}
+        let target=ScoutingClubCatalog.abilities(reference,role:role)
+        guard let base=try ScoutingRoleEvaluation.grades(role:role,abilities:abilities,positionMastery:mastery).first(where:{$0.id == review.roleID})?.score else {throw ScoutingObservationError.invalid}
+        var deficits:[ClubCoachDeficit]=[]
+        for kind in TrainingKind.allCases where kind != .pitch && kind.allows(role.rawValue) {
+            guard let id=CareerAgingRules.homeIDs[kind],let own=abilities.originals.first(where:{$0.id == id}),
+                  let rival=target.originals.first(where:{$0.id == id}),rival.current>own.current else {continue}
+            let replaced=abilities.originals.map {$0.id == id ? HomeAbilityValue(id:$0.id,label:$0.label,current:rival.current,initial:$0.initial):$0}
+            let changed=HomeAbilitySummary(axes:abilities.axes,originals:replaced,pitches:abilities.pitches,hasInitialValues:abilities.hasInitialValues)
+            guard let h=try ScoutingRoleEvaluation.grades(role:role,abilities:changed,positionMastery:mastery).first(where:{$0.id == review.roleID})?.score,h>base else {continue}
+            deficits.append(ClubCoachDeficit(kind:kind,current:own.current,reference:rival.current,roleImpact:h-base))
+        }
+        deficits.sort {$0.roleImpact == $1.roleImpact ? $0.id<$1.id:$0.roleImpact>$1.roleImpact}
+        return Self(review:review,nextEvaluation:dates.next,reconsideration:dates.change,deficits:Array(deficits.prefix(3)))
+    }
+}
+
+enum ClubCoachActionState: Equatable {
+    case available,resume,used,blocked(String)
+    var canTrain:Bool {self == .available}
+    var canRest:Bool {self == .available}
+    var message:String {
+        switch self {
+        case .available:"오늘 행동을 선택할 수 있습니다. 준비 화면에서 확인한 뒤 시작하세요."
+        case .resume:"진행 중인 훈련을 먼저 이어서 마쳐 주세요. 저장된 종목과 시도를 유지합니다."
+        case .used:"오늘 행동을 사용했습니다. 오늘 경기를 마치거나 다음 일정으로 진행한 뒤 준비하세요."
+        case .blocked(let reason):reason
+        }
+    }
+}

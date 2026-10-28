@@ -2779,8 +2779,9 @@ struct ClubSelectionHomePanel: View {
                         }
                     }
                     Text(review.reason).font(.subheadline)
+                    Text("평가 점수차 · 내 점수 − 경쟁자 "+String(format:"%+.1f",review.own.score-review.rival.score)).font(.subheadline.monospacedDigit()).accessibilityIdentifier("clubSelectionGap")
                     Text(review.nextReview <= player.gameDate ? "오프시즌 · 다음 개막 후 평가":"다음 평가 "+ManagementDisplay.date(review.nextReview)).font(.subheadline.monospacedDigit()).accessibilityIdentifier("clubSelectionNext")
-                    NavigationLink { ClubSelectionScreen(player:player,review:review,frozen:frozen) } label: {Text("경쟁 상대 · 기용 근거 보기")}
+                    NavigationLink { ClubSelectionScreen(player:player,calendar:calendar,review:review,frozen:frozen) } label: {Text("코치 피드백 · 출전 경쟁")}
                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubSelection")
                     Text(player.role == .pitcher ? "선발 기용과 별도로 5경기 순번을 따릅니다. 비등판일에도 훈련·휴식할 수 있습니다.":"벤치일에도 훈련·휴식 후 팀 경기를 진행할 수 있습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 }
@@ -2803,6 +2804,7 @@ struct ClubSelectionHomePanel: View {
 }
 struct ClubSelectionScreen: View {
     let player: CareerPlayer
+    let calendar: CareerCalendarState
     let review: ClubSelectionReview
     let frozen: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -2817,6 +2819,7 @@ struct ClubSelectionScreen: View {
                     Text(review.reason).font(.subheadline)
                     Text(review.nextReview <= player.gameDate ? "오프시즌 · 다음 개막 후 평가":"다음 평가 "+ManagementDisplay.date(review.nextReview)).font(.subheadline.monospacedDigit())
                 }
+                ClubCoachPanel(player:player,calendar:calendar,review:review)
                 let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:14)):AnyLayout(HStackLayout(alignment:.top,spacing:12))
                 layout {
                     candidate(review.own,title:player.name,isOwn:true)
@@ -2929,5 +2932,81 @@ private struct NPCSelectionEvidencePanel: View {
             }
             Text("출전 타석 +1 · 투구 수×지구력 비용\n수면 −4 · 비출전일 휴식 −18").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
         }
+    }
+}
+
+
+private struct ClubCoachPanel: View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    let review:ClubSelectionReview
+    @Environment(\.modelContext) private var context
+    @State private var feedback:ClubCoachFeedback?
+    @State private var pendingTraining:CareerTraining?
+    @State private var actionState:ClubCoachActionState = .blocked("준비 상태 확인 중")
+    @State private var failure:String?
+    @State private var showRest=false
+    private func n(_ value:Double) -> String {String(format:"%.1f",value)}
+    var body: some View {
+        GamePanel(title:"DUGOUT · 코치 피드백",onBoard:true,contentSpacing:14) {
+            if let feedback {
+                Text(review.isStarter ? "현재 자리를 지키는 준비":"다음 출전 기회를 준비하세요").font(.headline).foregroundStyle(GameTheme.gold)
+                Text("내 점수 "+n(review.own.score)+" · 경쟁자 "+n(review.rival.score))
+                    .font(.headline.monospacedDigit()).accessibilityIdentifier("coachScores")
+                Text("점수 차이 "+String(format:"%+.1f",feedback.scoreGap)+" · 내 점수 − 경쟁자")
+                    .font(.subheadline.monospacedDigit()).accessibilityIdentifier("coachScoreGap")
+                if !review.isStarter {
+                    Text(feedback.pointsToChallenge>0 ? "교체 비교선까지 약 "+n((feedback.pointsToChallenge*10).rounded(.up)/10)+"점 · 경쟁자보다 5점 높아야 합니다.":"점수 조건 충족 · 관찰 기간과 다음 평가를 확인하세요.").font(.subheadline)
+                }
+                Text("다음 평가 · "+ManagementDisplay.date(feedback.nextEvaluation)).font(.headline).accessibilityIdentifier("coachNextEvaluation")
+                if feedback.nextEvaluation != feedback.reconsideration {
+                    Text("기용 관찰 중 · 교체 재검토 "+ManagementDisplay.date(feedback.reconsideration)+"부터").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("coachReconsideration")
+                }
+                Text("점수는 "+ManagementDisplay.date(review.date)+" 평가 기준입니다. 오늘 훈련·휴식으로 이미 확정된 기용을 다시 뽑지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                if !feedback.deficits.isEmpty {
+                    Text("현재 내 능력 ↔ 평가 당시 경쟁자").font(.subheadline.bold())
+                    ForEach(feedback.deficits) {deficit in
+                        VStack(alignment:.leading,spacing:8) {
+                            Text(deficit.kind.label+" · 현재 "+n(deficit.current)+" / 경쟁자 "+n(deficit.reference)).font(.headline.monospacedDigit()).accessibilityIdentifier("coachDeficit-"+deficit.id)
+                            ProgressView(value:deficit.current,total:100).tint(GameTheme.growth).accessibilityHidden(true)
+                            NavigationLink {CareerTrainingView(player:player,calendar:calendar,initialKind:deficit.kind)} label: {Text(deficit.kind.label+" 훈련 준비")}
+                                .buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(!actionState.canTrain).accessibilityIdentifier("coachTrain-"+deficit.id)
+                        }
+                    }
+                    Text("역할 기량에 반영되는 격차 순입니다. 현재 능력의 보완 제안이며 평가 당시 내 개별 능력을 복원한 값은 아닙니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                } else {
+                    Text(feedback.hasAbilityBasis ? "비교 가능한 원본 능력에서 보완할 격차가 없습니다. 구종 숙련·경기 성과와 컨디션도 함께 확인하세요.":"경쟁자의 당시 개별 능력 자료가 없어 부족한 능력을 추정하지 않습니다.").font(.subheadline)
+                    NavigationLink {CareerTrainingView(player:player,calendar:calendar)} label: {Text("훈련장 선택 화면")}
+                        .buttonStyle(MatchPixelButtonStyle()).disabled(!actionState.canTrain).accessibilityIdentifier("coachTrainingLibrary")
+                }
+                if actionState == .resume {
+                    NavigationLink {resumeDestination} label: {Text("진행 중인 훈련 이어하기")}
+                        .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("coachResumeTraining")
+                }
+                Text("현재 피로 \(player.fatigue) / 100 · 휴식 후 \(DailyRecovery.recover(player.fatigue,by:DailyRecovery.rest))").font(.headline.monospacedDigit()).accessibilityIdentifier("coachCurrentFatigue")
+                Button("휴식 라운지 · 회복 확인") {showRest=true}
+                    .buttonStyle(MatchPixelButtonStyle()).disabled(!actionState.canRest).accessibilityIdentifier("coachRest")
+                Text(actionState.message).font(.subheadline).accessibilityIdentifier("coachActionState")
+            }
+            if let failure {
+                Text("코치 자료 확인 필요 · "+failure).font(.subheadline).accessibilityIdentifier("coachError")
+                Button("코치 자료 다시 확인",action:load).buttonStyle(MatchPixelButtonStyle())
+            }
+        }.task(id:"\(player.gameDate)-\(calendar.revision)") {load()}
+            .sheet(isPresented:$showRest,onDismiss:load) {
+                CareerRestConfirmation(player:player,state:calendar,revision:calendar.revision,returnTitle:"코치 피드백으로 돌아가기")
+            }
+    }
+    @ViewBuilder private var resumeDestination:some View {
+        if let trait=pendingTraining?.trait {TraitTrainingLiveView(player:player,calendar:calendar,initialTrait:trait)}
+        else if let position=pendingTraining?.position {PositionTrainingView(player:player,calendar:calendar,initialPosition:position)}
+        else {CareerTrainingView(player:player,calendar:calendar)}
+    }
+    private func load() {
+        do {
+            pendingTraining=try CareerTrainingStore.record(player:player,in:context)?.snapshot()
+            feedback=try ClubCoachStore.feedback(player:player,calendar:calendar,review:review,in:context)
+            actionState=ClubCoachStore.actions(player:player,calendar:calendar,in:context);failure=nil
+        } catch {feedback=nil;actionState = .blocked(error.localizedDescription);failure=error.localizedDescription}
     }
 }

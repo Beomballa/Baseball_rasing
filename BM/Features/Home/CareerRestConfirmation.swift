@@ -5,6 +5,7 @@ struct CareerRestConfirmation: View {
     let player: CareerPlayer
     let state: CareerCalendarState
     let revision: Int
+    var returnTitle = "홈으로 돌아가기"
     var onCompleted: (() -> Void)? = nil
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -33,7 +34,7 @@ struct CareerRestConfirmation: View {
                                 Text("지금 날짜는 그대로 · 피로는 0 아래로 내려가지 않습니다.").managementFont(.helper)
                                 if completed {
                                     Text("휴식을 저장했습니다.").managementFont(.body).accessibilityIdentifier("restSaved")
-                                    Button("홈으로 돌아가기") { dismiss() }.buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("restDone")
+                                    Button(returnTitle) { dismiss() }.buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("restDone")
                                 } else {
                                     if pending { Text("진행 중인 훈련을 먼저 마쳐 주세요.").managementFont(.body).accessibilityIdentifier("restPendingGate") }
                                     else if used { Text("오늘 행동을 이미 사용했습니다.").managementFont(.body).accessibilityIdentifier("restActionGate") }

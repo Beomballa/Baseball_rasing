@@ -2,6 +2,56 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV35CoachAdviceTrainingPreparationAndConfirmedRestBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench","-v35-coach-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-game"].tap();app.buttons["facility-game"].tap();reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+            let gap=app.staticTexts["coachScoreGap"];reveal(gap,app);XCTAssertTrue(gap.exists);let score=gap.label
+            XCTAssertTrue(app.staticTexts["coachNextEvaluation"].exists)
+            capture(app,"v35-"+(pitcher ? "pitcher":"batter")+"-coach")
+            let train=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","coachTrain-")).firstMatch;reveal(train,app);XCTAssertTrue(train.isEnabled)
+            capture(app,"v35-"+(pitcher ? "pitcher":"batter")+"-deficits")
+            let kind=train.label.replacingOccurrences(of:" 훈련 준비",with:"");train.tap()
+            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout:10));XCTAssertTrue(app.navigationBars[kind+" 훈련"].exists)
+            capture(app,"v35-"+(pitcher ? "pitcher":"batter")+"-training-ready")
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let rest=app.buttons["coachRest"];reveal(rest,app);rest.tap()
+            XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout:8));capture(app,"v35-"+(pitcher ? "pitcher":"batter")+"-rest-preview")
+            app.buttons["취소 · 돌아가기"].tap();XCTAssertTrue(app.staticTexts["coachCurrentFatigue"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["coachCurrentFatigue"].label.contains("55"))
+            rest.tap();app.buttons["confirmRest"].tap();XCTAssertTrue(app.staticTexts["restSaved"].waitForExistence(timeout:5));XCTAssertEqual(app.buttons["restDone"].label,"코치 피드백으로 돌아가기");app.buttons["restDone"].tap()
+            let fatigue=app.staticTexts["coachCurrentFatigue"];XCTAssertTrue(fatigue.waitForExistence(timeout:5));XCTAssertTrue(fatigue.label.contains("37"));XCTAssertFalse(rest.isEnabled)
+            capture(app,"v35-"+(pitcher ? "pitcher":"batter")+"-rest-used")
+            reveal(gap,app);XCTAssertEqual(gap.label,score)
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app).first,before.first)
+        }
+    }
+    @MainActor func testV35CoachResumesSavedTrainingInsteadOfNewAdviceBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench","-v35-coach-verification","-v35-coach-pending"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-game"].tap();app.buttons["facility-game"].tap();reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+            let resume=app.buttons["coachResumeTraining"];reveal(resume,app);XCTAssertTrue(resume.isEnabled);XCTAssertFalse(app.buttons["coachRest"].isEnabled)
+            capture(app,"v35-"+(pitcher ? "pitcher":"batter")+"-resume-priority")
+            resume.tap();let progress=app.descendants(matching:.any).matching(identifier:"trainingProgress").firstMatch;XCTAssertTrue(progress.waitForExistence(timeout:10))
+            XCTAssertFalse(app.buttons["startTraining"].exists);capture(app,"v35-"+(pitcher ? "pitcher":"batter")+"-resume-training")
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before)
+        }
+    }
+    @MainActor func testV35SmallPhoneLargeTextCoachDatesAndActionsRemainReachable() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench","-v35-coach-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        app.buttons["managementLargeMenu"].tap();app.buttons["경기"].tap();reveal(app.buttons["facility-game"],app);app.buttons["facility-game"].tap();reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+        let day=app.staticTexts["coachNextEvaluation"];reveal(day,app);XCTAssertTrue(day.isHittable);capture(app,"v35-large-dates")
+        let rest=app.buttons["coachRest"];reveal(rest,app);XCTAssertTrue(rest.isHittable);XCTAssertTrue(rest.isEnabled);capture(app,"v35-large-actions")
+    }
     @MainActor func testV34ObservedNPCPerformanceAndFatigueAreReadOnlyBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench","-v34-npc-evidence"];app.launch()

@@ -5603,3 +5603,116 @@ extension CareerCalendarTests {
         XCTAssertNotNil(try ClubSelectionStore.projection(player:p,calendar:s,in:c)?.rivalEvidence);XCTAssertEqual(row.payload,bytes)
     }
 }
+
+
+extension CareerCalendarTests {
+    private func coachReview(role:PlayerRole = .batter,roleID:String="field",date:String="2030-04-01",reference:PlayerInitialValues?=nil) throws -> ClubSelectionReview {
+        let actual=role == .pitcher ? "starter":roleID,position=role == .pitcher ? "P":"SS"
+        let h=try reference.flatMap {try ScoutingRoleEvaluation.grades(role:role,abilities:ScoutingClubCatalog.abilities($0,role:role),positionMastery:60).first {$0.id == actual}?.score} ?? 80
+        return try ClubSelectionReview.make(context:"m/team/domestic-development/2030/"+position,membershipID:"m",teamID:"team",level:"domestic-development",position:position,roleID:actual,date:GameDate(date),
+            own:ClubSelectionCandidate(id:"me",h:20,p:0,readiness:50,evidence:nil,note:"고정 평가"),rival:ClubSelectionCandidate(id:"npc",h:h,p:0,readiness:100,evidence:nil,note:"고정 평가"),previous:nil,rivalAbilities:reference,rivalPositionMastery:reference == nil ? nil:60)
+    }
+    func testV35WeeklyHoldAndOffseasonDatesFollowExistingEvaluationWindows() throws {
+        let review=try coachReview(date:"2030-04-03")
+        let dates=try ClubCoachFeedback.dates(review:review,on:GameDate("2030-04-03"))
+        XCTAssertEqual(dates.next,"2030-04-08");XCTAssertEqual(dates.change,"2030-04-22")
+        XCTAssertEqual(review.holdUntil,"2030-04-17")
+        let late=try coachReview(date:"2030-09-22")
+        XCTAssertEqual(try ClubCoachFeedback.dates(review:late,on:GameDate("2030-09-23")).next,"2031-04-01")
+        XCTAssertEqual(try ClubCoachFeedback.dates(review:late,on:GameDate("2031-02-01")).next,"2031-04-01")
+        XCTAssertThrowsError(try ClubCoachFeedback.dates(review:review,on:GameDate("2030-03-31")))
+    }
+    func testV35DeficitsReuseRoleFormulaAndShowOnlyRelevantTrainableAbilities() throws {
+        var reference=PlayerInitialValues(contact:80,power:80,discipline:80,speed:80,defense:80,arm:80,mental:80,velocity:80,control:80,stuff:80,stamina:80)
+        reference.pitches=["four-seam":80,"slider":80,"changeup":80]
+        var own=PlayerInitialValues(contact:20,power:20,discipline:20,speed:20,defense:20,arm:20,mental:20,velocity:20,control:20,stuff:20,stamina:20)
+        own.pitches=reference.pitches
+        for (role,id,expected) in [(PlayerRole.batter,"field",TrainingKind.defense),(.batter,"slugger",.power),(.batter,"onBase",.contact),(.pitcher,"starter",.control)] {
+            let review=try coachReview(role:role,roleID:id,reference:reference)
+            let feedback=try ClubCoachFeedback.make(review:review,abilities:ScoutingClubCatalog.abilities(own,role:role),role:role,mastery:60,on:GameDate(review.date))
+            XCTAssertEqual(feedback.deficits.first?.kind,expected);XCTAssertEqual(feedback.deficits.count,3)
+            XCTAssertTrue(feedback.deficits.allSatisfy {$0.kind.allows(role.rawValue) && $0.reference == 80 && $0.current == 20 && $0.roleImpact>0})
+            XCTAssertEqual(feedback.scoreGap,review.own.score-review.rival.score);XCTAssertEqual(feedback.pointsToChallenge,max(0,review.rival.score+5-review.own.score))
+        }
+    }
+    func testV35LegacyMissingBasisAndNoDeficitsNeverFabricateAbilityTargets() throws {
+        let values=PlayerArchetype.contact.values,summary=ScoutingClubCatalog.abilities(values,role:.batter)
+        let legacy=try coachReview()
+        let unknown=try ClubCoachFeedback.make(review:legacy,abilities:summary,role:.batter,mastery:60,on:GameDate(legacy.date))
+        XCTAssertFalse(unknown.hasAbilityBasis);XCTAssertTrue(unknown.deficits.isEmpty)
+        let equal=try coachReview(reference:values)
+        let result=try ClubCoachFeedback.make(review:equal,abilities:summary,role:.batter,mastery:60,on:GameDate(equal.date))
+        XCTAssertTrue(result.hasAbilityBasis);XCTAssertTrue(result.deficits.isEmpty)
+        XCTAssertThrowsError(try ClubCoachFeedback.make(review:equal,abilities:summary,role:.pitcher,mastery:60,on:GameDate(equal.date)))
+    }
+    func testV35FeedbackReadsLiveAbilitiesButNeverRewritesSavedEvaluationOrReports() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try v32Fixture(role),c=db.mainContext
+            let review=try XCTUnwrap(ClubSelectionStore.capture(player:p,calendar:s,in:c));try c.save()
+            let owner=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),bytes=owner.payload
+            let reports=try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),date=p.gameDate,fatigue=p.fatigue,revision=s.revision
+            let first=try ClubCoachStore.feedback(player:p,calendar:s,review:review,in:c)
+            XCTAssertEqual(ClubCoachStore.actions(player:p,calendar:s,in:c),.available);XCTAssertFalse(c.hasChanges)
+            XCTAssertEqual(try ClubCoachStore.feedback(player:p,calendar:s,review:review,in:c).deficits,first.deficits)
+            XCTAssertEqual(owner.payload,bytes);XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+            if role == .batter {p.defense=99} else {try PlayerAbilityStore.profile(playerID:p.id,in:c)!.grow(.control,to:99)}
+            try c.save()
+            let updated=try ClubCoachStore.feedback(player:p,calendar:s,review:review,in:c)
+            XCTAssertFalse(updated.deficits.contains {$0.kind == (role == .batter ? .defense:.control)})
+            XCTAssertEqual(updated.scoreGap,first.scoreGap);XCTAssertEqual(owner.payload,bytes)
+            XCTAssertEqual(try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reports)
+        }
+    }
+    func testV35PendingTrainingTakesPriorityAndRewardsRemainOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try v32Fixture(role),c=db.mainContext
+            let kind:TrainingKind=role == .batter ? .contact:.control
+            let row=try CareerTrainingStore.start(player:p,state:s,kind:kind,in:c)
+            try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(x:0.5,y:0.5,timing:role == .batter ? 0.5:nil),in:c)
+            let before=row.payload
+            XCTAssertEqual(ClubCoachStore.actions(player:p,calendar:s,in:c),.resume)
+            XCTAssertThrowsError(try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c));XCTAssertEqual(row.payload,before)
+            XCTAssertEqual(try CareerTrainingStore.start(player:p,state:s,kind:role == .batter ? .power:.stamina,in:c).payload,before)
+            for _ in 1..<5 {try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(x:0.5,y:0.5,timing:role == .batter ? 0.5:nil),in:c)}
+            let done=row.payload,fatigue=p.fatigue
+            XCTAssertEqual(ClubCoachStore.actions(player:p,calendar:s,in:c),.used)
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(),in:c))
+            XCTAssertEqual(row.payload,done);XCTAssertEqual(p.fatigue,fatigue)
+        }
+    }
+    func testV35RestFailureRetryAndFixedSelectionStayIndependentBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try v32Fixture(role),c=db.mainContext
+            p.fatigue=55;let review=try XCTUnwrap(ClubSelectionStore.capture(player:p,calendar:s,in:c));try c.save()
+            let owner=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),bytes=owner.payload,revision=s.revision
+            XCTAssertThrowsError(try CalendarProgression.rest(player:p,state:s,revision:revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(p.fatigue,55);XCTAssertEqual(ClubCoachStore.actions(player:p,calendar:s,in:c),.available)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            XCTAssertEqual(p.fatigue,37);XCTAssertEqual(ClubCoachStore.actions(player:p,calendar:s,in:c),.used)
+            let feedback=try ClubCoachStore.feedback(player:p,calendar:s,review:review,in:c)
+            XCTAssertEqual(feedback.review.own.readiness,45);XCTAssertEqual(owner.payload,bytes)
+            XCTAssertThrowsError(try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c));XCTAssertEqual(p.fatigue,37)
+            let game=try CareerMatchStore.start(player:p,state:s,in:c)
+            XCTAssertEqual(try game.snapshot().clubSelection?.review,review)
+            let gameBytes=game.payload
+            _=try ClubCoachStore.feedback(player:p,calendar:s,review:review,in:c)
+            XCTAssertEqual(game.payload,gameBytes);XCTAssertEqual(owner.payload,bytes)
+        }
+    }
+    func testV35CoachResumeAfterDiskReopenKeepsStoredAttemptAndReview() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("coach.store");var id:UUID!,bytes:Data!,review:ClubSelectionReview!
+        do {
+            let (db,p,s)=try v32Fixture(.batter,url:url),c=db.mainContext;id=p.id
+            review=try ClubSelectionStore.capture(player:p,calendar:s,in:c);try c.save()
+            let row=try CareerTrainingStore.start(player:p,state:s,kind:.contact,in:c)
+            try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(x:0.5,y:0.5,timing:0.5),in:c);bytes=row.payload
+        }
+        let db=try CareerStore.makeContainer(url:url),c=db.mainContext
+        let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        XCTAssertEqual(ClubCoachStore.actions(player:p,calendar:s,in:c),.resume)
+        _=try ClubCoachStore.feedback(player:p,calendar:s,review:review,in:c)
+        XCTAssertEqual(try CareerTrainingStore.record(player:p,in:c)?.payload,bytes);XCTAssertFalse(c.hasChanges)
+    }
+}

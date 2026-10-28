@@ -1601,3 +1601,26 @@ enum GoalSpecialError:LocalizedError {
         return result+". "+fatigue+". 이미 고정한 평가/경기는 재계산하지 않습니다."
     }
 }
+
+
+@MainActor enum ClubCoachStore {
+    static func feedback(player:CareerPlayer,calendar:CareerCalendarState,review:ClubSelectionReview,in context:ModelContext) throws -> ClubCoachFeedback {
+        guard calendar.playerID == player.id,review.own.id == player.id.uuidString else {throw ContractRegistrationError.invalid}
+        let values=HomeAbilitySummary(player:player,abilities:try PlayerAbilityStore.profile(playerID:player.id,in:context))
+        let mastery=try FieldPosition(rawValue:player.positionRaw).flatMap {position in try PlayerPositionStore.profile(playerID:player.id,in:context)?.snapshot().skill(position).mastery}
+        return try ClubCoachFeedback.make(review:review,abilities:values,role:player.role,mastery:mastery,on:GameDate(player.gameDate))
+    }
+    static func actions(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) -> ClubCoachActionState {
+        do {
+            try CareerLifecycleStore.requireActive(player)
+            guard calendar.playerID == player.id else {throw CalendarError.staleState}
+            _ = try calendar.fixtures(for:player,year:GameDate(player.gameDate).year)
+            if let training=try CareerTrainingStore.record(player:player,in:context),!(try training.snapshot().completed) {return .resume}
+            try CareerTrainingStore.requireNoPending(player:player,in:context)
+            if calendar.hasAction(on:player.gameDate) {return .used}
+            let id=player.id,date=player.gameDate
+            if try context.fetchCount(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.gameDate == date}))>0 {return .blocked("오늘 경기를 마친 뒤 다음 준비일에 훈련·휴식을 선택하세요.")}
+            return .available
+        } catch {return .blocked(error.localizedDescription)}
+    }
+}
