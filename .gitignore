@@ -214,3 +214,6 @@
 !/BM/Resources/Assets.xcassets/RestRoomV2.imageset/
 !/BM/Resources/Assets.xcassets/RestRoomV2.imageset/Contents.json
 !/BM/Resources/Assets.xcassets/RestRoomV2.imageset/room.png
+
+# Required-reason API declarations only; no private distribution credentials.
+!/BM/Resources/PrivacyInfo.xcprivacy
