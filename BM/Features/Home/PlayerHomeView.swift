@@ -49,10 +49,10 @@ struct PlayerHomeView: View {
 
     private var affiliationLabel:String {
         do {
-            if let calendar,let member=try calendar.registration(for:player) {return member.name+" · 출신 "+player.schoolName}
+            if let calendar,let member=try calendar.registration(for:player) {return member.name+" · 출신 "+player.displaySchoolName}
             let age=(try? calendar?.age(of:player)) ?? player.startAge
-            return age <= 18 ? player.schoolName:"무소속 · 출신 "+player.schoolName
-        } catch {return "소속 조회 오류 · 출신 "+player.schoolName}
+            return age <= 18 ? player.displaySchoolName:"무소속 · 출신 "+player.displaySchoolName
+        } catch {return "소속 조회 오류 · 출신 "+player.displaySchoolName}
     }
     @State private var clubSelection: ClubSelectionReview?
     @State private var clubSelectionFailure: String?
@@ -882,7 +882,7 @@ struct CareerPathHomePanel: View {
                 Button("다시 확인", action:load).buttonStyle(MatchPixelButtonStyle())
             } else if let history {
                 Text((try? calendar.registration(for:player))?.label ?? history.current.stage.label).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerPathStage")
-                Text((try? calendar.registration(for:player)).map {"현재 소속 · "+$0.name+" / 출신 · "+player.schoolName} ?? (history.current.stage == .school ? "현재 소속 · \(history.current.schoolName ?? player.schoolName)" : "현재 소속 · 무소속 / 출신 · \(player.schoolName)"))
+                Text((try? calendar.registration(for:player)).map {"현재 소속 · "+$0.name+" / 출신 · "+player.displaySchoolName} ?? (history.current.stage == .school ? "현재 소속 · \(SchoolCatalog.displayName(id: history.current.schoolID, fallback: history.current.schoolName ?? player.displaySchoolName))" : "현재 소속 · 무소속 / 출신 · \(player.displaySchoolName)"))
                     .font(.caption).accessibilityIdentifier("careerPathAffiliation")
                 Text("관심·선발·제의와 실제 등록을 구분합니다. 수락한 소속과 제의 결정은 별도 이력으로 보관합니다.")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -899,7 +899,7 @@ struct CareerPathHomePanel: View {
                     Text("표시된 경로는 기본 나이 조건입니다. 등록 중인 소속/보유 권리와 실제 제의 상태를 함께 확인하세요.")
                         .font(.caption).foregroundStyle(GameTheme.boardMuted)
                     ForEach(Array(history.entries.enumerated()),id:\.offset) { _, entry in
-                        Text("\(entry.since) · \(entry.stage.label)\(entry.schoolName.map { " · " + $0 } ?? "")")
+                        Text("\(entry.since) · \(entry.stage.label)\(entry.schoolName.map { " · " + SchoolCatalog.displayName(id: entry.schoolID, fallback: $0) } ?? "")")
                             .font(.caption.monospaced()).accessibilityIdentifier("careerAffiliationHistory")
                     }
                     if let journal=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context) {

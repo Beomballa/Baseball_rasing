@@ -145,7 +145,12 @@ struct ManagementSpatialHeader: View {
                 }.accessibilityLabel("선수 선택 · 프로필").accessibilityIdentifier("roomProfile")
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(player.name)  #\(player.jerseyNumber)").font(.headline).accessibilityIdentifier("homePlayerName")
-                    Text(affiliation).font(.caption).accessibilityIdentifier("homeSchool")
+                    HStack(spacing: 6) {
+                        if let school = SchoolCatalog.bundled.first(where: { $0.id == player.schoolID }) {
+                            SchoolCrest(school: school).frame(width: 24, height: 26)
+                        }
+                        Text(affiliation).font(.caption).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeSchool")
+                    }
                     Text("\(age)세 · \(player.role.label) · \(player.roleDetail)").font(.caption).accessibilityIdentifier("homeAge")
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 if !typeSize.isAccessibilitySize {

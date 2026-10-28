@@ -15,7 +15,7 @@ struct MatchView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(player.name) · \(player.role.label)").font(.headline)
-                    Text("\(player.schoolName) · \(player.roleDetail)").font(.caption)
+                    Text("\(player.displaySchoolName) · \(player.roleDetail)").font(.caption)
                 }
                 Spacer()
                 Text("연습 장면").font(.caption.bold()).padding(8).background(GameTheme.gold).foregroundStyle(GameTheme.navy)
@@ -134,7 +134,7 @@ struct TrainingPracticeView: View {
                                 PixelPlayer(appearance: player.appearance).frame(width: 32, height: 44)
                                 VStack(alignment: .leading) {
                                     Text("\(player.name) #\(player.jerseyNumber)").bold().accessibilityIdentifier("practicePlayerName")
-                                    Text(player.schoolName + " · " + player.roleDetail).font(.caption)
+                                    Text(player.displaySchoolName + " · " + player.roleDetail).font(.caption)
                                 }
                             }
                             DisclosureGroup("능력치·보유 구종 확인") {

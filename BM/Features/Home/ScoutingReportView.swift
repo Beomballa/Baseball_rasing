@@ -34,7 +34,7 @@ struct ScoutingObservationHomePanel: View {
             } else if let row = own.first, let value = try? row.snapshot() {
                 ScoutPeriodRibbon(value: value, count: own.count)
                 ScoutingInterestList(value: value, compact: true)
-                NavigationLink { SavedScoutingObservationView(value: value) } label: {
+                NavigationLink { SavedScoutingObservationView(value: value, schoolID: player.schoolID, legacySchoolName: player.schoolName) } label: {
                     HStack { Text("확정 보고서 펼치기"); Spacer(); Text("›") }
                 }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("openSavedScoutingReport")
                 if archive && own.count > 1 {
@@ -42,7 +42,7 @@ struct ScoutingObservationHomePanel: View {
                     if showHistory {
                         ForEach(own.dropFirst()) { old in
                             if let snapshot = try? old.snapshot() {
-                                NavigationLink { SavedScoutingObservationView(value: snapshot) } label: {
+                                NavigationLink { SavedScoutingObservationView(value: snapshot, schoolID: player.schoolID, legacySchoolName: player.schoolName) } label: {
                                     HStack { Text("FILE \(snapshot.period + 1)").monospaced(); Spacer(); Text(ManagementDisplay.date(snapshot.observedDate)) }
                                 }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutHistory-\(snapshot.period)")
                             }
@@ -108,6 +108,8 @@ struct ScoutingInterestList: View {
 
 struct SavedScoutingObservationView: View {
     let value: ScoutingObservation
+    let schoolID: String?
+    let legacySchoolName: String?
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var showOriginals = false
     @State private var showClubs = false
@@ -174,7 +176,7 @@ struct SavedScoutingObservationView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(value.name) #\(value.number)").font(.title3.bold())
                         Text("\(value.age)세 · \(value.role.label) · " + (value.role == .batter ? FieldPosition(rawValue: value.position)?.label ?? value.position : value.hand == "left" ? "좌투" : "우투")).font(.subheadline)
-                        Text(value.age <= 18 ? value.school : "등록 학교 · \(value.school)").font(.subheadline)
+                        Text(value.age <= 18 ? SchoolCatalog.displayName(id: schoolID, fallback: value.school) : "등록 학교 · \(value.school == legacySchoolName ? SchoolCatalog.displayName(id: schoolID, fallback: value.school) : value.school)").font(.subheadline)
                     }
                 }
                 Text("관찰일 \(ManagementDisplay.date(value.observedDate))").font(.subheadline.bold()).accessibilityIdentifier("scoutFrozenDate")
@@ -389,8 +391,8 @@ struct ScoutingReportView: View {
                     Text("\(player.name)  #\(player.jerseyNumber)").font(.title3.bold()).accessibilityIdentifier("scoutActualPlayer")
                     Text("\(report.age)세 · " + (player.role == .batter ? "타자 / \(FieldPosition(rawValue: player.positionRaw)?.label ?? player.positionRaw)" : "투수 / \(player.throwingHandRaw == "left" ? "좌투" : "우투")"))
                         .font(.subheadline).accessibilityIdentifier("scoutActualRole")
-                    Text(report.age <= 18 ? player.schoolName : SeasonSchedule.academicStatus(age: report.age)).font(.subheadline).accessibilityIdentifier("scoutActualAffiliation")
-                    if report.age > 18 { Text("등록 학교 · " + player.schoolName).font(.subheadline) }
+                    Text(report.age <= 18 ? player.displaySchoolName : SeasonSchedule.academicStatus(age: report.age)).font(.subheadline).accessibilityIdentifier("scoutActualAffiliation")
+                    if report.age > 18 { Text("등록 학교 · " + player.displaySchoolName).font(.subheadline) }
                 }
             }
             Text("기준일 \(ManagementDisplay.date(report.date.description))").font(.subheadline.bold()).foregroundStyle(ScoutDossierInk.muted)

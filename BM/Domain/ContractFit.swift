@@ -712,7 +712,7 @@ enum CareerTeamDirectory {
         if let i=japaneseFirstIDs.firstIndex(of:id) {return OverseasMarket.japaneseNames[i]}
         if let i=americanFirstIDs.firstIndex(of:id) {return OverseasMarket.americanNames[i]}
         if let i=americanDevelopmentIDs.firstIndex(of:id) {return OverseasMarket.americanNames[i]}
-        return schools.first {$0.id == id}?.name ?? id
+        return schools.first {$0.id == id}?.name ?? SchoolCatalog.displayName(id: id, fallback: id)
     }
 }
 struct DomesticRenewalAcceptance:Codable,Equatable {

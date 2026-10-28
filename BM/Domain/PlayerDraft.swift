@@ -71,6 +71,16 @@ struct PlayerDraft {
     var throwingHand: ThrowingHand = .right
     var appearance = PlayerAppearance()
 
+    var abilityBudget: Int { role == .batter ? 388 : 459 }
+    var initialAllocation: PlayerStatAllocation {
+        isCustom ? allocation ?? PlayerStatAllocation(role: role, base: selectedArchetype.values)
+            : PlayerStatAllocation(role: role, base: selectedArchetype.values)
+    }
+    var assignedAbilityPoints: Int { initialAllocation.points.values.reduce(0, +) }
+    var pitchingAbilityPoints: Int {
+        [TrainingKind.velocity, .control, .stuff, .stamina].reduce(0) { $0 + (initialAllocation.points[$1] ?? 0) }
+    }
+
     func validate(schools: [School]) throws {
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanName.isEmpty, cleanName.count <= 12,

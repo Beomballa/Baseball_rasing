@@ -2,6 +2,100 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV49FictionalChampionSchoolAtLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-management-empty-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 15))
+        reveal(app.buttons["schoolPicker"], app); app.buttons["schoolPicker"].tap()
+        let search = app.textFields["schoolSearch"]; search.tap(); search.typeText("별나루체육고")
+        app.buttons["검색 완료"].tap()
+        let row = app.buttons["hs-ref-023"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); XCTAssertTrue(row.isHittable)
+        XCTAssertTrue(row.label.contains("2025 우승"))
+        XCTAssertTrue(row.label.contains("별나루체육고"))
+        capture(app, "v49-fictional-champion-large")
+        row.tap()
+        XCTAssertTrue(app.buttons["schoolPicker"].label.contains("별나루체육고"))
+    }
+
+    @MainActor func testV49CreationReviewNavigationAndSavedIdentityBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification", "-management-empty-verification"]; app.launch()
+            XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 15))
+            if pitcher { reveal(app.buttons["role-pitcher"], app); app.buttons["role-pitcher"].tap() }
+            let name = pitcher ? "ReviewPitch" : "ReviewBat"
+            app.buttons["creationSection-information"].tap()
+            let field = app.textFields["playerName"]; field.tap(); field.typeText(name)
+            app.buttons["입력 완료"].tap()
+            reveal(app.buttons["randomSchool"], app); app.buttons["randomSchool"].tap()
+            let school = app.buttons["schoolPicker"].label
+            app.buttons["creationSection-abilities"].tap()
+            XCTAssertTrue(app.staticTexts["archetypePreviewTitle"].label.contains(pitcher ? "459 / 459" : "388 / 388"))
+            capture(app, pitcher ? "v49-pitcher-budget" : "v49-batter-budget")
+            app.buttons["creationSection-appearance"].tap()
+            XCTAssertTrue(app.staticTexts["creationMotionPreview"].waitForExistence(timeout: 5))
+            capture(app, pitcher ? "v49-pitcher-appearance" : "v49-batter-appearance")
+            app.buttons["creationSection-review"].tap()
+            XCTAssertTrue(app.staticTexts["creationReadiness"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["creationReadiness"].label.contains("확인 완료"))
+            XCTAssertTrue(app.staticTexts["creationSlots-" + (pitcher ? "pitcher" : "batter")].label.contains("활성 0/1"))
+            if pitcher { XCTAssertTrue(app.staticTexts["creationReviewPitches"].label.contains("4개")) }
+            capture(app, pitcher ? "v49-pitcher-review" : "v49-batter-review")
+            app.buttons["creationSection-information"].tap()
+            XCTAssertEqual(field.value as? String, name)
+            reveal(app.buttons["schoolPicker"], app); XCTAssertEqual(app.buttons["schoolPicker"].label, school)
+            app.buttons["creationSection-review"].tap()
+            reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains(name))
+            capture(app, pitcher ? "v49-created-pitcher-home" : "v49-created-batter-home")
+        }
+    }
+
+    @MainActor func testV49SchoolSearchEmptyAndFilteredRandomAndValidationRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-empty-verification"]; app.launch()
+        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 15))
+        reveal(app.buttons["schoolPicker"], app); app.buttons["schoolPicker"].tap()
+        capture(app, "v49-schools-list")
+        let search = app.textFields["schoolSearch"]; search.tap(); search.typeText("no-such-school")
+        app.buttons["검색 완료"].tap()
+        XCTAssertTrue(app.staticTexts["schoolSearchEmpty"].exists)
+        XCTAssertFalse(app.buttons["randomFilteredSchool"].isEnabled)
+        capture(app, "v49-school-empty")
+        app.buttons["검색 지우기"].tap(); search.tap(); search.typeText("달여울체육고")
+        app.buttons["검색 완료"].tap()
+        XCTAssertTrue(app.buttons["randomFilteredSchool"].isEnabled)
+        capture(app, "v49-school-search")
+        app.buttons["randomFilteredSchool"].tap()
+        app.buttons["creationSection-review"].tap()
+        XCTAssertTrue(app.staticTexts["creationReadiness"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["creationReadiness"].label.contains("이름"))
+        reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
+        XCTAssertTrue(app.staticTexts["creationError"].waitForExistence(timeout: 5))
+        app.buttons["creationSection-information"].tap()
+        let name = app.textFields["playerName"]; name.tap(); name.typeText("RetryPlayer"); app.buttons["입력 완료"].tap()
+        reveal(app.buttons["schoolPicker"], app); XCTAssertTrue(app.buttons["schoolPicker"].label.contains("달여울체육고"))
+        app.buttons["creationSection-review"].tap(); reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("RetryPlayer"))
+    }
+
+    @MainActor func testV49LargestTextCreationShortcutsAndReviewRemainReachable() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-empty-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 15))
+        for target in ["abilities", "appearance", "review", "information"] {
+            let shortcut = app.buttons["creationSection-" + target]
+            XCTAssertTrue(shortcut.isHittable); XCTAssertGreaterThanOrEqual(shortcut.frame.height, 44)
+            shortcut.tap()
+            capture(app, "v49-large-" + target)
+        }
+    }
     @MainActor func testV48HomeSelectionFailureHasReadOnlyRetry() {
         continueAfterFailure = false
         let app = XCUIApplication()

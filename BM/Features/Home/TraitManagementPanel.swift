@@ -198,7 +198,7 @@ struct TraitDetailView: View {
                             .frame(width: 72, height: 88).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(player.name) #\(player.jerseyNumber)").font(.headline).accessibilityIdentifier("traitPlayerName")
-                            Text("\(player.schoolName) · \(player.role.label)").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                            Text("\(player.displaySchoolName) · \(player.role.label)").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                         }
                     }
                     Text("보유 특성 중 최대 3개 활성화").font(.caption).foregroundStyle(GameTheme.gold)

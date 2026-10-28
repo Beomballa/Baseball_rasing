@@ -3,6 +3,76 @@ import SwiftData
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV49FictionalSchoolsKeepIDsAndLegacyStoredIdentity() throws {
+        let schools = try SchoolCatalog.load()
+        XCTAssertEqual(Set(schools.map(\.name)).count, 50)
+        XCTAssertEqual(schools.filter(\.openingWorldChampion).count, 1)
+        XCTAssertTrue(schools.allSatisfy { (1...63).contains($0.crestNumber) })
+        XCTAssertEqual(Set(schools.map(\.crestNumber)).count, 50)
+        XCTAssertEqual(schools.first?.name, "달여울체육고")
+        XCTAssertFalse(schools.contains { $0.name == "경기고" })
+        let db = try CareerStore.makeContainer(inMemory: true)
+        let player = try CareerStore.create(draft(.batter), schools: schools, in: db.mainContext)
+        player.schoolName = "경기고"
+        try db.mainContext.save()
+        let identity = player.id, pitches = player.pitches.map(\.code), date = player.gameDate
+        XCTAssertEqual(player.displaySchoolName, "달여울체육고")
+        XCTAssertEqual(CareerTeamDirectory.name(player.schoolID), player.displaySchoolName)
+        XCTAssertEqual(CareerTeamDirectory.name(player.schoolID, schools: schools), player.displaySchoolName)
+        XCTAssertEqual(SchoolCatalog.displayName(id: "custom-school", fallback: "기존 사용자 학교"), "기존 사용자 학교")
+        XCTAssertEqual(player.schoolName, "경기고")
+        XCTAssertEqual(player.id, identity)
+        XCTAssertEqual(player.pitches.map(\.code), pitches)
+        XCTAssertEqual(player.gameDate, date)
+        XCTAssertFalse(db.mainContext.hasChanges)
+    }
+
+    func testV49SchoolFiltersRetainOriginalIDsAndRespectRegionAndWhitespace() throws {
+        let schools = try SchoolCatalog.load()
+        XCTAssertEqual(SchoolCatalog.filtered(schools, query: "  \n ").map(\.id), schools.map(\.id))
+        let selected = try XCTUnwrap(schools.first)
+        let matches = SchoolCatalog.filtered(schools, query: "  " + selected.region + "  " + selected.name + " ", region: selected.region)
+        XCTAssertTrue(matches.contains(selected))
+        XCTAssertTrue(matches.allSatisfy { $0.region == selected.region })
+        XCTAssertTrue(SchoolCatalog.filtered(schools, query: "no-such-school").isEmpty)
+        XCTAssertTrue(SchoolCatalog.filtered(schools, query: selected.name, region: "no-such-region").isEmpty)
+    }
+
+    func testV49AbilitySummariesKeepAllPresetAndCustomBudgets() {
+        for archetype in PlayerArchetype.allCases {
+            var value = draft(archetype.role)
+            value.archetype = archetype
+            XCTAssertEqual(value.assignedAbilityPoints, value.abilityBudget)
+            if value.role == .pitcher { XCTAssertEqual(value.pitchingAbilityPoints, 224) }
+            let original = value.initialValues
+            value.allocation = PlayerStatAllocation(role: value.role, base: original)
+            value.isCustom = true
+            XCTAssertEqual(value.initialValues, original)
+            value.allocation?.adjust(value.role == .pitcher ? .velocity : .contact, by: -1)
+            XCTAssertEqual(value.assignedAbilityPoints, value.abilityBudget - 1)
+            XCTAssertEqual(value.initialAllocation.remaining, 1)
+            value.allocation?.adjust(.mental, by: 1)
+            XCTAssertEqual(value.assignedAbilityPoints, value.abilityBudget)
+            XCTAssertTrue(value.initialAllocation.isValid)
+        }
+    }
+
+    func testV49SaveFailureKeepsOtherCareerAndDraftThenRetryCreatesOnce() throws {
+        enum Failure: Error { case saving }
+        let schools = try SchoolCatalog.load(), db = try CareerStore.makeContainer(inMemory: true)
+        let c = db.mainContext, existing = try CareerStore.create(draft(.pitcher), schools: schools, in: c)
+        var value = draft(); value.isCustom = true
+        value.allocation = PlayerStatAllocation(role: .batter, base: value.initialValues)
+        let original = value.initialValues, appearance = value.appearance
+        XCTAssertThrowsError(try CareerStore.create(value, schools: schools, in: c, save: { _ in throw Failure.saving }))
+        XCTAssertEqual(value.initialValues, original); XCTAssertEqual(value.appearance, appearance)
+        XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerPlayer>()), 1)
+        XCTAssertEqual(try c.fetch(FetchDescriptor<CareerPlayer>()).first?.id, existing.id)
+        let created = try CareerStore.create(value, schools: schools, in: c)
+        XCTAssertNotEqual(existing.id, created.id)
+        XCTAssertThrowsError(try CareerStore.create(value, schools: schools, in: c))
+        XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerPlayer>()), 2)
+    }
     private func draft(_ role: PlayerRole = .batter) -> PlayerDraft {
         var value = PlayerDraft()
         value.name = role == .batter ? "김타자" : "이투수"
@@ -149,7 +219,7 @@ import SwiftData
         XCTAssertEqual(player.name, "이투수")
         XCTAssertEqual(player.jerseyNumber, 27)
         XCTAssertEqual(player.schoolID, "hs-ref-001")
-        XCTAssertEqual(player.schoolName, "경기고")
+        XCTAssertEqual(player.schoolName, schools.first { $0.id == "hs-ref-001" }?.name)
         XCTAssertEqual(player.appearance, draft(.pitcher).appearance)
         XCTAssertEqual(player.throwingHandRaw, "left")
         XCTAssertEqual(player.startAge, 16)
