@@ -9,6 +9,7 @@ struct CareerRootView: View {
     @Query(sort: \CareerPlayer.createdAt) private var players: [CareerPlayer]
     @Query private var calendars: [CareerCalendarState]
     @State private var selectedID: UUID?
+    @State private var showSettings = false
     @State private var showCreation = false
     @State private var initialRegistering = false
     @State private var sheetRegistering = false
@@ -41,6 +42,10 @@ struct CareerRootView: View {
                     MatchView(player: player).toolbar(.visible, for: .navigationBar)
                 } else { ContentUnavailableView("선수를 찾을 수 없습니다", systemImage: "person.crop.square") }
             }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                Button("설정 · 저장") { showSettings=true }.accessibilityIdentifier("openSaveProtection")
+            } }
+            .sheet(isPresented: $showSettings) { SaveProtectionView() }
             .sheet(isPresented: $showCreation) {
                 NavigationStack {
                     PlayerCreationView(schools: schools, availableRoles: PlayerRole.allCases.filter { role in

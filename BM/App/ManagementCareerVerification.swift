@@ -5,18 +5,23 @@ import SwiftData
 /// Uses the production root and commands with an isolated in-memory career.
 struct ManagementCareerVerification: View {
     @State private var container: ModelContainer?
+    @State private var protection: SaveProtection?
     @State private var schools: [School] = []
     @State private var error: String?
     var body: some View {
         Group {
-            if let container { CareerRootView(schools: schools).modelContainer(container) }
+            if let container { CareerRootView(schools: schools).modelContainer(protection?.container ?? container).environment(\.saveProtection, protection).id(protection?.generation) }
             else if let error { Text(error).accessibilityIdentifier("managementSeedError") }
             else { ProgressView("관리 화면 QA 준비") }
         }.task {
             guard container == nil && error == nil else { return }
             do {
                 let catalog = try SchoolCatalog.load()
-                let memory = try CareerStore.makeContainer(inMemory: true)
+                let saveQA=ProcessInfo.processInfo.arguments.contains("-save-protection-verification")
+                let base=FileManager.default.temporaryDirectory.appendingPathComponent("save-qa-"+UUID().uuidString).appendingPathComponent("Career.store")
+                if saveQA { try FileManager.default.createDirectory(at:base.deletingLastPathComponent(),withIntermediateDirectories:true) }
+                let memory = try saveQA ? CareerStore.makeContainer(url:base) : CareerStore.makeContainer(inMemory: true)
+                if saveQA { protection=SaveProtection(container:memory,base:base) }
                 let roles: [PlayerRole] = ProcessInfo.processInfo.arguments.contains("-management-empty-verification") ? []
                     : ProcessInfo.processInfo.arguments.contains("-management-single-role-verification") ? [.batter] : PlayerRole.allCases
                 for role in roles {

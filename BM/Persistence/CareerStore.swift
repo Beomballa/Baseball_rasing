@@ -11,6 +11,10 @@ import SwiftData
             configuration = ModelConfiguration("Career", schema: schema, isStoredInMemoryOnly: inMemory,
                                                groupContainer: .none, cloudKitDatabase: .none)
         }
+        if url == nil && !inMemory {
+            let active = try SaveArchiveStore.activeURL(base: configuration.url)
+            if active != configuration.url { return try makeContainer(url: active) }
+        }
         if !inMemory {try prepareV15Backup(at:configuration.url)}
         let container = try ModelContainer(for: schema, migrationPlan: CareerMigrationPlan.self,
                                            configurations: [configuration])
@@ -104,5 +108,156 @@ import SwiftData
         guard !missing.isEmpty else {return}
         for player in missing {context.insert(ActiveCareerSlot(role:player.role,playerID:player.id))}
         do {try save(context)} catch {context.rollback();throw error}
+    }
+}
+
+// A consistent SQLite snapshot includes WAL transactions without copying a live WAL/SHM trio.
+import SQLite3
+import CryptoKit
+import Observation
+
+struct CareerSaveArchive: Codable {
+    let format: Int
+    let schema: Int
+    let created: Date
+    let digest: String
+    let database: Data
+}
+enum SaveProtectionError: LocalizedError {
+    case invalid, busy, unavailable
+    var errorDescription: String? {
+        switch self {
+        case .invalid: "지원하지 않거나 손상된 백업입니다. 기존 저장은 변경하지 않았습니다."
+        case .busy: "저장이 진행 중이거나 저장소를 읽지 못했습니다. 잠시 후 다시 시도하세요."
+        case .unavailable: "이 화면에서는 실제 저장 내보내기·복원을 사용할 수 없습니다."
+        }
+    }
+}
+@MainActor enum SaveArchiveStore {
+    static let maximumBytes = 64 * 1024 * 1024
+    static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    static func defaultURL() -> URL {
+        ModelConfiguration("Career", schema: Schema(versionedSchema: CareerSchemaV15.self), cloudKitDatabase: .none).url
+    }
+    static func pointer(_ base: URL) -> URL { base.appendingPathExtension("active-generation") }
+    static func generationURL(_ id: UUID, base: URL) -> URL {
+        base.deletingLastPathComponent().appendingPathComponent("restored-" + id.uuidString).appendingPathComponent("Career.store")
+    }
+    static func activeURL(base: URL) throws -> URL {
+        let file = pointer(base)
+        guard FileManager.default.fileExists(atPath: file.path) else { return base }
+        let raw = try String(contentsOf: file, encoding: .utf8)
+        guard let id = UUID(uuidString: raw) else { throw SaveProtectionError.invalid }
+        let url = generationURL(id, base: base)
+        guard FileManager.default.fileExists(atPath: url.path) else { throw SaveProtectionError.invalid }
+        return url
+    }
+    static func snapshot(from source: URL, to destination: URL) throws {
+        var input: OpaquePointer?, output: OpaquePointer?
+        defer { sqlite3_close(input); sqlite3_close(output) }
+        guard sqlite3_open_v2(source.path, &input, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+              sqlite3_open(destination.path, &output) == SQLITE_OK else { throw SaveProtectionError.busy }
+        guard let backup = sqlite3_backup_init(output, "main", input, "main") else { throw SaveProtectionError.busy }
+        let step = sqlite3_backup_step(backup, -1), finish = sqlite3_backup_finish(backup)
+        guard step == SQLITE_DONE, finish == SQLITE_OK,
+              sqlite3_exec(output, "PRAGMA journal_mode=DELETE", nil, nil, nil) == SQLITE_OK else { throw SaveProtectionError.busy }
+    }
+    static func checkSQLite(_ url: URL) throws {
+        var db: OpaquePointer?, statement: OpaquePointer?
+        defer { sqlite3_finalize(statement); sqlite3_close(db) }
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              sqlite3_prepare_v2(db, "PRAGMA quick_check", -1, &statement, nil) == SQLITE_OK,
+              sqlite3_step(statement) == SQLITE_ROW, let result = sqlite3_column_text(statement, 0),
+              String(cString: result) == "ok" else { throw SaveProtectionError.invalid }
+        sqlite3_finalize(statement); statement=nil
+        guard sqlite3_prepare_v2(db, "SELECT Z_PK FROM ZPLAYER LIMIT 0", -1, &statement, nil) == SQLITE_OK,
+              sqlite3_step(statement) == SQLITE_DONE else { throw SaveProtectionError.invalid }
+    }
+    static func export(container: ModelContainer) throws -> Data {
+        guard !container.mainContext.hasChanges, let source = container.configurations.first?.url else { throw SaveProtectionError.busy }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("snapshot.store")
+        try snapshot(from: source, to: file); try checkSQLite(file)
+        let data = try Data(contentsOf: file)
+        guard data.count <= maximumBytes else { throw SaveProtectionError.invalid }
+        return try JSONEncoder().encode(CareerSaveArchive(format: 1, schema: 15, created: Date(), digest: hash(data), database: data))
+    }
+    static func prepare(_ data: Data, base: URL) throws -> PreparedSave {
+        guard data.count <= maximumBytes * 2 else { throw SaveProtectionError.invalid }
+        let archive = try JSONDecoder().decode(CareerSaveArchive.self, from: data)
+        guard archive.format == 1, archive.schema == 15, !archive.database.isEmpty,
+              archive.database.count <= maximumBytes, hash(archive.database) == archive.digest else { throw SaveProtectionError.invalid }
+        let id = UUID(), url = generationURL(id, base: base)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            try archive.database.write(to: url, options: .atomic); try checkSQLite(url)
+            let schema = Schema(versionedSchema: CareerSchemaV15.self)
+            let candidate = try ModelContainer(for: schema, configurations: [ModelConfiguration("Career", schema: schema, url: url, cloudKitDatabase: .none)])
+            let c = candidate.mainContext
+            c.autosaveEnabled=false
+            let players = try c.fetch(FetchDescriptor<CareerPlayer>())
+            let calendars = try c.fetch(FetchDescriptor<CareerCalendarState>())
+            guard Set(players.map(\.id)).count == players.count,
+                  calendars.count == players.count else { throw SaveProtectionError.invalid }
+            for p in players {
+                guard let state = calendars.first(where: { $0.playerID == p.id }) else { throw SaveProtectionError.invalid }
+                _ = try p.lifecycle; _ = try state.age(of: p)
+                _ = try ContractRegistrationStore.journal(player: p, calendar: state, in: c)
+            }
+            func owner(_ id: UUID) throws -> (CareerPlayer, CareerCalendarState) {
+                guard let player=players.first(where: {$0.id == id}), let state=calendars.first(where: {$0.playerID == id}) else { throw SaveProtectionError.invalid }
+                return (player,state)
+            }
+            for row in try c.fetch(FetchDescriptor<CareerAffiliationRecord>()) { let (p,s)=try owner(row.playerID); _ = try row.snapshot(player:p,calendar:s) }
+            for row in try c.fetch(FetchDescriptor<CareerContractEvaluation>()) { let (p,s)=try owner(row.playerID); _ = try row.snapshot(player:p,calendar:s) }
+            for row in try c.fetch(FetchDescriptor<CareerContractOffer>()) {
+                let (p,s)=try owner(row.playerID)
+                guard let evaluation=try c.fetch(FetchDescriptor<CareerContractEvaluation>()).first(where: {$0.key == row.key}) else { throw SaveProtectionError.invalid }
+                _ = try row.snapshot(evaluation: evaluation,player:p,calendar:s)
+            }
+            for row in try c.fetch(FetchDescriptor<CareerCertificationRecord>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
+            guard try c.fetchCount(FetchDescriptor<PlayerAbilities>()) == players.count,
+                  try c.fetchCount(FetchDescriptor<PlayerTraits>()) == players.count,
+                  try c.fetchCount(FetchDescriptor<PlayerPositions>()) == players.filter({$0.role == .batter}).count else { throw SaveProtectionError.invalid }
+            for row in try c.fetch(FetchDescriptor<PlayerAbilities>()) { _ = try owner(row.playerID) }
+            for row in try c.fetch(FetchDescriptor<CareerTrainingRecord>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
+            for row in try c.fetch(FetchDescriptor<CareerMatchRecord>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
+            for row in try c.fetch(FetchDescriptor<CareerLeagueGameRecord>()) { _ = try row.snapshot() }
+            for row in try c.fetch(FetchDescriptor<CareerScoutingReport>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
+            for row in try c.fetch(FetchDescriptor<PlayerTraits>()) { _ = try row.snapshot() }
+            for row in try c.fetch(FetchDescriptor<PlayerPositions>()) { _ = try row.snapshot() }
+            guard !c.hasChanges else { throw SaveProtectionError.invalid }
+            return PreparedSave(id: id, url: url, container: candidate, created: archive.created,
+                                players: players.map { $0.name + " · " + $0.role.rawValue + " · " + $0.gameDate }.sorted())
+        } catch {
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+            throw error
+        }
+    }
+}
+@MainActor final class PreparedSave {
+    let id: UUID
+    let url: URL
+    let container: ModelContainer
+    let created: Date
+    let players: [String]
+    init(id: UUID, url: URL, container: ModelContainer, created: Date, players: [String]) {
+        self.id=id; self.url=url; self.container=container; self.created=created; self.players=players
+    }
+}
+@MainActor @Observable final class SaveProtection {
+    var container: ModelContainer
+    var generation = UUID()
+    let base: URL
+    let recoveryOnly: Bool
+    init(container: ModelContainer, base: URL, recoveryOnly: Bool = false) { self.container=container; self.base=base; self.recoveryOnly=recoveryOnly }
+    func restore(_ prepared: PreparedSave, commit: (URL, Data) throws -> Void = { try $1.write(to: $0, options: .atomic) }) throws {
+        guard !container.mainContext.hasChanges, !prepared.container.mainContext.hasChanges else { throw SaveProtectionError.busy }
+        guard prepared.url == SaveArchiveStore.generationURL(prepared.id, base: base) else { throw SaveProtectionError.invalid }
+        try SaveArchiveStore.checkSQLite(prepared.url)
+        try commit(SaveArchiveStore.pointer(base), Data(prepared.id.uuidString.utf8))
+        container=prepared.container; generation=UUID()
     }
 }

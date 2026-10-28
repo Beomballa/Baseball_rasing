@@ -12,6 +12,82 @@ import SwiftData
         return value
     }
 
+    func testV44ArchiveRoundTripKeepsBothPendingRecordsReportsAndOneReward() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:dir)}
+        let base=dir.appendingPathComponent("original.store")
+        let db=try CareerStore.makeContainer(url:base), c=db.mainContext
+        let batter=try CareerStore.create(draft(.batter),schools:SchoolCatalog.load(),in:c)
+        let pitcher=try CareerStore.create(draft(.pitcher),schools:SchoolCatalog.load(),in:c)
+        let states=try c.fetch(FetchDescriptor<CareerCalendarState>())
+        let bs=try XCTUnwrap(states.first {$0.playerID == batter.id}), ps=try XCTUnwrap(states.first {$0.playerID == pitcher.id})
+        let training=try CareerTrainingStore.start(player:batter,state:bs,in:c)
+        for _ in 0..<2 {let round=try training.snapshot(),target=round.targets[round.scores.count]
+            try CareerTrainingStore.attempt(player:batter,state:bs,record:training,revision:training.revision,input:TrainingInput(x:target.x,y:target.y,timing:MatchDelivery.contactPhase),in:c)}
+        try CalendarProgression.rest(player:pitcher,state:ps,revision:ps.revision,in:c)
+        let game=try CareerMatchStore.start(player:pitcher,state:ps,in:c)
+        try CareerMatchStore.advance(player:pitcher,state:ps,record:game,revision:game.revision,input:.pitch,pitchCode:pitcher.pitches[0].code,in:c)
+        if try c.fetchCount(FetchDescriptor<CareerScoutingReport>()) == 0 {
+            c.insert(try CareerScoutingReport(ScoutingObservationStore.currentObservation(player:batter,calendar:bs,in:c))); try c.save()
+        }
+        let reports=try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload)
+        XCTAssertFalse(reports.isEmpty)
+        let originalTraining=training.payload,originalGame=game.payload
+        let archive=try SaveArchiveStore.export(container:db)
+        XCTAssertEqual(training.payload,originalTraining);XCTAssertEqual(game.payload,originalGame)
+        let candidate=try SaveArchiveStore.prepare(archive,base:base)
+        let session=SaveProtection(container:db,base:base)
+        enum Failure:Error {case write}
+        XCTAssertThrowsError(try session.restore(candidate,commit:{_,_ in throw Failure.write}))
+        XCTAssertTrue(session.container === db);XCTAssertEqual(try SaveArchiveStore.activeURL(base:base),base)
+        try session.restore(candidate)
+        XCTAssertEqual(try SaveArchiveStore.activeURL(base:base),candidate.url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath:base.path))
+        let rc=candidate.container.mainContext
+        XCTAssertEqual(try rc.fetch(FetchDescriptor<CareerTrainingRecord>()).first?.payload,originalTraining)
+        XCTAssertEqual(try rc.fetch(FetchDescriptor<CareerMatchRecord>()).first?.payload,originalGame)
+        XCTAssertEqual(try rc.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reports)
+        let restored=try XCTUnwrap(rc.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == pitcher.id})
+        let state=try XCTUnwrap(rc.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == pitcher.id})
+        let row=try CareerMatchStore.start(player:restored,state:state,in:rc)
+        try CareerMatchStore.advance(player:restored,state:state,record:row,revision:row.revision,input:.automatic,in:rc)
+        let result=row.payload,fatigue=restored.fatigue
+        XCTAssertThrowsError(try CareerMatchStore.advance(player:restored,state:state,record:row,revision:row.revision,input:.automatic,in:rc))
+        XCTAssertEqual(row.payload,result);XCTAssertEqual(restored.fatigue,fatigue)
+    }
+    func testV44RecoveryFromUnreadableOriginalKeepsOriginalBytesAndReopensGeneration() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let source=try CareerStore.makeContainer(url:dir.appendingPathComponent("source.store"))
+        let player=try CareerStore.create(draft(),schools:SchoolCatalog.load(),in:source.mainContext)
+        let archive=try SaveArchiveStore.export(container:source)
+        let base=dir.appendingPathComponent("broken.store"),broken=Data("broken-original".utf8)
+        try broken.write(to:base)
+        let candidate=try SaveArchiveStore.prepare(archive,base:base)
+        let session=SaveProtection(container:try CareerStore.makeContainer(inMemory:true),base:base,recoveryOnly:true)
+        try session.restore(candidate)
+        XCTAssertEqual(try Data(contentsOf:base),broken)
+        let reopened=try CareerStore.makeContainer(url:SaveArchiveStore.activeURL(base:base))
+        XCTAssertEqual(try reopened.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.id,player.id)
+    }
+
+    func testV44CorruptAndUnsupportedArchiveNeverSelectOrEditOriginal() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let base=dir.appendingPathComponent("original.store"),db=try CareerStore.makeContainer(url:dir.appendingPathComponent("original.store"))
+        let p=try CareerStore.create(draft(),schools:SchoolCatalog.load(),in:db.mainContext)
+        let bytes=try SaveArchiveStore.export(container:db),a=try JSONDecoder().decode(CareerSaveArchive.self,from:bytes)
+        for bad in [CareerSaveArchive(format:99,schema:15,created:a.created,digest:a.digest,database:a.database),CareerSaveArchive(format:1,schema:15,created:a.created,digest:"bad",database:a.database),CareerSaveArchive(format:1,schema:15,created:a.created,digest:SaveArchiveStore.hash(Data("not sqlite".utf8)),database:Data("not sqlite".utf8))] {
+            XCTAssertThrowsError(try SaveArchiveStore.prepare(JSONEncoder().encode(bad),base:base))
+            XCTAssertEqual(try SaveArchiveStore.activeURL(base:base),base)
+            XCTAssertEqual(p.name,"김타자");XCTAssertFalse(db.mainContext.hasChanges)
+        }
+        p.name="unsaved"
+        XCTAssertThrowsError(try SaveArchiveStore.export(container:db))
+        db.mainContext.rollback()
+    }
+
     func testBundledSchoolsRetainFiftyUniqueIDs() throws {
         let schools = try SchoolCatalog.load()
         XCTAssertEqual(schools.count, 50)

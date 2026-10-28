@@ -56,6 +56,7 @@ struct PlayerHomeView: View {
     }
     @State private var clubSelection: ClubSelectionReview?
     @State private var selectedTab = ManagementTab.home
+    @State private var showSettings = false
     @State private var showCalendar = false
     @State private var showRest = false
     @State private var roomDetail: ManagementRoomDetail?
@@ -113,6 +114,7 @@ struct PlayerHomeView: View {
                 .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             }.presentationDragIndicator(.visible).presentationDetents([.large]).preferredColorScheme(.dark)
         }
+        .sheet(isPresented: $showSettings) { SaveProtectionView() }
         .sheet(isPresented: $showCalendar) {
             if let calendar {
                 NavigationStack {
@@ -174,6 +176,7 @@ struct PlayerHomeView: View {
         switch selectedTab {
         case .home:
             return [
+                .init(id: "clubhouse-settings", title: "설정 · 저장", status: "백업 · 복원", x: 0.2, y: 0.15),
                 .init(id: "clubhouse-game", title: "경기장", status: "일정 · 상대 분석", x: 0.78, y: 0.17),
                 .init(id: "clubhouse-training", title: "훈련장", status: action, x: 0.2, y: 0.37, recommended: true),
                 .init(id: "clubhouse-career", title: "스카우트실", status: "관찰 · 계약", x: 0.8, y: 0.48),
@@ -209,6 +212,7 @@ struct PlayerHomeView: View {
     }
     private func chooseFacility(_ id: String) {
         switch id {
+        case "clubhouse-settings": showSettings=true
         case "clubhouse-game": selectedTab = .game
         case "clubhouse-training": selectedTab = .training
         case "clubhouse-career": selectedTab = .career

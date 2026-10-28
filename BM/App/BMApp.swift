@@ -39,6 +39,8 @@ import SwiftData
 
 struct AppBootstrapView: View {
     @State private var container: ModelContainer?
+    @State private var protection: SaveProtection?
+    @State private var showRecovery=false
     @State private var schools: [School] = []
     @State private var errorMessage: String?
 
@@ -48,7 +50,8 @@ struct AppBootstrapView: View {
                 if launchPractice {
                     NavigationStack { TrainingPracticeView() }.modelContainer(container)
                 } else {
-                    CareerRootView(schools: schools).modelContainer(container)
+                    CareerRootView(schools: schools).modelContainer(protection?.container ?? container)
+                        .environment(\.saveProtection, protection).id(protection?.generation)
                 }
             } else if let errorMessage {
                 ContentUnavailableView {
@@ -57,9 +60,16 @@ struct AppBootstrapView: View {
                     Text("기존 데이터는 삭제하지 않았습니다.\n\(errorMessage)")
                 } actions: {
                     Button("다시 열기", action: load).buttonStyle(.borderedProminent)
+                    Button("백업에서 복구") { showRecovery=true }.accessibilityIdentifier("openFailedSaveRecovery")
                 }
             } else {
                 ProgressView("커리어 불러오는 중")
+            }
+        }
+        .sheet(isPresented:$showRecovery) {
+            FailedSaveRecoveryView { session in
+                protection=session; container=session.container
+                schools=(try? SchoolCatalog.load()) ?? []; errorMessage=nil
             }
         }
         .tint(GameTheme.green)
@@ -85,6 +95,7 @@ struct AppBootstrapView: View {
             #else
             store=try CareerStore.makeContainer()
             #endif
+            protection=SaveProtection(container: store, base: SaveArchiveStore.defaultURL())
             schools = catalog; container = store; errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
@@ -547,3 +558,114 @@ private struct LiveCareerPerformanceRun:View {
     }
 }
 #endif
+
+import UniformTypeIdentifiers
+
+private struct SaveProtectionKey: EnvironmentKey { static let defaultValue: SaveProtection? = nil }
+extension EnvironmentValues {
+    var saveProtection: SaveProtection? {
+        get { self[SaveProtectionKey.self] }
+        set { self[SaveProtectionKey.self] = newValue }
+    }
+}
+struct SaveBackupDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.data] }
+    var data: Data
+    init(data: Data) { self.data=data }
+    init(configuration: ReadConfiguration) throws {
+        guard let data=configuration.file.regularFileContents else { throw SaveProtectionError.invalid }; self.data=data
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
+}
+struct SaveProtectionView: View {
+    var onRestored: (() -> Void)? = nil
+    @Environment(\.saveProtection) private var protection
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("bm-haptics-enabled") private var haptics = true
+    @State private var document: SaveBackupDocument?
+    @State private var exporting=false
+    @State private var importing=false
+    @State private var prepared: PreparedSave?
+    @State private var confirming=false
+    @State private var message: String?
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    ManagementPanel("기기 설정") {
+                        Toggle("훈련 햅틱", isOn: $haptics).accessibilityIdentifier("settingHaptics")
+                        Text("화면 읽기와 동작 줄이기는 iPhone의 손쉬운 사용 설정을 따릅니다. 배경음·효과음은 아직 제공하지 않습니다.").managementFont(.body)
+                    }
+                    ManagementPanel("저장 내보내기") {
+                        Text("모든 선수·날짜·능력치·고정 보고서·진행 중인 경기와 훈련을 함께 보관합니다. 파일에는 선수 이름과 기록이 포함됩니다. 외부 서버로 자동 전송하지 않습니다.").managementFont(.body)
+                        Button("백업 파일 만들기") {
+                            do { guard let protection, !protection.recoveryOnly else { throw SaveProtectionError.unavailable }
+                                document=SaveBackupDocument(data: try SaveArchiveStore.export(container: protection.container)); exporting=true
+                            } catch { message=error.localizedDescription }
+                        }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("exportSave").disabled(protection?.recoveryOnly == true)
+                    }
+                    ManagementPanel("검증 후 전체 복원") {
+                        Text("파일을 선택하면 별도 저장소에서 먼저 검증합니다. 확정하면 현재 커리어 전체가 백업 시점으로 돌아갑니다. 기록을 합치지 않으며 복원 전 저장은 기기에 보관합니다.").managementFont(.body)
+                        Button("백업 선택·검증") { importing=true }
+                            .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("importSave")
+                        if let prepared {
+                            Text("검증 완료 · " + prepared.created.formatted(date: .abbreviated, time: .shortened)).managementFont(.label)
+                            ForEach(prepared.players, id: \.self) { Text($0).managementFont(.body) }
+                            if prepared.players.isEmpty { Text("선수가 없는 백업입니다.").managementFont(.body) }
+                            Button("이 백업으로 전체 복원 확인") { confirming=true }
+                                .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("confirmRestoreSave")
+                        }
+                        Text("최신 형식 V15 백업만 지원하며 DB 크기는 최대 64MB입니다. 파일 무결성 검사는 변조 방지 서명이나 암호화가 아닙니다.").managementFont(.helper)
+                    }
+                    if let message { Text(message).managementFont(.body).accessibilityIdentifier("saveProtectionMessage") }
+                }.padding(16)
+            }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("설정 · 저장 보호")
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { dismiss() }.frame(minWidth: 44, minHeight: 44) } }
+        }
+        .task {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-save-protection-preview"), prepared == nil, let protection {
+                do { prepared=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:protection.container),base:protection.base) }
+                catch { message=error.localizedDescription }
+            }
+            #endif
+        }
+        .fileExporter(isPresented: $exporting, document: document, contentType: .data, defaultFilename: "BM-career.bmbackup") { result in
+            switch result { case .success: message="백업 내보내기 완료"; case .failure(let error): message=error.localizedDescription }
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in
+            do {
+                let url=try result.get(); let access=url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
+                guard let protection else { throw SaveProtectionError.unavailable }
+                let size=try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard size > 0, size <= SaveArchiveStore.maximumBytes * 2 else { throw SaveProtectionError.invalid }
+                let candidate=try SaveArchiveStore.prepare(Data(contentsOf: url), base: protection.base)
+                prepared=candidate; message="검증 완료 · 확정 전에는 기존 저장을 사용합니다."
+            } catch { message=error.localizedDescription; prepared=nil }
+        }
+        .alert("모든 커리어를 백업 시점으로 되돌릴까요?", isPresented: $confirming) {
+            Button("전체 복원", role: .destructive) {
+                do { guard let protection, let prepared else { throw SaveProtectionError.unavailable }
+                    try protection.restore(prepared); onRestored?(); dismiss()
+                } catch { message=error.localizedDescription }
+            }
+            Button("취소", role: .cancel) {}
+        } message: { Text("현재 데이터와 합치지 않습니다. 복원 전 저장은 삭제하지 않습니다. 백업 이후 진행한 내용은 새 활성 커리어에 표시되지 않습니다.") }
+    }
+}
+
+private struct FailedSaveRecoveryView: View {
+    var restored: (SaveProtection) -> Void
+    @State private var session: SaveProtection?
+    @State private var error: String?
+    var body: some View {
+        Group {
+            if let session { SaveProtectionView(onRestored: { restored(session) }).environment(\.saveProtection, session) }
+            else if let error { Text(error) }
+            else { ProgressView("복구 준비 중") }
+        }.task {
+            do { session=SaveProtection(container:try CareerStore.makeContainer(inMemory:true),base:SaveArchiveStore.defaultURL(),recoveryOnly:true) }
+            catch { self.error=error.localizedDescription }
+        }
+    }
+}

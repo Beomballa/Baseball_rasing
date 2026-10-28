@@ -325,7 +325,7 @@ struct CareerTrainingView: View {
             scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
             load(); if dynamicTypeSize.isAccessibilitySize { buttonInput = true }
         }
-        .sensoryFeedback(.impact(weight: .light), trigger: feedbackTick)
+        .sensoryFeedback(.impact(weight: .light), trigger: feedbackTick) { _, _ in UserDefaults.standard.object(forKey: "bm-haptics-enabled") as? Bool ?? true }
         .onDisappear { cancelUncommitted() }
         .toolbar {
             if practice { Button("훈련 바꾸기") { resetPractice() }.accessibilityIdentifier("practiceChangeTraining") }

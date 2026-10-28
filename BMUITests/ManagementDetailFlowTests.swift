@@ -2,12 +2,35 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV44SaveSettingsPreviewCancelAndRestoreQAOnly() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-save-protection-verification","-save-protection-preview"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30))
+        app.buttons["clubhouse-settings"].tap()
+        if !app.switches["settingHaptics"].waitForExistence(timeout: 3) { app.buttons["clubhouse-settings"].tap() }
+        XCTAssertTrue(app.switches["settingHaptics"].waitForExistence(timeout:5));capture(app,"v44-save-settings")
+        let confirm=app.buttons["confirmRestoreSave"];reveal(confirm,app);XCTAssertTrue(confirm.waitForExistence(timeout:8));capture(app,"v44-verified-preview")
+        confirm.tap();XCTAssertTrue(app.buttons["전체 복원"].waitForExistence(timeout:5));app.buttons["취소"].tap()
+        XCTAssertTrue(confirm.exists);confirm.tap();app.buttons["전체 복원"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:10));capture(app,"v44-restored-qa-home")
+        pickPitcher(app);app.buttons["clubhouse-settings"].tap();XCTAssertTrue(app.buttons["exportSave"].waitForExistence(timeout:8));capture(app,"v44-pitcher-settings")
+    }
+    @MainActor func testV44SaveSettingsLargestText() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-save-protection-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL","-management-reduced-motion-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30))
+        reveal(app.buttons["clubhouse-settings"],app);app.buttons["clubhouse-settings"].tap()
+        let export=app.buttons["exportSave"];reveal(export,app);XCTAssertTrue(export.isHittable);capture(app,"v44-large-export")
+        let restore=app.buttons["importSave"];reveal(restore,app);XCTAssertTrue(restore.isHittable);capture(app,"v44-large-import")
+    }
+
     @MainActor func testV42GuidanceBothRolesReadOnly() {
         continueAfterFailure = false
         let app = launch()
         for role in 0..<2 {
             if role == 1 { pickPitcher(app) }
             app.buttons["managementTab-game"].tap()
+            if !app.buttons["facility-calendar"].waitForExistence(timeout: 3) { app.buttons["managementTab-game"].tap() }
             app.buttons["facility-calendar"].tap()
             let guide = app.descendants(matching: .any).matching(identifier: "earlyPlayGuidance").firstMatch
             XCTAssertTrue(guide.waitForExistence(timeout: 8))
@@ -722,10 +745,16 @@ final class ManagementDetailFlowTests: XCTestCase {
         }
     }
 
+    @MainActor func testV44PitchTrainingReturnAfterResultReopen() {
+        checkLocationCareerTraining([(true, "control")])
+    }
     @MainActor func testV28LocationCareerTrainingMotionResumeAndOneReward() {
+        checkLocationCareerTraining([(true, "control"), (false, "defense"), (true, "defense")])
+    }
+    @MainActor private func checkLocationCareerTraining(_ cases: [(Bool, String)]) {
         continueAfterFailure = false
         let app = XCUIApplication()
-        for (pitcher, kind) in [(true, "control"), (false, "defense"), (true, "defense")] {
+        for (pitcher, kind) in cases {
             app.terminate(); app.launchArguments = ["-management-career-verification"]
             app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
             if pitcher { pickPitcher(app) }
@@ -767,6 +796,10 @@ final class ManagementDetailFlowTests: XCTestCase {
             reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
             XCTAssertTrue(completed.waitForExistence(timeout: 5)); XCTAssertEqual(app.staticTexts["trainingGrowth"].label, growth)
             app.navigationBars.buttons.element(boundBy: 0).tap()
+            if !app.buttons["closeRoomDetail"].waitForExistence(timeout: 3), app.buttons["BackButton"].exists {
+                app.buttons["BackButton"].tap()
+            }
+            XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 5))
             app.buttons["closeRoomDetail"].tap(); app.buttons["managementTab-home"].tap()
             let after = status(app)
             XCTAssertEqual(after[0], before[0]); XCTAssertEqual(after[2], "행동 0/1")
