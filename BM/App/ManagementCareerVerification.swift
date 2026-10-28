@@ -23,6 +23,11 @@ struct ManagementCareerVerification: View {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"
                     let player = try CareerStore.create(draft, schools: catalog, in: memory.mainContext)
+                    if ProcessInfo.processInfo.arguments.contains("-v39-forecast-verification") {
+                        let c=memory.mainContext,state=try c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == player.id}!
+                        if ProcessInfo.processInfo.arguments.contains("-v39-legacy") {var life=try player.lifecycle;life.development=nil;player.lifecycleData=try JSONEncoder().encode(life);try c.save()}
+                        try OverseasReportStore.capture(player:player,calendar:state,date:player.gameDate,revision:state.revision,in:c)
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-v38-development-verification") {
                         let c=memory.mainContext,state=try c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == player.id}!
                         var life=try player.lifecycle;life.development=PlayerDevelopment(adopted:player.gameDate,timing:.early)

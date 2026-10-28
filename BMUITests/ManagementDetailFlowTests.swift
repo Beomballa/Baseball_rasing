@@ -2,6 +2,34 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV39FrozenForecastBothRolesAndLegacy() {
+        continueAfterFailure=false
+        for legacy in [false,true] {
+            let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v39-forecast-verification"]+(legacy ? ["-v39-legacy"]:[]);app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:25))
+            for pitcher in [false,true] {
+                if pitcher {pickPitcher(app)}
+                let before=status(app)
+                app.buttons["managementTab-career"].tap();app.buttons["facility-contracts"].tap();reveal(app.buttons["openOverseasReport"],app);app.buttons["openOverseasReport"].tap()
+                let label=app.staticTexts["growthForecastPolicy"];reveal(label,app);XCTAssertTrue(label.label.contains(legacy ? "V1":"V2"));capture(app,"v39-"+(pitcher ? "pitcher":"batter")+(legacy ? "-legacy":"-forecast"))
+                if !legacy {let text=app.staticTexts["growthForecastWindow"];reveal(text,app);XCTAssertTrue(text.label.contains("미래 발동"))}
+                app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before);app.buttons["managementTab-home"].tap()
+            };app.terminate()
+        }
+    }
+
+    @MainActor func testV39SmallLargestTextForecastBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v39-forecast-verification","-management-reduced-motion-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:25))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            app.buttons["managementLargeMenu"].tap();app.buttons["커리어"].tap();reveal(app.buttons["facility-contracts"],app);app.buttons["facility-contracts"].tap();reveal(app.buttons["openOverseasReport"],app);app.buttons["openOverseasReport"].tap()
+            let policy=app.staticTexts["growthForecastPolicy"];for _ in 0..<40 {if policy.isHittable {break};app.swipeUp()}
+            XCTAssertTrue(policy.isHittable);capture(app,"v39-small-"+(pitcher ? "pitcher":"batter"))
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+        }
+    }
     @MainActor func testV38GrowthWindowAndPositionConfirmationKeepReadOnlyStateBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v38-development-verification"];app.launch()

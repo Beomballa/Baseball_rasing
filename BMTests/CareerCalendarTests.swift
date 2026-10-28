@@ -2155,7 +2155,7 @@ extension CareerCalendarTests {
 
 extension CareerCalendarTests {
     private func collegeProFixture(_ role:PlayerRole,games:Bool=true,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
-        let (store,p,s,packet)=try acceptance(role,legacyURL:legacyURL),c=store.mainContext
+        let (store,p,s,packet)=try acceptance(role,legacyURL:legacyURL,legacyVersion:15),c=store.mainContext
         let offer=try XCTUnwrap(packet.offers.first {$0.route == .college})
         try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
         let member=try XCTUnwrap(s.registration(for:p))
@@ -6092,5 +6092,75 @@ extension CareerCalendarTests {
         }
         XCTAssertEqual(output.count,1200)
         let a=XCTAttachment(data:try JSONEncoder().encode(output),uniformTypeIdentifier:"public.json");a.name="v38-growth-policy-comparison.json";a.lifetime = .keepAlways;add(a)
+    }
+}
+
+extension CareerCalendarTests {
+    func testV39GrowthForecastUsesFrozenTimingAgingAndNoFutureBreakthrough() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try collegeProFixture(role,games:false),c=db.mainContext
+            let observation=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+            let before=p.lifecycleData,stats=try CareerLifecycleStore.values(player:p,in:c),revision=s.revision
+            let balanced=OverseasGrowthPolicy(development:PlayerDevelopment(adopted:p.gameDate,timing:.balanced))
+            let late=OverseasGrowthPolicy(development:PlayerDevelopment(adopted:p.gameDate,timing:.late))
+            let old=try OverseasGrowthProjection.make(observation:observation),new=try OverseasGrowthProjection.make(observation:observation,policy:balanced)
+            XCTAssertNotEqual(new,old);XCTAssertNotEqual(new,try OverseasGrowthProjection.make(observation:observation,policy:late))
+            for row in new {XCTAssertLessThanOrEqual(try XCTUnwrap(row.conservative),try XCTUnwrap(row.baseline));XCTAssertLessThanOrEqual(try XCTUnwrap(row.baseline),try XCTUnwrap(row.optimistic))}
+            var prepared=balanced.development
+            prepared.proofs[TrainingKind.control.rawValue]=[DevelopmentProof(key:CareerTrainingRecord.key(p.id,p.gameDate),date:p.gameDate)]
+            XCTAssertEqual(new,try OverseasGrowthProjection.make(observation:observation,policy:OverseasGrowthPolicy(development:prepared)))
+            let day=try GameDate(p.gameDate)
+            let sources=(0..<8).map {i -> DevelopmentProof in let date=day.adding(days:(i-7)*2).description;return DevelopmentProof(key:CareerTrainingRecord.key(p.id,date),date:date)}
+            var active=PlayerDevelopment(adopted:"2026-04-01",timing:.balanced)
+            active.windows=[DevelopmentWindow(id:sources.last!.key+"/growth-window-v2",kind:role == .pitcher ? .control:.contact,opened:p.gameDate,expires:day.adding(days:27).description,sources:sources)]
+            let boosted=OverseasGrowthPolicy(development:active),roleID=role == .pitcher ? "starter":"onBase",key=role == .pitcher ? "homeControl":"homeContact"
+            let normalValues=try balanced.values(observation:observation,roleID:roleID,score:75,fatigue:40)
+            let boostedValues=try boosted.values(observation:observation,roleID:roleID,score:75,fatigue:40)
+            XCTAssertGreaterThan(try XCTUnwrap(boostedValues.0[key]),try XCTUnwrap(normalValues.0[key]))
+            XCTAssertLessThanOrEqual(boostedValues.0[key]!-normalValues.0[key]!,0.6001)
+            var bad=balanced;bad.version=99;XCTAssertThrowsError(try bad.values(observation:observation,roleID:observation.grades[0].id,score:75,fatigue:40))
+            XCTAssertEqual(p.lifecycleData,before);XCTAssertEqual(try CareerLifecycleStore.values(player:p,in:c),stats);XCTAssertEqual(s.revision,revision);XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testV39ReportAdoptionRollbackSamePeriodAndDiskReopenKeepOldBytes() throws {
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString);try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:folder)}
+        let url=folder.appendingPathComponent("forecast.store");var id:UUID!,bytes:Data!
+        try autoreleasepool {
+            let (db,p,s)=try collegeProFixture(.pitcher,games:false,legacyURL:url),c=db.mainContext;id=p.id
+            var legacy=try p.lifecycle;legacy.development=nil;p.lifecycleData=try JSONEncoder().encode(legacy);try c.save()
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let old=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c));XCTAssertNil(old.growthPolicy)
+            let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys;let oldBytes=try encoder.encode(old)
+            try DevelopmentStore.adopt(player:p,calendar:s,in:c)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c,save:{_ in XCTFail("same window")})
+            XCTAssertEqual(try encoder.encode(XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c))),oldBytes)
+            p.gameDate="2032-12-01";try c.save();let owner=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),original=owner.payload,life=p.lifecycleData,revision=s.revision
+            XCTAssertThrowsError(try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:revision,in:c,save:{_ in throw TrainingError.stale}))
+            XCTAssertEqual(owner.payload,original);XCTAssertEqual(p.lifecycleData,life);XCTAssertEqual(s.revision,revision)
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let report=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c));XCTAssertEqual(report.growthPolicy?.version,2)
+            XCTAssertEqual(try encoder.encode(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasReports!.first!),oldBytes)
+            var corrupt=report;corrupt.growthPolicy=nil;XCTAssertThrowsError(try corrupt.validate(playerID:p.id,today:GameDate(p.gameDate)))
+            bytes=owner.payload
+        }
+        let db=try CareerStore.makeContainer(url:url),c=db.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id == id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == id})
+        XCTAssertEqual(try ContractRegistrationStore.row(player:p,in:c)?.payload,bytes)
+        let report=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c));try report.validate(playerID:p.id,today:GameDate(p.gameDate));XCTAssertEqual(report.growthPolicy?.version,2)
+    }
+}
+
+extension CareerCalendarTests {
+    func testV39AgingAndCareerHorizonApplyWithoutEditingPlayer() throws {
+        let (db,p,s)=try fixture(role:.pitcher),c=db.mainContext
+        p.gameDate="2037-03-31";p.speed=100
+        let abilities=try XCTUnwrap(PlayerAbilityStore.profile(playerID:p.id,in:c));abilities.velocity=100;try c.save()
+        let o=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        let policy=OverseasGrowthPolicy(development:PlayerDevelopment(adopted:"2026-04-01",timing:.balanced))
+        let result=try policy.values(observation:o,roleID:"starter",score:0,fatigue:100)
+        XCTAssertLessThan(try XCTUnwrap(result.0["homeVelocity"]),100);XCTAssertEqual(p.speed,100);XCTAssertEqual(abilities.velocity,100)
+        p.gameDate="2051-04-01";try c.save()
+        let retired=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+        let capped=try policy.values(observation:retired,roleID:"starter",score:100,fatigue:0)
+        XCTAssertEqual(capped.0["homeVelocity"],100);XCTAssertEqual(capped.1,Dictionary(uniqueKeysWithValues:retired.abilities.pitches.map {($0.id,$0.current)}))
     }
 }

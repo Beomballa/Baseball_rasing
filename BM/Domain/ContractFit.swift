@@ -1317,6 +1317,45 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
     }
 }
 
+// Frozen projection inputs, not a command that trains or ages the saved player.
+struct OverseasGrowthPolicy:Codable,Equatable {
+    var version=2
+    let development:PlayerDevelopment
+    func validate(observation:ScoutingObservation) throws {
+        guard version == 2 else {throw ContractEvaluationError.invalid}
+        try development.validate(playerID:observation.playerID,today:observation.observedDate)
+    }
+    func values(observation:ScoutingObservation,roleID:String,score:Double,fatigue:Int) throws -> ([String:Double],[String:Double]) {
+        try validate(observation:observation)
+        let date=try GameDate(observation.observedDate),origin=try GameDate(observation.origin),end=date.anniversary(in:date.year+2),days=date.days(to:end)
+        let initialAge=origin.age(startingAt:16,on:date)
+        var values=Dictionary(uniqueKeysWithValues:observation.abilities.originals.map {($0.id,$0.current)}),pitches=Dictionary(uniqueKeysWithValues:observation.abilities.pitches.map {($0.id,$0.current)})
+        let selected=roleID == "field" ? ["homeContact","homePower","homeDiscipline","homeSpeed","homeDefense","homeArm","homeMental"]:roleID == "starter" ? ["homeVelocity","homeControl","homeStuff","homeStamina","homeMental"]:["homeContact","homePower","homeDiscipline","homeMental"]
+        let keys=(selected.filter {values[$0] != nil}+(roleID == "starter" ? pitches.keys.map {"pitch/"+$0}:[])).sorted()
+        guard !keys.isEmpty else {return(values,pitches)}
+        var window=development.active(on:date.description),step=0
+        for day in 1...days {
+            let target=date.adding(days:day),age=observation.age+origin.age(startingAt:16,on:target)-initialAge
+            if age>=41 {break}
+            if target == origin.anniversary(in:target.year),target.description>development.adopted {
+                for (kind,key) in CareerAgingRules.homeIDs {if let n=values[key] {values[key]=DevelopmentRules.aged(n,kind:kind,age:age,pitch:false)}}
+                for (code,n) in pitches {pitches[code]=DevelopmentRules.aged(n,kind:.pitch,age:age,pitch:true)}
+            }
+            guard day*360/days > (day-1)*360/days else {continue}
+            let key=keys[step%keys.count],isPitch=key.hasPrefix("pitch/"),code=isPitch ? String(key.dropFirst(6)):nil
+            let kind=isPitch ? TrainingKind.pitch:CareerAgingRules.homeIDs.first {$0.value == key}!.key
+            let before=isPitch ? pitches[code!]!:values[key]!
+            let base=DevelopmentRules.growth(before:before,score:score,fatigue:fatigue,age:age,pitch:isPitch,timing:development.timing)
+            var after=base
+            if var w=window,w.available(on:target.description),w.kind == kind,w.pitchCode == code {
+                let bonus=TrainingRules.round(min(0.6-w.spent,100-base,max(0,base-before)*0.4))
+                after=TrainingRules.round(min(100,base+bonus));w.used += 1;w.spent=TrainingRules.round(w.spent+bonus);window=w
+            }
+            if isPitch {pitches[code!]=after} else {values[key]=after};step += 1
+        }
+        return(values,pitches)
+    }
+}
 struct OverseasGrowthProjection:Codable,Equatable,Identifiable {
     let roleID:String
     let current:Double?
@@ -1324,7 +1363,7 @@ struct OverseasGrowthProjection:Codable,Equatable,Identifiable {
     let baseline:Double?
     let optimistic:Double?
     var id:String {roleID}
-    static func make(observation:ScoutingObservation) throws -> [Self] {
+    static func make(observation:ScoutingObservation,policy:OverseasGrowthPolicy?=nil) throws -> [Self] {
         let date=try GameDate(observation.observedDate),origin=try GameDate(observation.origin)
         guard date.year < 9996 else {throw ContractEvaluationError.invalid}
         let end=date.anniversary(in:date.year+2),days=date.days(to:end)
@@ -1334,13 +1373,14 @@ struct OverseasGrowthProjection:Codable,Equatable,Identifiable {
             let selected=roleID == "field" ? ["homeContact","homePower","homeDiscipline","homeSpeed","homeDefense","homeArm","homeMental"]:roleID == "starter" ? ["homeVelocity","homeControl","homeStuff","homeStamina","homeMental"]:["homeContact","homePower","homeDiscipline","homeMental"]
             let keys=(selected.filter {values[$0] != nil}+(roleID == "starter" ? pitches.keys.map {"pitch/"+$0}:[])).sorted()
             guard !keys.isEmpty else {return nil}
-            for step in 0..<360 {
+            for step in 0..<(policy == nil ? 360:0) {
                 let target=date.adding(days:(step+1)*days/360),age=origin.age(startingAt:16,on:target),key=keys[step%keys.count]
                 if key.hasPrefix("pitch/") {
                     let pitch=String(key.dropFirst(6)),before=pitches[pitch]!
                     pitches[pitch]=TrainingRules.growth(before:before,score:score,fatigue:fatigue,age:age,pitch:true)
                 } else {values[key]=TrainingRules.growth(before:values[key]!,score:score,fatigue:fatigue,age:age,pitch:false)}
             }
+            if let policy {(values,pitches)=try policy.values(observation:observation,roleID:roleID,score:score,fatigue:fatigue)}
             let originals=observation.abilities.originals.map {HomeAbilityValue(id:$0.id,label:$0.label,current:values[$0.id]!,initial:$0.initial)}
             let pitchValues=observation.abilities.pitches.map {HomeAbilityValue(id:$0.id,label:$0.label,current:pitches[$0.id]!,initial:$0.initial)}
             let summary=HomeAbilitySummary(axes:observation.abilities.axes,originals:originals,pitches:pitchValues,hasInitialValues:observation.abilities.hasInitialValues)
@@ -1359,9 +1399,10 @@ struct OverseasScoutingReport:Codable {
     let comparisons:[ScoutingPerformanceComparison]
     let projections:[OverseasGrowthProjection]
     var market:OverseasMarket? = nil
+    var growthPolicy:OverseasGrowthPolicy?
     var id:String {observation.playerID.uuidString+":overseas-report-v1:"+String(period)}
     var selected:ScoutingPerformanceComparison? {ScoutingContractFit.selected(comparisons,role:observation.role)}
-    @MainActor static func make(observation:ScoutingObservation,eligibility:OverseasEligibilitySnapshot) throws -> Self {
+    @MainActor static func make(observation:ScoutingObservation,eligibility:OverseasEligibilitySnapshot,growthPolicy:OverseasGrowthPolicy?=nil) throws -> Self {
         let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
         let groups=observation.groups.filter {$0.id.hasPrefix(level+"/")}
         let comparisons=try groups.map {group -> ScoutingPerformanceComparison in
@@ -1371,14 +1412,16 @@ struct OverseasScoutingReport:Codable {
             let p=verified ? ScoutingContractFit.correction(value:value!,reference:ref!.value!,n:group.performance!.sample(group.totals.line,role:observation.role)):0
             return ScoutingPerformanceComparison(id:group.id,totals:group.totals,performance:group.performance,reference:ref,value:value,correction:p,verified:verified,reason:verified ? "성인 표준 NPC 기준 · 원소속 수준/입력 환경 분리":"지원 환경/성적 비교 미검증 · P=0")
         }
-        var result=Self(version:3,period:observation.period,eligibility:eligibility,observation:observation,comparisons:comparisons,projections:try OverseasGrowthProjection.make(observation:observation))
+        var result=Self(version:3,period:observation.period,eligibility:eligibility,observation:observation,comparisons:comparisons,projections:try OverseasGrowthProjection.make(observation:observation,policy:growthPolicy))
+        result.growthPolicy=growthPolicy
         result.market=OverseasMarket.make(report:result,version:2);return result
     }
     func validate(playerID:UUID,today:GameDate) throws {
         try eligibility.validate(playerID:playerID,today:today);try observation.validate()
+        try growthPolicy?.validate(observation:observation)
         guard [1,2,3].contains(version),observation.playerID == playerID,period == observation.period,eligibility.evidence.date == observation.observedDate,
               comparisons.count <= observation.groups.count,Set(comparisons.map(\.id)).count == comparisons.count,
-              projections == (try OverseasGrowthProjection.make(observation:observation)) else {throw ContractEvaluationError.invalid}
+              projections == (try OverseasGrowthProjection.make(observation:observation,policy:growthPolicy)) else {throw ContractEvaluationError.invalid}
         guard version == 1 ? market == nil:market == OverseasMarket.make(report:self,version:version == 3 ? 2:1) else {throw ContractEvaluationError.invalid}
         let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
         guard comparisons.map(\.id) == observation.groups.filter({$0.id.hasPrefix(level+"/")}).map(\.id) else {throw ContractEvaluationError.invalid}

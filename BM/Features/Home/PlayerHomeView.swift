@@ -1437,15 +1437,7 @@ struct OverseasScoutingReportView:View {
                         if report.comparisons.isEmpty {Text("현재 수준의 성적 표본 없음 · 과거 다른 수준 성적을 합치지 않습니다.").font(.caption)}
                         Text("NPC 기준은 게임 엔진의 표준 비교 자료이며 실제 선수 평균/실사용자 분포가 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     }
-                    GamePanel(title:"2년 성장 전망 · 역할 기량",onBoard:true,contentSpacing:12) {
-                        ForEach(report.projections) {row in
-                            Text(DomesticContractOffer.roleName(row.roleID)).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
-                            Text("현재 \(number(row.current)) → 기준 \(number(row.baseline))\n보수 \(number(row.conservative)) / 낙관 \(number(row.optimistic))")
-                                .font(.subheadline.monospaced()).lineSpacing(6).accessibilityIdentifier("overseasProjection-"+row.roleID)
-                        }
-                        Text("고정 비교모형 V1 · 2개 달력연도 · 연180회 훈련 예산 · 당시 나이/능력 감쇠식. 점수/피로 조건은 보수50/60·기준75/40·낙관100/0입니다. 부상/일정·노화까지 예측한 확정 성장값이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        Text("새 성장 정책 V2의 개인 발현·노화·성장 집중은 이 고정 비교 전망에 포함되지 않습니다. 전망은 실제 능력·날짜·피로·훈련 보상에 반영되지 않습니다.").font(.caption)
-                    }
+                    OverseasGrowthPanel(projections:report.projections,policy:report.growthPolicy,date:report.observation.observedDate)
                 }
             }.padding(12)
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
@@ -3142,4 +3134,28 @@ struct DevelopmentHomePanel:View {
             Button("취소",role:.cancel) {}
         } message: {Text("기존 선수는 균형 발현으로 시작합니다. 과거 훈련·경기·노화는 다시 계산하지 않습니다. 날짜·피로·오늘 행동은 유지됩니다.")}
     }
+}
+
+
+struct OverseasGrowthPanel:View {
+    let projections:[OverseasGrowthProjection]
+    let policy:OverseasGrowthPolicy?
+    let date:String
+    var body:some View {
+        GamePanel(title:"2년 성장 전망 · 역할 기량",onBoard:true,contentSpacing:12) {
+                        ForEach(projections) {row in
+                            Text(DomesticContractOffer.roleName(row.roleID)).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                            Text("현재 \(number(row.current)) → 기준 \(number(row.baseline))\n보수 \(number(row.conservative)) / 낙관 \(number(row.optimistic))")
+                                .font(.subheadline.monospaced()).lineSpacing(6).accessibilityIdentifier("overseasProjection-"+row.roleID)
+                        }
+            if let policy {
+                Text("성장 모형 V2 · "+policy.development.timing.label).font(.headline).accessibilityIdentifier("growthForecastPolicy")
+                Text("고구간 성장 감속 · 미래 기념일 노화 · 41세 전까지만 계산").font(.subheadline)
+                Text(policy.development.active(on:date) == nil ? "확인된 성장 집중 없음 · 미래 발동은 가정하지 않음":"현재 발동한 집중의 남은 기한·횟수·추가 예산만 반영").font(.subheadline).accessibilityIdentifier("growthForecastWindow")
+            } else {Text("고정 비교모형 V1 · 당시 규칙 보존").font(.subheadline).accessibilityIdentifier("growthForecastPolicy")}
+            Text("2개 달력연도 · 연180회 가정 · 보수 점수50/피로60, 기준75/40, 낙관100/0. 선택 역할의 능력·구종을 순환 훈련합니다. 피로는 시나리오 고정값이며 실제 일정 예측이 아닙니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            Text("경기 XP·부상·미래 성장 집중은 미포함. 전망은 하락할 수도 있으며 실제 성장·훈련 보상·계약이나 주전을 보장하지 않습니다.").font(.subheadline)
+        }
+    }
+    private func number(_ n:Double?) -> String {n.map {String(format:"%.1f",$0)} ?? "자료 부족"}
 }

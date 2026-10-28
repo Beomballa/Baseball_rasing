@@ -783,7 +783,8 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         if journal.overseasReports?.contains(where:{$0.period == period}) == true {return}
         let eligibility=try OverseasEligibilityStore.current(player:player,calendar:calendar,in:context)
         let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
-        let report=try OverseasScoutingReport.make(observation:observation,eligibility:eligibility)
+        let policy=try player.lifecycle.development.map {OverseasGrowthPolicy(development:$0)}
+        let report=try OverseasScoutingReport.make(observation:observation,eligibility:eligibility,growthPolicy:policy)
         try report.validate(playerID:player.id,today:GameDate(date))
         journal.overseasReports=(journal.overseasReports ?? [])+[report]
         try CareerProjectStore.appendReview(owner:&journal,player:player,observation:observation,reportID:report.id,in:context)
