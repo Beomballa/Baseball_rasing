@@ -85,7 +85,7 @@ struct PlayerHomeView: View {
         }
         .id(player.id)
         .preferredColorScheme(.dark)
-        .sheet(item: $roomDetail, onDismiss: performRootAction) { detail in
+        .sheet(item: $roomDetail, onDismiss: performRootAction) { [trainingKind] detail in
             NavigationStack {
                 Group {
                     if detail == .gameEntry, let calendar {
@@ -95,7 +95,7 @@ struct PlayerHomeView: View {
                             VStack(alignment: .leading, spacing: 24) {
                                 switch detail {
                                 case .player(let section): playerContent(section)
-                                case .training(let section): trainingContent(section)
+                                case .training(let section): trainingContent(section, selectedKind: trainingKind)
                                 case .game(let section): gameContent(section)
                                 case .career(let section): careerContent(section)
                                 case .profile:
@@ -306,7 +306,7 @@ struct PlayerHomeView: View {
     @State private var trainingSection = ManagementTrainingSection.abilities
     @State private var gameSection = ManagementGameSection.schedule
     @State private var trainingKind = TrainingKind.contact
-    private var activeTrainingKind: TrainingKind { trainingKind.allows(player.roleRaw) ? trainingKind : player.role == .pitcher ? .pitch : .contact }
+    private func allowedTrainingKind(_ kind: TrainingKind) -> TrainingKind { kind.allows(player.roleRaw) ? kind : player.role == .pitcher ? .pitch : .contact }
     @ViewBuilder private func playerContent(_ section: ManagementPlayerSection) -> some View {
         let summary = HomeAbilitySummary(player: player, abilities: abilities)
         rolePicker
@@ -383,13 +383,13 @@ struct PlayerHomeView: View {
         }
     }
 
-    @ViewBuilder private func trainingContent(_ section: ManagementTrainingSection) -> some View {
+    @ViewBuilder private func trainingContent(_ section: ManagementTrainingSection, selectedKind: TrainingKind) -> some View {
         if let calendar {
             if todayTraining != nil { trainingLink(calendar) }
             ManagementSectionTabs(options: ManagementTrainingSection.allCases.filter { player.role == .batter || $0 != .positions }, selection: Binding(get: { section }, set: { trainingSection = $0; roomDetail = .training($0) }), title: { $0.title }, identifier: "trainingSection", horizontal: true)
             switch section {
             case .abilities:
-                trainingAbilities(calendar)
+                trainingAbilities(calendar, selectedKind: selectedKind)
             case .traits:
                 ManagementPanel("특성 습득 훈련") {
                     ForEach(PlayerTrait.allCases) { trait in
@@ -425,10 +425,11 @@ struct PlayerHomeView: View {
         }.tint(GameTheme.gold)
         #endif
     }
-    private func trainingAbilities(_ calendar: CareerCalendarState) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private func trainingAbilities(_ calendar: CareerCalendarState, selectedKind: TrainingKind) -> some View {
+        let activeTrainingKind = allowedTrainingKind(selectedKind)
+        return VStack(alignment: .leading, spacing: 16) {
             ManagementPanel(activeTrainingKind.label + " 훈련", surface: .paper) {
-                Text(trainingMethod).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
+                Text(trainingMethod(activeTrainingKind)).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
                 Text("5회 · 오늘 행동 1회 · 완료 시 피로 +\(TrainingRules.fatigueCost)").managementFont(.label)
                 NavigationLink { CareerTrainingDestination(player: player, calendar: calendar, initialKind: activeTrainingKind) } label: { Text(activeTrainingKind.label + " 훈련 준비") }
                     .buttonStyle(ManagementButtonStyle()).disabled(todayTraining != nil || calendar.hasAction(on: player.gameDate))
@@ -468,7 +469,7 @@ struct PlayerHomeView: View {
             }, identifier: "trainingKind")
         }
     }
-    private var trainingMethod: String {
+    private func trainingMethod(_ activeTrainingKind: TrainingKind) -> String {
         if let saved = todayTraining, let session = try? saved.snapshot(), session.selectedKind == activeTrainingKind {
             return activeTrainingKind.drillDescription(version: session.drillVersion)
         }

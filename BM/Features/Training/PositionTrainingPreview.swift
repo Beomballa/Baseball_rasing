@@ -257,7 +257,7 @@ struct PositionPracticeField: View {
     var readMotion: Double = 0.5
     var body: some View {
         Canvas { context, size in
-            context.scaleBy(x: size.width / 320, y: size.height / 220)
+            TrainingStageLayout.fit(&context, size: size)
             func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double, _ hex: Int) {
                 context.fill(Path(CGRect(x: x.rounded(), y: y.rounded(), width: w, height: h)), with: .color(Color(hex: hex)))
             }

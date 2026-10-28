@@ -6,6 +6,52 @@ import SpriteKit
 @testable import BM
 
 @MainActor final class FieldTrainingTests: XCTestCase {
+    func testV51UniformWorldAndTouchInversePreserveTargetsAtAllAspectRatios() {
+        XCTAssertGreaterThanOrEqual(LocationDrillReplay.point(TrainingTarget(x:0,y:0),kind:.defense).y,90, "Even an edge input must remain below the fence on the ground")
+        for size in [CGSize(width: 320,height: 220),CGSize(width: 280,height: 280),CGSize(width: 390,height: 170),CGSize(width: 320,height: 440)] {
+            let rect = TrainingStageLayout.rect(in: size)
+            XCTAssertEqual(rect.width/320,rect.height/220,accuracy:0.00001)
+            for input in [TrainingTarget(x: 0,y: 0),TrainingTarget(x: 0.3,y: 0.7),TrainingTarget(x: 1,y: 1)] {
+                let p = TrainingFieldArt.point(input), scale = rect.width/320
+                let view = CGPoint(x: rect.minX+p.x*scale,y: rect.minY+p.y*scale)
+                let actual = TrainingStageLayout.fieldInput(view,in: size)
+                XCTAssertEqual(actual.x,input.x,accuracy:0.00001);XCTAssertEqual(actual.y,input.y,accuracy:0.00001)
+                for kind in [TrainingKind.control,.defense] {
+                    let local = LocationDrillReplay.point(input,kind: kind)
+                    let touched = CGPoint(x: rect.minX+local.x*scale,y: rect.minY+local.y*scale)
+                    let result = LocationDrillReplay.input(at: TrainingStageLayout.world(touched,in: size),kind:kind)
+                    XCTAssertEqual(result.x,input.x,accuracy:0.00001);XCTAssertEqual(result.y,input.y,accuracy:0.00001)
+                }
+            }
+        }
+    }
+    func testV51OriginalPracticeAssetsAreSeparateFromActorsAndPresentInBundle() throws {
+        for room in [TrainingEnvironmentArt.Room.bullpen,.field,.running,.dugout] {
+            let image = try XCTUnwrap(TrainingEnvironmentArt.image(room))
+            XCTAssertEqual(image.size.width/image.size.height,1.5,accuracy:0.0001)
+        }
+        XCTAssertNotNil(TrainingEnvironmentArt.tee)
+        XCTAssertLessThan(TirePowerScene.contactAt,TirePowerScene.duration)
+    }
+    func testV51GrowthProgressUsesStoredPrecisionWithoutReapplyingGrowth() {
+        XCTAssertEqual(TrainingGrowthDisplay.next(64.37),64.5,accuracy:0.00001)
+        XCTAssertEqual(TrainingGrowthDisplay.progress(64.37),0.2,accuracy:0.00001)
+        XCTAssertEqual(TrainingGrowthDisplay.next(64.31),64.4,accuracy:0.00001)
+        XCTAssertEqual(TrainingGrowthDisplay.progress(64.31),0.6,accuracy:0.00001)
+        XCTAssertEqual(TrainingGrowthDisplay.next(100),100)
+        XCTAssertEqual(TrainingGrowthDisplay.progress(100),1)
+    }
+    func testV51TeeWaitsThroughContactAndFlightAndCancelsWithoutSecondCallback() {
+        let scene = TirePowerScene(size: TrainingStageLayout.size)
+        var callbacks = 0
+        scene.strike(score: 100,reduced: true,at: 100) { callbacks += 1 }
+        scene.advance(at: 100+TirePowerScene.contactAt);XCTAssertEqual(callbacks,0)
+        scene.advance(at: 100+TirePowerScene.duration-0.01);XCTAssertEqual(callbacks,0)
+        scene.advance(at: 100+TirePowerScene.duration+0.01);XCTAssertEqual(callbacks,1)
+        scene.advance(at: 110);XCTAssertEqual(callbacks,1)
+        scene.strike(score: 27,reduced: false,at: 120) { callbacks += 1 }
+        scene.cancel();scene.advance(at: 125);XCTAssertEqual(callbacks,1)
+    }
     func testV30ThrowPhasesKeepTheJudgedEndpointAndWaitThroughReceive() throws {
         XCTAssertEqual(TrainingFieldMotion.flight(0.1),0)
         XCTAssertEqual(TrainingFieldMotion.flight(TrainingFieldMotion.arrival),1)
@@ -26,7 +72,7 @@ import SpriteKit
         }
     }
     func testV29PreparedPitchFlightWaitsForActualFlightAndReceiveThenCompletesOnce() throws {
-        let scene = LocationDrillScene(size: CGSize(width: 320,height: 320))
+        let scene = LocationDrillScene(size: TrainingStageLayout.size)
         scene.configure(kind: .control,appearance: PlayerAppearance(),number: 8,hand: "left")
         scene.prepareDrill(phase: 0.85)
         let point = TrainingTarget(x: 0.5,y: 0.5)
@@ -61,7 +107,7 @@ import SpriteKit
 
     func testV28LocationPlaybackEndsAtJudgedCoordinatesAndCompletesOnlyOnceAfterReceive() throws {
         for kind in [TrainingKind.control, .defense] {
-            let scene = LocationDrillScene(size: CGSize(width: 320, height: 320))
+            let scene = LocationDrillScene(size: TrainingStageLayout.size)
             scene.configure(kind: kind, appearance: PlayerAppearance(), number: 27, hand: "left")
             let target = TrainingTarget(x: 0.3, y: 0.6), input = TrainingTarget(x: 0.7, y: 0.4)
             let replay = LocationDrillReplay(kind: kind, target: target, input: input, score: 0)
@@ -75,17 +121,17 @@ import SpriteKit
             let ball = try XCTUnwrap(scene.childNode(withName: "locationBall"))
             if kind == .control {
                 XCTAssertEqual(ball.position.x, judged.x, accuracy: 0.0001)
-                XCTAssertEqual(ball.position.y, 320 - judged.y, accuracy: 0.0001)
+                XCTAssertEqual(ball.position.y, 220 - judged.y, accuracy: 0.0001)
             } else {
-                let catchFacing = FieldFacing.direction(dx: 160 - judged.x, dy: 286 - judged.y)
-                let offset = try XCTUnwrap(FieldRasterArt.contact(FieldSpriteMotion(facing: catchFacing, stage: .catchBall, progress: 1, chestCatch: true), kind: "fielder", left: true, hand: false))
+                let catchFacing = FieldFacing.direction(dx: 160 - judged.x, dy: 216 - judged.y)
+                let offset = try XCTUnwrap(FieldRasterArt.contact(FieldSpriteMotion(facing: catchFacing, stage: .catchBall, progress: 1, chestCatch: false), kind: "fielder", left: true, hand: false))
                 XCTAssertEqual(ball.position.x, judged.x + offset.x * 1.7, accuracy: 0.0001)
-                XCTAssertEqual(ball.position.y, 320 - judged.y - offset.y * 1.7, accuracy: 0.0001)
+                XCTAssertEqual(ball.position.y, 220 - judged.y - offset.y * 1.7, accuracy: 0.0001)
             }
             let actor = try XCTUnwrap(scene.childNode(withName: "locationActor"))
             if kind == .defense {
                 let chosen = LocationDrillReplay.point(input, kind: kind)
-                XCTAssertEqual(actor.position.x, chosen.x, accuracy: 0.0001); XCTAssertEqual(actor.position.y, 320 - chosen.y, accuracy: 0.0001)
+                XCTAssertEqual(actor.position.x, chosen.x, accuracy: 0.0001); XCTAssertEqual(actor.position.y, 220 - chosen.y, accuracy: 0.0001)
             }
             scene.advance(at: 150); XCTAssertEqual(completions, 1)
             scene.play(replay, at: 200) { completions += 1 }; scene.cancel(); scene.advance(at: 250)

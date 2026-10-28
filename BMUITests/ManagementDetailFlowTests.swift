@@ -2,6 +2,52 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV51TrainingScreensAndSelectedRoutes() {
+        captureV51TrainingRoutes(["contact", "power", "discipline", "velocity", "control", "stuff", "speed", "defense", "arm", "stamina", "mental"])
+    }
+    @MainActor func testV51DefensePreparationScrollKeepsCenteredInput() {
+        captureV51TrainingRoutes(["defense"])
+    }
+    @MainActor private func captureV51TrainingRoutes(_ kinds: [String]) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for kind in kinds {
+            app.terminate(); app.launchArguments = ["-management-career-verification"]; app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            if ["velocity", "control", "stuff", "stamina"].contains(kind) { pickPitcher(app) }
+            app.buttons["managementTab-training"].tap()
+            app.buttons[["contact", "power", "discipline"].contains(kind) ? "facility-training" : "facility-physical"].tap()
+            revealLocationChoice(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
+            reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
+            XCTAssertTrue(app.navigationBars[["contact":"컨택","power":"파워","discipline":"선구안","velocity":"구속","control":"제구","stuff":"구위","speed":"스피드","defense":"수비","arm":"송구","stamina":"지구력","mental":"멘탈"][kind]! + " 훈련"].waitForExistence(timeout: 5), "selected route must match " + kind)
+            reveal(app.buttons["startTraining"], app); app.buttons["startTraining"].tap()
+            if kind == "defense" {
+                let field = app.descendants(matching:.any).matching(identifier:"trainingField").firstMatch
+                XCTAssertTrue((field.value as? String ?? "").contains("선수 가로 50 세로 50"), "Preparation scrolling must not move the player")
+            }
+            capture(app, "v51-after-" + kind)
+        }
+    }
+
+    @MainActor func testV51LibraryAndTraitPoliciesRemainReadOnly() {
+        continueAfterFailure = false
+        let app = launch(), before = status(app)
+        app.buttons["managementTab-player"].tap();app.buttons["facility-traits"].tap()
+        capture(app,"v51-trait-owned-active")
+        close(app);app.buttons["managementTab-home"].tap();XCTAssertEqual(status(app),before)
+        pickPitcher(app)
+        let pitcherBefore = status(app)
+        app.buttons["managementTab-player"].tap();app.buttons["facility-positions"].tap()
+        reveal(app.buttons["openPitchLibrary"],app);app.buttons["openPitchLibrary"].tap()
+        XCTAssertTrue(app.staticTexts["pitchLibraryCount"].waitForExistence(timeout:5))
+        capture(app,"v51-pitch-library-registered")
+        let learn = app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","pitchStudyStart-")).firstMatch
+        reveal(learn,app);XCTAssertTrue(learn.isHittable);capture(app,"v51-pitch-library-learning");learn.tap()
+        XCTAssertTrue(app.buttons["pitchStudyConfirm"].waitForExistence(timeout:5));capture(app,"v51-pitch-library-confirm")
+        app.buttons["취소"].tap();app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+        app.buttons["managementTab-home"].tap();XCTAssertEqual(status(app),pitcherBefore)
+    }
+
     @MainActor func testV44SaveSettingsPreviewCancelAndRestoreQAOnly() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-management-career-verification","-save-protection-verification","-save-protection-preview"];app.launch()
@@ -586,8 +632,8 @@ final class ManagementDetailFlowTests: XCTestCase {
                 let trace = app.descendants(matching: .any).matching(identifier: "skillTraceBoard").firstMatch
                 XCTAssertTrue(trace.exists)
                 let before = trace.value as? String
-                field.coordinate(withNormalizedOffset: CGVector(dx: 0.5,dy: 0.794)).press(forDuration: 0.05,
-                    thenDragTo: field.coordinate(withNormalizedOffset: CGVector(dx: 0.5,dy: 0.206)))
+                trace.coordinate(withNormalizedOffset: CGVector(dx: 0.5,dy: 0.794)).press(forDuration: 0.05,
+                    thenDragTo: trace.coordinate(withNormalizedOffset: CGVector(dx: 0.5,dy: 0.206)))
                 XCTAssertNotEqual(trace.value as? String,before)
                 capture(app,"v29-small-stuff-drawn")
                 action.tap()

@@ -59,7 +59,7 @@ extension TrainingKind {
     func drillDescription(version: Int?) -> String {
         if version == 1 {
             switch self {
-            case .power: return "타이어 · MAX 중앙에서 손 떼기"
+            case .power: return "티배팅 · MAX 중앙에서 손 떼기"
             case .velocity: return "준비 → 회전 → 릴리스 · 3박자"
             case .stuff: return "점선 궤적을 시작부터 끝까지 따라 그리기"
             default: break

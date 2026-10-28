@@ -148,7 +148,7 @@ struct TraitManagementPanel: View {
                         .buttonStyle(GameButtonStyle(secondary: true, onBoard: onBoard)).accessibilityIdentifier("traitDetails")
                 } else {
                     Text("보유 도감 · \(value.owned.count)").font(.title3.bold()).padding(.top, 12)
-                    if value.owned.isEmpty { Text("보유한 특성이 없습니다.").font(.subheadline).accessibilityIdentifier("traitOwnedEmpty") }
+                    if value.owned.isEmpty { Text("보유한 특성이 없습니다. 생성 시 능력 조건에 따라 0개로 시작할 수 있습니다. 강견·치타·안정 포구의 조건을 확인하고 습득 훈련으로 진척을 쌓으세요.").font(.subheadline).accessibilityIdentifier("traitOwnedEmpty") }
                     ForEach(PlayerTrait.allCases.filter { value.owned.contains($0) }) { card($0, value: value, locked: reason != nil) }
                     let missing = PlayerTrait.allCases.filter { !value.owned.contains($0) }
                     if !missing.isEmpty {
@@ -201,7 +201,7 @@ struct TraitDetailView: View {
                             Text("\(player.displaySchoolName) · \(player.role.label)").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                         }
                     }
-                    Text("보유 특성 중 최대 3개 활성화").font(.caption).foregroundStyle(GameTheme.gold)
+                    Text("MVP 특성 3종 · 보유 중 최대 3개 활성화").font(.caption).foregroundStyle(GameTheme.gold)
                 }
                 TraitManagementPanel(player: player, calendar: calendar, onBoard: true)
                 #if DEBUG
@@ -446,10 +446,11 @@ struct TraitTrainingArena: View {
     var appearance = PlayerAppearance()
     var number = 1
     var hand = "right"
+    var conditioning = false
     var body: some View {
         Canvas { context, size in
-            context.scaleBy(x: size.width / 320, y: size.height / 220)
-            TrainingFieldArt.background(in: context)
+            TrainingStageLayout.fit(&context, size: size)
+            TrainingFieldArt.background(in: context, room: trait == .cheetah ? .running : .field)
             func point(_ p: TrainingTarget) -> CGPoint { TrainingFieldArt.point(p) }
             @MainActor func actor(_ p: CGPoint, _ facing: FieldFacing, _ stage: FieldSpriteStage, runner: Bool = false, coach: Bool = false) {
                 TrainingFieldArt.actor(in: context, at: p, appearance: appearance, number: coach ? 0 : number,
@@ -457,15 +458,10 @@ struct TraitTrainingArena: View {
             }
             let flight = TrainingFieldMotion.flight(motion)
             if trait == .cheetah {
-                let lane = CGRect(x: 16, y: 125, width: 288, height: 65)
-                context.fill(Path(lane), with: .color(Color(hex: 0xb78450)))
-                for y in [133.0,160,187] {
-                    var path = Path(); path.move(to: CGPoint(x: 16,y: y)); path.addLine(to: CGPoint(x: 304,y: y))
-                    context.stroke(path, with: .color(Color(hex: 0xf3edcf)), lineWidth: 2)
-                }
-                for i in 0..<8 { context.fill(Path(CGRect(x: 280 + (i%2)*6,y: 125+i*8,width: 6,height: 8)), with: .color(i%2 == 0 ? .white : GameTheme.navy)) }
-                let x = 38 + Double(min(16,steps)) / 16 * 232
-                actor(CGPoint(x: x,y: 166), .direction(dx: 1,dy: 0), moving ? .run : .ready, runner: true)
+                let progress = Double(min(16,steps)) / 16
+                let travel = conditioning ? (progress <= 0.5 ? progress*2 : (1-progress)*2) : progress
+                let x = 38 + travel * 232
+                actor(CGPoint(x: x,y: 166), .direction(dx: conditioning && progress > 0.5 ? -1 : 1,dy: 0), moving ? .run : .ready, runner: true)
                 actor(CGPoint(x: 301,y: 103), .direction(dx: -1,dy: 1), .ready, coach: true)
             } else {
                 let bases = [4,1,2,3,4].map { point(TrainingRules.basePoint($0)) }
@@ -641,8 +637,8 @@ struct TraitDrillExperience: View {
                                     guard trait != .cheetah, !running, feedback == nil, errorMessage == nil else { return }
                                     let reserve: CGFloat = trait == .strongArm ? 420 : 340
                                     let height = typeSize.isAccessibilitySize ? 210 : max(170, min(260, geometry.size.height - reserve))
-                                    let pointX = (event.location.x / max(1, geometry.size.width - 24) * 320 - 32) / 256
-                                    let pointY = (event.location.y / height * 220 - 48) / 140
+                                    let input = TrainingStageLayout.fieldInput(event.location, in: CGSize(width: max(1,geometry.size.width-24),height: height))
+                                    let pointX = input.x, pointY = input.y
                                     if trait == .safeHands {
                                         x = min(0.9, max(0.1, pointX)); y = min(0.9, max(0.2, pointY))
                                     } else {

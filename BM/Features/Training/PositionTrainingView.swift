@@ -29,7 +29,7 @@ struct PositionHomePanel: View {
                         switch Result(catching:{try PositionAdvice.make(abilities:HomeAbilitySummary(player:player,abilities:PlayerAbilityStore.profile(playerID:player.id,in:context)),loadout:value,primary:primary)}) {
                         case .success(let advice):
                             VStack(alignment:.leading,spacing:10) {
-                                Text("COACH · 위치 적합도").font(.headline).foregroundStyle(GameTheme.gold)
+                                Text("COACH · 위치 비교 지수").font(.headline).foregroundStyle(GameTheme.gold)
                                 if let target=advice.recommendation,let row=advice.rows.first(where:{$0.position == target}) {
                                     Text(target.label+(row.skill.mastery>=40 ? " · 전환 검토 후보":" · 체험 훈련 추천")).font(.headline).accessibilityIdentifier("positionRecommendation")
                                     Text("현재 위치보다 기초 적합도5 이상 높습니다. 숙련과 실제 전환 조건은 별도로 확인하세요.").font(.subheadline)
@@ -38,10 +38,13 @@ struct PositionHomePanel: View {
                                     Text(primary == .catcher ? "포수 전문 기술 자료 부족 · 자동 전환 판단 보류":"현재 위치 유지 검토 · 뚜렷한 대안 차이가 없습니다.").font(.subheadline).accessibilityIdentifier("positionRecommendation")
                                 }
                                 if let row=advice.rows.first(where:{$0.position == selected}),let fit=row.fit,let weights=PositionAdvice.weights(selected) {
-                                    Text("\(selected.label) 기초 적합도 \(fit,specifier:"%.1f") / 100").font(.headline.monospacedDigit()).accessibilityIdentifier("positionFit")
+                                    Text("\(selected.label) 코치 지수 \(fit,specifier:"%.1f") / 100").font(.headline.monospacedDigit()).accessibilityIdentifier("positionFit")
                                     PositionMeter(value:fit,color:GameTheme.gold)
                                     Text("비중 · 주력 \(Int((weights[0]*100).rounded())) / 수비 \(Int((weights[1]*100).rounded())) / 송구 \(Int((weights[2]*100).rounded())) / 멘탈 \(Int((weights[3]*100).rounded()))").font(.subheadline)
-                                    Text("현재 숙련 \(row.skill.mastery,specifier:"%.1f") · 전환 준비40까지 \(max(0,40-row.skill.mastery),specifier:"%.1f")").font(.subheadline).accessibilityIdentifier("positionAdviceReadiness")
+                                    VStack(alignment: .leading,spacing: 6) {
+                                        Text("실전 적용 숙련 \(row.skill.mastery,specifier:"%.1f")").font(.subheadline.bold())
+                                        Text("전환 숙련 조건 40 · 남음 \(max(0,40-row.skill.mastery),specifier:"%.1f")").font(.subheadline)
+                                    }.accessibilityElement(children: .combine).accessibilityIdentifier("positionAdviceReadiness")
                                 } else {Text("포수 전문 포구·리드 자료가 없어 기초 지수를 계산하지 않습니다.").font(.subheadline).accessibilityIdentifier("positionFitUnavailable")}
                                 Text("코치용 비교 지수 · 경기/계약 점수나 성공 확률이 아닙니다. 특성·피로·상대·기용은 별도이며 전환 자체의 능력 보너스는 없습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                             }.padding(12).background(GameTheme.boardPanel,in:ManagementStepFrame()).overlay(ManagementStepFrame().strokeBorder(GameTheme.gold,lineWidth:2))
@@ -352,8 +355,9 @@ struct PositionDrillLiveView: View {
                             .contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { value in
                                 guard !typeSize.isAccessibilitySize, phase < 2, errorMessage == nil else { return }
                                 let height = max(170, min(220, geometry.size.height - 390))
-                                let px = min(0.95, max(0.05, value.location.x / max(1, geometry.size.width - 24)))
-                                let py = min(0.95, max(0.05, value.location.y / height))
+                                let world = TrainingStageLayout.world(value.location, in: CGSize(width: max(1,geometry.size.width-24),height: height))
+                                let px = min(0.95,max(0.05,world.x/320))
+                                let py = min(0.95,max(0.05,world.y/220))
                                 if phase == 0 { x = px; y = py }
                                 else { angle = (atan2(py - y, px - x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360); force = min(100, hypot(px - x, py - y) / 0.9 * 100) }
                             }, including: typeSize.isAccessibilitySize ? .none : .all)
