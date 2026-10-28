@@ -99,6 +99,7 @@ struct ScoutingObservation: Codable {
     var contractFit: ScoutingContractFit?
     var interests: ScoutingInterests?
     var opportunities: ClubOpportunitySummary? = nil
+    var clubParticipation:ClubParticipationBasis? = nil
 
     static func pendingReasons(age: Int, role: PlayerRole, groups: [ScoutingSampleGroup], modern: Bool = false, compared: Bool = false) -> [String] {
         var reasons = ["구단 기준 미연결", "동일 환경 비교 성적 미검증", "육성 전망 미산정", "진로/권리·모집/예산 심사 미연결"]
@@ -115,6 +116,10 @@ struct ScoutingObservation: Codable {
 
     func validate() throws {
         try opportunities?.validate()
+        try clubParticipation?.validate()
+        if let basis=clubParticipation {
+            guard basis.playerID == playerID,basis.playerRole == role.rawValue,basis.through == observedDate,basis.year == (try GameDate(observedDate)).year else {throw ScoutingObservationError.invalid}
+        }
         if let opportunities, opportunities.through != observedDate { throw ScoutingObservationError.invalid }
         let origin = try GameDate(origin), date = try GameDate(observedDate)
         let cycle = try ScoutingPeriod(origin: origin, today: date)
@@ -212,6 +217,7 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
             grades: try ScoutingRoleEvaluation.grades(role: player.role, abilities: live.abilities, positionMastery: mastery),
             evaluationPending: ScoutingObservation.pendingReasons(age: live.age, role: player.role, groups: live.groups))
         value.opportunities = try ClubSelectionStore.opportunities(player:player,through:player.gameDate,in:context)
+        value.clubParticipation = try ClubParticipationStore.current(player:player,calendar:calendar,in:context)
         value.version = 4
         value.contractFit = try ScoutingContractFit.make(value)
         value.interests = ScoutingInterests.make(value)
@@ -1392,7 +1398,8 @@ enum GoalSpecialError:LocalizedError {
             if foreignA != foreignB {return foreignA}
             return a.reportID < b.reportID
         }.first
-        return try ClubSeasonReview.make(goal:goal,on:date,basis:basis)
+        let participation=try ClubParticipationStore.season(goal:goal,owner:owner,player:player,in:context)
+        return try ClubSeasonReview.make(goal:goal,on:date,basis:basis,participation:participation)
     }
     static func review(_ goalID:String,player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
         var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
@@ -1622,5 +1629,49 @@ enum GoalSpecialError:LocalizedError {
             if try context.fetchCount(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.gameDate == date}))>0 {return .blocked("오늘 경기를 마친 뒤 다음 준비일에 훈련·휴식을 선택하세요.")}
             return .available
         } catch {return .blocked(error.localizedDescription)}
+    }
+}
+
+
+@MainActor enum ClubParticipationStore {
+    static func current(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> ClubParticipationBasis? {
+        guard context.container.schema.entities.contains(where:{$0.name == "ContractRegistration"}) else {return nil}
+        let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        let date=try GameDate(player.gameDate)
+        guard let member=try owner.current(on:date) else {return nil}
+        let from=max(try GameDate("\(date.year)-01-01"),try GameDate(member.since))
+        return try collect(player:player,owner:owner,membershipID:member.offerID,teamID:member.teamID,level:member.level,year:date.year,from:from.description,through:date.description,in:context)
+    }
+    static func season(goal:ClubSeasonGoal,owner:CareerContractJournal,player:CareerPlayer,in context:ModelContext) throws -> ClubParticipationBasis {
+        guard let through=goal.settledOn else {throw ClubSeasonGoalError.unfinished}
+        return try collect(player:player,owner:owner,membershipID:goal.role.membershipID,teamID:goal.role.teamID,level:goal.role.level,year:goal.year,from:goal.started,through:through,fixtureIDs:Set(goal.fixtureIDs),excluded:Set(goal.excludedKeys),in:context)
+    }
+    static func collect(player:CareerPlayer,owner:CareerContractJournal,membershipID:String,teamID:String,level:String,year:Int,from:String,through:String,
+                        fixtureIDs:Set<String>?=nil,excluded:Set<String>=[],in context:ModelContext) throws -> ClubParticipationBasis {
+        let id=player.id
+        let rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.gameDate >= from && $0.gameDate <= through}))
+        var records:[String:CareerMatchRecord]=[:]
+        for row in rows {guard records[row.fixtureID] == nil else {throw MatchError.invalidRecord};records[row.fixtureID]=row}
+        let schedule=try SeasonSchedule.fixtures(year:year,schoolIDs:CareerTeamDirectory.teams(level:level))
+        var games:[ClubParticipationGame]=[]
+        for fixture in schedule where fixture.includes(teamID) && fixture.date.description>=from && fixture.date.description<=through && (fixtureIDs?.contains(fixture.id) ?? true) {
+            let key=CareerMatchRecord.key(player.id,fixture.id)
+            guard !excluded.contains(key) else {continue}
+            guard let member=try owner.current(on:fixture.date),member.offerID == membershipID,member.teamID == teamID,member.level == level else {continue}
+            let rotation=fixture.isAppearance(for:player.role)
+            var kind:ClubParticipationKind = .missing,appearance:Bool?
+            if let row=records[fixture.id],row.completed {
+                let match=try row.snapshot()
+                guard match.role == player.roleRaw,match.competition == level else {throw ContractRegistrationError.invalid}
+                appearance=match.appearance
+                if let selection=match.clubSelection {
+                    guard selection.review.membershipID == membershipID,selection.review.teamID == teamID,selection.review.level == level else {throw ContractRegistrationError.invalid}
+                    kind=match.appearance ? .start:selection.rotationDay ? .bench:.rotationRest
+                } else {kind = .legacy}
+            }
+            games.append(ClubParticipationGame(key:key,fixtureID:fixture.id,date:fixture.date.description,rotationDay:rotation,appearance:appearance,kind:kind))
+        }
+        let result=ClubParticipationBasis(playerID:player.id,membershipID:membershipID,teamID:teamID,level:level,playerRole:player.roleRaw,year:year,from:from,through:through,games:games)
+        try result.validate();return result
     }
 }

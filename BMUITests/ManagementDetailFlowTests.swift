@@ -2,6 +2,54 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV36SeasonAndDomesticRenewalShowFrozenBenchContextBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-v36-opportunity-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:150))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app),role=pitcher ? "pitcher":"batter"
+            app.buttons["managementTab-career"].tap();app.buttons["facility-goals"].tap()
+            reveal(app.buttons["openClubSeasonGoals"],app);app.buttons["openClubSeasonGoals"].tap();reveal(app.buttons["openClubSeasonReviews"],app);app.buttons["openClubSeasonReviews"].tap()
+            let advice=app.staticTexts["clubNextRoleAdvice"];reveal(advice,app);XCTAssertTrue(advice.label.contains("기회 제한"))
+            capture(app,"v36-"+role+"-season-finding")
+            let counts=app.descendants(matching:.any).matching(identifier:"seasonParticipationCounts").firstMatch;reveal(counts,app);XCTAssertTrue(counts.label.contains("벤치"))
+            capture(app,"v36-"+role+"-season-counts")
+            let prepare=app.buttons["seasonParticipationPrepare"];reveal(prepare,app);prepare.tap()
+            XCTAssertTrue(app.buttons["opportunityCurrentSchedule"].waitForExistence(timeout:10));capture(app,"v36-"+role+"-current-preparation")
+            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+            app.buttons["facility-contracts"].tap();reveal(app.buttons["openRenewalOffer"],app);app.buttons["openRenewalOffer"].tap()
+            let finding=app.staticTexts["domesticParticipationFinding"];reveal(finding,app);XCTAssertTrue(finding.label.contains("기회 제한"))
+            capture(app,"v36-"+role+"-domestic-renewal")
+            XCTAssertFalse(app.buttons["acceptRenewalOffer"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before)
+        }
+    }
+    @MainActor func testV36OverseasRenewalContextDoesNotReplaceOriginalOfferBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-career-objectives-verification","-goal-special-verification","-overseas-renewal-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:150))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-career"].tap();app.buttons["facility-contracts"].tap()
+            reveal(app.buttons["openOverseasRenewal"],app);app.buttons["openOverseasRenewal"].tap()
+            let evaluate=app.buttons["evaluateOverseasRenewal"];reveal(evaluate,app);if evaluate.exists {evaluate.tap()}
+            let sample=app.staticTexts["overseasParticipationSample"].firstMatch;reveal(sample,app);XCTAssertTrue(sample.exists)
+            capture(app,"v36-"+(pitcher ? "pitcher":"batter")+"-overseas-context")
+            XCTAssertFalse(app.staticTexts["overseasRenewalError"].exists)
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before)
+        }
+    }
+    @MainActor func testV36SmallPhoneLargeTextParticipationCountsAndNextAction() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-v36-opportunity-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:150))
+        app.buttons["managementLargeMenu"].tap();app.buttons["커리어"].tap();reveal(app.buttons["facility-goals"],app);app.buttons["facility-goals"].tap()
+        reveal(app.buttons["openClubSeasonGoals"],app);app.buttons["openClubSeasonGoals"].tap();reveal(app.buttons["openClubSeasonReviews"],app);app.buttons["openClubSeasonReviews"].tap()
+        let sample=app.staticTexts["seasonParticipationSample"];reveal(sample,app);XCTAssertTrue(sample.isHittable);capture(app,"v36-large-sample")
+        let prepare=app.buttons["seasonParticipationPrepare"];reveal(prepare,app);XCTAssertTrue(prepare.isHittable);capture(app,"v36-large-action")
+    }
     @MainActor func testV35CoachAdviceTrainingPreparationAndConfirmedRestBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-club-selection-verification","-club-selection-bench","-v35-coach-verification"];app.launch()

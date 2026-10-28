@@ -950,6 +950,7 @@ struct DomesticRenewalReview: Codable, Equatable {
     var reasons: [String]
     var offer: DomesticRenewalOffer?
     var horizon:String? = nil
+    var participation:ClubParticipationBasis? = nil
     static func make(observation: ScoutingObservation, member: CareerMembership, roleID: String,
                      key: String, window: ContractEvaluationWindow) throws -> Self {
         let date=try GameDate(observation.observedDate)
@@ -986,7 +987,7 @@ struct DomesticRenewalReview: Codable, Equatable {
             expiresDate:min(date.adding(days:6),window.end).description,effectiveDate:start.description,
             economicEnd:start.anniversary(in:start.year+1).adding(days:-1).description,economicIndex:cost):nil
         return Self(rule:"domestic-renewal-v1",membership:member,roleID:roleID,h:h,c:c,p:p,f:f,competitorH:competitor,budget:budget,
-            sampleID:sample?.id,sampleCount:n,totals:sample?.totals,reasons:reasons,offer:offer)
+            sampleID:sample?.id,sampleCount:n,totals:sample?.totals,reasons:reasons,offer:offer,participation:observation.clubParticipation?.matching(member))
     }
     func validate(observation: ScoutingObservation,key: String,window: ContractEvaluationWindow) throws {
         guard self == (try Self.make(observation:observation,member:membership,roleID:roleID,key:key,window:window).limited(to:horizon)) else {throw ContractEvaluationError.invalid}
@@ -1791,6 +1792,7 @@ struct OverseasRenewalReview:Codable,Equatable,Identifiable {
     var reasons:[String]
     var offer:OverseasOffer?
     var horizon:String? = nil
+    var participation:ClubParticipationBasis? = nil
     static func route(_ member:CareerMembership) -> OverseasRoute? {
         switch member.level {
         case "mlb-development":.mlbDevelopment
@@ -1838,9 +1840,9 @@ struct OverseasRenewalReview:Codable,Equatable,Identifiable {
         if reasons.isEmpty,let row,let h,let f {
             offer=OverseasOffer(id:id+"/offer",clubID:row.id,teamID:member.teamID,name:member.name,route:route,roleID:roleID,issued:date.description,expires:min(date.adding(days:6),window.end).description,effective:start.description,economicEnd:start.anniversary(in:start.year+years).adding(days:-1).description,economicIndex:price,years:years,h:h,c:row.criterion,p:p,margin:f)
         } else {
-            return Self(version:1,id:id,window:window,date:date.description,reportID:report.id,source:member,reserved:reserved,roleID:roleID,sampleCount:count,criterion:row?.criterion,h:h,p:p,budget:row?.budget,reasons:reasons,offer:nil)
+            return Self(version:1,id:id,window:window,date:date.description,reportID:report.id,source:member,reserved:reserved,roleID:roleID,sampleCount:count,criterion:row?.criterion,h:h,p:p,budget:row?.budget,reasons:reasons,offer:nil,participation:report.observation.clubParticipation?.matching(member))
         }
-        return Self(version:1,id:id,window:window,date:date.description,reportID:report.id,source:member,reserved:reserved,roleID:roleID,sampleCount:count,criterion:row?.criterion,h:h,p:p,budget:row?.budget,reasons:reasons,offer:offer)
+        return Self(version:1,id:id,window:window,date:date.description,reportID:report.id,source:member,reserved:reserved,roleID:roleID,sampleCount:count,criterion:row?.criterion,h:h,p:p,budget:row?.budget,reasons:reasons,offer:offer,participation:report.observation.clubParticipation?.matching(member))
     }
     func limited(to horizon:String?) throws -> Self {
         guard let horizon else {return self};var value=self;value.horizon=horizon
@@ -2846,14 +2848,16 @@ struct ClubSeasonReview:Codable,Equatable,Identifiable {
     let result:ClubSeasonProgress
     let basis:ClubSeasonReviewBasis?
     let advice:ClubNextRoleAdvice
-    static func make(goal:ClubSeasonGoal,on date:String,basis:ClubSeasonReviewBasis?) throws -> Self {
+    var participation:ClubParticipationBasis? = nil
+    static func make(goal:ClubSeasonGoal,on date:String,basis:ClubSeasonReviewBasis?,participation:ClubParticipationBasis?=nil) throws -> Self {
         guard let result=goal.result,result.values.count == 2 else {throw ClubSeasonGoalError.unfinished}
+        try participation?.validate(goal:goal)
         let advice:ClubNextRoleAdvice
         if result.values[0] < goal.targets[0].target {advice = .sampleNeeded}
         else if result.values[1] < goal.targets[1].target {advice = .rolePractice}
         else if basis?.h == nil || basis?.environment == nil || (basis?.sample ?? 0) < (goal.playerRole == "batter" ? 40:45) {advice = .evidenceNeeded}
         else {advice = .roleDiscussion}
-        return Self(id:goal.id+"/review-v1",goalID:goal.id,date:date,result:result,basis:basis,advice:advice)
+        return Self(id:goal.id+"/review-v1",goalID:goal.id,date:date,result:result,basis:basis,advice:advice,participation:participation)
     }
 }
 extension CareerContractJournal {
@@ -2861,9 +2865,9 @@ extension CareerContractJournal {
         let rows=seasonReviews ?? []
         guard Set(rows.map(\.goalID)).count == rows.count else {throw ContractRegistrationError.invalid}
         for row in rows {
-            guard row.version == 1,let goal=seasonGoals?.first(where:{$0.id == row.goalID}),let settled=goal.settledOn,
+            guard row.version == 1,row.participation.map({$0.playerID == playerID}) ?? true,let goal=seasonGoals?.first(where:{$0.id == row.goalID}),let settled=goal.settledOn,
                   row.date >= settled,try GameDate(row.date) <= today,
-                  row == (try ClubSeasonReview.make(goal:goal,on:row.date,basis:row.basis)) else {throw ContractRegistrationError.invalid}
+                  row == (try ClubSeasonReview.make(goal:goal,on:row.date,basis:row.basis,participation:row.participation)) else {throw ContractRegistrationError.invalid}
             if let basis=row.basis {
                 guard let source=sources[basis.reportID],basis == (try ClubSeasonReviewBasis.make(goal:goal,owner:self,reportID:basis.reportID,observation:source.0,comparisons:source.1,on:row.date)) else {throw ContractRegistrationError.invalid}
             }
@@ -2881,5 +2885,114 @@ extension CareerContractJournal {
             if a.review.date != b.review.date {return a.review.date > b.review.date}
             return a.review.id < b.review.id
         }.first
+    }
+}
+
+
+// Frozen participation context explains an evaluation; it never changes qualification or offers.
+enum ClubParticipationKind:String,Codable {case start,bench,rotationRest,legacy,missing}
+struct ClubParticipationGame:Codable,Equatable,Identifiable {
+    let key:String
+    let fixtureID:String
+    let date:String
+    let rotationDay:Bool
+    let appearance:Bool?
+    let kind:ClubParticipationKind
+    var id:String {fixtureID}
+}
+struct ClubParticipationBasis:Codable,Equatable {
+    var version=1
+    let playerID:UUID
+    let membershipID:String
+    let teamID:String
+    let level:String
+    let playerRole:String
+    let year:Int
+    let from:String
+    let through:String
+    let games:[ClubParticipationGame]
+    var starts:Int {games.filter {$0.appearance == true}.count}
+    var bench:Int {games.filter {$0.kind == .bench}.count}
+    var rotationRest:Int {games.filter {$0.kind == .rotationRest}.count}
+    var turns:Int {games.filter(\.rotationDay).count}
+    var unknownTurns:Int {games.filter {$0.rotationDay && [.legacy,.missing].contains($0.kind)}.count}
+    func matching(_ member:CareerMembership) -> Self? {membershipID == member.offerID && teamID == member.teamID && level == member.level ? self:nil}
+    func validate() throws {
+        guard version == 1,!membershipID.isEmpty,!teamID.isEmpty,["batter","pitcher"].contains(playerRole),
+              ["college","domestic-development","domestic-first-team","mlb-development","npb-first-team","mlb-first-team"].contains(level),
+              CareerTeamDirectory.teams(level:level).contains(teamID),try GameDate(from).year == year,try GameDate(from)<=GameDate(through),games.count<=30,
+              Set(games.map(\.fixtureID)).count == games.count,games.map(\.date) == games.map(\.date).sorted() else {throw ContractRegistrationError.invalid}
+        let schedule=try SeasonSchedule.fixtures(year:year,schoolIDs:CareerTeamDirectory.teams(level:level))
+        for game in games {
+            guard let fixture=schedule.first(where:{$0.id == game.fixtureID}),fixture.includes(teamID),game.date == fixture.date.description,
+                  game.key == CareerMatchRecord.key(playerID,game.fixtureID),game.date>=from,game.date<=through,
+                  game.rotationDay == fixture.isAppearance(for:playerRole == "batter" ? .batter:.pitcher) else {throw ContractRegistrationError.invalid}
+            switch game.kind {
+            case .start:guard game.rotationDay,game.appearance == true else {throw ContractRegistrationError.invalid}
+            case .bench:guard game.rotationDay,game.appearance == false else {throw ContractRegistrationError.invalid}
+            case .rotationRest:guard !game.rotationDay,game.appearance == false else {throw ContractRegistrationError.invalid}
+            case .legacy:guard game.appearance != nil else {throw ContractRegistrationError.invalid}
+            case .missing:guard game.appearance == nil else {throw ContractRegistrationError.invalid}
+            }
+        }
+    }
+    func validate(goal:ClubSeasonGoal) throws {
+        try validate()
+        guard membershipID == goal.role.membershipID,teamID == goal.role.teamID,level == goal.role.level,
+              playerRole == goal.playerRole,year == goal.year,from == goal.started,through == goal.settledOn,
+              games.allSatisfy({goal.fixtureIDs.contains($0.fixtureID) && !goal.excludedKeys.contains($0.key)}) else {throw ContractRegistrationError.invalid}
+    }
+}
+
+enum ClubParticipationFinding:String {
+    case unavailable,opportunityLimited,sampleNeeded,performanceBelow,roleCriteria,sampleReady,onTrack
+    var label:String {switch self {
+    case .unavailable:"기용 근거 확인 필요"
+    case .opportunityLimited:"기회 제한 동반 · 성과 판단 보류"
+    case .sampleNeeded:"출전 확인 · 실전 표본 부족"
+    case .performanceBelow:"표본 확보 · 역할 성과 보완"
+    case .roleCriteria:"표본 확보 · 기량·경쟁 기준 보완"
+    case .sampleReady:"실전 표본 확보 · 별도 심사 확인"
+    case .onTrack:"표본·역할 성과 목표 충족"
+    }}
+    var detail:String {switch self {
+    case .unavailable:"당시 기용 사유가 미수집됐거나 기간 내 확인되지 않은 경기가 있습니다. 출전 부족의 원인을 추정하지 않습니다."
+    case .opportunityLimited:"표본 부족과 벤치 기용이 함께 확인됐습니다. 낮은 성과로 단정하지 않고 출전 경쟁과 기회를 먼저 확인합니다."
+    case .sampleNeeded:"기용은 확인됐지만 평가에 필요한 타석·투구 분량이 부족합니다. 확인된 출전에서 관찰 자료를 더 확보하세요."
+    case .performanceBelow:"필요한 표본을 확보한 상태에서 역할 성과의 보완 근거가 확인됐습니다. 해당 수행과 훈련을 준비하세요."
+    case .roleCriteria:"경기 표본과 별도로 역할 기량·구단 경쟁 기준이 남아 있습니다. 이를 경기 성적 미달과 구분해 준비하세요."
+    case .sampleReady:"필요 표본을 확보했습니다. 제의는 기존 기량·경쟁·모집 자리·예산·권리 심사를 따릅니다."
+    case .onTrack:"고정된 시즌 목표의 표본과 역할 성과를 충족했습니다. 다음 역할은 기존 구단 평가와 계약 심사에서 확인합니다."
+    }}
+}
+struct ClubParticipationFeedback {
+    let basis:ClubParticipationBasis?
+    let sample:Int
+    let required:Int
+    let finding:ClubParticipationFinding
+    static func make(basis:ClubParticipationBasis?,sample:Int,required:Int,performanceBelow:Bool=false,roleBelow:Bool=false,goalMet:Bool=false) -> Self {
+        let finding:ClubParticipationFinding
+        if basis == nil {finding = .unavailable}
+        else if sample < required {
+            if basis!.unknownTurns>0 || basis!.turns == 0 {finding = .unavailable}
+            else if basis!.bench>0 {finding = .opportunityLimited}
+            else {finding = .sampleNeeded}
+        } else if performanceBelow {finding = .performanceBelow}
+        else if roleBelow {finding = .roleCriteria}
+        else {finding = goalMet ? .onTrack:.sampleReady}
+        return Self(basis:basis,sample:sample,required:required,finding:finding)
+    }
+    static func season(_ review:ClubSeasonReview,goal:ClubSeasonGoal) -> Self {
+        make(basis:review.participation,sample:review.result.values[0],required:goal.targets[0].target,
+             performanceBelow:review.result.values[1]<goal.targets[1].target,goalMet:review.result.values[1]>=goal.targets[1].target)
+    }
+    static func domestic(_ review:DomesticRenewalReview,role:PlayerRole) -> Self {
+        make(basis:review.participation,sample:role == .batter ? review.totals?.line.plateAppearances ?? 0:review.totals?.line.pitchingOuts ?? 0,
+             required:role == .batter ? 40:45,roleBelow:(review.f ?? 0)<0)
+    }
+    static func overseas(_ review:OverseasRenewalReview,role:PlayerRole) -> Self {
+        let development=review.source.level == "mlb-development"
+        return make(basis:review.participation,sample:review.sampleCount,required:role == .batter ? (development ? 40:100):(development ? 45:75),
+                    performanceBelow:review.p<0,roleBelow:review.h.flatMap {h in review.criterion.map {h<$0}} ?? false)
     }
 }

@@ -251,6 +251,26 @@ struct CareerPathVerification: View {
                                 try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
                             }
                         }
+                        if args.contains("-v36-opportunity-verification") {
+                            // Dedicated in-memory QA: actual team-game completion paths, no installed save is opened.
+                            p.contact=20;p.power=20;p.discipline=20;p.defense=20;p.arm=20;p.speed=20
+                            let abilities=try PlayerAbilityStore.profile(playerID:p.id,in:c.mainContext)!
+                            abilities.mental=20
+                            if role == .pitcher {abilities.velocity=20;abilities.control=20;abilities.stuff=20;abilities.stamina=20;for pitch in p.pitches {pitch.mastery=20}}
+                            try c.mainContext.save()
+                            try ClubSeasonStore.start(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                            let fixtures=try calendar.fixtures(for:p,year:2030)
+                            for fixture in fixtures {
+                                p.gameDate=fixture.date.description;calendar.actionDate=p.gameDate;try c.mainContext.save()
+                                let game=try CareerMatchStore.start(player:p,state:calendar,in:c.mainContext)
+                                try CareerMatchStore.advance(player:p,state:calendar,record:game,revision:game.revision,input:.automatic,in:c.mainContext)
+                            }
+                            p.gameDate="2030-09-23";calendar.actionDate=nil;try c.mainContext.save()
+                            let goal=try ContractRegistrationStore.journal(player:p,calendar:calendar,in:c.mainContext).seasonGoals!.first!
+                            try ClubSeasonStore.settle(goal.id,player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
+                            p.gameDate="2030-11-01";try c.mainContext.save()
+                            _=try ContractEvaluationStore.captureIfDue(player:p,calendar:calendar,in:c.mainContext)
+                        }
                         if args.contains("-club-observation-verification") {
                             try ScoutingObservationStore.ensureCurrent(player:p,calendar:calendar,in:c.mainContext)
                             try ClubSeasonStore.start(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)

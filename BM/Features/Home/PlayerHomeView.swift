@@ -1132,6 +1132,7 @@ struct DomesticRenewalDetail: View {
                     Text(player.name+" · "+DomesticContractOffer.roleName(value.roleID)+" · 국내 육성/출전 경쟁")
                         .font(.subheadline)
                     Text(evaluatedDate+" 평가 · 같은 창 재평가 없음").font(.caption).accessibilityIdentifier("renewalFrozenDate")
+                    ClubParticipationFeedbackPanel(player:player,calendar:calendar,feedback:ClubParticipationFeedback.domestic(value,role:player.role),prefix:"domesticParticipation")
                     if let offer=value.offer {
                         ContractTermsTimeline(issued:offer.issuedDate,expires:offer.expiresDate,effective:offer.effectiveDate)
                         Text((try? GameDate(player.gameDate) > GameDate(offer.expiresDate)) == true ? "제의 만료 · 원본 이력 보관":"검토 가능한 재계약 제의")
@@ -1671,6 +1672,7 @@ struct OverseasRenewalView:View {
                         GamePanel(title:review.source.name+" · "+review.date,onBoard:true,contentSpacing:12) {
                             Text(DomesticContractOffer.roleName(review.roleID)+" · 표본 \(review.sampleCount)"+(player.role == .batter ? "타석":"아웃")).font(.headline).foregroundStyle(GameTheme.gold)
                             Text("H "+(review.h.map {String(format:"%.1f",$0)} ?? "—")+" / C "+(review.criterion.map {String(format:"%.1f",$0)} ?? "—")+String(format:" / P %+.1f",review.p)+" · 예산 "+(review.budget.map(String.init) ?? "미확인")).font(.caption.monospaced())
+                            ClubParticipationFeedbackPanel(player:player,calendar:calendar,feedback:ClubParticipationFeedback.overseas(review,role:player.role),prefix:"overseasParticipation")
                             if let offer=review.offer {
                                 ContractTermsMetric(title:"잔류 제의 · 연봉지수",value:String(offer.economicIndex),note:"계약 기간 \(offer.years)년")
                                 ContractTermsTimeline(issued:offer.issued,expires:offer.expires,effective:offer.effective)
@@ -2685,8 +2687,8 @@ struct ClubSeasonReviewScreen:View {
                             Text(CareerTeamDirectory.name(goal.role.teamID)+" · "+goal.role.label).font(.headline).foregroundStyle(GameTheme.gold)
                             VStack(alignment:.leading,spacing:10) {
                                 Text("\(goal.year+1)년 · "+goal.role.label).font(.subheadline.bold()).foregroundStyle(GameTheme.boardMuted)
-                                Text(review.advice.label).font(.title2.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubNextRoleAdvice")
-                                Text(review.advice.detail).font(.subheadline)
+                                Text(review.participation == nil ? review.advice.label:ClubParticipationFeedback.season(review,goal:goal).finding.label).font(.title2.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubNextRoleAdvice")
+                                Text(review.participation == nil ? review.advice.detail:ClubParticipationFeedback.season(review,goal:goal).finding.detail).font(.subheadline)
                             }.padding(16).frame(maxWidth:.infinity,alignment:.leading)
                                 .background(GameTheme.board,in:ManagementStepFrame())
                                 .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold,lineWidth:2))
@@ -2694,7 +2696,10 @@ struct ClubSeasonReviewScreen:View {
                             if let basis=review.basis {
                                 Text("근거 보고서 · "+ManagementDisplay.date(basis.date)).font(.subheadline.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("clubReviewReportBasis")
                             }
-                            NavigationLink {nextStep(review.advice)} label: {Text(nextLabel(review.advice))}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("clubReviewNextAction")
+                            ClubParticipationFeedbackPanel(player:player,calendar:calendar,feedback:ClubParticipationFeedback.season(review,goal:goal),prefix:"seasonParticipation",showFinding:false,sampleScope:"시즌 표본은 해당 목표의 공식 개인 경기 합계입니다. 계약의 단일 환경 표본과 구분합니다.")
+                            if ClubParticipationFeedback.season(review,goal:goal).finding != .opportunityLimited {
+                                NavigationLink {nextStep(review.advice)} label: {Text(nextLabel(review.advice))}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("clubReviewNextAction")
+                            }
                             Text("이번 시즌의 실제 수행").font(.headline).foregroundStyle(GameTheme.gold)
                             ForEach(Array(goal.targets.enumerated()),id:\.offset) {i,target in
                                 reviewMetric(target,value:review.result.values[i])
@@ -3008,5 +3013,74 @@ private struct ClubCoachPanel: View {
             feedback=try ClubCoachStore.feedback(player:player,calendar:calendar,review:review,in:context)
             actionState=ClubCoachStore.actions(player:player,calendar:calendar,in:context);failure=nil
         } catch {feedback=nil;actionState = .blocked(error.localizedDescription);failure=error.localizedDescription}
+    }
+}
+
+
+private struct ClubParticipationFeedbackPanel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    let feedback:ClubParticipationFeedback
+    let prefix:String
+    var showFinding=true
+    var sampleScope="심사 표본은 원 평가의 단일 환경 자료이며 기용 횟수와 분모를 합치지 않습니다."
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var workload:String {
+        player.role == .batter ? "\(feedback.sample) / \(feedback.required)타석":"\(feedback.sample/3).\(feedback.sample%3) / \(feedback.required/3).\(feedback.required%3)이닝"
+    }
+    var body:some View {
+        VStack(alignment:.leading,spacing:14) {
+            Text("OPPORTUNITY · 당시 기용 맥락").font(.headline).foregroundStyle(GameTheme.gold)
+            if showFinding {Text(feedback.finding.label).font(.headline).accessibilityIdentifier(prefix+"Finding");Text(feedback.finding.detail).font(.subheadline)}
+            Text("평가 표본 · "+workload).font(.headline.monospacedDigit()).accessibilityIdentifier(prefix+"Sample")
+            ProgressView(value:Double(min(feedback.sample,feedback.required)),total:Double(max(1,feedback.required))).tint(GameTheme.gold).accessibilityHidden(true)
+            if let basis=feedback.basis {
+                Text(ManagementDisplay.date(basis.from)+" ~ "+ManagementDisplay.date(basis.through)+" · \(basis.year)년 "+CareerTeamDirectory.name(basis.teamID)).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:10)):AnyLayout(HStackLayout(alignment:.top,spacing:14))
+                layout {
+                    count("실제 출전",basis.starts)
+                    count("벤치",basis.bench)
+                    count("순번 휴식",basis.rotationRest)
+                }.accessibilityElement(children:.combine).accessibilityIdentifier(prefix+"Counts")
+                Text("예정 순번 \(basis.turns)회 · 기용 근거 미확인 \(basis.unknownTurns)회").font(.subheadline.monospacedDigit()).accessibilityIdentifier(prefix+"Coverage")
+                Text("기용 집계는 위 소속·수준·기간입니다. "+sampleScope).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                DisclosureGroup {
+                    ForEach(basis.games) {game in
+                        Text(ManagementDisplay.date(game.date)+" · "+kind(game.kind)+" · "+game.key).font(.caption).textSelection(.enabled)
+                    }
+                } label: {Text("기용 근거 \(basis.games.count)경기").frame(minHeight:44)}.font(.subheadline).tint(GameTheme.gold)
+            } else {
+                Text("당시 기용 자료 미수집 · 과거 벤치/휴식 사유를 소급 생성하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier(prefix+"Legacy")
+            }
+            if feedback.finding == .opportunityLimited {
+                NavigationLink {ClubOpportunityPreparation(player:player,calendar:calendar)} label: {Text("현재 출전 경쟁 · 준비 확인")}
+                    .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier(prefix+"Prepare")
+            }
+            Text("기존 표본·기량·역할 목표·계약 조건을 유지합니다. 기회 부족만으로 자격을 완화하거나 성과 점수를 가산하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+        }.padding(14).frame(maxWidth:.infinity,alignment:.leading).background(GameTheme.boardPanel,in:ManagementStepFrame())
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine,lineWidth:2))
+    }
+    private func count(_ title:String,_ value:Int) -> some View {
+        VStack(alignment:.leading,spacing:6) {Text(title).font(.subheadline);Text("\(value)").font(.title2.bold().monospacedDigit()).foregroundStyle(GameTheme.gold)}.frame(maxWidth:.infinity,alignment:.leading)
+    }
+    private func kind(_ value:ClubParticipationKind) -> String {
+        switch value {case .start:"출전";case .bench:"벤치";case .rotationRest:"순번 휴식";case .legacy:"당시 기용 사유 미수집";case .missing:"당시 미완료/미기록"}
+    }
+}
+private struct ClubOpportunityPreparation:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    var body:some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:16) {
+                GamePanel(title:"NEXT CHANCE · 현재 준비",onBoard:true) {
+                    Text(ManagementDisplay.date(player.gameDate)+" · "+player.name).font(.headline)
+                    Text("과거 평가 원문은 보존하고 현재 출전 경쟁·훈련·다음 일정을 확인합니다.").font(.subheadline)
+                }
+                ClubSelectionHomePanel(player:player,calendar:calendar)
+                NavigationLink {ObservationScheduleView(player:player,calendar:calendar)} label: {Text("현재 개인 출전 일정 확인")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("opportunityCurrentSchedule")
+                NavigationLink {CareerTrainingView(player:player,calendar:calendar)} label: {Text("현재 훈련 선택 · 이어하기")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("opportunityCurrentTraining")
+            }.padding(12)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("현재 출전 준비").navigationBarTitleDisplayMode(.inline)
     }
 }

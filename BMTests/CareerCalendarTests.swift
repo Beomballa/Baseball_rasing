@@ -4071,7 +4071,7 @@ extension CareerCalendarTests {
 
 extension CareerCalendarTests {
     private func goalObservationFixture(_ role:PlayerRole,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,ClubSeasonGoal,CareerMatchRecord) {
-        let (store,p,s,packet)=try acceptance(role,legacyURL:legacyURL),c=store.mainContext
+        let (store,p,s,packet)=try acceptance(role,legacyURL:legacyURL,legacyVersion:15),c=store.mainContext
         let offer=try XCTUnwrap(packet.offers.first {$0.route == .rookie})
         try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
         try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
@@ -5714,5 +5714,132 @@ extension CareerCalendarTests {
         XCTAssertEqual(ClubCoachStore.actions(player:p,calendar:s,in:c),.resume)
         _=try ClubCoachStore.feedback(player:p,calendar:s,review:review,in:c)
         XCTAssertEqual(try CareerTrainingStore.record(player:p,in:c)?.payload,bytes);XCTAssertFalse(c.hasChanges)
+    }
+}
+
+
+extension CareerCalendarTests {
+    private func v36Basis(_ role:PlayerRole,kind:ClubParticipationKind = .bench) throws -> ClubParticipationBasis {
+        let team=CareerTeamDirectory.teams(level:"domestic-development")[0],id=UUID()
+        let fixtures=try SeasonSchedule.fixtures(year:2030,schoolIDs:CareerTeamDirectory.teams(level:"domestic-development")).filter {$0.includes(team)}
+        let games=fixtures.map {fixture -> ClubParticipationGame in
+            let turn=fixture.isAppearance(for:role)
+            let value:ClubParticipationKind = [.legacy,.missing].contains(kind) ? kind:turn ? kind:.rotationRest
+            return ClubParticipationGame(key:CareerMatchRecord.key(id,fixture.id),fixtureID:fixture.id,date:fixture.date.description,rotationDay:turn,appearance:value == .missing ? nil:value == .start,kind:value)
+        }
+        let basis=ClubParticipationBasis(playerID:id,membershipID:"membership",teamID:team,level:"domestic-development",playerRole:role.rawValue,year:2030,from:"2030-04-01",through:"2030-09-23",games:games)
+        try basis.validate();return basis
+    }
+    func testV36FindingsSeparateBenchShortfallSampleShortfallAndPerformance() throws {
+        for role in PlayerRole.allCases {
+            let bench=try v36Basis(role),starts=try v36Basis(role,kind:.start),legacy=try v36Basis(role,kind:.legacy)
+            XCTAssertEqual(ClubParticipationFeedback.make(basis:bench,sample:0,required:40,performanceBelow:true).finding,.opportunityLimited)
+            XCTAssertEqual(ClubParticipationFeedback.make(basis:starts,sample:1,required:40,performanceBelow:true).finding,.sampleNeeded)
+            XCTAssertEqual(ClubParticipationFeedback.make(basis:legacy,sample:0,required:40).finding,.unavailable)
+            XCTAssertEqual(ClubParticipationFeedback.make(basis:nil,sample:100,required:40,performanceBelow:true).finding,.unavailable)
+            XCTAssertEqual(ClubParticipationFeedback.make(basis:starts,sample:40,required:40,performanceBelow:true).finding,.performanceBelow)
+            XCTAssertEqual(ClubParticipationFeedback.make(basis:starts,sample:40,required:40,roleBelow:true).finding,.roleCriteria)
+            XCTAssertEqual(ClubParticipationFeedback.make(basis:starts,sample:40,required:40,goalMet:true).finding,.onTrack)
+            XCTAssertEqual(bench.rotationRest,role == .pitcher ? 24:0);XCTAssertEqual(bench.bench,role == .pitcher ? 6:30)
+        }
+    }
+    func testV36SeasonContextKeepsOriginalTargetsAdviceAndLegacyNil() throws {
+        for role in PlayerRole.allCases {
+            let basis=try v36Basis(role),club=CareerClubRole(membershipID:basis.membershipID,teamID:basis.teamID,level:basis.level,roleID:role == .pitcher ? "starter":"slugger",sourceID:"source")
+            var goal=ClubSeasonGoal(id:ClubSeasonGoal.key(club,year:2030),year:2030,started:basis.from,role:club,playerRole:role.rawValue,fixtureIDs:basis.games.map(\.fixtureID),excludedKeys:[],appearances:basis.turns,targets:ClubSeasonGoal.targets(role:club,playerRole:role.rawValue,appearances:basis.turns))
+            goal.settledOn=basis.through;goal.result=ClubSeasonProgress(matchKeys:[],values:[0,0])
+            let old=try ClubSeasonReview.make(goal:goal,on:basis.through,basis:nil),new=try ClubSeasonReview.make(goal:goal,on:basis.through,basis:nil,participation:basis)
+            XCTAssertEqual(new.advice,old.advice);XCTAssertEqual(new.result,old.result)
+            XCTAssertEqual(ClubParticipationFeedback.season(new,goal:goal).finding,.opportunityLimited)
+            XCTAssertEqual(ClubParticipationFeedback.season(old,goal:goal).finding,.unavailable)
+            let decoded=try JSONDecoder().decode(ClubSeasonReview.self,from:JSONEncoder().encode(old));XCTAssertNil(decoded.participation)
+            goal.result=ClubSeasonProgress(matchKeys:[],values:[goal.targets[0].target,0])
+            let low=try ClubSeasonReview.make(goal:goal,on:basis.through,basis:nil,participation:basis)
+            XCTAssertEqual(low.advice,.rolePractice);XCTAssertEqual(ClubParticipationFeedback.season(low,goal:goal).finding,.performanceBelow)
+        }
+    }
+    func testV36ParticipationRejectsDuplicateSourcesWrongDatesAndMembership() throws {
+        let basis=try v36Basis(.pitcher)
+        let bad=ClubParticipationBasis(playerID:basis.playerID,membershipID:basis.membershipID,teamID:basis.teamID,level:basis.level,playerRole:basis.playerRole,year:basis.year,from:basis.from,through:basis.through,games:basis.games+[basis.games[0]])
+        XCTAssertThrowsError(try bad.validate())
+        let wrong=CareerMembership(offerID:"other",route:.rookie,teamID:basis.teamID,name:"team",since:basis.from,economicEnd:"2031-03-31",enrollmentEnd:nil,economicIndex:100)
+        XCTAssertNil(basis.matching(wrong))
+        let scope=ClubParticipationBasis(playerID:basis.playerID,membershipID:basis.membershipID,teamID:basis.teamID,level:basis.level,playerRole:basis.playerRole,year:basis.year,from:"2030-05-01",through:basis.through,games:basis.games)
+        XCTAssertThrowsError(try scope.validate())
+    }
+    func testV36ActualSameAffiliationCountsFreezeInNextReportBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try v32Fixture(role),c=db.mainContext
+            let fixtures=Array(try s.fixtures(for:p,year:2030).prefix(3))
+            for fixture in fixtures {
+                p.gameDate=fixture.date.description;s.actionDate=p.gameDate;try c.save()
+                let row=try CareerMatchStore.start(player:p,state:s,in:c)
+                try CareerMatchStore.advance(player:p,state:s,record:row,revision:row.revision,input:.automatic,in:c)
+            }
+            p.gameDate=try ScoutingPeriod(origin:GameDate(s.originDate),today:GameDate(p.gameDate)).next.description;s.actionDate=nil;try c.save()
+            let matches=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
+            let live=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c),scope=try XCTUnwrap(live.clubParticipation)
+            XCTAssertEqual(scope.starts,0);XCTAssertEqual(scope.bench,role == .pitcher ? 1:3);XCTAssertEqual(scope.rotationRest,role == .pitcher ? 2:0)
+            XCTAssertTrue(scope.games.contains {$0.kind == .missing});XCTAssertFalse(c.hasChanges)
+            try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            let row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first),bytes=row.payload
+            XCTAssertEqual(try row.snapshot().clubParticipation,scope)
+            p.fatigue=80;try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
+            XCTAssertEqual(row.payload,bytes);XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload),matches)
+        }
+    }
+    func testV36SeasonSettlementContextSharesRollbackAndDoesNotRewriteExistingReview() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s,goal,game)=try goalObservationFixture(role),c=db.mainContext
+            p.gameDate="2030-09-23";try c.save()
+            let owner=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),bytes=owner.payload,gameBytes=game.payload
+            XCTAssertThrowsError(try ClubSeasonStore.settle(goal.id,player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c,save:{_ in throw MatchError.invalidRecord}))
+            XCTAssertEqual(owner.payload,bytes);XCTAssertEqual(game.payload,gameBytes)
+            try ClubSeasonStore.settle(goal.id,player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let journal=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),review=try XCTUnwrap(journal.seasonReviews?.last),settled=try XCTUnwrap(journal.seasonGoals?.first {$0.id == goal.id})
+            try XCTUnwrap(review.participation).validate(goal:settled)
+            XCTAssertEqual(ClubParticipationFeedback.season(review,goal:settled).finding,.unavailable)
+            let final=owner.payload
+            try ClubSeasonStore.review(goal.id,player:p,calendar:s,date:"stale",revision:-1,in:c)
+            XCTAssertEqual(owner.payload,final);XCTAssertEqual(game.payload,gameBytes)
+            var legacy=journal;legacy.seasonReviews![legacy.seasonReviews!.count-1].participation=nil
+            owner.payload=try JSONEncoder().encode(legacy);try c.save();let old=owner.payload
+            try ClubSeasonStore.review(goal.id,player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(owner.payload,old)
+        }
+    }
+    func testV36DomesticContextNeverChangesOfferReasonsOrUsesBattersFacedAsInnings() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try renewalFixture(role),c=db.mainContext
+            var observation=try ScoutingObservationStore.currentObservation(player:p,calendar:s,in:c)
+            let member=try XCTUnwrap(s.registration(for:p)),owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            let offers=try ContractOfferStore.records(player:p,calendar:s,in:c)
+            let packet=try offers[0].snapshot(evaluation:ContractEvaluationStore.records(player:p,calendar:s,in:c)[0],player:p,calendar:s)
+            let roleID=try XCTUnwrap(packet.offers.first {$0.id == member.offerID}?.roleID)
+            let window=try XCTUnwrap(ContractEvaluationWindow.containing(GameDate(p.gameDate))),key=CareerContractEvaluation.key(p.id,window.id)
+            let new=try DomesticRenewalReview.make(observation:observation,member:member,roleID:roleID,key:key,window:window)
+            observation.clubParticipation=nil
+            let old=try DomesticRenewalReview.make(observation:observation,member:member,roleID:roleID,key:key,window:window)
+            var stripped=new;stripped.participation=nil;XCTAssertEqual(old,stripped)
+            let feedback=ClubParticipationFeedback.domestic(new,role:role)
+            XCTAssertEqual(feedback.sample,role == .batter ? new.totals?.line.plateAppearances ?? 0:new.totals?.line.pitchingOuts ?? 0)
+            XCTAssertEqual(feedback.required,role == .batter ? 40:45);XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).decisions,owner.decisions)
+        }
+    }
+    func testV36OverseasContextNeverChangesFrozenRenewalDecisionInputs() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s,_)=try overseasRenewalFixture(role),c=db.mainContext
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),member=try XCTUnwrap(owner.current(on:GameDate(p.gameDate)))
+            let report=try XCTUnwrap(owner.overseasReports?.last)
+            let original=report.observation.clubParticipation
+            let roleID=role == .batter ? "slugger":"starter",window=try XCTUnwrap(ContractEvaluationWindow.containing(GameDate(p.gameDate)))
+            let new=try OverseasRenewalReview.make(report:report,member:member,roleID:roleID,window:window,on:GameDate(p.gameDate),reserved:false)
+            var oldObservation=report.observation;oldObservation.clubParticipation=nil
+            var oldReport=OverseasScoutingReport(version:report.version,period:report.period,eligibility:report.eligibility,observation:oldObservation,comparisons:report.comparisons,projections:report.projections)
+            oldReport.market=report.market
+            let old=try OverseasRenewalReview.make(report:oldReport,member:member,roleID:roleID,window:window,on:GameDate(p.gameDate),reserved:false)
+            var stripped=new;stripped.participation=nil;XCTAssertEqual(stripped,old)
+            XCTAssertEqual(new.participation,original?.matching(member))
+        }
     }
 }
