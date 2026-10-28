@@ -157,9 +157,13 @@ import SwiftData
             let schema = Schema(versionedSchema: CareerSchemaV3.self)
             let container = try ModelContainer(for: schema, configurations: [ModelConfiguration("Career", schema: schema, url: url, cloudKitDatabase: .none)])
             let context = container.mainContext; context.autosaveEnabled = false
-            let (player, calendar) = try setup(context, role: .pitcher)
-            calendar.actionDate = player.gameDate; calendar.revision = 1; player.fatigue = 34
-            // V3 has no training entity, so create the pre-training match payload directly.
+            let schools=try SchoolCatalog.load()
+            var draft=PlayerDraft();draft.name="훈련선수";draft.schoolID=schools[0].id;draft.role = .pitcher
+            let historical=CareerSchemaV1.Player(draft:draft,school:schools[0]);historical.fatigue=34;context.insert(historical)
+            let player=CareerPlayer(draft:draft,school:schools[0]);player.id=historical.id
+            let calendar=CareerCalendarState(player:player,schools:schools,legacySave:false);context.insert(calendar)
+            calendar.actionDate = player.gameDate; calendar.revision = 1
+            // Historical Player belongs to V3; the detached projection only supplies UUID-based record inputs.
             let fixture = try XCTUnwrap(calendar.upcoming(for: player).first)
             let match = CareerMatch(random: 42, isHome: true, role: player.roleRaw, appearance: true, contact: player.contact, power: player.power, discipline: player.discipline, mastery: Dictionary(uniqueKeysWithValues: player.pitches.map { ($0.code, $0.mastery) }))
             let record = try CareerMatchRecord(player: player, fixture: fixture, match: match)
@@ -608,5 +612,165 @@ import SwiftData
         let restored = try JSONDecoder().decode(CareerTraining.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertNil(restored.pitchStudy); XCTAssertEqual(restored.before, 91.1234); XCTAssertEqual(restored.scores, [27,100])
         XCTAssertEqual(restored.controlMastery, 91.1234)
+    }
+}
+
+extension CareerTrainingTests {
+    private func v38Fixture(_ role:PlayerRole = .batter,url:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+        let db=try CareerStore.makeContainer(url:url,inMemory:url == nil),c=db.mainContext
+        var draft=PlayerDraft();draft.name="Growth38";draft.schoolID="hs-ref-001";draft.role=role;draft.position = .shortstop
+        let p=try CareerStore.create(draft,schools:SchoolCatalog.load(),in:c),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        var life=try p.lifecycle;life.development=PlayerDevelopment(adopted:p.gameDate,timing:.early);p.lifecycleData=try JSONEncoder().encode(life);p.fatigue=24;try c.save()
+        return(db,p,s)
+    }
+    private func v38Attempt(_ p:CareerPlayer,_ s:CareerCalendarState,_ row:CareerTrainingRecord,_ c:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
+        let t=try row.snapshot(),target=t.targets[min(t.scores.count,t.targets.count-1)]
+        try CareerTrainingStore.attempt(player:p,state:s,record:row,revision:row.revision,input:TrainingInput(x:target.x,y:target.y),in:c,save:save)
+    }
+    func testV38GrowthPolicyKeepsLegacyAndHighschoolBaseButSlowsHighRatings() throws {
+        XCTAssertEqual(DevelopmentRules.growth(before:40,score:75,fatigue:24,age:16,pitch:false,timing:.balanced),TrainingRules.growth(before:40,score:75,fatigue:24,age:16,pitch:false))
+        for value in [72.0,82,92,98] {
+            XCTAssertLessThan(DevelopmentRules.growth(before:value,score:90,fatigue:24,age:16,pitch:false,timing:.balanced),TrainingRules.growth(before:value,score:90,fatigue:24,age:16,pitch:false))
+        }
+        XCTAssertGreaterThan(DevelopmentTiming.early.factor(age:17),DevelopmentTiming.late.factor(age:17))
+        XCTAssertLessThan(DevelopmentTiming.early.factor(age:22),DevelopmentTiming.late.factor(age:22))
+        XCTAssertEqual(TrainingRules.growth(before:65,score:100,fatigue:24,age:16,pitch:false),65.2028)
+        var t=CareerTraining(playerID:UUID(),date:"2026-04-01",role:"batter",pitchCode:nil,before:82,fatigue:24,age:16,calendarRevision:1,kind:.defense)
+        t.scores=[100,100,100,100,100];let original=t.after
+        let old=try JSONEncoder().encode(t);XCTAssertEqual(try JSONDecoder().decode(CareerTraining.self,from:old).after,original)
+        t.growthPolicy=TrainingGrowthPolicy(timing:.balanced,windowID:nil,bonusLimit:0)
+        XCTAssertLessThan(t.after,original);XCTAssertEqual(try JSONDecoder().decode(CareerTraining.self,from:old).after,original)
+    }
+    func testV38TimingIsFixedAndLegacyAdoptionPreservesStateAndPendingTraining() throws {
+        let (db,p,s)=try v38Fixture(),c=db.mainContext
+        let a=PlayerDevelopment.initial(playerID:p.id,date:p.gameDate),b=PlayerDevelopment.initial(playerID:p.id,date:p.gameDate);XCTAssertEqual(a,b)
+        var life=try p.lifecycle;life.development=nil;p.lifecycleData=try JSONEncoder().encode(life);try c.save()
+        let row=try CareerTrainingStore.start(player:p,state:s,kind:.defense,in:c)
+        XCTAssertNil(try row.snapshot().growthPolicy)
+        XCTAssertThrowsError(try DevelopmentStore.adopt(player:p,calendar:s,in:c))
+        for _ in 0..<5 {try v38Attempt(p,s,row,c)}
+        let bytes=row.payload,before=[p.contact,p.defense,Double(p.fatigue)],date=p.gameDate,action=s.actionDate
+        XCTAssertThrowsError(try DevelopmentStore.adopt(player:p,calendar:s,in:c,save:{_ in throw CalendarError.staleState}))
+        XCTAssertNil(try p.lifecycle.development)
+        try DevelopmentStore.adopt(player:p,calendar:s,in:c)
+        XCTAssertEqual(try p.lifecycle.development?.timing,.balanced);XCTAssertEqual(row.payload,bytes)
+        XCTAssertEqual([p.contact,p.defense,Double(p.fatigue)],before);XCTAssertEqual(p.gameDate,date);XCTAssertEqual(s.actionDate,action)
+        let revision=s.revision;try DevelopmentStore.adopt(player:p,calendar:s,in:c,save:{_ in XCTFail("duplicate adoption")});XCTAssertEqual(s.revision,revision)
+    }
+    func testV38CompletedTrainingProofAndGrowthShareRollbackAndPayOnceBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try v38Fixture(role),c=db.mainContext,kind:TrainingKind=role == .batter ? .defense:.control
+            let row=try CareerTrainingStore.start(player:p,state:s,kind:kind,in:c)
+            for _ in 0..<4 {try v38Attempt(p,s,row,c)}
+            let bytes=row.payload,life=p.lifecycleData,before=try CareerTrainingStore.value(player:p,code:nil,kind:kind,in:c),fatigue=p.fatigue,revision=s.revision
+            XCTAssertThrowsError(try v38Attempt(p,s,row,c,save:{_ in throw TrainingError.stale}))
+            XCTAssertEqual(row.payload,bytes);XCTAssertEqual(p.lifecycleData,life);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+            XCTAssertEqual(try CareerTrainingStore.value(player:p,code:nil,kind:kind,in:c),before)
+            try v38Attempt(p,s,row,c)
+            XCTAssertEqual(try p.lifecycle.development?.proofs[kind.rawValue]?.count,1)
+            let final=row.payload,finalLife=p.lifecycleData
+            XCTAssertThrowsError(try v38Attempt(p,s,row,c));XCTAssertEqual(row.payload,final);XCTAssertEqual(p.lifecycleData,finalLife)
+            XCTAssertEqual(try row.snapshot().growthPolicy?.version,2)
+        }
+    }
+    func testV38WindowDiskResumePracticeIsolationAndBudgetDoNotReroll() throws {
+        let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString);try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:folder)}
+        let url=folder.appendingPathComponent("career.store");var id:UUID!,pending:Data!,savedLife:Data!
+        try autoreleasepool {
+            let (db,p,s)=try v38Fixture(.pitcher,url:url),c=db.mainContext;id=p.id;p.fatigue=24;try c.save()
+            for i in 0..<8 {
+                p.gameDate=try GameDate("2026-04-01").adding(days:i*2).description;s.actionDate=nil;p.fatigue=24;try c.save()
+                let row=try CareerTrainingStore.start(player:p,state:s,kind:.control,in:c)
+                for _ in 0..<5 {try v38Attempt(p,s,row,c)}
+            }
+            let window=try XCTUnwrap(p.lifecycle.development?.windows.last);XCTAssertEqual(window.used,0);XCTAssertEqual(window.sources.count,8)
+            p.gameDate="2026-04-17";s.actionDate=nil;p.fatigue=24;try c.save()
+            let row=try CareerTrainingStore.start(player:p,state:s,kind:.control,in:c);XCTAssertNotNil(try row.snapshot().growthPolicy?.windowID)
+            for _ in 0..<2 {try v38Attempt(p,s,row,c)};pending=row.payload;savedLife=p.lifecycleData
+            let fatigue=p.fatigue,revision=s.revision
+            var practice=try TrainingPractice.round(player:p,calendar:s,kind:.control,code:"",in:c)
+            for _ in 0..<5 {let target=practice.targets[practice.scores.count];try practice.attempt(TrainingInput(x:target.x,y:target.y))}
+            XCTAssertNil(practice.growthPolicy);XCTAssertEqual(p.lifecycleData,savedLife);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision)
+        }
+        let db=try CareerStore.makeContainer(url:url),c=db.mainContext,p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first {$0.id==id}),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID==id}),row=try XCTUnwrap(CareerTrainingStore.record(player:p,in:c))
+        XCTAssertEqual(row.payload,pending);XCTAssertEqual(p.lifecycleData,savedLife)
+        for _ in 0..<2 {try v38Attempt(p,s,row,c)}
+        XCTAssertThrowsError(try v38Attempt(p,s,row,c,save:{_ in throw TrainingError.stale}));XCTAssertEqual(try row.snapshot().scores.count,4)
+        try v38Attempt(p,s,row,c)
+        let window=try XCTUnwrap(p.lifecycle.development?.windows.last);XCTAssertEqual(window.used,1);XCTAssertGreaterThan(window.spent,0);XCTAssertLessThanOrEqual(window.spent,0.6)
+        let bytes=row.payload,life=p.lifecycleData;XCTAssertThrowsError(try v38Attempt(p,s,row,c));XCTAssertEqual(row.payload,bytes);XCTAssertEqual(p.lifecycleData,life)
+        XCTAssertEqual(try p.lifecycle.development?.windows.count,1)
+    }
+    func testV38AgingSeparatesAbilitiesAndDoesNotRewriteLegacyEvents() throws {
+        XCTAssertEqual(DevelopmentRules.loss(.speed,age:27),0.35);XCTAssertEqual(DevelopmentRules.loss(.control,age:27),0)
+        XCTAssertEqual(DevelopmentRules.loss(.power,age:29),0.2);XCTAssertEqual(DevelopmentRules.loss(.discipline,age:33),0)
+        XCTAssertEqual(DevelopmentRules.loss(.control,age:34),0.12);XCTAssertEqual(DevelopmentRules.loss(.mental,age:40),0)
+        let (db,p,s)=try v38Fixture(),c=db.mainContext
+        p.gameDate="2029-04-01";try CareerPathStore.synchronize(player:p,calendar:s,in:c)
+        p.gameDate="2037-03-31";try CareerPathStore.synchronize(player:p,calendar:s,in:c);try c.save();let old=p.lifecycleData,speed=p.speed
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,confirmAnniversary:true,in:c,save:{_ in throw TrainingError.stale}))
+        XCTAssertEqual(p.lifecycleData,old);XCTAssertEqual(p.speed,speed)
+        try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,confirmAnniversary:true,in:c)
+        let event=try XCTUnwrap(p.lifecycle.aging.last);XCTAssertTrue(event.id.contains("aging-v2"));XCTAssertEqual(p.speed,TrainingRules.round(speed-0.35));XCTAssertEqual(event.age,27)
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        let frozen=try encoder.encode(event);var life=try p.lifecycle;life.development=nil;life.aging=[];try life.validate(playerID:p.id,today:p.gameDate)
+        XCTAssertEqual(try encoder.encode(event),frozen)
+    }
+    func testV38PositionSwitchPreservesMasteriesCostsOneActionAndLocksPending() throws {
+        let (db,p,s)=try v38Fixture(),c=db.mainContext,profile=try XCTUnwrap(PlayerPositionStore.profile(playerID:p.id,in:c))
+        var value=try profile.snapshot();value.skills[FieldPosition.center.rawValue]=PositionSkill(mastery:40,xp:30);profile.payload=try JSONEncoder().encode(value);try c.save()
+        let bytes=profile.payload,stats=[p.contact,p.power,p.speed,p.defense,p.arm],life=p.lifecycleData,position=p.positionRaw,fatigue=p.fatigue
+        XCTAssertThrowsError(try DevelopmentStore.changePosition(player:p,calendar:s,to:.center,date:p.gameDate,revision:s.revision,in:c,save:{_ in throw TrainingError.stale}))
+        XCTAssertEqual(p.positionRaw,position);XCTAssertEqual(p.lifecycleData,life);XCTAssertEqual(profile.payload,bytes)
+        try DevelopmentStore.changePosition(player:p,calendar:s,to:.center,date:p.gameDate,revision:s.revision,in:c)
+        XCTAssertEqual(p.positionRaw,"CF");XCTAssertEqual(profile.payload,bytes);XCTAssertEqual([p.contact,p.power,p.speed,p.defense,p.arm],stats);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.actionDate,p.gameDate)
+        let adopted=try XCTUnwrap(p.lifecycle.development);XCTAssertEqual(adopted.positions.count,1);XCTAssertTrue(adopted.windows.isEmpty)
+        let game=try CareerMatchStore.start(player:p,state:s,in:c)
+        XCTAssertEqual(try game.snapshot().fieldStats?.position,"CF");XCTAssertEqual(try game.snapshot().fieldStats?.positionMastery,40)
+        try CareerMatchStore.advance(player:p,state:s,record:game,revision:game.revision,input:.automatic,in:c)
+        let frozen=game.payload
+        p.gameDate="2026-04-02";s.actionDate=nil;try c.save()
+        XCTAssertNotNil(try DevelopmentStore.switchReason(player:p,calendar:s,to:FieldPosition(rawValue:position)!,in:c))
+        let row=try CareerTrainingStore.start(player:p,state:s,position:.center,in:c);let pending=row.payload
+        XCTAssertThrowsError(try DevelopmentStore.changePosition(player:p,calendar:s,to:.first,date:p.gameDate,revision:s.revision,in:c));XCTAssertEqual(row.payload,pending);XCTAssertEqual(game.payload,frozen)
+    }
+}
+
+extension CareerTrainingTests {
+    func testV38WindowIsBoundedByEightSetsTwentyEightDaysYearAndExtraBudget() throws {
+        let id=UUID(),date="2026-04-15",key=CareerTrainingRecord.key(id,date)
+        let sources=try (0..<8).map {i in let d=try GameDate("2026-04-01").adding(days:i*2).description;return DevelopmentProof(key:CareerTrainingRecord.key(id,d),date:d)}
+        var d=PlayerDevelopment(adopted:"2026-04-01",timing:.early)
+        d.windows=[DevelopmentWindow(id:key+"/growth-window-v2",kind:.control,opened:date,expires:"2026-05-12",sources:sources)]
+        for i in 0..<8 {
+            let date=try GameDate("2026-04-16").adding(days:i).description
+            var t=CareerTraining(playerID:id,date:date,role:"pitcher",pitchCode:nil,before:20,fatigue:24,age:16,calendarRevision:1,kind:.control)
+            t.growthPolicy=d.policy(kind:.control,on:date);t.scores=[100,100,100,100,100]
+            try d.complete(t,key:CareerTrainingRecord.key(id,date))
+        }
+        XCTAssertEqual(d.windows.count,1);XCTAssertLessThanOrEqual(d.windows[0].used,8);XCTAssertEqual(d.windows[0].spent,0.6,accuracy:0.0001)
+        XCTAssertNil(d.active(on:"2026-04-24"));XCTAssertNil(d.policy(kind:.control,on:"2026-04-24").windowID)
+        let window=DevelopmentWindow(id:key+"/growth-window-v2",kind:.control,opened:date,expires:"2026-05-12",sources:sources)
+        XCTAssertTrue(window.available(on:"2026-05-12"));XCTAssertFalse(window.available(on:"2026-05-13"))
+        var exhausted=window;exhausted.used=8;XCTAssertFalse(exhausted.available(on:"2026-04-16"))
+        var expired=d;expired.windows=[window];XCTAssertNil(expired.policy(kind:.power,on:"2026-04-16").windowID)
+        expired.windows.append(window);XCTAssertThrowsError(try expired.validate(playerID:id,today:"2026-05-13"))
+    }
+}
+
+extension CareerTrainingTests {
+    func testV38PitchBreakthroughStaysWithPreparedPitchNotOtherMasteries() throws {
+        let id=UUID(),date="2026-04-15",key=CareerTrainingRecord.key(id,date)
+        let sources=try (0..<8).map {i in let d=try GameDate("2026-04-01").adding(days:i*2).description;return DevelopmentProof(key:CareerTrainingRecord.key(id,d),date:d)}
+        var d=PlayerDevelopment(adopted:"2026-04-01",timing:.early)
+        d.windows=[DevelopmentWindow(id:key+"/growth-window-v2",kind:.pitch,pitchCode:"slider",opened:date,expires:"2026-05-12",sources:sources)]
+        try d.validate(playerID:id,today:date)
+        XCTAssertNotNil(d.policy(kind:.pitch,code:"slider",on:date).windowID)
+        XCTAssertNil(d.policy(kind:.pitch,code:"four-seam",on:date).windowID)
+        XCTAssertNil(d.policy(kind:.control,on:date).windowID)
+        var wrong=CareerTraining(playerID:id,date:"2026-04-16",role:"pitcher",pitchCode:"four-seam",before:40,fatigue:24,age:16,calendarRevision:1)
+        wrong.growthPolicy=d.policy(kind:.pitch,code:"slider",on:date);wrong.scores=[100,100,100,100,100]
+        XCTAssertThrowsError(try d.complete(wrong,key:CareerTrainingRecord.key(id,wrong.date)))
+        XCTAssertEqual(d.windows[0].used,0)
     }
 }

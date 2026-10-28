@@ -2,6 +2,56 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV38GrowthWindowAndPositionConfirmationKeepReadOnlyStateBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v38-development-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:25))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app),role=pitcher ? "pitcher":"batter"
+            app.buttons["managementTab-player"].tap();app.buttons["facility-abilities"].tap()
+            reveal(app.staticTexts["developmentActiveWindow"],app);XCTAssertTrue(app.staticTexts["developmentActiveWindow"].label.contains(pitcher ? "제구":"수비"))
+            capture(app,"v38-"+role+"-growth-window");close(app);XCTAssertEqual(status(app),before)
+            if !pitcher {
+                app.buttons["facility-positions"].tap();reveal(app.buttons["homePositionSelect-SS"],app);app.buttons["homePositionSelect-SS"].tap()
+                reveal(app.buttons["changePrimaryPosition"],app);XCTAssertTrue(app.buttons["changePrimaryPosition"].isEnabled);capture(app,"v38-batter-position-ready")
+                app.buttons["changePrimaryPosition"].tap();capture(app,"v38-batter-position-confirm");app.buttons["취소"].tap();close(app);XCTAssertEqual(status(app),before)
+                app.buttons["facility-positions"].tap();reveal(app.buttons["homePositionSelect-SS"],app);app.buttons["homePositionSelect-SS"].tap();reveal(app.buttons["changePrimaryPosition"],app);app.buttons["changePrimaryPosition"].tap();app.buttons["전환 확정 · 오늘 행동 사용"].tap()
+                reveal(app.staticTexts["homeSelectedPositionMastery"],app);XCTAssertTrue(app.staticTexts["homeSelectedPositionMastery"].label.contains("40.0"));capture(app,"v38-batter-position-applied");close(app)
+                XCTAssertEqual(Array(status(app).prefix(2)),Array(before.prefix(2)));XCTAssertNotEqual(status(app).last,before.last)
+            }
+            app.buttons["managementTab-home"].tap()
+        }
+    }
+    @MainActor func testV38CompletedTrainingShowsCapturedGrowthPolicyReadOnlyBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v38-development-verification","-v38-result-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:25))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-player"].tap();app.buttons["facility-abilities"].tap();reveal(app.buttons["developmentTraining"],app);app.buttons["developmentTraining"].tap()
+            reveal(app.staticTexts["trainingGrowthPolicy"],app);XCTAssertTrue(app.staticTexts["trainingGrowthPolicy"].label.contains("성장 집중"));capture(app,"v38-"+(pitcher ? "pitcher":"batter")+"-training-policy-result")
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before);app.buttons["managementTab-home"].tap()
+        }
+    }
+    @MainActor func testV38LegacyAdoptionDoesNotSpendActionOrRewriteResults() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v38-development-verification","-v38-legacy-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:25));let before=status(app)
+        app.buttons["managementTab-player"].tap();app.buttons["facility-abilities"].tap();reveal(app.buttons["developmentAdopt"],app);capture(app,"v38-legacy-growth-kept")
+        app.buttons["developmentAdopt"].tap();capture(app,"v38-legacy-adopt-confirm");app.buttons["현재 능력을 유지하고 적용"].tap()
+        reveal(app.staticTexts["developmentTiming"],app);XCTAssertTrue(app.staticTexts["developmentTiming"].label.contains("균형"));capture(app,"v38-legacy-adopted");close(app);XCTAssertEqual(status(app),before)
+    }
+    @MainActor func testV38SmallPhoneLargestTextGrowthAndPositionRemainReachable() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v38-development-verification","-management-reduced-motion-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:25));let before=status(app)
+        app.buttons["managementLargeMenu"].tap();app.buttons["선수"].tap();app.buttons["facility-abilities"].tap();reveal(app.staticTexts["developmentActiveWindow"],app);XCTAssertTrue(app.staticTexts["developmentActiveWindow"].isHittable);capture(app,"v38-large-growth-window");close(app)
+        app.buttons["facility-positions"].tap();reveal(app.buttons["homePositionSelect-SS"],app);app.buttons["homePositionSelect-SS"].tap();reveal(app.buttons["changePrimaryPosition"],app);XCTAssertTrue(app.buttons["changePrimaryPosition"].isHittable);capture(app,"v38-large-position-action");close(app);XCTAssertEqual(status(app),before)
+        pickPitcher(app);app.buttons["managementLargeMenu"].tap();app.buttons["선수"].tap();app.buttons["facility-abilities"].tap();reveal(app.staticTexts["developmentActiveWindow"],app);XCTAssertTrue(app.staticTexts["developmentActiveWindow"].isHittable);capture(app,"v38-large-pitcher-window")
+    }
+
     @MainActor func testV36SeasonAndDomesticRenewalShowFrozenBenchContextBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-club-season-verification","-v36-opportunity-verification"];app.launch()

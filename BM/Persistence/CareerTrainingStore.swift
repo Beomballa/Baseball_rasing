@@ -29,6 +29,7 @@ enum CareerSchemaV4: VersionedSchema {
                   (value.selectedKind == .pitch ? value.role == "pitcher" && value.pitchCode != nil : value.selectedKind.allows(value.role) && value.pitchCode == nil), value.targets.count == 5, value.scores.count <= 5,
                   value.scores.allSatisfy({ (0...100).contains($0) }), value.before.isFinite, (0...100).contains(value.before),
                   value.targets.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }) else { throw TrainingError.invalidRecord }
+            try value.growthPolicy?.validate(training:value)
             try value.pitchStudy?.validate(training: value)
             try value.projectFeedback?.validate(training: value)
             return value
@@ -142,6 +143,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
         training.pitchStudy = study
         if trait == nil && position == nil && study == nil && SkillDrillRules.kinds.contains(selected) { training.drillVersion = 1 }
         try study?.validate(training: training)
+        if trait == nil,position == nil,study == nil {training.growthPolicy=try player.lifecycle.development?.policy(kind:selected,code:pitchCode,on:player.gameDate)}
         let saved = try CareerTrainingRecord(training); context.insert(saved); state.revision += 1
         do { try save(context) } catch { context.rollback(); throw error }
         return saved
@@ -170,6 +172,13 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
         try training.attempt(input)
         training.calendarRevision = state.revision + 1
         if training.completed { training.projectFeedback = try completionFeedback(training, player: player, state: state, record: record, in: context) }
+        var developmentPayload:Data?
+        if training.completed,training.growthPolicy != nil {
+            var life=try player.lifecycle
+            guard var development=life.development else {throw TrainingError.invalidRecord}
+            try development.complete(training,key:record.key);life.development=development
+            developmentPayload=try JSONEncoder().encode(life)
+        }
         let payload = try JSONEncoder().encode(training)
         if training.completed {
             if let position = training.position, let (profile, original, _) = positions {
@@ -197,6 +206,7 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
                 default: player.contact = training.after
                 }
             }
+            if let developmentPayload {player.lifecycleData=developmentPayload}
             player.fatigue = min(100, player.fatigue + TrainingRules.fatigueCost)
             state.actionDate = player.gameDate
             record.completed = true

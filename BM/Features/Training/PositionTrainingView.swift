@@ -6,8 +6,15 @@ struct PositionHomePanel: View {
     let calendar: CareerCalendarState?
     @Environment(\.dynamicTypeSize) private var typeSize
     @Query private var profiles: [PlayerPositions]
+    @Environment(\.modelContext) private var context
+    @State private var switching=false
+    @State private var switchFailure:String?
     @State private var selection: FieldPosition?
     private var selected: FieldPosition { selection ?? FieldPosition(rawValue: player.positionRaw) ?? .shortstop }
+    private func switchReason(_ calendar:CareerCalendarState) -> String? {
+        do {return try DevelopmentStore.switchReason(player:player,calendar:calendar,to:selected,in:context)}
+        catch {return error.localizedDescription}
+    }
     var body: some View {
         if player.role == .batter {
             GamePanel(title: "포지션 수첩", onBoard: true, contentSpacing: 14) {
@@ -52,8 +59,17 @@ struct PositionHomePanel: View {
                 if let calendar {
                     NavigationLink { PositionTrainingView(player: player, calendar: calendar, initialPosition: selected) } label: { Text("포지션 훈련") }
                         .buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("openPositionTraining")
+                    if selected.rawValue != player.positionRaw {
+                        let reason=switchReason(calendar)
+                        Text(reason ?? "숙련을 유지하고 주 포지션 전환 · 오늘 행동1회 · 피로 추가 없음").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                        Button("주 포지션을 "+selected.label+"로") {switching=true}.buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(reason != nil).accessibilityIdentifier("changePrimaryPosition")
+                    }
+                    if let switchFailure {Text(switchFailure).font(.subheadline).foregroundStyle(GameTheme.gold)}
                 }
-            }
+            }.alert("주 포지션 전환",isPresented:$switching) {
+                if let calendar {Button("전환 확정 · 오늘 행동 사용") {do {try DevelopmentStore.changePosition(player:player,calendar:calendar,to:selected,date:player.gameDate,revision:calendar.revision,in:context);switchFailure=nil} catch {switchFailure=error.localizedDescription}}}
+                Button("취소",role:.cancel) {}
+            } message: {Text("현재 위치별 숙련/능력/기록은 유지합니다. 전환 후28일간 재전환할 수 없고 프로는 오프시즌에만 가능합니다. 전환 자체로 성장 보상을 지급하지 않습니다.")}
         }
     }
 }

@@ -61,6 +61,7 @@ import SwiftData
         guard let school = schools.first(where: { $0.id == draft.schoolID }) else { throw CreationError.invalidSchool }
         let player = CareerPlayer(draft: draft, school: school)
         var lifecycle=CareerLifecycleState();lifecycle.adopted=player.gameDate
+        lifecycle.development=PlayerDevelopment.initial(playerID:player.id,date:player.gameDate)
         player.lifecycleData=try JSONEncoder().encode(lifecycle)
         let values = draft.initialValues
         if player.role == .pitcher {

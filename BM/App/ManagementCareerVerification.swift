@@ -23,6 +23,27 @@ struct ManagementCareerVerification: View {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"
                     let player = try CareerStore.create(draft, schools: catalog, in: memory.mainContext)
+                    if ProcessInfo.processInfo.arguments.contains("-v38-development-verification") {
+                        let c=memory.mainContext,state=try c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == player.id}!
+                        var life=try player.lifecycle;life.development=PlayerDevelopment(adopted:player.gameDate,timing:.early)
+                        player.lifecycleData=try JSONEncoder().encode(life);try c.save()
+                        for i in 0..<(ProcessInfo.processInfo.arguments.contains("-v38-legacy-verification") ? 0:8) {
+                            player.gameDate=try GameDate("2026-04-01").adding(days:i*2).description;state.actionDate=nil;player.fatigue=24;try c.save()
+                            let row=try CareerTrainingStore.start(player:player,state:state,kind:role == .batter ? .defense:.control,in:c)
+                            for _ in 0..<5 {let t=try row.snapshot(),target=t.targets[t.scores.count];try CareerTrainingStore.attempt(player:player,state:state,record:row,revision:row.revision,input:TrainingInput(x:target.x,y:target.y),in:c)}
+                        }
+                        player.gameDate="2026-04-17";state.actionDate=nil;player.fatigue=24
+                        if role == .batter,let profile=try PlayerPositionStore.profile(playerID:player.id,in:c) {
+                            var loadout=try profile.snapshot();loadout.skills[FieldPosition.shortstop.rawValue]=PositionSkill(mastery:40,xp:20);profile.payload=try JSONEncoder().encode(loadout)
+                        }
+                        try c.save()
+                        if ProcessInfo.processInfo.arguments.contains("-v38-result-verification") {
+                            let row=try CareerTrainingStore.start(player:player,state:state,kind:role == .batter ? .defense:.control,in:c)
+                            for _ in 0..<5 {let t=try row.snapshot(),target=t.targets[t.scores.count];try CareerTrainingStore.attempt(player:player,state:state,record:row,revision:row.revision,input:TrainingInput(x:target.x,y:target.y),in:c)}
+                        }
+                        if ProcessInfo.processInfo.arguments.contains("-v38-legacy-verification") {var life=try player.lifecycle;life.development=nil;player.lifecycleData=try JSONEncoder().encode(life)}
+                        try c.save()
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-management-v31-lifecycle") {
                         let c=memory.mainContext,state=try c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == player.id}!
                         player.gameDate="2029-04-01";try CareerPathStore.synchronize(player:player,calendar:state,in:c)

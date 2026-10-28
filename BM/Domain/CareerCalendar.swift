@@ -449,11 +449,14 @@ struct CareerLifecycleState:Codable,Equatable {
     var traitRisk:[String:String]=[:]
     var losses:[CareerTraitLoss]=[]
     var retirement:CareerRetirement?
+    var development:PlayerDevelopment?
     func validate(playerID:UUID,today:String) throws {
         guard version == 1,Set(aging.map(\.id)).count == aging.count,Set(losses.map(\.id)).count == losses.count else {throw CareerLifecycleError.invalid}
+        try development?.validate(playerID:playerID,today:today)
         if let adopted {guard try GameDate(adopted) <= GameDate(today) else {throw CareerLifecycleError.invalid}}
         for event in aging {
-            guard (31...40).contains(event.age),event.date <= today,event.id == playerID.uuidString+":aging-v1:"+event.date,
+            guard ((31...40).contains(event.age) && event.id == playerID.uuidString+":aging-v1:"+event.date) || ((27...40).contains(event.age) && development.map {event.date>$0.adopted} == true && event.id == playerID.uuidString+":aging-v2:"+event.date) else {throw CareerLifecycleError.invalid}
+            guard event.date <= today,
                   Set(event.before.keys) == Set(event.after.keys),event.before.values.allSatisfy({$0.isFinite && (0...100).contains($0)}),
                   event.after.allSatisfy({k,v in v.isFinite && v>=0 && v <= event.before[k]!}) else {throw CareerLifecycleError.invalid}
         }

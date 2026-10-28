@@ -831,6 +831,12 @@ struct CareerTrainingView: View {
                 TrainingGrowthReceipt(name: pitchName, before: value.before, after: value.after,
                                       gain: value.gain, fatigue: value.fatigue)
             }
+            if !practice,let policy=value.growthPolicy {
+                ManagementPanel("적용한 성장 정책") {
+                    Text("V2 · "+policy.timing.label).font(.headline)
+                    Text(policy.windowID == nil ? "이 훈련 시작 당시의 성장 조건을 보존합니다.":"성장 집중 적용 · 관련 능력 한정 보너스 포함").font(.subheadline).accessibilityIdentifier("trainingGrowthPolicy")
+                }
+            }
             if !practice { TrainingProjectFeedbackPanel(training: value); CareerProjectNextActions(player: player, calendar: calendar) }
             if let result = value.lastContact { ContactTrainingFeedback(result: result) }
             Button(practice ? "연습 메뉴로" : "선수 홈으로") { dismiss() }

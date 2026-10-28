@@ -281,6 +281,7 @@ struct PlayerHomeView: View {
         PlayerNotebookIdentity(player: player, affiliation: affiliationLabel, age: age)
         switch section {
         case .abilities:
+            if let calendar {DevelopmentHomePanel(player:player,calendar:calendar)}
             PlayerNotebookHighlights(values: summary.originals)
             ManagementPanel("기량 분포 · 현재와 시작", surface: .paper) {
                 if let abilities { Text(abilities.label).managementFont(.helper).foregroundStyle(Color(hex: 0x237459)).accessibilityIdentifier("homeArchetype") }
@@ -412,8 +413,10 @@ struct PlayerHomeView: View {
                     let value = HomeAbilitySummary(player: player, abilities: abilities).originals.first { $0.id == "home" + activeTrainingKind.rawValue.prefix(1).uppercased() + activeTrainingKind.rawValue.dropFirst() }
                     if let value {
                         ManagementMetricRow(title: "현재 능력", value: String(format: "%.1f", value.current))
-                        let low = TrainingRules.growth(before: value.current, score: 0, fatigue: player.fatigue, age: age, pitch: false) - value.current
-                        let high = TrainingRules.growth(before: value.current, score: 100, fatigue: player.fatigue, age: age, pitch: false) - value.current
+                        let policy=(try? player.lifecycle)?.development?.policy(kind:activeTrainingKind,on:player.gameDate)
+                        let round=CareerTraining(playerID:player.id,date:player.gameDate,role:player.roleRaw,pitchCode:nil,before:value.current,fatigue:player.fatigue,age:age,calendarRevision:calendar.revision,kind:activeTrainingKind)
+                        let low=estimatedGrowth(round,policy:policy,score:0)-value.current
+                        let high=estimatedGrowth(round,policy:policy,score:100)-value.current
                         let target = min(100, floor(value.current) + 1)
                         ManagementMetricRow(title: "다음 능력 목표", value: String(format: "%.1f → %.1f", value.current, target))
                         ProgressView(value: value.current >= 100 ? 1 : value.current - floor(value.current)).tint(Color(hex: 0x237459))
@@ -428,6 +431,10 @@ struct PlayerHomeView: View {
                 .buttonStyle(ManagementButtonStyle()).disabled(todayTraining != nil || calendar.hasAction(on: player.gameDate))
                 .accessibilityIdentifier(todayTraining == nil ? "openTraining" : "openNewAbilityTraining")
         }
+    }
+    private func estimatedGrowth(_ round:CareerTraining,policy:TrainingGrowthPolicy?,score:Int) -> Double {
+        var training=round;training.scores=Array(repeating:score,count:5);training.growthPolicy=policy
+        return training.after
     }
     private func pitchLibrary(_ calendar: CareerCalendarState) -> some View {
         NavigationLink { PitchRepertoireView(player: player, calendar: calendar) } label: {
@@ -1436,8 +1443,8 @@ struct OverseasScoutingReportView:View {
                             Text("현재 \(number(row.current)) → 기준 \(number(row.baseline))\n보수 \(number(row.conservative)) / 낙관 \(number(row.optimistic))")
                                 .font(.subheadline.monospaced()).lineSpacing(6).accessibilityIdentifier("overseasProjection-"+row.roleID)
                         }
-                        Text("2개 달력연도 · 연180회 훈련 예산 · 실제 나이/능력 감쇠식. 점수/피로 조건은 보수50/60·기준75/40·낙관100/0입니다. 부상/일정·노화까지 예측한 확정 성장값이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        Text("전망 계산과 보고서 기록은 실제 능력·날짜·피로·훈련 보상에 반영되지 않습니다.").font(.caption)
+                        Text("고정 비교모형 V1 · 2개 달력연도 · 연180회 훈련 예산 · 당시 나이/능력 감쇠식. 점수/피로 조건은 보수50/60·기준75/40·낙관100/0입니다. 부상/일정·노화까지 예측한 확정 성장값이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        Text("새 성장 정책 V2의 개인 발현·노화·성장 집중은 이 고정 비교 전망에 포함되지 않습니다. 전망은 실제 능력·날짜·피로·훈련 보상에 반영되지 않습니다.").font(.caption)
                     }
                 }
             }.padding(12)
@@ -3082,5 +3089,57 @@ private struct ClubOpportunityPreparation:View {
                 NavigationLink {CareerTrainingView(player:player,calendar:calendar)} label: {Text("현재 훈련 선택 · 이어하기")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("opportunityCurrentTraining")
             }.padding(12)
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("현재 출전 준비").navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct DevelopmentHomePanel:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var failure:String?
+    @State private var confirm=false
+    var body:some View {
+        GamePanel(title:"GROWTH NOTE · 성장 수첩",onBoard:true) {
+            if let life=try? player.lifecycle {
+                if let development=life.development {
+                    HStack(alignment:.firstTextBaseline) {
+                        Text(development.timing.label).font(.title3.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("developmentTiming")
+                        Spacer(minLength:8)
+                        Text("정책 V2").font(.caption.monospaced())
+                    }
+                    Text("고교의 기초 성장은 빠르게 · 높은 능력은 천천히").font(.subheadline)
+                    Text("성장 집중 시기 \(development.timing.ages.lowerBound)~\(development.timing.ages.upperBound)세 · 최대 능력이나 성공 보장이 아닙니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    if let window=development.active(on:player.gameDate) {
+                        Text((window.pitchCode.flatMap {PitchType(rawValue:$0)?.label} ?? window.kind.label)+" · 성장 집중 중").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("developmentActiveWindow")
+                        Text("남은 \(8-window.used)회 · "+ManagementDisplay.date(window.expires)+"까지").font(.subheadline.monospacedDigit())
+                        ProgressView(value:Double(window.used),total:8).tint(GameTheme.gold)
+                        Text("관련 훈련 성장에만 보너스 · 추가 성장 예산 \(max(0,0.6-window.spent),specifier:"%.1f") 남음").font(.subheadline)
+                        NavigationLink {CareerTrainingDestination(player:player,calendar:calendar,initialKind:window.kind)} label: {Text((window.pitchCode.flatMap {PitchType(rawValue:$0)?.label} ?? window.kind.label)+" 훈련 · 준비/이어하기")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("developmentTraining")
+                    } else {
+                        let from=(try? GameDate(player.gameDate).adding(days:-55).description) ?? player.gameDate
+                        let preparations=development.proofs.mapValues {$0.filter {$0.date>=from}}.filter {!$0.value.isEmpty}.sorted {$0.value.count == $1.value.count ? $0.key<$1.key:$0.value.count>$1.value.count}
+                        if let first=preparations.first {
+                            let label=TrainingKind(rawValue:first.key)?.label ?? PitchType(rawValue:String(first.key.dropFirst(6)))?.label ?? "구종"
+                            Text(label+" 준비 · \(first.value.count) / 8회").font(.headline).accessibilityIdentifier("developmentPreparation")
+                            ProgressView(value:Double(first.value.count),total:8).tint(GameTheme.growth)
+                        } else {Text("꾸준한 훈련에서 성장 조짐을 발견합니다.").font(.subheadline).accessibilityIdentifier("developmentPreparation")}
+                        Text("최근56일 같은 능력8회 · 평균50점 이상·시작 피로40 이하. 적용 후14일과 발현 시기 조건,연1회를 확인합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    }
+                    DisclosureGroup("성장·노화와 전환 기록") {
+                        Text("정책 적용 · "+ManagementDisplay.date(development.adopted)+" 이후 새 훈련부터. 구속·주력은27세,파워·송구·지구력은29세,복합 기술은31세,제구·선구안·구종은34세부터 게임용 감소를 적용합니다. 기존 경기XP/특성·포지션XP는 종전 규칙입니다.").font(.subheadline)
+                        ForEach(development.windows) {w in Text(ManagementDisplay.date(w.opened)+" · "+w.kind.label+" 집중 · 사용\(w.used)/8").font(.subheadline)}
+                        ForEach(Array(development.positions.enumerated()),id:\.offset) {_,change in Text(ManagementDisplay.date(change.date)+" · "+change.from.label+" → "+change.to.label).font(.subheadline)}
+                    }.tint(GameTheme.gold)
+                } else {
+                    Text("기존 성장 정책 유지 중").font(.headline).accessibilityIdentifier("developmentLegacy")
+                    Text("새 정책은 이후 시작하는 능력 훈련·미래 노화에 적용합니다. 현재 능력·구종·기록·진행 중 훈련은 그대로 보존합니다.").font(.subheadline)
+                    Button("새 성장 수첩 시작") {confirm=true}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("developmentAdopt")
+                }
+            } else {Text("성장 기록을 읽지 못했습니다.").foregroundStyle(GameTheme.gold)}
+            if let failure {Text(failure).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("developmentError")}
+        }.alert("새 성장 정책 적용",isPresented:$confirm) {
+            Button("현재 능력을 유지하고 적용") {do {try DevelopmentStore.adopt(player:player,calendar:calendar,in:context);failure=nil} catch {failure=error.localizedDescription}}
+            Button("취소",role:.cancel) {}
+        } message: {Text("기존 선수는 균형 발현으로 시작합니다. 과거 훈련·경기·노화는 다시 계산하지 않습니다. 날짜·피로·오늘 행동은 유지됩니다.")}
     }
 }

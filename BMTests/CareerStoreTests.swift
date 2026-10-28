@@ -118,7 +118,7 @@ extension CareerStoreTests {
                     let state=CareerCalendarState(player:projection,schools:schools,legacySave:false)
                     db.mainContext.insert(state)
                     let memory=try CareerStore.makeContainer(inMemory:true),c=memory.mainContext
-                    let source=try CareerStore.create(draft(.pitcher),schools:schools,in:c)
+                    let source=try LegacyPlayerFixture.create(draft(.pitcher),schools:schools,in:c)
                     let sourceState=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
                     let row=try CareerTrainingStore.start(player:source,state:sourceState,pitchCode:"four-seam",in:c)
                     try CareerTrainingStore.attempt(player:source,state:sourceState,record:row,revision:row.revision,input:TrainingInput(release:0.68),in:c)

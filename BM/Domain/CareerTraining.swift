@@ -84,6 +84,7 @@ struct CareerTraining: Codable, Equatable {
     var positionXP: Double?
     var pitchStudy: PitchStudy?
     var drillVersion: Int?
+    var growthPolicy:TrainingGrowthPolicy?
     var projectFeedback: TrainingProjectFeedback?
     var isSkillDrill: Bool { drillVersion == 1 && SkillDrillRules.kinds.contains(selectedKind) && trait == nil && position == nil && pitchStudy == nil }
     var selectedKind: TrainingKind { kind ?? (pitchCode == nil ? .contact : .pitch) }
@@ -98,7 +99,7 @@ struct CareerTraining: Codable, Equatable {
     var average: Double { scores.isEmpty ? 0 : Double(scores.reduce(0, +)) / Double(scores.count) }
     var positionGainXP: Double { completed && position != nil ? PositionTrainingRules.gainedXP(mastery: before, score: average.rounded(), fatigue: fatigue, age: age) : 0 }
     var positionAfter: PositionSkill { PositionTrainingRules.adding(positionGainXP, to: PositionSkill(mastery: before, xp: positionXP ?? 0)) }
-    var after: Double { position != nil ? positionAfter.mastery : completed ? (trait == nil && pitchStudy == nil ? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil) : TrainingRules.traitGrowth(before: before, score: average.rounded(), fatigue: fatigue, age: age)) : before }
+    var after: Double { position != nil ? positionAfter.mastery : completed ? (trait == nil && pitchStudy == nil ? (growthPolicy?.after(training:self) ?? TrainingRules.growth(before: before, score: average, fatigue: fatigue, age: age, pitch: pitchCode != nil)) : TrainingRules.traitGrowth(before: before, score: average.rounded(), fatigue: fatigue, age: age)) : before }
     var controlMastery: Double { pitchStudy.map { $0.restoredMastery ?? min(40, 20 + before * 0.2) } ?? before }
     var gain: Double { TrainingRules.round(after - before) }
     var title: String { pitchStudy.map { (PitchType(rawValue: $0.code)?.label ?? $0.code) + ($0.restoredMastery == nil ? " 습득 훈련" : " 재등록 훈련") } ?? (position?.label ?? trait?.label ?? selectedKind.label) + " 훈련" }
@@ -462,4 +463,132 @@ struct MatchProjectFeedback: Codable, Equatable {
     }
     var sampleContribution:Int {max(0,(after?.sample ?? 0)-(before?.sample ?? 0))}
     var taskContribution:Int {max(0,(after?.task?.value ?? 0)-(before?.task?.value ?? 0))}
+}
+
+// Versioned training growth is independent of legacy match XP, traits and position XP.
+enum DevelopmentTiming:String,Codable,CaseIterable {
+    case early,balanced,late
+    var label:String {switch self {case .early:"조기 발현";case .balanced:"균형 발현";case .late:"후기 발현"}}
+    var ages:ClosedRange<Int> {switch self {case .early:16...22;case .balanced:18...26;case .late:20...30}}
+    func factor(age:Int) -> Double {
+        switch self {
+        case .balanced:1
+        case .early:age<=18 ? 1.1:age<=23 ? 0.95:0.9
+        case .late:age<=18 ? 0.9:age<=23 ? 1.15:age<=27 ? 1.1:1
+        }
+    }
+}
+struct TrainingGrowthPolicy:Codable,Equatable {
+    var version=2
+    let timing:DevelopmentTiming
+    let windowID:String?
+    let bonusLimit:Double
+    func validate(training:CareerTraining) throws {
+        guard version == 2,training.trait == nil,training.position == nil,training.pitchStudy == nil,
+              bonusLimit.isFinite,(0...0.6).contains(bonusLimit),windowID == nil ? bonusLimit == 0:(windowID!.hasPrefix(training.playerID.uuidString+":") && windowID!.hasSuffix("/growth-window-v2")) else {throw TrainingError.invalidRecord}
+    }
+    func base(training:CareerTraining) -> Double {
+        DevelopmentRules.growth(before:training.before,score:training.average,fatigue:training.fatigue,age:training.age,pitch:training.pitchCode != nil,timing:timing)
+    }
+    func bonus(training:CareerTraining) -> Double {TrainingRules.round(min(bonusLimit,100-base(training:training),max(0,base(training:training)-training.before)*0.4))}
+    func after(training:CareerTraining) -> Double {TrainingRules.round(min(100,base(training:training)+bonus(training:training)))}
+}
+enum DevelopmentRules {
+    static func growth(before:Double,score:Double,fatigue:Int,age:Int,pitch:Bool,timing:DevelopmentTiming) -> Double {
+        let level=before<50 ? 1.0:before<70 ? 0.65:before<80 ? 0.25:before<90 ? 0.10:before<95 ? 0.04:0.0125
+        let performance=score>=90 ? 1.3:score>=75 ? 1.2:score>=50 ? 1.1:1
+        let recovery=fatigue<=40 ? 1.0:fatigue<60 ? 0.8:0.5
+        return TrainingRules.round(min(100,before+(pitch ? 0.12:0.08)*performance*level*recovery*TrainingRules.ageMultiplier(age)*timing.factor(age:age)))
+    }
+    static func loss(_ kind:TrainingKind,age:Int) -> Double {
+        guard age<=40,kind != .mental else {return 0}
+        if [.speed,.velocity].contains(kind) {return age<27 ? 0:age<=30 ? 0.35:age<=33 ? 0.6:age<=36 ? 1:1.4}
+        if [.power,.arm,.stamina].contains(kind) {return age<29 ? 0:age<=30 ? 0.2:age<=33 ? 0.4:age<=36 ? 0.75:1.1}
+        if [.control,.discipline,.pitch].contains(kind) {return age<34 ? 0:age<=36 ? 0.12:0.3}
+        return age<31 ? 0:age<=33 ? 0.15:age<=36 ? 0.35:0.65
+    }
+    static func aged(_ value:Double,kind:TrainingKind,age:Int,pitch:Bool) -> Double {TrainingRules.round(min(value,max(pitch ? 0:1,value-loss(kind,age:age))))}
+}
+struct DevelopmentProof:Codable,Equatable {
+    let key:String
+    let date:String
+}
+struct DevelopmentWindow:Codable,Equatable,Identifiable {
+    let id:String
+    let kind:TrainingKind
+    var pitchCode:String?
+    let opened:String
+    let expires:String
+    let sources:[DevelopmentProof]
+    var used=0
+    var spent=0.0
+    func available(on date:String) -> Bool {date>=opened && date<=expires && used<8 && spent<0.6}
+}
+struct DevelopmentPositionChange:Codable,Equatable {
+    let date:String
+    let from:FieldPosition
+    let to:FieldPosition
+    let mastery:Double
+}
+struct PlayerDevelopment:Codable,Equatable {
+    var version=2
+    let adopted:String
+    let timing:DevelopmentTiming
+    var proofs:[String:[DevelopmentProof]]=[:]
+    var windows:[DevelopmentWindow]=[]
+    var positions:[DevelopmentPositionChange]=[]
+    static func initial(playerID:UUID,date:String,legacy:Bool=false) -> Self {
+        let hash=DomesticSelection.hash("development-v2/"+playerID.uuidString)
+        return Self(adopted:date,timing:legacy ? .balanced:DevelopmentTiming.allCases[Int(hash%3)])
+    }
+    var completedPreparation:Int {proofs.values.map(\.count).max() ?? 0}
+    func active(on date:String) -> DevelopmentWindow? {windows.last {$0.available(on:date)}}
+    func policy(kind:TrainingKind,code:String?=nil,on date:String) -> TrainingGrowthPolicy {
+        let window=active(on:date).flatMap {$0.kind == kind && $0.pitchCode == code ? $0:nil}
+        return TrainingGrowthPolicy(timing:timing,windowID:window?.id,bonusLimit:window.map {TrainingRules.round(0.6-$0.spent)} ?? 0)
+    }
+    mutating func complete(_ training:CareerTraining,key:String) throws {
+        guard let policy=training.growthPolicy,policy.timing == timing,training.completed,training.date>=adopted else {throw TrainingError.invalidRecord}
+        if let id=policy.windowID {
+            guard let i=windows.firstIndex(where:{$0.id == id}),windows[i].available(on:training.date),windows[i].kind == training.selectedKind,windows[i].pitchCode == training.pitchCode,
+                  policy.bonusLimit == TrainingRules.round(0.6-windows[i].spent) else {throw TrainingError.stale}
+            windows[i].used += 1;windows[i].spent=TrainingRules.round(windows[i].spent+min(max(0,training.after-policy.base(training:training)),policy.bonusLimit))
+        }
+        let day=try GameDate(training.date),from=day.adding(days:-55).description
+        for kind in Array(proofs.keys) {proofs[kind]=proofs[kind]!.filter {$0.date>=from}}
+        if training.average>=50,training.fatigue<=40,training.before<95 {
+            let kind=training.pitchCode.map {"pitch/"+$0} ?? training.selectedKind.rawValue
+            guard !proofs.values.flatMap({$0}).contains(where:{$0.key == key}) else {throw TrainingError.invalidRecord}
+            proofs[kind]=Array(((proofs[kind] ?? [])+[DevelopmentProof(key:key,date:training.date)]).suffix(8))
+            let sources=proofs[kind] ?? []
+            if sources.count==8,timing.ages.contains(training.age),active(on:training.date) == nil,try GameDate(adopted).days(to:day)>=14,
+               !windows.contains(where:{String($0.opened.prefix(4)) == String(training.date.prefix(4))}) {
+                windows.append(DevelopmentWindow(id:key+"/growth-window-v2",kind:training.selectedKind,pitchCode:training.pitchCode,opened:training.date,expires:day.adding(days:27).description,sources:sources))
+                proofs[kind]=[]
+            }
+        }
+        try validate(playerID:training.playerID,today:training.date)
+    }
+    func validate(playerID:UUID,today:String) throws {
+        guard version == 2,try GameDate(adopted)<=GameDate(today),windows.count<=25,positions.count<=400,
+              Set(windows.map(\.id)).count == windows.count,Set(windows.map {String($0.opened.prefix(4))}).count == windows.count,
+              proofs.count<=TrainingKind.allCases.count+PitchType.allCases.count else {throw CareerLifecycleError.invalid}
+        var keys:Set<String>=[]
+        for (kind,rows) in proofs {
+            guard TrainingKind(rawValue:kind) != nil || kind.hasPrefix("pitch/") && PitchType(rawValue:String(kind.dropFirst(6))) != nil,rows.count<=8 else {throw CareerLifecycleError.invalid}
+            for row in rows {guard row.key == CareerTrainingRecord.key(playerID,row.date),try GameDate(row.date)>=GameDate(adopted),row.date<=today,keys.insert(row.key).inserted else {throw CareerLifecycleError.invalid}}
+        }
+        for w in windows {
+            guard w.pitchCode == nil ? w.kind != .pitch:(w.kind == .pitch && PitchType(rawValue:w.pitchCode!) != nil),w.opened>=adopted,w.opened<=today,w.expires == (try GameDate(w.opened).adding(days:27).description),
+                  (0...8).contains(w.used),w.spent.isFinite,(0...0.6).contains(w.spent),w.sources.count==8,
+                  Set(w.sources.map(\.key)).count==8,w.sources.map(\.date) == w.sources.map(\.date).sorted(),w.sources.last?.date == w.opened,w.id == w.sources.last!.key+"/growth-window-v2" else {throw CareerLifecycleError.invalid}
+            for row in w.sources {guard row.key == CareerTrainingRecord.key(playerID,row.date),row.date>=adopted,row.date<=w.opened,try GameDate(row.date)>=GameDate(w.opened).adding(days:-55) else {throw CareerLifecycleError.invalid}}
+        }
+        var previous:DevelopmentPositionChange?
+        for change in positions {
+            guard change.from != change.to,change.mastery.isFinite,(40...100).contains(change.mastery),change.date>=adopted,change.date<=today,
+                  try previous.map {try GameDate($0.date).days(to:GameDate(change.date))>=28 && $0.to==change.from} ?? true else {throw CareerLifecycleError.invalid}
+            previous=change
+        }
+    }
 }

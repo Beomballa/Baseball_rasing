@@ -241,14 +241,15 @@ extension CalendarProgression {
         guard life.retirement == nil else {throw CareerLifecycleError.retired}
         if life.adopted == nil {life.adopted=previous.description;life.enforceAgeLimit=try GameDate(state.originDate).age(startingAt:player.startAge,on:previous)<41}
         let today=try GameDate(player.gameDate),origin=try GameDate(state.originDate),age=try state.age(of:player)
-        let id=player.id.uuidString+":aging-v1:"+player.gameDate
-        if today == origin.anniversary(in:today.year),(31...40).contains(age),!life.aging.contains(where:{$0.id == id}) {
+        let modern=life.development.map {player.gameDate>$0.adopted} ?? false
+        let id=player.id.uuidString+(modern ? ":aging-v2:":":aging-v1:")+player.gameDate
+        if today == origin.anniversary(in:today.year),(modern ? 27...40:31...40).contains(age),!life.aging.contains(where:{$0.id == id || $0.date == player.gameDate}) {
             let before=try values(player:player,in:context)
             let after=before.mapValues {$0}
             var adjusted=after
             for (key,value) in before {
                 let isPitch=key.hasPrefix("pitch/")
-                if let kind=isPitch ? TrainingKind.pitch:TrainingKind(rawValue:key) {adjusted[key]=CareerAgingRules.value(value,kind:kind,age:age,pitch:isPitch)}
+                if let kind=isPitch ? TrainingKind.pitch:TrainingKind(rawValue:key) {adjusted[key]=modern ? DevelopmentRules.aged(value,kind:kind,age:age,pitch:isPitch):CareerAgingRules.value(value,kind:kind,age:age,pitch:isPitch)}
             }
             try apply(adjusted,player:player,in:context)
             life.aging.append(CareerAgeEvent(id:id,date:player.gameDate,age:age,before:before,after:adjusted))
