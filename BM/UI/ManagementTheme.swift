@@ -1,8 +1,16 @@
 import SwiftUI
 
-/// Management surfaces follow design/v1/tokens.json; gameplay keeps its current theme.
+/// Semantic roles map to design/v2/native-token-map.json; existing gameplay values stay intact.
 enum ManagementTheme {
     static let version = "1.0.0"
+    enum Spatial {
+        static let canvas = Color(hex: 0x102e42)
+        static let onCanvas = Color(hex: 0xf2e9ce)
+        static let wood = Color(hex: 0x442c1e)
+        static let screenInset: CGFloat = 12
+        static let facilityMaxWidth: CGFloat = 145
+        static let shortContentHeight: CGFloat = 680
+    }
     enum Palette {
         static let canvas = GameTheme.board
         static let panel = GameTheme.boardPanel

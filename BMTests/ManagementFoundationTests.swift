@@ -3,6 +3,16 @@ import UIKit
 @testable import BM
 
 final class ManagementFoundationTests: XCTestCase {
+    func testV48TrainingInstructionsRespectRecordedVersionWithoutChangingInputs() {
+        for kind in [TrainingKind.power, .velocity, .stuff] {
+            XCTAssertEqual(kind.drillDescription, kind.drillDescription(version: 1))
+            XCTAssertNotEqual(kind.drillDescription(version: nil), kind.drillDescription(version: 1))
+        }
+        XCTAssertEqual(TrainingKind.power.drillDescription(version: nil), "힘과 발사각 조절")
+        for kind in TrainingKind.allCases where ![.power, .velocity, .stuff].contains(kind) {
+            XCTAssertEqual(kind.drillDescription(version: nil), kind.drillDescription(version: 1))
+        }
+    }
     @MainActor func testAddedPlayerAndTrainingRoomAssetsAreBundled() throws {
         for name in ["LockerV1", "BattingRoomV1", "BullpenRoomV1", "StadiumGateV1", "ScoutRoomV1", "RestRoomV1"] {
             let image = try XCTUnwrap(UIImage(named: name), name)

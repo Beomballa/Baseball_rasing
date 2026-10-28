@@ -572,9 +572,9 @@ struct CareerGameView: View {
                 Text("결과 저장 완료").font(.caption.bold()).foregroundStyle(GameTheme.growth)
                     .accessibilityIdentifier("gameResultSaved")
             }
-            if let preparation=match.preparation,let outcome=MatchPlanOutcome.make(match:match) {MatchPlanOutcomePanel(preparation:preparation,outcome:outcome)}
+
             GamePanel(title: player.role == .batter ? "타자 경기 기록" : "투수 경기 기록", onBoard: true) {
-                if let change=match.ownPitcherChange {PitcherChangePanel(change:change,finalRuns:match.line.runsAllowed,appearance:player.appearance)}
+
                 if let decision = match.clubSelection {
                     Text(decision.appearance ? "주전 기용 · 경기 시작 때 고정" : decision.rotationDay ? "벤치 · 개인 성적/XP 없음" : "로테이션 휴식 · 개인 성적/XP 없음")
                         .font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("matchSelectionResult")
@@ -592,48 +592,6 @@ struct CareerGameView: View {
                             }.padding(8).background(GameTheme.board)
                                 .accessibilityElement(children: .combine).accessibilityIdentifier("gameResult-" + metric.id)
                         }
-                    }
-                }
-            }
-            if let homeRun=match.homeRuns?.last {
-                GamePanel(title:"최근 홈런 · 비거리",onBoard:true) {
-                    HomeRunReplayBoard(event:homeRun,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
-                        ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(homeRun.half%2 == 0) == match.isHome,scoreText:"H \(match.homeScore) : \(match.awayScore) A",animated:homeRunResultPlaying) {homeRunResultPlaying=false}
-                        .id(resultReplayID).frame(height:650)
-                    Button("홈런 다시 보기") {homeRunResultPlaying=true;resultReplayID+=1}
-                        .buttonStyle(MatchPixelButtonStyle()).disabled(homeRunResultPlaying).accessibilityIdentifier("replayResultHomeRun")
-                }
-            }
-            if let play=resultReplayPlay ?? match.fieldPlays?.last {
-                GamePanel(title:resultReplayPlay == nil ? "마지막 타구 · 수비/주루" : resultReplayPlay?.misplay != nil ? "최근 실책 · 추가 진루" : resultReplayPlay?.relay != nil ? "최근 중계 송구" : resultReplayPlay?.fly != nil ? "최근 뜬공 · 태그업" : "최근 병살 시도",onBoard:true) {
-                    Text(animateResultReplay ? "인플레이 · 수비 재생 중":play.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gameDetailedFieldSummary")
-                    DetailedFieldReplayBoard(play:play,appearance:player.appearance,animated:animateResultReplay,
-                        jerseyNumber:player.jerseyNumber,ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(play.half%2 == 0) == match.isHome,scoreText:"H \(match.homeScore) : \(match.awayScore) A") { animateResultReplay=false }
-                        .id(resultReplayID).frame(height:600)
-                    if !animateResultReplay {FieldReplayDetails(play:play)}
-                    Button("수비·주루 재생") { animateResultReplay=true;resultReplayID += 1 }
-                        .buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayResultFieldPlay")
-                    if let error=match.fieldPlays?.last(where:{$0.misplay != nil}) {
-                        Button("최근 실책 다시 보기") {
-                            resultReplayPlay=error;animateResultReplay=true;resultReplayID += 1
-                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayMisplay")
-                    }
-                    if let relay=match.fieldPlays?.last(where:{ $0.relay != nil }) {
-                        Button("최근 중계 송구 다시 보기") {
-                            resultReplayPlay=relay;animateResultReplay=true;resultReplayID += 1
-                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayRelayPlay")
-                    }
-                    if let fly=match.fieldPlays?.last(where: { $0.fly?.caught == true && $0.targetRunner != nil && $0.misplay == nil }) ?? match.fieldPlays?.last(where:{ $0.fly?.caught == true && $0.misplay == nil }) ?? match.fieldPlays?.last(where:{ $0.fly != nil && $0.misplay == nil }) {
-                        Button("최근 뜬공·태그업 다시 보기") {
-                            resultReplayPlay=fly;animateResultReplay=true;resultReplayID += 1
-                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayFlyPlay")
-                    }
-                    if let doublePlay=match.fieldPlays?.last(where: { $0.secondThrow != nil }) {
-                        Button("최근 병살 시도 다시 보기") {
-                            resultReplayPlay=doublePlay;animateResultReplay=true;resultReplayID += 1
-                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayDoublePlay")
                     }
                 }
             }
@@ -685,6 +643,58 @@ struct CareerGameView: View {
                                 Text(trait.effect).font(.caption)
                             }
                         }.accessibilityElement(children: .combine).accessibilityIdentifier("gameResultTrait-" + trait.rawValue)
+                    }
+                }
+            }
+            if let preparation = match.preparation, let outcome = MatchPlanOutcome.make(match: match) {
+                DisclosureGroup("경기 전 계획 · 수행 근거") {
+                    MatchPlanOutcomePanel(preparation: preparation, outcome: outcome)
+                }.tint(GameTheme.gold).accessibilityIdentifier("gamePlanDetails")
+            }
+            if let change = match.ownPitcherChange {
+                DisclosureGroup("투수 교체 · 책임 주자 상세") {
+                    PitcherChangePanel(change: change, finalRuns: match.line.runsAllowed, appearance: player.appearance)
+                }.tint(GameTheme.gold).accessibilityIdentifier("pitcherChangeDetails")
+            }
+            if let homeRun=match.homeRuns?.last {
+                GamePanel(title:"최근 홈런 · 비거리",onBoard:true) {
+                    HomeRunReplayBoard(event:homeRun,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
+                        ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
+                        ownTeamFielding:(homeRun.half%2 == 0) == match.isHome,scoreText:"H \(match.homeScore) : \(match.awayScore) A",animated:homeRunResultPlaying) {homeRunResultPlaying=false}
+                        .id(resultReplayID).frame(height:650)
+                    Button("홈런 다시 보기") {homeRunResultPlaying=true;resultReplayID+=1}
+                        .buttonStyle(MatchPixelButtonStyle()).disabled(homeRunResultPlaying).accessibilityIdentifier("replayResultHomeRun")
+                }
+            }
+            if let play=resultReplayPlay ?? match.fieldPlays?.last {
+                GamePanel(title:resultReplayPlay == nil ? "마지막 타구 · 수비/주루" : resultReplayPlay?.misplay != nil ? "최근 실책 · 추가 진루" : resultReplayPlay?.relay != nil ? "최근 중계 송구" : resultReplayPlay?.fly != nil ? "최근 뜬공 · 태그업" : "최근 병살 시도",onBoard:true) {
+                    Text(animateResultReplay ? "인플레이 · 수비 재생 중":play.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gameDetailedFieldSummary")
+                    DetailedFieldReplayBoard(play:play,appearance:player.appearance,animated:animateResultReplay,
+                        jerseyNumber:player.jerseyNumber,ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
+                        ownTeamFielding:(play.half%2 == 0) == match.isHome,scoreText:"H \(match.homeScore) : \(match.awayScore) A") { animateResultReplay=false }
+                        .id(resultReplayID).frame(height:600)
+                    if !animateResultReplay {FieldReplayDetails(play:play)}
+                    Button("수비·주루 재생") { animateResultReplay=true;resultReplayID += 1 }
+                        .buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayResultFieldPlay")
+                    if let error=match.fieldPlays?.last(where:{$0.misplay != nil}) {
+                        Button("최근 실책 다시 보기") {
+                            resultReplayPlay=error;animateResultReplay=true;resultReplayID += 1
+                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayMisplay")
+                    }
+                    if let relay=match.fieldPlays?.last(where:{ $0.relay != nil }) {
+                        Button("최근 중계 송구 다시 보기") {
+                            resultReplayPlay=relay;animateResultReplay=true;resultReplayID += 1
+                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayRelayPlay")
+                    }
+                    if let fly=match.fieldPlays?.last(where: { $0.fly?.caught == true && $0.targetRunner != nil && $0.misplay == nil }) ?? match.fieldPlays?.last(where:{ $0.fly?.caught == true && $0.misplay == nil }) ?? match.fieldPlays?.last(where:{ $0.fly != nil && $0.misplay == nil }) {
+                        Button("최근 뜬공·태그업 다시 보기") {
+                            resultReplayPlay=fly;animateResultReplay=true;resultReplayID += 1
+                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayFlyPlay")
+                    }
+                    if let doublePlay=match.fieldPlays?.last(where: { $0.secondThrow != nil }) {
+                        Button("최근 병살 시도 다시 보기") {
+                            resultReplayPlay=doublePlay;animateResultReplay=true;resultReplayID += 1
+                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayDoublePlay")
                     }
                 }
             }

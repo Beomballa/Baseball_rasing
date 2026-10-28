@@ -115,6 +115,15 @@ struct SavedScoutingObservationView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 frozenIdentity
+                ManagementPanel("이번 관찰 · 먼저 확인") {
+                    Text("확정 자료 · " + ManagementDisplay.date(value.observedDate)).managementFont(.label)
+                    if let condition = value.evaluationPending.first {
+                        Text(condition).managementFont(.body)
+                    } else {
+                        Text("기록된 평가 대기 조건 없음 · 제의 여부는 계약 메뉴에서 확인합니다.").managementFont(.body)
+                    }
+                    Text("현재 능력과 다른 시점의 자료입니다. 관심 구단은 실제 계약 제의와 구분합니다.").managementFont(.helper)
+                }.accessibilityIdentifier("scoutDecisionSummary")
                 ScoutingInterestList(value: value)
                 roleBoard
                 frozenSample
@@ -130,7 +139,8 @@ struct SavedScoutingObservationView: View {
                 } else {
                     ScoutNote(title: "이전 버전 파일", message: "이 보고서는 확정 당시 구단/비교 성적을 기록하지 않았습니다. 원문을 유지하며 다음 관찰부터 새 자료를 확인합니다.", messageIdentifier: "scoutLegacyFit")
                 }
-                VStack(alignment: .leading, spacing: 12) {
+                DisclosureGroup("다음 검토 조건 · 계산/계약 절차") {
+                    VStack(alignment: .leading, spacing: 12) {
                     Text("다음 검토를 위한 조건").font(.title3.bold())
                     ForEach(value.evaluationPending, id: \.self) { Text($0).font(.subheadline) }
                     Text(value.contractFit == nil ? "당시 평가 대기 상태를 보존한 파일입니다." : "역할 기량·성적 적합도는 참고값입니다. 실제 자격·선발 결과·제의는 계약 메뉴에서 확인하세요.")
@@ -140,6 +150,7 @@ struct SavedScoutingObservationView: View {
                             .font(.subheadline).padding(.top, 8)
                     }.font(.subheadline).tint(GameTheme.gold)
                 }
+                }.tint(GameTheme.gold).accessibilityIdentifier("scoutReviewConditions")
                 DisclosureGroup("선수 프로젝트 · 관찰 근거") {
                     CareerProjectReportEvidence(playerID: value.playerID, period: value.period).padding(.top, 12)
                 }.font(.headline).tint(GameTheme.gold)

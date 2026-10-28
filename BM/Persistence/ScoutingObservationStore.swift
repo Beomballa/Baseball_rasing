@@ -1309,7 +1309,7 @@ enum GoalSpecialError:LocalizedError {
 
 @MainActor extension ClubSeasonStore {
     static func progress(_ goal:ClubSeasonGoal,player:CareerPlayer,on date:String?=nil,in context:ModelContext) throws -> ClubSeasonProgress {
-        if let result=goal.result,date.map {cutoff in goal.settledOn.map {$0 <= cutoff} ?? false} ?? true {return result}
+        if let result=goal.result,date.map({cutoff in goal.settledOn.map {$0 <= cutoff} ?? false}) ?? true {return result}
         let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
         let source=try rows.filter {row in row.completed && goal.fixtureIDs.contains(row.fixtureID) && row.gameDate >= goal.started && (date.map {row.gameDate <= $0} ?? true)}.map {row -> (key:String,match:CareerMatch) in
             let match=try row.snapshot()

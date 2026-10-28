@@ -34,8 +34,8 @@ struct ManagementFacilityStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 10).padding(.vertical, 8)
             .frame(minHeight: 44)
-            .foregroundStyle(Color(hex: 0xf2e9ce))
-            .background(Color(hex: 0x442c1e), in: ManagementStepFrame())
+            .foregroundStyle(ManagementTheme.Spatial.onCanvas)
+            .background(ManagementTheme.Spatial.wood, in: ManagementStepFrame())
             .overlay(ManagementStepFrame().stroke(recommended ? GameTheme.gold : Color(hex: 0xb48243), lineWidth: recommended ? 3 : 2))
             .offset(y: configuration.isPressed ? 2 : 0)
     }
@@ -60,7 +60,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .clipped()
                     .accessibilityHidden(true)
-                LinearGradient(colors: [Color(hex: 0x102e42), .clear], startPoint: .top, endPoint: .bottom)
+                LinearGradient(colors: [ManagementTheme.Spatial.canvas, .clear], startPoint: .top, endPoint: .bottom)
                     .frame(height: 210).frame(maxHeight: .infinity, alignment: .top).ignoresSafeArea(edges: .top).allowsHitTesting(false)
                 VStack(spacing: 0) {
                     if typeSize.isAccessibilitySize {
@@ -74,12 +74,12 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                     } else {
                         header
                         roomToolbar
-                        if geometry.size.height < 680 {
+                        if geometry.size.height < ManagementTheme.Spatial.shortContentHeight {
                             ScrollView { facilityList(columns: 2) }.accessibilityIdentifier("roomFacilityList")
                         } else {
                             GeometryReader { room in
                                 ForEach(facilities) { facility in
-                                    facilityButton(facility).frame(width: min(145, room.size.width * 0.4))
+                                    facilityButton(facility).frame(width: min(ManagementTheme.Spatial.facilityMaxWidth, room.size.width * 0.4))
                                         .position(x: max(82, min(room.size.width - 82, room.size.width * facility.x)),
                                                   y: max(40, min(room.size.height - 42, room.size.height * facility.y)))
                                 }
@@ -87,14 +87,14 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                         }
                     }
                     VStack(spacing: 8) {
-                        action.frame(minHeight: 56).padding(.horizontal, 12)
+                        action.frame(minHeight: ManagementTheme.Control.primaryHeight).padding(.horizontal, ManagementTheme.Spatial.screenInset)
                         ManagementTabBar(selection: $selection)
                     }.dynamicTypeSize(...DynamicTypeSize.accessibility1)
-                        .padding(.top, 8).background(Color(hex: 0x102e42).opacity(0.97))
+                        .padding(.top, 8).background(ManagementTheme.Spatial.canvas.opacity(0.97))
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
         }
-        .background(Color(hex: 0x102e42).ignoresSafeArea())
+        .background(ManagementTheme.Spatial.canvas.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
     }
@@ -106,7 +106,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
             }
             Spacer()
             Text(title).font(.subheadline.bold()).padding(.horizontal, 12)
-        }.foregroundStyle(Color(hex: 0xf2e9ce)).background(Color(hex: 0x102e42).opacity(0.86))
+        }.foregroundStyle(ManagementTheme.Spatial.onCanvas).background(ManagementTheme.Spatial.canvas.opacity(0.86))
     }
     private func facilityList(columns: Int) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: columns), spacing: 16) {
@@ -163,7 +163,7 @@ struct ManagementSpatialHeader: View {
                 Text(pending ? "훈련 이어하기" : "행동 \(used ? 0 : 1)/1").accessibilityIdentifier("calendarAction")
             }.font(.caption.bold())
         }.padding(.horizontal, 12).padding(.vertical, 8)
-            .foregroundStyle(Color(hex: 0xf2e9ce)).background(Color(hex: 0x102e42).opacity(0.94))
+            .foregroundStyle(ManagementTheme.Spatial.onCanvas).background(ManagementTheme.Spatial.canvas.opacity(0.94))
     }
 }
 

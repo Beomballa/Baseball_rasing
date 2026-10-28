@@ -55,6 +55,10 @@ struct PlayerHomeView: View {
         } catch {return "소속 조회 오류 · 출신 "+player.schoolName}
     }
     @State private var clubSelection: ClubSelectionReview?
+    @State private var clubSelectionFailure: String?
+    #if DEBUG
+    @State private var injectedSelectionFailure = false
+    #endif
     @State private var selectedTab = ManagementTab.home
     @State private var showSettings = false
     @State private var showCalendar = false
@@ -69,10 +73,15 @@ struct PlayerHomeView: View {
             ManagementSpatialHeader(player: player, affiliation: affiliationLabel, age: age,
                                     used: calendar?.hasAction(on: player.gameDate) == true,
                                     pending: todayTraining?.completed == false) { roomDetail = .profile }
+            if let clubSelectionFailure {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("기용 조회 실패 · " + clubSelectionFailure).font(.subheadline).accessibilityIdentifier("homeSelectionError")
+                    Button("기용 다시 확인", action: refreshSelection).frame(minHeight: 44).accessibilityIdentifier("retryHomeSelection")
+                }.foregroundStyle(GameTheme.boardInk).padding(12).background(GameTheme.boardPanel)
+            }
         } action: { roomAction }
         .task(id: "selection-\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)") {
-            if let calendar { clubSelection = try? ClubSelectionStore.projection(player:player,calendar:calendar,in:context) }
-            else { clubSelection = nil }
+            refreshSelection()
         }
         .id(player.id)
         .preferredColorScheme(.dark)
@@ -96,7 +105,7 @@ struct PlayerHomeView: View {
                                         Text(affiliationLabel).managementFont(.body)
                                         Text("\(age)세 · \(player.role.label) · \(player.roleDetail)").managementFont(.body)
                                     }
-                                    if players.filter {!$0.isRetired}.count < PlayerRole.allCases.count {
+                                    if players.filter({ !$0.isRetired }).count < PlayerRole.allCases.count {
                                         Button("다른 역할 선수 만들기") { leaveRoom(for: .create) }.buttonStyle(ManagementButtonStyle())
                                     }
                                 case .gameEntry: Text("일정 자료를 확인할 수 없습니다.")
@@ -139,6 +148,26 @@ struct PlayerHomeView: View {
             }
     }
 
+
+    private func refreshSelection() {
+        do {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-v48-selection-query-failure"), !injectedSelectionFailure {
+                injectedSelectionFailure = true
+                throw MatchError.invalidRecord
+            }
+            #endif
+            if let calendar {
+                clubSelection = try ClubSelectionStore.projection(player: player, calendar: calendar, in: context)
+            } else {
+                clubSelection = nil
+            }
+            clubSelectionFailure = nil
+        } catch {
+            clubSelection = nil
+            clubSelectionFailure = error.localizedDescription
+        }
+    }
 
     private enum ManagementRootAction { case create, practice }
     private func leaveRoom(for action: ManagementRootAction) {
@@ -199,7 +228,7 @@ struct PlayerHomeView: View {
             return [
                 .init(id: "facility-calendar", title: "경기 일정", status: ManagementDisplay.date(player.gameDate), x: 0.2, y: 0.25),
                 .init(id: "facility-analysis", title: "상대 분석", status: "투수 · 타선 · 계획", x: 0.8, y: 0.33),
-                .init(id: "facility-game", title: "경기 준비", status: clubSelection?.isStarter == false ? "벤치 · 팀 경기" : "기용 · 경기 이어하기", x: 0.8, y: 0.65, recommended: true),
+                .init(id: "facility-game", title: "경기 준비", status: clubSelectionFailure != nil ? "기용 조회 실패 · 재확인" : clubSelection?.isStarter == false ? "벤치 · 팀 경기" : "기용 · 경기 이어하기", x: 0.8, y: 0.65, recommended: true),
                 .init(id: "facility-gameRecords", title: "경기 기록", status: "최근 5경기 · 시즌", x: 0.2, y: 0.77),
                 .init(id: "facility-standings", title: "리그 순위", status: "연간 순위 · 결산", x: 0.8, y: 0.88)]
         case .career:
@@ -252,7 +281,7 @@ struct PlayerHomeView: View {
                 } else if todayTraining?.completed == false {
                     roomActionButton("진행 중인 훈련", "훈련 이어하기", id: "homeResumeTraining") { trainingSection = .abilities; roomDetail = .training(trainingSection) }
                 } else if saved?.completed == false || (status.schedule?.today != nil && calendar.hasAction(on: player.gameDate)) {
-                    roomActionButton((saved?.appearance == false || (saved == nil && clubSelection?.isStarter == false)) ? "오늘 벤치 · 팀 경기" : "오늘의 경기", saved?.completed == true ? "경기 결과 보기" : saved == nil ? "오늘 경기 준비" : "경기 이어하기", id: "homeTodayGame") { roomDetail = .gameEntry }
+                    roomActionButton(clubSelectionFailure != nil && saved == nil ? "기용 조회 실패 · 경기 준비에서 확인" : (saved?.appearance == false || (saved == nil && clubSelection?.isStarter == false)) ? "오늘 벤치 · 팀 경기" : "오늘의 경기", saved?.completed == true ? "경기 결과 보기" : saved == nil ? "오늘 경기 준비" : "경기 이어하기", id: "homeTodayGame") { roomDetail = .gameEntry }
                 } else if calendar.hasAction(on: player.gameDate) {
                     roomActionButton("오늘 행동 완료", "다음 일정 확인", id: "homeCalendar") { showCalendar = true }
                 } else {
@@ -285,7 +314,6 @@ struct PlayerHomeView: View {
         PlayerNotebookIdentity(player: player, affiliation: affiliationLabel, age: age)
         switch section {
         case .abilities:
-            if let calendar {DevelopmentHomePanel(player:player,calendar:calendar)}
             PlayerNotebookHighlights(values: summary.originals)
             ManagementPanel("기량 분포 · 현재와 시작", surface: .paper) {
                 if let abilities { Text(abilities.label).managementFont(.helper).foregroundStyle(Color(hex: 0x237459)).accessibilityIdentifier("homeArchetype") }
@@ -298,6 +326,7 @@ struct PlayerHomeView: View {
             }.font(.subheadline.bold()).tint(GameTheme.gold).foregroundStyle(GameTheme.boardInk)
                 .padding(14).background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(GameTheme.boardLine))
                 .accessibilityIdentifier("homeAbilityDetails")
+            if let calendar { DevelopmentHomePanel(player: player, calendar: calendar) }
             if player.role == .pitcher {
                 ManagementPanel("보유 구종 · 숙련도") {
                     ForEach(summary.pitches) { value in
@@ -349,7 +378,7 @@ struct PlayerHomeView: View {
                     .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("playerOpenSeason")
             }
         }
-        if players.filter {!$0.isRetired}.count < PlayerRole.allCases.count {
+        if players.filter({ !$0.isRetired }).count < PlayerRole.allCases.count {
             Button("다른 역할 선수 만들기") { leaveRoom(for: .create) }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("createOtherRole")
         }
     }
@@ -398,43 +427,52 @@ struct PlayerHomeView: View {
     }
     private func trainingAbilities(_ calendar: CareerCalendarState) -> some View {
         VStack(alignment: .leading, spacing: 16) {
+            ManagementPanel(activeTrainingKind.label + " 훈련", surface: .paper) {
+                Text(trainingMethod).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
+                Text("5회 · 오늘 행동 1회 · 완료 시 피로 +\(TrainingRules.fatigueCost)").managementFont(.label)
+                NavigationLink { CareerTrainingDestination(player: player, calendar: calendar, initialKind: activeTrainingKind) } label: { Text(activeTrainingKind.label + " 훈련 준비") }
+                    .buttonStyle(ManagementButtonStyle()).disabled(todayTraining != nil || calendar.hasAction(on: player.gameDate))
+                    .accessibilityIdentifier(todayTraining == nil ? "openTraining" : "openNewAbilityTraining")
+                DisclosureGroup("현재 능력·성장 예상·보유 구종") {
+                    if activeTrainingKind == .pitch {
+                        Text("보유 구종 · 준비 화면에서 선택").managementFont(.label)
+                        ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
+                            ManagementMetricRow(title: pitch.name, value: String(format: "%.1f", pitch.mastery))
+                        }
+                        Text("준비 화면에서 훈련할 보유 구종을 선택합니다.").managementFont(.helper)
+                        pitchLibrary(calendar)
+                    } else {
+                        let value = HomeAbilitySummary(player: player, abilities: abilities).originals.first { $0.id == "home" + activeTrainingKind.rawValue.prefix(1).uppercased() + activeTrainingKind.rawValue.dropFirst() }
+                        if let value {
+                            ManagementMetricRow(title: "현재 능력", value: String(format: "%.1f", value.current))
+                            let policy=(try? player.lifecycle)?.development?.policy(kind:activeTrainingKind,on:player.gameDate)
+                            let round=CareerTraining(playerID:player.id,date:player.gameDate,role:player.roleRaw,pitchCode:nil,before:value.current,fatigue:player.fatigue,age:age,calendarRevision:calendar.revision,kind:activeTrainingKind)
+                            let low=estimatedGrowth(round,policy:policy,score:0)-value.current
+                            let high=estimatedGrowth(round,policy:policy,score:100)-value.current
+                            let target = min(100, floor(value.current) + 1)
+                            ManagementMetricRow(title: "다음 능력 목표", value: String(format: "%.1f → %.1f", value.current, target))
+                            ProgressView(value: value.current >= 100 ? 1 : value.current - floor(value.current)).tint(Color(hex: 0x237459))
+                            Text("5회 완료 후 예상 " + String(format: "%.1f ~ %.1f", value.current + low, value.current + high)).managementFont(.helper)
+                            Text("미세 성장도 누적 저장됩니다.").managementFont(.helper)
+                        }
+                    }
+                    ManagementMetricRow(title: "완료 후 피로", value: "\(player.fatigue) → \(min(100, player.fatigue + TrainingRules.fatigueCost))")
+                    Text("5회 결과·나이·피로에 따라 성장 · 준비 화면 이동은 오늘 행동을 사용하지 않습니다.").managementFont(.helper)
+                }.tint(GameTheme.navy).accessibilityIdentifier("trainingPreparationDetails")
+            }
             Text("훈련 종류").managementFont(.sectionTitle)
             ManagementSectionTabs(options: TrainingKind.allCases.filter { $0.allows(player.roleRaw) }, selection: Binding(get: { activeTrainingKind }, set: { trainingKind = $0 }), title: { kind in
                 let summary = HomeAbilitySummary(player: player, abilities: abilities)
                 let current = summary.originals.first { $0.id.lowercased() == "home" + kind.rawValue.lowercased() }?.current
                 return kind.label + (current.map { String(format: " %.1f", $0) } ?? "")
             }, identifier: "trainingKind")
-            ManagementPanel(activeTrainingKind.label + " 훈련", surface: .paper) {
-                Text(activeTrainingKind.drillDescription).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
-                if activeTrainingKind == .pitch {
-                    Text("보유 구종 · 준비 화면에서 선택").managementFont(.label)
-                    ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
-                        ManagementMetricRow(title: pitch.name, value: String(format: "%.1f", pitch.mastery))
-                    }
-                    Text("준비 화면에서 훈련할 보유 구종을 선택합니다.").managementFont(.helper)
-                    pitchLibrary(calendar)
-                } else {
-                    let value = HomeAbilitySummary(player: player, abilities: abilities).originals.first { $0.id == "home" + activeTrainingKind.rawValue.prefix(1).uppercased() + activeTrainingKind.rawValue.dropFirst() }
-                    if let value {
-                        ManagementMetricRow(title: "현재 능력", value: String(format: "%.1f", value.current))
-                        let policy=(try? player.lifecycle)?.development?.policy(kind:activeTrainingKind,on:player.gameDate)
-                        let round=CareerTraining(playerID:player.id,date:player.gameDate,role:player.roleRaw,pitchCode:nil,before:value.current,fatigue:player.fatigue,age:age,calendarRevision:calendar.revision,kind:activeTrainingKind)
-                        let low=estimatedGrowth(round,policy:policy,score:0)-value.current
-                        let high=estimatedGrowth(round,policy:policy,score:100)-value.current
-                        let target = min(100, floor(value.current) + 1)
-                        ManagementMetricRow(title: "다음 능력 목표", value: String(format: "%.1f → %.1f", value.current, target))
-                        ProgressView(value: value.current >= 100 ? 1 : value.current - floor(value.current)).tint(Color(hex: 0x237459))
-                        Text("5회 완료 후 예상 " + String(format: "%.1f ~ %.1f", value.current + low, value.current + high)).managementFont(.helper)
-                        Text("미세 성장도 누적 저장됩니다.").managementFont(.helper)
-                    }
-                }
-                ManagementMetricRow(title: "완료 후 피로", value: "\(player.fatigue) → \(min(100, player.fatigue + TrainingRules.fatigueCost))")
-                Text("5회 결과·나이·피로에 따라 성장 · 준비 화면 이동은 오늘 행동을 사용하지 않습니다.").managementFont(.helper)
-            }
-            NavigationLink { CareerTrainingDestination(player: player, calendar: calendar, initialKind: activeTrainingKind) } label: { Text(activeTrainingKind.label + " 훈련 준비") }
-                .buttonStyle(ManagementButtonStyle()).disabled(todayTraining != nil || calendar.hasAction(on: player.gameDate))
-                .accessibilityIdentifier(todayTraining == nil ? "openTraining" : "openNewAbilityTraining")
         }
+    }
+    private var trainingMethod: String {
+        if let saved = todayTraining, let session = try? saved.snapshot(), session.selectedKind == activeTrainingKind {
+            return activeTrainingKind.drillDescription(version: session.drillVersion)
+        }
+        return activeTrainingKind.drillDescription
     }
     private func estimatedGrowth(_ round:CareerTraining,policy:TrainingGrowthPolicy?,score:Int) -> Double {
         var training=round;training.scores=Array(repeating:score,count:5);training.growthPolicy=policy
@@ -468,7 +506,7 @@ struct PlayerHomeView: View {
                     } else { Text("오늘은 비경기일입니다.").managementFont(.body) }
                     NavigationLink { ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }.background(GameTheme.board).navigationTitle("일정 · 날짜 관리") } label: { Text("연간 일정 · 날짜 진행") }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
                     ForEach(Array((status.schedule?.upcoming ?? []).prefix(3)), id: \.id) { fixture in
-                        Text("\(fixture.date) · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools)) · \(fixture.isAppearance(for: player.role) ? "기본 출전 차례 · 기용 별도" : "순번 휴식 · 팀 경기")").managementFont(.helper)
+                        Text("\(fixture.date.description) · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools)) · \(fixture.isAppearance(for: player.role) ? "기본 출전 차례 · 기용 별도" : "순번 휴식 · 팀 경기")").managementFont(.helper)
                     }
                 }
             case .analysis:
@@ -797,7 +835,7 @@ struct SeasonOffseasonPanel: View {
                 Text(loadError).font(.caption).accessibilityIdentifier("offseasonLoadError")
                 Button("다시 확인", action: reload).buttonStyle(MatchPixelButtonStyle())
             } else if let plan {
-                Text("\(plan.date) → \(plan.target)").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                Text("\(plan.date.description) → \(plan.target.description)").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
                     .accessibilityIdentifier("offseasonDates")
                 Text("남은 \(plan.remainingDays)일 · \(plan.age)세 → \(plan.targetAge)세 · \(SeasonSchedule.academicStatus(age: plan.targetAge))")
                     .font(.caption).accessibilityIdentifier("offseasonAge")
@@ -3100,80 +3138,4 @@ private struct ClubOpportunityPreparation:View {
             }.padding(12)
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("현재 출전 준비").navigationBarTitleDisplayMode(.inline)
     }
-}
-
-struct DevelopmentHomePanel:View {
-    let player:CareerPlayer
-    let calendar:CareerCalendarState
-    @Environment(\.modelContext) private var context
-    @State private var failure:String?
-    @State private var confirm=false
-    var body:some View {
-        GamePanel(title:"GROWTH NOTE · 성장 수첩",onBoard:true) {
-            if let life=try? player.lifecycle {
-                if let development=life.development {
-                    HStack(alignment:.firstTextBaseline) {
-                        Text(development.timing.label).font(.title3.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("developmentTiming")
-                        Spacer(minLength:8)
-                        Text("정책 V2").font(.caption.monospaced())
-                    }
-                    Text("고교의 기초 성장은 빠르게 · 높은 능력은 천천히").font(.subheadline)
-                    Text("성장 집중 시기 \(development.timing.ages.lowerBound)~\(development.timing.ages.upperBound)세 · 최대 능력이나 성공 보장이 아닙니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-                    if let window=development.active(on:player.gameDate) {
-                        Text((window.pitchCode.flatMap {PitchType(rawValue:$0)?.label} ?? window.kind.label)+" · 성장 집중 중").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("developmentActiveWindow")
-                        Text("남은 \(8-window.used)회 · "+ManagementDisplay.date(window.expires)+"까지").font(.subheadline.monospacedDigit())
-                        ProgressView(value:Double(window.used),total:8).tint(GameTheme.gold)
-                        Text("관련 훈련 성장에만 보너스 · 추가 성장 예산 \(max(0,0.6-window.spent),specifier:"%.1f") 남음").font(.subheadline)
-                        NavigationLink {CareerTrainingDestination(player:player,calendar:calendar,initialKind:window.kind)} label: {Text((window.pitchCode.flatMap {PitchType(rawValue:$0)?.label} ?? window.kind.label)+" 훈련 · 준비/이어하기")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("developmentTraining")
-                    } else {
-                        let from=(try? GameDate(player.gameDate).adding(days:-55).description) ?? player.gameDate
-                        let preparations=development.proofs.mapValues {$0.filter {$0.date>=from}}.filter {!$0.value.isEmpty}.sorted {$0.value.count == $1.value.count ? $0.key<$1.key:$0.value.count>$1.value.count}
-                        if let first=preparations.first {
-                            let label=TrainingKind(rawValue:first.key)?.label ?? PitchType(rawValue:String(first.key.dropFirst(6)))?.label ?? "구종"
-                            Text(label+" 준비 · \(first.value.count) / 8회").font(.headline).accessibilityIdentifier("developmentPreparation")
-                            ProgressView(value:Double(first.value.count),total:8).tint(GameTheme.growth)
-                        } else {Text("꾸준한 훈련에서 성장 조짐을 발견합니다.").font(.subheadline).accessibilityIdentifier("developmentPreparation")}
-                        Text("최근56일 같은 능력8회 · 평균50점 이상·시작 피로40 이하. 적용 후14일과 발현 시기 조건,연1회를 확인합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-                    }
-                    DisclosureGroup("성장·노화와 전환 기록") {
-                        Text("정책 적용 · "+ManagementDisplay.date(development.adopted)+" 이후 새 훈련부터. 구속·주력은27세,파워·송구·지구력은29세,복합 기술은31세,제구·선구안·구종은34세부터 게임용 감소를 적용합니다. 기존 경기XP/특성·포지션XP는 종전 규칙입니다.").font(.subheadline)
-                        ForEach(development.windows) {w in Text(ManagementDisplay.date(w.opened)+" · "+w.kind.label+" 집중 · 사용\(w.used)/8").font(.subheadline)}
-                        ForEach(Array(development.positions.enumerated()),id:\.offset) {_,change in Text(ManagementDisplay.date(change.date)+" · "+change.from.label+" → "+change.to.label).font(.subheadline)}
-                    }.tint(GameTheme.gold)
-                } else {
-                    Text("기존 성장 정책 유지 중").font(.headline).accessibilityIdentifier("developmentLegacy")
-                    Text("새 정책은 이후 시작하는 능력 훈련·미래 노화에 적용합니다. 현재 능력·구종·기록·진행 중 훈련은 그대로 보존합니다.").font(.subheadline)
-                    Button("새 성장 수첩 시작") {confirm=true}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("developmentAdopt")
-                }
-            } else {Text("성장 기록을 읽지 못했습니다.").foregroundStyle(GameTheme.gold)}
-            if let failure {Text(failure).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("developmentError")}
-        }.alert("새 성장 정책 적용",isPresented:$confirm) {
-            Button("현재 능력을 유지하고 적용") {do {try DevelopmentStore.adopt(player:player,calendar:calendar,in:context);failure=nil} catch {failure=error.localizedDescription}}
-            Button("취소",role:.cancel) {}
-        } message: {Text("기존 선수는 균형 발현으로 시작합니다. 과거 훈련·경기·노화는 다시 계산하지 않습니다. 날짜·피로·오늘 행동은 유지됩니다.")}
-    }
-}
-
-
-struct OverseasGrowthPanel:View {
-    let projections:[OverseasGrowthProjection]
-    let policy:OverseasGrowthPolicy?
-    let date:String
-    var body:some View {
-        GamePanel(title:"2년 성장 전망 · 역할 기량",onBoard:true,contentSpacing:12) {
-                        ForEach(projections) {row in
-                            Text(DomesticContractOffer.roleName(row.roleID)).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
-                            Text("현재 \(number(row.current)) → 기준 \(number(row.baseline))\n보수 \(number(row.conservative)) / 낙관 \(number(row.optimistic))")
-                                .font(.subheadline.monospaced()).lineSpacing(6).accessibilityIdentifier("overseasProjection-"+row.roleID)
-                        }
-            if let policy {
-                Text("성장 모형 V2 · "+policy.development.timing.label).font(.headline).accessibilityIdentifier("growthForecastPolicy")
-                Text("고구간 성장 감속 · 미래 기념일 노화 · 41세 전까지만 계산").font(.subheadline)
-                Text(policy.development.active(on:date) == nil ? "확인된 성장 집중 없음 · 미래 발동은 가정하지 않음":"현재 발동한 집중의 남은 기한·횟수·추가 예산만 반영").font(.subheadline).accessibilityIdentifier("growthForecastWindow")
-            } else {Text("고정 비교모형 V1 · 당시 규칙 보존").font(.subheadline).accessibilityIdentifier("growthForecastPolicy")}
-            Text("2개 달력연도 · 연180회 가정 · 보수 점수50/피로60, 기준75/40, 낙관100/0. 선택 역할의 능력·구종을 순환 훈련합니다. 피로는 시나리오 고정값이며 실제 일정 예측이 아닙니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-            Text("경기 XP·부상·미래 성장 집중은 미포함. 전망은 하락할 수도 있으며 실제 성장·훈련 보상·계약이나 주전을 보장하지 않습니다.").font(.subheadline)
-        }
-    }
-    private func number(_ n:Double?) -> String {n.map {String(format:"%.1f",$0)} ?? "자료 부족"}
 }

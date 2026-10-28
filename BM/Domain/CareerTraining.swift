@@ -587,7 +587,7 @@ struct PlayerDevelopment:Codable,Equatable {
         var previous:DevelopmentPositionChange?
         for change in positions {
             guard change.from != change.to,change.mastery.isFinite,(40...100).contains(change.mastery),change.date>=adopted,change.date<=today,
-                  try previous.map {try GameDate($0.date).days(to:GameDate(change.date))>=28 && $0.to==change.from} ?? true else {throw CareerLifecycleError.invalid}
+                  try previous.map({try GameDate($0.date).days(to:GameDate(change.date))>=28 && $0.to==change.from}) ?? true else {throw CareerLifecycleError.invalid}
             previous=change
         }
     }

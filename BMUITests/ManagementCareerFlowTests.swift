@@ -2,6 +2,47 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV48HomeSelectionFailureHasReadOnlyRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-v48-selection-query-failure"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homeSelectionError"].waitForExistence(timeout: 15))
+        let before = labels(app)
+        capture(app, "v48-home-selection-error")
+        app.buttons["retryHomeSelection"].tap()
+        XCTAssertFalse(app.staticTexts["homeSelectionError"].exists)
+        XCTAssertEqual(labels(app), before)
+        capture(app, "v48-home-selection-recovered")
+    }
+
+    @MainActor func testV48AbilitiesAndTrainingActionPrecedeLongRulesBothRoles() {
+        continueAfterFailure = false
+        let app = launch()
+        for pitcher in [false, true] {
+            if pitcher { switchToPitcher(app) }
+            let before = labels(app)
+            app.buttons["managementTab-player"].tap(); app.buttons["facility-abilities"].tap()
+            let strength = app.descendants(matching: .any).matching(identifier: "notebookStrength").firstMatch
+            XCTAssertTrue(strength.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.frame.contains(strength.frame))
+            capture(app, pitcher ? "v48-pitcher-abilities-first" : "v48-batter-abilities-first")
+            closeDetail(app)
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+            let action = app.buttons["openTraining"]
+            XCTAssertTrue(action.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.frame.contains(action.frame))
+            XCTAssertTrue(action.isHittable)
+            XCTAssertFalse(app.staticTexts["5회 완료 후 예상"].exists)
+            capture(app, pitcher ? "v48-pitcher-training-summary" : "v48-batter-training-summary")
+            let details = app.descendants(matching: .any).matching(identifier: "trainingPreparationDetails").firstMatch
+            details.tap()
+            capture(app, pitcher ? "v48-pitcher-training-details" : "v48-batter-training-details")
+            closeDetail(app)
+            app.buttons["managementTab-home"].tap()
+            XCTAssertEqual(labels(app), before)
+        }
+    }
     private let captureSession = UUID().uuidString
     @MainActor func testSpatialRoomsAndDetailsBothRolesAreReadOnly() {
         let app = launch()
@@ -48,7 +89,7 @@ final class ManagementCareerFlowTests: XCTestCase {
             app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
             let kind = pitcher ? "control" : "power"
             reveal(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
-            XCTAssertEqual(app.staticTexts["trainingHubMethod"].label, pitcher ? "목표 코스 조준" : "힘과 발사각 조절")
+            XCTAssertEqual(app.staticTexts["trainingHubMethod"].label, pitcher ? "목표 코스 조준" : "타이어 · MAX 중앙에서 손 떼기")
             reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
             XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 6))
             XCTAssertTrue(app.buttons["trainingKind-" + kind].isSelected)

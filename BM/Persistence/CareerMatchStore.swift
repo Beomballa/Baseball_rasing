@@ -484,7 +484,7 @@ extension CareerMatchStore {
     static func opponentSeason(player: CareerPlayer, state: CareerCalendarState, analysis: MatchOppositionAnalysis, in context: ModelContext) throws -> MatchOpponentSeason {
         let fixture = try today(player: player, state: state)
         guard let attack = analysis.attack else { throw MatchError.invalidRecord }
-        let cutoff = try fixture.date.adding(days: -1)
+        let cutoff = fixture.date.adding(days: -1)
         let ledger = try seasonPlayerRecords(playerID: player.id, year: fixture.date.year, competition: attack.competition, through: cutoff, in: context)
         let rows = ledger.players.filter { $0.teamID == analysis.teamID }.map {
             MatchOpponentSeasonPlayer(id: $0.id, battingGames: $0.battingGames, pitchingGames: $0.pitchingGames,

@@ -1678,7 +1678,7 @@ struct PitchLocationBoard: View {
     let result: ManualMatchResult?
     let side: OpponentBatterSide
     @Environment(\.dynamicTypeSize) private var typeSize
-    static func marker(x: Double, y: Double, size: CGSize) -> CGPoint {
+    nonisolated static func marker(x: Double, y: Double, size: CGSize) -> CGPoint {
         CGPoint(x: size.width * (0.08 + 0.84 * min(1, max(0, x))),
                 y: size.height * (0.08 + 0.84 * min(1, max(0, y))))
     }
