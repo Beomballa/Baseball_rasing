@@ -1,4 +1,5 @@
 import SpriteKit
+import SwiftUI
 
 @MainActor final class BallparkScene: SKScene {
     private let ball = SKSpriteNode(texture: PixelBaseball.texture)
@@ -15,6 +16,10 @@ import SpriteKit
     private var hand = "right"
     private var role = PlayerRole.pitcher
     private var ready = false
+    private var batterSide = OpponentBatterSide.left
+    private var lastPitcherFrame = -1
+    private(set) var stadium = StadiumIdentity.legacy
+    private var dress: StadiumSceneDress?
     enum PitchStage { case idle, preparing, flight, received }
     private(set) var pitchStage = PitchStage.idle
     private var contactAt = 0.0
@@ -80,16 +85,16 @@ import SpriteKit
             if now < timeline.releaseAt {
                 pitchStage = .preparing; ball.isHidden = true
                 let windupPhase=(now-timeline.startedAt)/max(0.001,timeline.windup)
-                if !flight.reduced { pitcherPose(windupPhase < 0.55 ? 1:2) }
+                pitcherPose(windupPhase < 0.28 ? 1 : windupPhase < 0.65 ? 2 : 3)
             } else {
                 let t=min(1,max(0,(now-timeline.releaseAt)/(timeline.duration*MatchDelivery.contactPhase)))
                 let depth=t/(2.4-1.4*t)
                 pitchStage = .flight; ball.isHidden = false
                 ball.position=MatchBallPath.point(from:flight.start,to:flight.end,size:size,role:.batter,hand:hand,code:flight.code,progress:t)
                 ball.setScale(0.35+depth*0.9)
-                pitcherPose(t < 0.25 || flight.reduced ? 3:4)
+                pitcherPose(t < 0.16 ? 4 : t < 0.45 ? 5 : 6)
                 if now >= timeline.contactAt {
-                    batterFlight=nil;pitchStage = .received;ball.position=flight.end;ball.isHidden=true;pitcherPose(5);markArrival()
+                    batterFlight=nil;pitchStage = .received;ball.position=flight.end;ball.isHidden=true;pitcherPose(7);markArrival()
                     if flight.completion != nil { pitchReceipt=(now+flight.receipt,flight.completion) }
                     flight.arrival?()
                 }
@@ -101,6 +106,10 @@ import SpriteKit
             ball.setScale(1.1-(2.4*t/(1+1.4*t))*0.4)
             if t >= 1 {
                 pitchFlight=nil;ball.position=flight.end;pitcherPose(5)
+                if flight.fieldPlay != nil || flight.homeRun != nil || flight.outcome == "헛스윙" {
+                    batterPose(2)
+                    batter.run(.sequence([.wait(forDuration:0.12),.run { [weak self] in self?.batterPose(3) }]))
+                }
                 if let play=flight.fieldPlay {
                     pitchStage = .received
                     startContact(play,origin:CGPoint(x:flight.end.x/size.width,y:1-flight.end.y/size.height),reduced:flight.reduced,arrival:flight.arrival,completion:flight.completion,startedAt:now)
@@ -173,28 +182,28 @@ import SpriteKit
         }
     }
     func configure(hand: String, kit: Int, role: PlayerRole = .pitcher, appearance: PlayerAppearance? = nil, jerseyNumber: Int = 1, batterSide: OpponentBatterSide = .left) {
-        cancelDelivery(); self.hand = hand; self.role = role
+        cancelDelivery(); self.hand = hand; self.role = role; self.batterSide = batterSide; lastPitcherFrame = -1
         size = CGSize(width: 320, height: role == .batter ? 320 : 320 * 1290 / 1219)
         removeAllChildren()
-        guard let image = MatchArt.image(role == .batter ? "batter-view-clean" : "stadium-clean") else { ready = false; return }
+        guard let image = MatchArt.image(role == .batter ? "batter-field-v52" : "pitcher-field-v52") else { ready = false; return }
         let texture = SKTexture(image: image); texture.filteringMode = .nearest
         let field = SKSpriteNode(texture: texture, size: size); field.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        field.xScale = role == .pitcher && batterSide == .right ? -1 : 1
+        field.name = "fixedStadiumBackground"
         addChild(field)
         let style = appearance ?? PlayerAppearance(kit: kit)
-        pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : textures("pitcher-delivery-v2", columns: 3, rows: 2)
-        batterFrames = role == .batter ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : textures("batter-actions", columns: 3, rows: 2)
-        catcherFrames = textures("catcher-parts", columns: 2, rows: 2)
+        if role == .batter {addBackgroundFielders(ownKit:PlayerAppearance.kitColors[style.kit])}
+        pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-pitcher-v52",columns:4,rows:2,ownKit:PlayerAppearance.kitColors[style.kit])
+        batterFrames = role == .batter ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-batter-v52",columns:3,rows:2,ownKit:PlayerAppearance.kitColors[style.kit])
+        catcherFrames = OpponentMotionArt.textures("catcher-parts",columns:2,rows:2,ownKit:PlayerAppearance.kitColors[style.kit],opponent:false)
         mittFrames = Array(catcherFrames.suffix(2))
-        guard pitcherFrames.count == 6, batterFrames.count == 6, catcherFrames.count == 4 else { ready = false; return }
+        guard pitcherFrames.count == (role == .pitcher ? 6 : 8), batterFrames.count == 6, catcherFrames.count == 4 else { ready = false; return }
+        pitcher.name = "animatedPitcher";pitcher.zPosition = 4;pitcher.xScale = hand == "left" ? -1 : 1;addChild(pitcher);pitcherPose(0)
+        batter.name = "animatedBatter";batter.zPosition = 3;addChild(batter);batterPose(0)
         if role == .pitcher {
-            pitcher.zPosition = 4; pitcher.xScale = hand == "left" ? -1 : 1; addChild(pitcher); pitcherPose(0)
             catcher.texture = catcherFrames[0]; catcher.size = CGSize(width: size.width * 0.22, height: size.height * 0.22)
             catcher.position = point(0.50, 0.41); catcher.zPosition = 2; addChild(catcher)
             mitt.texture = mittFrames[0]; mitt.size = CGSize(width: size.width * 0.09, height: size.height * 0.09)
             mitt.position = point(0.55, 0.475); mitt.zPosition = 6; addChild(mitt)
-        } else {
-            batter.zPosition = 4; addChild(batter); batterPose(0)
         }
         ball.name="baseball";ball.zPosition=8;ball.size=CGSize(width:10,height:10)
         ball.isHidden=true;addChild(ball)
@@ -210,6 +219,26 @@ import SpriteKit
         strikeZone.path=path;addChild(strikeZone)
         receivedBall.name="receivedBaseball";receivedBall.zPosition=9;receivedBall.size=CGSize(width:10,height:10)
         receivedBall.isHidden=true;addChild(receivedBall);ready=true
+        setStadium(stadium)
+    }
+    func setStadium(_ value: StadiumIdentity) {
+        stadium = value; dress?.removeFromParent()
+        guard ready else { return }
+        let next = StadiumSceneDress(stadium: value, size: size, camera: role == .pitcher ? .pitcher : .batter)
+        next.zPosition = 1; addChild(next); dress = next
+    }
+    private func addBackgroundFielders(ownKit:Int) {
+        let motion=FieldSpriteMotion(facing:.south,stage:.ready)
+        guard let sample=FieldRasterArt.samples(motion,kind:"fielder",left:false).first,
+              let image=FieldRasterArt.image(sample,kit:FieldReplayPresentation.opponentKit(ownKit),skin:0xefbe91,hair:0x263b48,number:0,back:false) else {return}
+        let texture=SKTexture(image:image);texture.filteringMode = .nearest
+        for (index,placement) in [(0.105,0.295,0.075),(0.637,0.245,0.045),(0.925,0.295,0.075)].enumerated() {
+            let height=size.width*placement.2,frame=sample.frame
+            let node=SKSpriteNode(texture:texture);node.name="backgroundFielder-\(index)"
+            node.anchorPoint=CGPoint(x:frame.pivot[0]/frame.rect[2],y:1-frame.pivot[1]/frame.rect[3])
+            node.size=CGSize(width:height*frame.rect[2]/frame.rect[3],height:height)
+            node.position=point(placement.0,placement.1);node.zPosition=2;addChild(node)
+        }
     }
     func arrivalPoint(x:Double,y:Double) -> CGPoint {
         role == .batter ? point(0.5+(x-0.5)*0.16,0.68+(y-0.5)*0.22):point(0.54+(x-0.5)*0.22,0.43+(y-0.5)*0.24)
@@ -218,13 +247,26 @@ import SpriteKit
     private func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * size.width, y: (1 - y) * size.height) }
     private func pitcherPose(_ frame: Int) {
         guard pitcherFrames.indices.contains(frame) else { return }
+        guard frame != lastPitcherFrame else { return };lastPitcherFrame = frame
         pitcher.texture = pitcherFrames[frame]
-        pitcher.size = CGSize(width: size.width * 0.52, height: size.height * 0.65)
-        pitcher.position = point(0.79, 0.32 + (frame >= 3 ? 0.65 * 31 / 512 : 0) + 0.325)
+        let pose = PitcherPresentationPose(role: role, frame: frame, hand: hand)
+        let source = PitcherPresentationPose(role: role, frame: frame, hand: "right")
+        pitcher.size = CGSize(width: size.width * pose.width, height: size.width * pose.width)
+        // xScale mirrors around the source pivot; mirroring the anchor again would move the planted foot off the rubber.
+        pitcher.anchorPoint = CGPoint(x: source.pivot.x,y: 1-source.pivot.y)
+        pitcher.position = point(pose.foot.x,pose.foot.y)
     }
     private func batterPose(_ frame: Int) {
         guard batterFrames.indices.contains(frame) else { return }
         batter.texture = batterFrames[frame]
+        if role == .pitcher {
+            batter.size = CGSize(width: size.width*0.30,height: size.width*0.30)
+            batter.anchorPoint = CGPoint(x: 0.5,y: 0.04)
+            batter.xScale = batterSide == .left ? 1 : -1
+            batter.position = point(batterSide == .left ? 0.32 : 0.70,0.565)
+            return
+        }
+        batter.xScale = 1;batter.anchorPoint = CGPoint(x:0.5,y:0.5)
         let feet = [496.0, 494, 503, 469, 471, 471]
         batter.size = CGSize(width: size.width * 0.62, height: size.height * 0.61)
         batter.position = point(0.305, 0.34 + 0.61 * (1 - feet[frame] / 512) + 0.305)
@@ -232,7 +274,7 @@ import SpriteKit
     func cancelDelivery() {
         contactFlight=nil;fieldHandoff=nil
         pitchFlight=nil;batterFlight=nil;batFinish=nil;pitchReceipt=nil;contactAt=0
-        removeAllActions(); ball.removeAllActions(); pitcher.removeAllActions(); batter.removeAllActions(); mitt.removeAllActions()
+        removeAllActions(); ball.removeAllActions(); pitcher.removeAllActions(); batter.removeAllActions(); mitt.removeAllActions();lastPitcherFrame = -1
         pitchStage = .idle
         ball.isHidden = true; receivedBall.isHidden=true; ball.setScale(1); pitcherPose(0); batterPose(0)
         if catcherFrames.count >= 2 {
@@ -241,16 +283,14 @@ import SpriteKit
         }
     }
     private func handPoint(_ frame: Int) -> CGPoint {
-        let anchors = [(0.42, 0.56), (0.38, 0.52), (0.72, 0.37), (0.78, 0.11)]
-        let anchor = anchors[frame]
-        return point(0.53 + (hand == "left" ? 1 - anchor.0 : anchor.0) * 0.52,
-                     0.32 + (frame >= 3 ? 0.65 * 31 / 512 : 0) + anchor.1 * 0.65)
+        let p = PitcherPresentationPose(role: role,frame: frame,hand: hand)
+        return point(p.foot.x + p.width*(p.hand.x-p.pivot.x),p.foot.y + p.width*size.width/size.height*(p.hand.y-p.pivot.y))
     }
     func preparePitch(phase: Double, reduced: Bool) {
         guard ready, role == .pitcher, pitchStage != .flight else { return }
         if pitchStage == .received { cancelDelivery() }
         pitchStage = .preparing
-        let frame = reduced ? 0 : phase < 0.22 ? 0 : phase < 0.48 ? 1 : 2
+        let frame = phase < 0.22 ? 0 : phase < 0.48 ? 1 : 2
         pitcherPose(frame); ball.position = handPoint(frame); ball.isHidden = false
     }
     @discardableResult func demonstrate(reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5,
@@ -258,7 +298,7 @@ import SpriteKit
         guard ready else { return false }
         cancelDelivery()
         destination = arrivalPoint(x:x,y:y)
-        let release = role == .batter ? point(0.458, 0.237) : handPoint(3)
+        let release = handPoint(role == .batter ? 4 : 3)
         if role == .batter {
             let timeline=inputTimeline ?? MatchInputTimeline(windup:MatchDelivery.windup,duration:(flightDuration ?? 1.1)/MatchDelivery.contactPhase)
             contactAt=timeline.contactAt
@@ -273,7 +313,7 @@ import SpriteKit
         func launch() {
             self.pitchStage = .flight; self.pitcherPose(3); self.ball.position = release
             self.pitcher.run(.sequence([.wait(forDuration: duration * 0.25), .run { [weak self] in
-                if !reduceMotion { self?.pitcherPose(4) }
+                self?.pitcherPose(4)
             }]))
             if self.role == .pitcher && !["안타", "홈런", "범타"].contains(outcome ?? "") {
                 if reduceMotion {self.mitt.position=self.destination}
@@ -288,12 +328,12 @@ import SpriteKit
             run(.sequence([
                 .run { [weak self] in
                     guard let self else { return }
-                    if !reduceMotion { self.pitcherPose(1) }
-                    if self.role == .pitcher { self.ball.position = self.handPoint(reduceMotion ? 0 : 1) }
+                    self.pitcherPose(1)
+                    if self.role == .pitcher { self.ball.position = self.handPoint(1) }
                 },
                 .wait(forDuration: MatchDelivery.windup * 0.55),
                 .run { [weak self] in
-                    guard let self else { return }; if !reduceMotion { self.pitcherPose(2) }
+                    guard let self else { return }; self.pitcherPose(2)
                     if self.role == .pitcher { self.ball.position = self.handPoint(2) }
                 },
                 .wait(forDuration: MatchDelivery.windup * 0.45), .run { launch() }
@@ -321,5 +361,100 @@ import SpriteKit
         if action != "watch" { batterPose(action == "bunt" ? 4:1) }
         batFinish=BatFinish(at:max(contactAt,ProcessInfo.processInfo.systemUptime),action:action,outcome:outcome,reduced:reduced,
             receipt:DeliveryPresentation.receipt(reduced:reduced,match:matchJudgment),play:fieldPlay,homeRun:homeRun,arrival:onArrival,completion:completion)
+    }
+}
+
+// Atlas pivots are presentation metadata. The rubber stays fixed for both hands and batter sides.
+struct PitcherPresentationPose {
+    let width: Double
+    private(set) var pivot: CGPoint
+    private(set) var hand: CGPoint
+    let foot: CGPoint
+    init(role: PlayerRole, frame: Int, hand throwingHand: String) {
+        if role == .pitcher {
+            let pivots = [CGPoint(x:0.70,y:0.90),CGPoint(x:0.57,y:0.90),CGPoint(x:0.74,y:0.90),CGPoint(x:0.41,y:0.85),CGPoint(x:0.40,y:0.85),CGPoint(x:0.42,y:0.85)]
+            let hands = [CGPoint(x:0.42,y:0.56),CGPoint(x:0.38,y:0.52),CGPoint(x:0.72,y:0.37),CGPoint(x:0.78,y:0.11),CGPoint(x:0.50,y:0.65),CGPoint(x:0.40,y:0.55)]
+            width = 0.52; pivot = pivots[frame]; hand = hands[frame]
+            foot = CGPoint(x:frame<3 ? 0.76:0.69,y:0.895)
+        } else {
+            width = 0.20
+            let pivots = [0.5,0.53,0.65,0.65,0.55,0.52,0.50,0.5]
+            pivot = CGPoint(x:pivots[frame],y:0.965)
+            hand = frame == 4 ? CGPoint(x:0.35,y:0.08):CGPoint(x:0.35,y:0.42)
+            foot = CGPoint(x:0.50,y:0.375)
+        }
+        if throwingHand == "left" {
+            self.pivot = CGPoint(x:1-pivot.x,y:pivot.y)
+            self.hand = CGPoint(x:1-hand.x,y:hand.y)
+        }
+    }
+}
+
+@MainActor final class StadiumSceneDress: SKNode {
+    enum Camera { case batter, pitcher, field }
+    enum Celebration: String { case homeRun, doublePlay }
+    let stadium: StadiumIdentity
+    let fieldSize: CGSize
+    private let effects = SKNode()
+    private var lamps: [SKSpriteNode] = []
+    private(set) var celebration: Celebration?
+    private(set) var celebrationCount = 0
+    var effectNodeCount: Int { effects.children.count }
+    init(stadium: StadiumIdentity, size: CGSize, camera: Camera) {
+        self.stadium = stadium;fieldSize = size
+        super.init();name = "stadiumDress-" + stadium.theme.title
+        let y: CGFloat = camera == .pitcher ? 0.25 : camera == .batter ? 0.166 : 0.15
+        let positions: [CGFloat] = camera == .field ? [0.13,0.87] : [0.16,0.84]
+        for (i,x) in positions.enumerated() {
+            let sponsor = stadium.sponsors[i]
+            let w = size.width*(camera == .field ? 0.20:0.22),h = max(12,size.width*0.052)
+            let panel = SKShapeNode(rectOf:CGSize(width:w,height:h))
+            panel.fillColor = UIColor(Color(hex:stadium.theme.panel));panel.strokeColor = UIColor(Color(hex:stadium.theme.trim));panel.lineWidth = 1
+            panel.position = CGPoint(x:size.width*x,y:size.height*(1-y));addChild(panel)
+            let mark = SKLabelNode(fontNamed:"Menlo-Bold");mark.text = sponsor.mark;mark.fontSize = h*0.60
+            mark.fontColor = UIColor(Color(hex:stadium.theme.accent));mark.verticalAlignmentMode = .center;mark.position.x = -w*0.36;panel.addChild(mark)
+            let label = SKLabelNode(fontNamed:"AppleSDGothicNeo-Bold");label.text = sponsor.name;label.fontSize = h*0.43
+            label.fontColor = UIColor(GameTheme.paper);label.verticalAlignmentMode = .center;label.position.x = w*0.12;panel.addChild(label)
+        }
+        for i in 0..<12 {
+            let light = SKSpriteNode(color:UIColor(Color(hex:stadium.theme.trim)),size:CGSize(width:size.width*0.022,height:2))
+            light.position = CGPoint(x:size.width*(0.12+Double(i)*0.069),y:size.height*(1-(camera == .field ? 0.19:0.205)))
+            light.alpha = 0.48;lamps.append(light);addChild(light)
+        }
+        effects.zPosition = 2;addChild(effects)
+    }
+    required init?(coder:NSCoder) {fatalError("Storyboard initialization is not used")}
+    func reduceEffects() {
+        effects.removeAllChildren()
+        for light in lamps {light.removeAllActions();light.alpha = celebration == nil ? 0.48:0.8}
+    }
+    func celebrate(_ kind:Celebration,reduced:Bool) {
+        guard celebration == nil else {return}
+        celebration = kind;celebrationCount += 1
+        guard !reduced else {reduceEffects();return}
+        let delay = Double(stadium.variation)*0.08
+        for (i,light) in lamps.enumerated() {
+            let at = Double(stadium.theme == .brick ? i:11-i)*0.04+delay
+            light.run(.sequence([.wait(forDuration:at),.fadeAlpha(to:1,duration:0.18),.wait(forDuration:0.35),.fadeAlpha(to:0.65,duration:0.35)]))
+        }
+        // Fixed, bounded decorative paths. No emitter, physics or random-number consumption.
+        let count = kind == .doublePlay ? 12 : stadium.theme == .harbor ? 40 : 24
+        for i in 0..<count {
+            let node = SKSpriteNode(color:i.isMultiple(of:3) ? UIColor(GameTheme.gold):UIColor(Color(hex:stadium.theme.accent)),size:CGSize(width:3,height:i<8 ? 6:3))
+            let side = i.isMultiple(of:2) ? 0.23:0.77
+            node.position = CGPoint(x:fieldSize.width*side,y:fieldSize.height*0.82)
+            effects.addChild(node)
+            let angle = Double(i)*2.3999632297
+            let radius = Double(16+(i%7)*7)
+            let delta:CGVector
+            switch stadium.theme {
+            case .harbor:delta = CGVector(dx:cos(angle)*radius,dy:sin(angle)*radius)
+            case .brick:delta = CGVector(dx:Double(i%6-3)*6,dy:Double(12+i%8*4))
+            case .grove:delta = CGVector(dx:Double(i%6-3)*8,dy:-Double(12+i%7*5))
+            case .metro:delta = CGVector(dx:Double(i%4-2)*4,dy:Double(20+i%8*4))
+            }
+            node.alpha = 0
+            node.run(.sequence([.wait(forDuration:delay+Double(i%4)*0.08),.fadeIn(withDuration:0.12),.group([.move(by:delta,duration:0.75),.sequence([.wait(forDuration:0.40),.fadeOut(withDuration:0.35)])]),.removeFromParent()]))
+        }
     }
 }

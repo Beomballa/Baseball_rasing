@@ -14,6 +14,8 @@ struct CareerGameView: View {
     @State private var battingSwipe: MatchBattingSwipe?
     @State private var battingGestureRevision: Int?
     @State private var showGameDetails = false
+    @State private var showControlGuide = false
+    @AppStorage("bm.battingGestureGuide.v1") private var battingGuideSeen = false
     @State private var liveControlsHeight: CGFloat = 110
     private struct Attempt {
         let revision: Int
@@ -175,9 +177,15 @@ struct CareerGameView: View {
     private var fieldCoversArena:Bool {replay != nil || homeRunReplay != nil}
     private var inputLocked: Bool { clock.running || presenting || retrySave != nil }
     private var opponentSide: OpponentBatterSide { (visualSnapshot ?? displaySnapshot.match)?.opponentBatterSide ?? .right }
+    private var stadium: StadiumIdentity {
+        let snapshot = displaySnapshot.match
+        let ownID = record.flatMap {try? calendar.teamID(for: player,on: GameDate($0.gameDate))} ?? player.schoolID
+        return StadiumIdentity(homeTeamID: snapshot?.playerRecords?.home.teamID ?? (snapshot?.isHome == true ? ownID : record?.opponentID ?? ownID))
+    }
     private func configureScene() {
         scene.configure(hand: player.throwingHandRaw, kit: player.kit, role: player.role, appearance: player.appearance,
                         jerseyNumber: player.jerseyNumber, batterSide: opponentSide)
+        scene.setStadium(stadium)
     }
     private func load() {
         do {
@@ -201,6 +209,7 @@ struct CareerGameView: View {
         let timeline = MatchInputTimeline(windup: player.role == .batter ? MatchDelivery.windup : 0,
                                           duration: player.role == .batter ? flight.battingDuration : 1.8)
         if player.role == .batter {
+            battingGuideSeen = true
             scene.cancelDelivery()
             _ = scene.demonstrate(reduceMotion: reduced, flightDuration: flight.flightDuration, x: delivery.x, y: delivery.y, pitchCode: actualCode, inputTimeline: timeline)
         }
@@ -321,7 +330,7 @@ struct CareerGameView: View {
             } else {
                 MatchTimingGauge(phase: clock.phase, center: MatchDelivery.contactPhase,
                                  good: ManualMatchRules.timingWidth(contact: match.contact) * match.executionFactor,
-                                 perfect: 0.025, label: presenting ? "공·수비 진행 중" : clock.running ? (battingAction == .watch ? "공을 지켜보는 중" : "화면 탭 · 지금 " + battingAction.label) : "스와이프 조준 · 화면 탭으로 투구 요청", batting: true)
+                                 perfect: 0.025, label: presenting ? "공·수비 진행 중" : clock.running ? (battingAction == .watch ? "공을 지켜보는 중" : "화면 탭 · 지금 " + battingAction.label) : battingGuideSeen ? "화면 탭 · 투구 요청" : "스와이프 조준 · 투구 후 탭하여 타격", batting: true)
                     .accessibilityIdentifier("battingTimingGauge")
 
             }
@@ -333,7 +342,7 @@ struct CareerGameView: View {
         let opponent = CareerTeamDirectory.name(record.opponentID, schools: schools)
         let home = match.playerRecords.map {CareerTeamDirectory.name($0.home.teamID, schools: schools)} ?? (match.isHome ? ownName : opponent)
         let away = match.playerRecords.map {CareerTeamDirectory.name($0.away.teamID, schools: schools)} ?? (match.isHome ? opponent : ownName)
-        return MatchBroadcastBoard(match: match, homeName: home, awayName: away, date: record.gameDate, pulse: pulse, pulseAt: pulseAt)
+        return MatchBroadcastBoard(match: match, homeName: home, awayName: away, date: record.gameDate, pulse: pulse, pulseAt: pulseAt, stadium: stadium)
     }
     private var battingTouchLocked: Bool { retrySave != nil || presenting || record?.completed != false || record?.appearance != true }
     private func tapBattingField() {
@@ -393,7 +402,7 @@ struct CareerGameView: View {
             ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
                 let mastery = match.mastery[pitch.code] ?? 60
                 Button { pitchCode = pitch.code; pitchTarget = nil } label: {
-                    MatchPitchChip(name: pitch.name, mastery: mastery, selected: pitchCode == pitch.code)
+                    MatchPitchChip(name: pitch.name, mastery: mastery, selected: pitchCode == pitch.code, code: pitch.code, hand: player.throwingHandRaw)
                         .frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)
                     .disabled(inputLocked).accessibilityLabel(pitch.name + " · 숙련도 " + mastery.formatted(.number.precision(.fractionLength(1))))
@@ -459,7 +468,7 @@ struct CareerGameView: View {
                     }
                     DetailedFieldReplayBoard(play:play,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(play.half%2 == 0) == match.isHome,
+                        ownTeamFielding:(play.half%2 == 0) == match.isHome,stadium:stadium,
                         scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{
                             #if DEBUG
                             if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
@@ -488,7 +497,7 @@ struct CareerGameView: View {
                     Text("IN PLAY · BASE RUNNING").font(.title3.monospaced().bold()).foregroundStyle(GameTheme.gold)
                     HomeRunReplayBoard(event:event,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(event.half%2 == 0) == match.isHome,
+                        ownTeamFielding:(event.half%2 == 0) == match.isHome,stadium:stadium,
                         scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,
                         playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{
                             #if DEBUG
@@ -660,7 +669,7 @@ struct CareerGameView: View {
                 GamePanel(title:"최근 홈런 · 비거리",onBoard:true) {
                     HomeRunReplayBoard(event:homeRun,appearance:player.appearance,jerseyNumber:player.jerseyNumber,
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(homeRun.half%2 == 0) == match.isHome,scoreText:"H \(match.homeScore) : \(match.awayScore) A",animated:homeRunResultPlaying) {homeRunResultPlaying=false}
+                        ownTeamFielding:(homeRun.half%2 == 0) == match.isHome,stadium:stadium,scoreText:"H \(match.homeScore) : \(match.awayScore) A",animated:homeRunResultPlaying) {homeRunResultPlaying=false}
                         .id(resultReplayID).frame(height:650)
                     Button("홈런 다시 보기") {homeRunResultPlaying=true;resultReplayID+=1}
                         .buttonStyle(MatchPixelButtonStyle()).disabled(homeRunResultPlaying).accessibilityIdentifier("replayResultHomeRun")
@@ -671,7 +680,7 @@ struct CareerGameView: View {
                     Text(animateResultReplay ? "인플레이 · 수비 재생 중":play.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gameDetailedFieldSummary")
                     DetailedFieldReplayBoard(play:play,appearance:player.appearance,animated:animateResultReplay,
                         jerseyNumber:player.jerseyNumber,ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(play.half%2 == 0) == match.isHome,scoreText:"H \(match.homeScore) : \(match.awayScore) A") { animateResultReplay=false }
+                        ownTeamFielding:(play.half%2 == 0) == match.isHome,stadium:stadium,scoreText:"H \(match.homeScore) : \(match.awayScore) A") { animateResultReplay=false }
                         .id(resultReplayID).frame(height:600)
                     if !animateResultReplay {FieldReplayDetails(play:play)}
                     Button("수비·주루 재생") { animateResultReplay=true;resultReplayID += 1 }
@@ -737,6 +746,7 @@ struct CareerGameView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Button("경기 조작 안내") { showControlGuide = true }
                     Button("경기 계획·출전 선수") { showGameDetails = true }
                     if let saved = displaySnapshot.match {
                         if let last = saved.fieldPlays?.last {
@@ -762,6 +772,24 @@ struct CareerGameView: View {
                         .font(.caption.bold()).frame(minWidth: 44, minHeight: 44)
                         .disabled(inputLocked).accessibilityIdentifier("gameAutomatic")
                 }
+            }
+        }
+        .sheet(isPresented: $showControlGuide) {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment:.leading,spacing:18) {
+                        GamePanel(title:"타격 · 쓸어서 조준하고 탭",onBoard:true) {
+                            Text("공 대기 중 탭하면 투구를 요청합니다. 화면을 쓸어 방망이 위치를 옮기고, 공이 도착할 때 탭하여 스윙·번트합니다.")
+                            Text("입력하지 않으면 지켜보기로 판정합니다. 파랑은 빠름, 금색 중앙은 정타, 주황은 늦음입니다.")
+                        }
+                        GamePanel(title:"투구 · 구종과 코스를 먼저",onBoard:true) {
+                            Text("옆 그립에서 구종을 고릅니다. 포수 추천을 기본으로 쓰고 목표를 변경할 수 있습니다. 준비 후 릴리스 구간에서 놓으면 투구합니다.")
+                            Text("파란 마름모는 추천, 금색 십자는 목표, 야구공은 실제 도착입니다. 준비·비행 중 선택은 잠깁니다.")
+                        }
+                        Text("전광판 날씨는 고정 예시이며 경기 판정에 반영되지 않습니다.").font(.subheadline)
+                    }.padding(16)
+                }.background(GameTheme.board).foregroundStyle(GameTheme.paper).navigationTitle("경기 조작 안내")
+                    .toolbar {ToolbarItem(placement:.topBarTrailing) {Button("닫기") {showControlGuide=false;battingGuideSeen=true}.frame(minWidth:44,minHeight:44)}}
             }
         }
         .sheet(isPresented: $showGameDetails) {

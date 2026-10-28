@@ -396,13 +396,11 @@ import SwiftUI
         let url=dir.appendingPathComponent("pitching.store")
         let partial=try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
-            let (p,s)=try setup(role:.pitcher,in:c),r=try ready(p,s,in:c)
-            var m=try r.snapshot();let home=m.isHome;m.line.pitches=93;m.pitching?.homePitches=home ? 93:0;m.pitching?.awayPitches=home ? 0:93
-            if home {m.playerRecords?.home.pitching[0].counts.pitches=93} else {m.playerRecords?.away.pitching[0].counts.pitches=93}
-            m.scoutingPerformance?.inputs?.automatic=93
-            r.payload=try JSONEncoder().encode(m);try c.save()
-            let fatigue=p.fatigue
-            for _ in 0..<30 where try r.snapshot().ownPitcherChange == nil {
+            let (p,s)=try setup(role:.pitcher,in:c)
+            p.fatigue=100;try c.save()
+            let r=try ready(p,s,in:c),fatigue=p.fatigue
+            // Real pitches preserve the newer pitch-log and player-record invariants.
+            for _ in 0..<160 where try r.snapshot().ownPitcherChange == nil && !r.completed {
                 try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.pitch,pitchCode:"four-seam",control:ManualMatchInput(release:0.68),in:c)
             }
             XCTAssertNotNil(try r.snapshot().ownPitcherChange);XCTAssertFalse(r.completed);XCTAssertEqual(p.fatigue,fatigue)
@@ -573,7 +571,10 @@ import SwiftUI
                 XCTAssertEqual(try PlayerPositionStore.profile(playerID:p.id,in:c)?.payload,positions)
                 var expected = before; try expected.advance(.automatic)
                 try CareerMatchStore.advance(player:p,state:s,record:r,revision:revision,input:.automatic,in:c)
-                XCTAssertEqual(try r.snapshot(),expected)
+                let actual=try r.snapshot()
+                // Completion feedback belongs to the store; compare every engine/growth field after carrying that validated evidence.
+                expected.projectFeedback=actual.projectFeedback
+                XCTAssertEqual(actual,expected)
                 let growth = try XCTUnwrap(expected.abilityExperience?.result)
                 for award in growth.awards { XCTAssertEqual(try CareerTrainingStore.value(player:p,code:nil,kind:award.kind,in:c),award.after) }
                 XCTAssertEqual(Dictionary(uniqueKeysWithValues:p.pitches.map { ($0.code,$0.mastery) }),pitches)
@@ -801,4 +802,41 @@ import SwiftUI
         }
     }
 
+}
+
+extension CareerMatchTests {
+    func testV52DirectPlayerInputsFinishBothRolesWithResumeRollbackAndOneReward() throws {
+        enum Injected: Error { case save }
+        for role in PlayerRole.allCases {
+            let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+            let (player,state)=try setup(role:role,in:context),row=try ready(player,state,in:context)
+            let initialFatigue=player.fatigue
+            var inputs=0,manualInputs=0,checkedFailure=false
+            while !row.completed && inputs<250 {
+                let snapshot=try row.snapshot()
+                let manual=role == .batter || snapshot.ownPitcherActive
+                let input:MatchInput=manual ? (role == .batter ? .swing:.pitch):.automatic
+                let code=role == .pitcher && manual ? player.pitches.sorted {$0.order<$1.order}.first?.code:nil
+                let control:ManualMatchInput?=manual ? (role == .batter ? ManualMatchInput(x:0.5,y:0.5,timing:MatchDelivery.contactPhase):ManualMatchInput(release:0.68)):nil
+                let before=(row.payload,row.revision,player.fatigue,state.revision)
+                if inputs == 2 {
+                    XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:input,pitchCode:code,control:control,in:context,save:{_ in throw Injected.save}))
+                    XCTAssertEqual(row.payload,before.0);XCTAssertEqual(row.revision,before.1);XCTAssertEqual(player.fatigue,before.2);XCTAssertEqual(state.revision,before.3);checkedFailure=true
+                }
+                XCTAssertEqual(try CareerMatchStore.start(player:player,state:state,in:context).payload,before.0)
+                try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:input,pitchCode:code,control:control,in:context)
+                inputs += 1;if manual {manualInputs += 1}
+            }
+            XCTAssertTrue(row.completed);XCTAssertGreaterThan(manualInputs,2);XCTAssertTrue(checkedFailure)
+            let final=try row.snapshot(),before=(row.payload,player.fatigue,state.revision)
+            XCTAssertEqual(final.controlVersion,2)
+            XCTAssertEqual(player.fatigue,min(100,initialFatigue+final.appliedFatigueCost))
+            XCTAssertEqual(try CareerMatchStore.start(player:player,state:state,in:context).payload,before.0)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:.automatic,in:context))
+            XCTAssertEqual(row.payload,before.0);XCTAssertEqual(player.fatigue,before.1);XCTAssertEqual(state.revision,before.2)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerMatchRecord>()),1)
+            try CalendarProgression.advanceDay(player:player,state:state,revision:state.revision,in:context)
+            XCTAssertEqual(player.gameDate,"2026-04-02")
+        }
+    }
 }

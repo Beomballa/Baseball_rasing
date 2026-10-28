@@ -2478,6 +2478,7 @@ import SpriteKit
                     XCTAssertEqual(scene.displayedTime,time)
                     XCTAssertEqual(scene.actorIDs,ids)
                     let expected=sprites.actors(event,time:time,reduced:false)
+                    XCTAssertEqual(scene.visibleActorCount,expected.count,"Runners that crossed home must not leave ghost sprites at earlier bases")
                     for (position,actor) in zip(scene.actorPositions,expected) {
                         let point=InplayFieldProjection.point(actor.point,size:scene.size)
                         XCTAssertEqual(position.x,point.x,accuracy:0.0001);XCTAssertEqual(position.y,scene.size.height-point.y,accuracy:0.0001)
@@ -2621,5 +2622,60 @@ import SpriteKit
         MatchRenderMetrics.end("probe",started:ProcessInfo.processInfo.systemUptime)
         XCTAssertEqual(MatchRenderMetrics.frames.count,12_000)
         XCTAssertGreaterThan(MatchRenderMetrics.memory.count,before)
+    }
+}
+
+extension FieldTrainingTests {
+    func testV52CustomDoublePlayAlertWaitsForFinishedAndLeavesSavedNodesUnchanged() throws {
+        let play=doublePlay(),original=play
+        let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:1),jerseyNumber:27,ownPosition:"P",throwingHand:"right",ownTeamFielding:true)
+        let scene=InplayFieldScene(play:play,sprites:sprites,prepared:FieldRasterArt.Prepared(images:[:]),scoreText:"H 0 : 0 A",stadium:StadiumIdentity(homeTeamID:"ground-1"))
+        let result=try XCTUnwrap(scene.childNode(withName:"//finalPlayResult"))
+        let dress=try XCTUnwrap(scene.childNode(withName:"//stadiumDress-*") as? StadiumSceneDress)
+        scene.display(time:play.duration-0.001,finished:false)
+        XCTAssertTrue(result.isHidden);XCTAssertNil(dress.celebration)
+        scene.setFinished(true)
+        XCTAssertFalse(result.isHidden);XCTAssertEqual(dress.celebration,.doublePlay)
+        scene.setFinished(true);XCTAssertEqual(dress.celebrationCount,1)
+        scene.setEffectsReduced(true);XCTAssertEqual(dress.effectNodeCount,0)
+        XCTAssertEqual(play,original)
+    }
+}
+
+extension FieldTrainingTests {
+    func testV52FourStadiumHomeRunAndDoublePlayFinishAreReadOnlyNativeScenes() async throws {
+        let windowScene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=windowScene.windows.first(where: \.isKeyWindow)
+        let window=UIWindow(windowScene:windowScene),controller=UIViewController()
+        window.rootViewController=controller;window.makeKeyAndVisible()
+        defer {window.isHidden=true;previous?.makeKey()}
+        for pitcher in [false,true] {
+            let homeRun=try XCTUnwrap(MatchReplayFixture.make(pitcher:pitcher).last?.homeRun)
+            let dp=doublePlay(),sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:pitcher ? "left":"right",ownTeamFielding:pitcher)
+            for ground in 0..<4 {for replay in [InplayReplay.homeRun(homeRun),.field(dp)] {
+                let original=replay
+                let planned=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)})
+                let requests=try XCTUnwrap(planned),images=await FieldRasterArt.prepare(requests),prepared=try XCTUnwrap(images)
+                let stadium=StadiumIdentity(homeTeamID:"ground-\(ground)")
+                let scene=InplayFieldScene(replay:replay,sprites:sprites,prepared:prepared,scoreText:"H 3 : 2 A",stadium:stadium)
+                await scene.preload()
+                let view=SKView(frame:CGRect(x:0,y:0,width:400,height:600));controller.view=view;view.presentScene(scene)
+                let result=try XCTUnwrap(scene.childNode(withName:"//finalPlayResult"))
+                let dress=try XCTUnwrap(scene.childNode(withName:"//stadiumDress-*") as? StadiumSceneDress)
+                scene.display(time:replay.duration-0.001,finished:false);XCTAssertTrue(result.isHidden);XCTAssertNil(dress.celebration)
+                scene.setFinished(true);XCTAssertFalse(result.isHidden);XCTAssertEqual(dress.celebrationCount,1)
+                scene.setFinished(true);XCTAssertEqual(dress.celebrationCount,1)
+                try await Task.sleep(for:.seconds(0.35))
+                let image=UIImage(cgImage:try XCTUnwrap(view.texture(from:scene)?.cgImage()))
+                let shot=XCTAttachment(image:image);shot.name="v52-native-\(stadium.theme.title)-\(pitcher ? "pitcher":"batter")-\(replay.metricKind)-finished";shot.lifetime = .keepAlways;add(shot)
+                scene.setEffectsReduced(true);XCTAssertEqual(dress.effectNodeCount,0)
+                switch (replay,original) {
+                case (.field(let a),.field(let b)):XCTAssertEqual(a,b)
+                case (.homeRun(let a),.homeRun(let b)):XCTAssertEqual(a,b)
+                default:XCTFail("Presentation changed replay kind")
+                }
+                view.presentScene(nil)
+            }}
+        }
     }
 }

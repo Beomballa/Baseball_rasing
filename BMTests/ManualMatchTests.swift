@@ -1239,3 +1239,98 @@ extension ManualMatchTests {
         let attachment = XCTAttachment(string: String(decoding: data, as: UTF8.self)); attachment.name = "v23-rendered-arrival-metrics"; attachment.lifetime = .keepAlways; add(attachment)
     }
 }
+
+extension ManualMatchTests {
+    func testV52StadiumIdentityIsStableAndDoesNotTouchMatchRNGOrPayload() throws {
+        let game=match(),encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+        let before=try encoder.encode(game)
+        let identities=(0..<32).map {StadiumIdentity(homeTeamID:"ground-\($0)")}
+        XCTAssertEqual(Set(identities.map { $0.theme.rawValue }).count,4)
+        XCTAssertEqual(Set(identities.map(\.variation)).count,3)
+        for value in identities {
+            XCTAssertEqual(value,StadiumIdentity(homeTeamID:value.key))
+            XCTAssertEqual(value.sponsors.count,3);XCTAssertEqual(Set(value.sponsors.map(\.name)).count,3)
+            XCTAssertEqual(StadiumIdentity(homeTeamID:value.key).sponsors,value.sponsors)
+        }
+        XCTAssertEqual(try encoder.encode(game),before)
+    }
+    func testV52MoundAndAnimatedActorsStayFixedAcrossHandsAndBatterSides() throws {
+        for hand in ["left","right"] {for side in [OpponentBatterSide.left,.right] {
+            let scene=BallparkScene(size:CGSize(width:320,height:340))
+            scene.configure(hand:hand,kit:2,batterSide:side)
+            XCTAssertEqual(scene.childNode(withName:"fixedStadiumBackground")?.xScale,1)
+            let pitcher=try XCTUnwrap(scene.childNode(withName:"animatedPitcher") as? SKSpriteNode)
+            let batter=try XCTUnwrap(scene.childNode(withName:"animatedBatter") as? SKSpriteNode)
+            XCTAssertEqual(pitcher.position.x,scene.size.width*0.76,accuracy:0.001)
+            XCTAssertEqual(pitcher.position.y,scene.size.height*(1-0.895),accuracy:0.001)
+            XCTAssertEqual(pitcher.size.width,pitcher.size.height,accuracy:0.001)
+            XCTAssertEqual(batter.position.x,scene.size.width*(side == .left ? 0.32:0.70),accuracy:0.001)
+            XCTAssertNotNil(pitcher.texture);XCTAssertNotNil(batter.texture)
+            scene.preparePitch(phase:0.3,reduced:true)
+            XCTAssertEqual(scene.pitchStage,.preparing)
+            XCTAssertEqual(pitcher.position.x,scene.size.width*0.76,accuracy:0.001)
+            let sourcePivot=PitcherPresentationPose(role:.pitcher,frame:1,hand:"right").pivot
+            let planted=Double(pitcher.position.x)+(sourcePivot.x-pitcher.anchorPoint.x)*pitcher.size.width*pitcher.xScale
+            XCTAssertEqual(planted,scene.size.width*0.76,accuracy:0.001,"The actual source foot, not only the node origin, must sit on the rubber")
+            let right=PitcherPresentationPose(role:.pitcher,frame:1,hand:"right")
+            let left=PitcherPresentationPose(role:.pitcher,frame:1,hand:"left")
+            XCTAssertEqual(right.pivot.x+left.pivot.x,1,accuracy:0.001)
+            XCTAssertEqual(right.hand.x+left.hand.x,1,accuracy:0.001)
+            scene.cancelDelivery()
+        }}
+    }
+    func testV52BatterCameraActuallyAnimatesSeparateOpponentPitcherOnSharedClock() throws {
+        for reduced in [false,true] {
+            let scene=BallparkScene(size:CGSize(width:320,height:320));scene.configure(hand:"right",kit:0,role:.batter)
+            let pitcher=try XCTUnwrap(scene.childNode(withName:"animatedPitcher") as? SKSpriteNode)
+            let initial=pitcher.texture
+            XCTAssertEqual(scene.children.filter {$0.name?.hasPrefix("backgroundFielder-") == true}.count,3)
+            let start=ProcessInfo.processInfo.systemUptime,timeline=MatchInputTimeline(startedAt:start,windup:0.5,duration:1.2)
+            var arrivals=0
+            XCTAssertTrue(scene.demonstrate(reduceMotion:reduced,x:0.7,y:0.4,onArrival:{arrivals += 1},inputTimeline:timeline))
+            scene.advanceDelivery(at:start+0.3)
+            XCTAssertFalse(initial === pitcher.texture)
+            scene.advanceDelivery(at:timeline.contactAt-0.001);XCTAssertEqual(arrivals,0)
+            scene.advanceDelivery(at:timeline.contactAt+0.001);XCTAssertEqual(arrivals,1)
+            scene.advanceDelivery(at:timeline.contactAt+1);XCTAssertEqual(arrivals,1)
+            XCTAssertEqual(pitcher.position.y,320*(1-0.375),accuracy:0.001)
+            XCTAssertEqual(scene.childNode(withName:"receivedBaseball")?.isHidden,false)
+            scene.cancelDelivery()
+        }
+    }
+    func testV52CelebrationBudgetAndReducedMotionNeverRestartEffects() {
+        for n in 0..<12 {for reduced in [false,true] {
+            let dress=StadiumSceneDress(stadium:StadiumIdentity(homeTeamID:"ground-\(n)"),size:CGSize(width:400,height:600),camera:.field)
+            XCTAssertNil(dress.celebration);XCTAssertEqual(dress.effectNodeCount,0)
+            dress.celebrate(.homeRun,reduced:reduced)
+            XCTAssertEqual(dress.celebrationCount,1);XCTAssertLessThanOrEqual(dress.effectNodeCount,40)
+            if reduced {XCTAssertEqual(dress.effectNodeCount,0)}
+            dress.celebrate(.homeRun,reduced:reduced);dress.celebrate(.doublePlay,reduced:reduced)
+            XCTAssertEqual(dress.celebrationCount,1)
+            dress.reduceEffects();XCTAssertEqual(dress.effectNodeCount,0)
+        }}
+    }
+}
+
+extension ManualMatchTests {
+    func testV52NativeFourThemeBoardsAndBothCameraComponents() throws {
+        let ids=(0..<4).map {StadiumIdentity(homeTeamID:"ground-\($0)")}
+        XCTAssertEqual(Set(ids.map {$0.theme.rawValue}).count,4)
+        for stadium in ids {for role in PlayerRole.allCases {
+            let game=match(role:role)
+            let scene=BallparkScene(size:CGSize(width:320,height:320))
+            scene.configure(hand:role == .pitcher ? "left":"right",kit:1,role:role,batterSide:.right);scene.setStadium(stadium)
+            let view=SKView(frame:CGRect(origin:.zero,size:scene.size));view.presentScene(scene)
+            let field=UIImage(cgImage:try XCTUnwrap(view.texture(from:scene)?.cgImage()))
+            let board=UIHostingController(rootView:MatchBroadcastBoard(match:game,homeName:"연고 홈팀",awayName:"원정 고교",date:"2026-04-01",pulse:nil,pulseAt:.distantPast,stadium:stadium))
+            board.view.frame=CGRect(x:0,y:0,width:390,height:174);board.view.backgroundColor = .clear;board.view.layoutIfNeeded()
+            let image=UIGraphicsImageRenderer(size:CGSize(width:390,height:174+390*scene.size.height/scene.size.width)).image {context in
+                UIColor(GameTheme.navy).setFill();context.fill(CGRect(x:0,y:0,width:390,height:600))
+                field.draw(in:CGRect(x:0,y:174,width:390,height:390*scene.size.height/scene.size.width))
+                board.view.layer.render(in:context.cgContext)
+            }
+            let attachment=XCTAttachment(image:image);attachment.name="v52-component-\(stadium.theme.title)-\(role.rawValue)";attachment.lifetime = .keepAlways;add(attachment)
+            view.presentScene(nil)
+        }}
+    }
+}

@@ -9,7 +9,8 @@ import os
 // Presentation geometry never changes the saved pitch, timing window or RNG.
 enum MatchArt {
     static let names = ["batter-view-clean", "stadium-clean", "batter-actions", "pitcher-delivery-v2", "catcher-parts",
-                        "grip-fastball", "grip-slider", "grip-changeup", "grips-extra", "inplay-stadium-arcade-v1"]
+                        "grip-fastball", "grip-slider", "grip-changeup", "grips-extra", "inplay-stadium-arcade-v1",
+                        "batter-field-v52", "pitcher-field-v52", "opponent-pitcher-v52", "opponent-batter-v52"]
     private static let images: [String: UIImage] = Dictionary(uniqueKeysWithValues: names.compactMap { name in
         guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "MatchArt"),
               let image = UIImage(contentsOfFile: url.path) else { return nil }
@@ -1367,6 +1368,7 @@ struct DetailedFieldReplayBoard:View {
     var ownPosition:String?=nil
     var throwingHand="right"
     var ownTeamFielding:Bool?=nil
+    var stadium:StadiumIdentity = .legacy
     var scoreText="IN PLAY"
     var previewTime:Double?=nil
     var reduceMotionOverride:Bool?=nil
@@ -1422,7 +1424,7 @@ struct DetailedFieldReplayBoard:View {
             MatchRenderMetrics.mark("imagesReady")
             #endif
             if usesSpriteKit {
-                let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText)
+                let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText,stadium:stadium)
                 #if DEBUG
                 MatchRenderMetrics.mark("sceneCreated")
                 #endif
@@ -1771,6 +1773,7 @@ struct HomeRunReplayBoard:View {
     var ownPosition:String?=nil
     var throwingHand="right"
     var ownTeamFielding=false
+    var stadium:StadiumIdentity = .legacy
     var scoreText="IN PLAY"
     var handoff:FieldContactHandoff?=nil
     var animated=true
@@ -1825,7 +1828,7 @@ struct HomeRunReplayBoard:View {
             MatchRenderMetrics.mark("imagesReady")
             #endif
             if usesSpriteKit {
-                let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText)
+                let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText,stadium:stadium)
                 #if DEBUG
                 MatchRenderMetrics.mark("sceneCreated")
                 #endif
@@ -2103,6 +2106,8 @@ struct InplayStartupReadiness {
     private let ball=SKSpriteNode(texture:PixelBaseball.texture),ballShadow=SKShapeNode(ellipseOf:CGSize(width:6,height:2))
     private let trail=(0..<3).map {_ in SKSpriteNode(color:UIColor(GameTheme.paper).withAlphaComponent(0.4),size:CGSize(width:2,height:2))}
     private let result=SKNode()
+    private let stadium:StadiumIdentity
+    private var stadiumDress:StadiumSceneDress?
     private var actors:[ActorNode]=[]
     private var textures:[String:SKTexture]=[:]
     private var started=0.0,handoff:FieldContactHandoff?
@@ -2145,14 +2150,14 @@ struct InplayStartupReadiness {
     private(set) var displayedTime=0.0
     private(set) var textureChanges=0
     private(set) var fallbackTextures=0
-    convenience init(play:MatchDetailedPlay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String) {
-        self.init(replay:.field(play),sprites:sprites,prepared:prepared,scoreText:scoreText)
+    convenience init(play:MatchDetailedPlay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String,stadium:StadiumIdentity = .legacy) {
+        self.init(replay:.field(play),sprites:sprites,prepared:prepared,scoreText:scoreText,stadium:stadium)
     }
-    convenience init(event:MatchHomeRun,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String) {
-        self.init(replay:.homeRun(event),sprites:sprites,prepared:prepared,scoreText:scoreText)
+    convenience init(event:MatchHomeRun,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String,stadium:StadiumIdentity = .legacy) {
+        self.init(replay:.homeRun(event),sprites:sprites,prepared:prepared,scoreText:scoreText,stadium:stadium)
     }
-    init(replay:InplayReplay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String) {
-        self.replay=replay;self.sprites=sprites;self.prepared=prepared
+    init(replay:InplayReplay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String,stadium:StadiumIdentity = .legacy) {
+        self.replay=replay;self.sprites=sprites;self.prepared=prepared;self.stadium=stadium
         super.init(size:Self.fieldSize)
         scaleMode = .aspectFit;backgroundColor=UIColor(GameTheme.board);addChild(content)
         if let image=InplayStadiumArt.image {
@@ -2160,6 +2165,7 @@ struct InplayStartupReadiness {
             let frame=InplayFieldProjection.viewport(size)
             backdrop.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));backdrop.size=frame.size;backdrop.zPosition = -1000;content.addChild(backdrop)
         }
+        let dress=StadiumSceneDress(stadium:stadium,size:size,camera:.field);dress.zPosition = 10;content.addChild(dress);stadiumDress=dress
         let scoreFrame:CGRect
         switch replay {
         case .field:
@@ -2167,27 +2173,28 @@ struct InplayStartupReadiness {
             scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.123,width:viewport.width*0.22,height:viewport.height*0.039)
         case .homeRun:scoreFrame=CGRect(x:size.width*0.38,y:size.height*0.14,width:size.width*0.24,height:size.height*0.04)
         }
-        let board=SKShapeNode(rectOf:scoreFrame.size);board.position=convertPoint(CGPoint(x:scoreFrame.midX,y:scoreFrame.midY));board.fillColor=UIColor(GameTheme.navy);board.strokeColor=UIColor(GameTheme.gold);board.lineWidth=2
+        let board=SKShapeNode(rectOf:scoreFrame.size);board.position=convertPoint(CGPoint(x:scoreFrame.midX,y:scoreFrame.midY));board.fillColor=UIColor(Color(hex:stadium.theme.panel));board.strokeColor=UIColor(Color(hex:stadium.theme.trim));board.lineWidth=2
         content.addChild(board);score.fontSize=max(12,size.width*0.028);score.fontColor=UIColor(GameTheme.paper);score.verticalAlignmentMode = .center;score.position=board.position;score.zPosition=1;content.addChild(score);setScore(scoreText)
         target.strokeColor=UIColor(GameTheme.gold).withAlphaComponent(0.8);target.lineWidth=1;target.zPosition=2;content.addChild(target)
         for _ in replay.actors(sprites,time:0,reduced:false,finished:false) {let node=ActorNode();actors.append(node);content.addChild(node.root)}
         ballShadow.fillColor=UIColor.black.withAlphaComponent(0.4);ballShadow.strokeColor = .clear;ballShadow.zPosition=1900;content.addChild(ballShadow)
         for node in trail {node.zPosition=1999;content.addChild(node)}
-        ball.zPosition=2000;content.addChild(ball);configureResult();result.zPosition=3000;result.isHidden=true;content.addChild(result)
+        ball.zPosition=2000;content.addChild(ball);configureResult();result.name="finalPlayResult";result.zPosition=3000;result.isHidden=true;content.addChild(result)
     }
     required init?(coder:NSCoder) {fatalError("init(coder:) has not been implemented")}
     private func configureResult() {
         let frame:CGRect,title:String,detail:String?,home:Bool
         switch replay {
         case .field(let p):
-            detail=FieldReplayPresentation.errorDetail(p,ownTeamFielding:sprites.ownTeamFielding ?? !p.ownBatter)
+            let doublePlay=p.secondThrow?.out == true
+            detail=doublePlay ? "2루 아웃 → 1루 아웃" : FieldReplayPresentation.errorDetail(p,ownTeamFielding:sprites.ownTeamFielding ?? !p.ownBatter)
             frame=CGRect(x:size.width*(detail == nil ? 0.18:0.04),y:size.height*0.27,width:size.width*(detail == nil ? 0.64:0.92),height:detail == nil ? 32:78)
-            title=FieldReplayPresentation.resultTitle(p);home=false
+            title=doublePlay ? "DOUBLE PLAY · 병살" : FieldReplayPresentation.resultTitle(p);home=false
         case .homeRun(let h):
             frame=CGRect(x:size.width*0.08,y:size.height*0.24,width:size.width*0.84,height:size.height*0.12)
             title="HOME RUN · \(h.distance)m";detail="\(h.runs)점 · \(sprites.ownTeamFielding == true ? "상대 팀":"우리 팀") 홈 도착";home=true
         }
-        let panel=SKShapeNode(rectOf:frame.size);panel.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));panel.fillColor=UIColor(GameTheme.navy).withAlphaComponent(0.97);panel.strokeColor=UIColor(GameTheme.gold);panel.lineWidth=home ? 3:2;result.addChild(panel)
+        let panel=SKShapeNode(rectOf:frame.size);panel.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));panel.fillColor=UIColor(Color(hex:stadium.theme.panel));panel.strokeColor=UIColor(Color(hex:stadium.theme.trim));panel.lineWidth=home ? 3:2;result.addChild(panel)
         let label=SKLabelNode(fontNamed:"Menlo-Bold");label.text=title;label.fontSize=home ? max(16,size.width*0.052):18;label.fontColor=UIColor(home ? GameTheme.gold:GameTheme.paper);label.verticalAlignmentMode = .center
         label.position=convertPoint(CGPoint(x:frame.midX,y:detail == nil ? frame.midY:frame.minY+(home ? frame.height*0.36:16)));label.zPosition=1;result.addChild(label)
         if let detail {
@@ -2214,7 +2221,7 @@ struct InplayStartupReadiness {
     func setEffectsReduced(_ value:Bool) {
         guard effectsReduced != value else {return}
         effectsReduced=value
-        if value {content.position = .zero}
+        if value {content.position = .zero;stadiumDress?.reduceEffects()}
         display(time:displayedTime,finished:finished)
     }
     func setScore(_ text:String) {score.text=text}
@@ -2271,9 +2278,16 @@ struct InplayStartupReadiness {
             let p=replay.ballPoint(time:max(0,time-Double(index+1)*0.04),size:size,leftIndex:leftIndex);node.position=convertPoint(CGPoint(x:p.x+1,y:p.y+1))
         }
         result.isHidden = !finished
+        if finished {
+            switch replay {
+            case .homeRun:stadiumDress?.celebrate(.homeRun,reduced:effectsReduced)
+            case .field(let p):if p.secondThrow?.out == true {stadiumDress?.celebrate(.doublePlay,reduced:effectsReduced)}
+            }
+        }
     }
     private func updateActors(_ samples:[FieldReplaySprites.Actor]) {
         let ownKit=PlayerAppearance.kitColors[sprites.appearance.kit]
+        for (index,node) in actors.enumerated() {node.root.isHidden = index >= samples.count}
         for (index,actor) in samples.enumerated() {
             let node=actors[index],scale=InplayFieldProjection.actorScale(actor.point,size:size)
             let motion=InplayFieldProjection.motion(actor.motion,at:actor.point,size:size)
@@ -2307,6 +2321,7 @@ struct InplayStartupReadiness {
 
     }
     #if DEBUG
+    var visibleActorCount:Int {actors.filter {!$0.root.isHidden}.count}
     var actorIDs:[ObjectIdentifier] {actors.map {ObjectIdentifier($0.root)}}
     var actorPositions:[CGPoint] {actors.map {$0.root.position}}
     var ballPosition:CGPoint {ball.position}
@@ -2387,3 +2402,36 @@ extension InplayReplay {
     var metricKind:String {switch self {case .field:"fieldSprite";case .homeRun:"homeRunSprite"}}
 }
 #endif
+
+@MainActor enum OpponentMotionArt {
+    private static let cache = NSCache<NSString,NSArray>()
+    static func textures(_ name:String,columns:Int,rows:Int,ownKit:Int,opponent:Bool = true) -> [SKTexture] {
+        let kit=opponent ? FieldReplayPresentation.opponentKit(ownKit):ownKit,key="\(name):\(kit)" as NSString
+        if let result=cache.object(forKey:key) as? [SKTexture] {return result}
+        let result=(0..<(columns*rows)).compactMap { frame -> SKTexture? in
+            guard let source=MatchArt.cell(name,column:frame%columns,row:frame/columns,columns:columns,rows:rows)?.cgImage else {return nil}
+            let w=source.width,h=source.height,format=CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue
+            var data=[UInt8](repeating:0,count:w*h*4)
+            let image:CGImage?=data.withUnsafeMutableBytes {buffer in
+                guard let context=CGContext(data:buffer.baseAddress,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:format),let p=buffer.baseAddress?.assumingMemoryBound(to:UInt8.self) else {return nil}
+                context.draw(source,in:CGRect(x:0,y:0,width:w,height:h))
+                for index in stride(from:0,to:w*h*4,by:4) {
+                    let a=Int(p[index+3]);guard a>16 else {continue}
+                    let r=Double(p[index])*255/Double(a),g=Double(p[index+1])*255/Double(a),b=Double(p[index+2])*255/Double(a)
+                    guard b>36,b>r*1.35,b>g*1.1 else {continue}
+                    let shade=max(0.25,min(1.6,b/135))
+                    for channel in 0..<3 {
+                        let component=(kit >> ((2-channel)*8)) & 255
+                        p[index+channel]=UInt8(min(255,Int(Double(component)*shade))*a/255)
+                    }
+                }
+                return context.makeImage()
+            }
+            guard let image else {return nil}
+            let texture=SKTexture(cgImage:image);texture.filteringMode = .nearest;return texture
+        }
+        cache.totalCostLimit=24*1024*1024
+        cache.setObject(result as NSArray,forKey:key,cost:result.count*512*512*4)
+        return result
+    }
+}

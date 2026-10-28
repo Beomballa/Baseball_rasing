@@ -1590,3 +1590,24 @@ final class ManagementDetailFlowTests: XCTestCase {
         let image = XCTAttachment(screenshot: app.screenshot()); image.name = name; image.lifetime = .keepAlways; add(image)
     }
 }
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV52ControlGuideIsReadOnlyAndNoInputReturnsToReady() {
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:15))
+        app.buttons["clubhouse-rest"].tap();app.buttons["confirmRest"].tap();app.buttons["restDone"].tap();app.buttons["homeTodayGame"].tap()
+        XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout:8));app.buttons["opponentTab-plan"].tap()
+        reveal(app.buttons["confirmGamePlan"],app);app.buttons["confirmGamePlan"].tap()
+        let count=app.descendants(matching:.any).matching(identifier:"careerGameCount").firstMatch
+        XCTAssertTrue(count.waitForExistence(timeout:8));let before=count.label
+        app.buttons["gamePlaybackMenu"].tap();app.buttons["경기 조작 안내"].tap()
+        XCTAssertTrue(app.navigationBars["경기 조작 안내"].waitForExistence(timeout:5));capture(app,"v52-live-control-guide")
+        app.navigationBars["경기 조작 안내"].buttons["닫기"].tap()
+        XCTAssertEqual(count.label,before)
+        app.buttons["gameInput-swing"].tap();app.buttons["battingTouchSurface"].tap()
+        let automatic=app.buttons["gameAutomatic"]
+        let idle=XCTNSPredicateExpectation(predicate:NSPredicate(format:"enabled == true"),object:automatic)
+        XCTAssertEqual(XCTWaiter.wait(for:[idle],timeout:12),.completed)
+        XCTAssertNotEqual(count.label,before);capture(app,"v52-live-batter-no-input")
+    }
+}

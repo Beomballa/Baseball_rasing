@@ -142,11 +142,12 @@ struct MatchBroadcastBoard: View {
     let date: String
     let pulse: String?
     let pulseAt: Date
+    var stadium: StadiumIdentity = .legacy
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     private let paper = Color(hex: 0xf3edcf)
     private let muted = Color(hex: 0x93aab8)
-    private let panel = Color(hex: 0x0b2538)
+    private var panel: Color { Color(hex: stadium.theme.panel) }
     private var activeInning: Int? { match.completed ? nil : match.half / 2 + 1 }
     private var pitchCount: Int? { match.role == "pitcher" ? match.line.pitches : nil }
     private var displayedDate: String {
@@ -183,7 +184,7 @@ struct MatchBroadcastBoard: View {
                     .accessibilityLabel("\(teamSummary(home: false)). \(MatchBroadcastData.inningSummary(match, home: false)). \(teamSummary(home: true)). \(MatchBroadcastData.inningSummary(match, home: true))")
                     .accessibilityIdentifier("careerGameScore")
             }
-            Rectangle().fill(Color(hex: 0x426075)).frame(height: 1)
+            Rectangle().fill(Color(hex: stadium.theme.trim)).frame(height: stadium.theme == .brick ? 2 : 1)
             TimelineView(.animation(minimumInterval: 0.2, paused: reduced || pulse == nil)) { timeline in
                 let elapsed = timeline.date.timeIntervalSince(pulseAt)
                 let blink = !reduced && elapsed >= 0 && elapsed < 1.2 && Int(elapsed / 0.2).isMultiple(of: 2)
@@ -218,8 +219,7 @@ struct MatchBroadcastBoard: View {
             }
         }.foregroundStyle(paper).padding(8).frame(maxWidth: .infinity)
             .background(panel)
-            .overlay(Rectangle().strokeBorder(Color(hex: 0x72929e), lineWidth: 2))
-            .overlay(alignment: .bottom) { Rectangle().fill(Color(hex: 0x061a29)).frame(height: 3) }
+            .overlay(StadiumBoardFrame(stadium: stadium).allowsHitTesting(false).accessibilityHidden(true))
             .accessibilityElement(children: .contain).accessibilityIdentifier("matchScoreboard")
     }
     private var inningRow: some View {
@@ -308,23 +308,27 @@ struct MatchPitchChip: View {
     let name: String
     let mastery: Double
     let selected: Bool
+    var code = "four-seam"
+    var hand = "right"
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 3) {
+        HStack(spacing: 3) {
+            MatchGrip(code: code, hand: hand).frame(width: typeSize.isAccessibilitySize ? 38 : 23, height: typeSize.isAccessibilitySize ? 38 : 28).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
                 Text(name).font(typeSize.isAccessibilitySize ? .headline : .system(size: 12, weight: .heavy, design: .monospaced))
                     .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                Spacer(minLength: 0)
-                Text(mastery.formatted(.number.precision(.fractionLength(1))))
-                    .font(typeSize.isAccessibilitySize ? .body.monospaced().bold() : .system(size: 10, weight: .bold, design: .monospaced))
-            }
-            HStack(spacing: 2) {
-                ForEach(0..<8, id: \.self) { index in
-                    Rectangle().fill(Double(index) < min(100, max(0, mastery)) / 12.5 ? GameTheme.gold : Color(hex: 0x345365))
-                        .frame(width: 6, height: 3)
+                HStack(spacing: 3) {
+                    HStack(spacing: 1) {
+                        ForEach(0..<8, id: \.self) { index in
+                            Rectangle().fill(Double(index) < min(100, max(0, mastery))/12.5 ? GameTheme.gold : Color(hex: 0x345365))
+                                .frame(maxWidth: 3).frame(height: 3)
+                        }
+                    }.accessibilityHidden(true)
+                    Text(mastery.formatted(.number.precision(.fractionLength(1))))
+                        .font(typeSize.isAccessibilitySize ? .body.monospaced().bold() : .system(size: 9, weight: .bold, design: .monospaced))
                 }
-            }.accessibilityHidden(true)
-        }.padding(.leading, 12).padding(.trailing, 7).padding(.vertical, typeSize.isAccessibilitySize ? 10 : 0)
+            }
+        }.padding(.leading, 8).padding(.trailing, 5).padding(.vertical, typeSize.isAccessibilitySize ? 10 : 0)
             .frame(maxWidth: .infinity, minHeight: 36)
             .foregroundStyle(selected ? GameTheme.gold : GameTheme.paper)
             .background(ManagementStepFrame().fill(Color(hex: 0x102a3f)))
@@ -475,5 +479,62 @@ struct PitchCourseControl: View {
             .accessibilityIdentifier("pitchCourseControl")
             .onChange(of: locked) { _, _ in reviewingLast = false }
             .onChange(of: result) { _, _ in reviewingLast = false }
+    }
+}
+
+// A read-only identity derived from the saved home team, never from the match RNG.
+struct StadiumIdentity: Equatable, Sendable {
+    enum Theme: Int, CaseIterable, Sendable {
+        case harbor, brick, grove, metro
+        var title: String { ["항구", "벽돌", "숲", "도시"][rawValue] }
+        var panel: Int { [0x0b2538, 0x30251f, 0x132e29, 0x171f38][rawValue] }
+        var trim: Int { [0x64b8bc, 0xc78b62, 0xa5b975, 0x8b9dda][rawValue] }
+        var accent: Int { [0x80ddd3, 0xf2bd80, 0xd7d88b, 0xb8c9ff][rawValue] }
+    }
+    let key: String
+    let seed: UInt64
+    var theme: Theme { Theme(rawValue: Int(seed % 4))! }
+    var variation: Int { Int((seed / 4) % 3) }
+    static let legacy = StadiumIdentity(homeTeamID: "legacy-ground")
+    init(homeTeamID: String) {
+        key = homeTeamID
+        seed = homeTeamID.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+    }
+    var sponsors: [Sponsor] {
+        let start = Int((seed / 12) % UInt64(Self.catalog.count))
+        return (0..<3).map { Self.catalog[(start + $0 * 3) % Self.catalog.count] }
+    }
+    struct Sponsor: Equatable, Sendable { let name: String; let mark: String }
+    static let catalog: [Sponsor] = [
+        .init(name: "모루 기어", mark: "M"), .init(name: "아홉별 식품", mark: "9"),
+        .init(name: "다람 운송", mark: "D"), .init(name: "잔디 서점", mark: "J"),
+        .init(name: "누리 바람", mark: "N"), .init(name: "오름 공방", mark: "O"),
+        .init(name: "초록 쉼표", mark: "+"), .init(name: "바다 링크", mark: "B")
+    ]
+}
+
+private struct StadiumBoardFrame: View {
+    let stadium: StadiumIdentity
+    var body: some View {
+        GeometryReader { g in
+            let color = Color(hex: stadium.theme.trim)
+            ZStack {
+                Rectangle().strokeBorder(color, lineWidth: 2)
+                if stadium.theme == .brick {
+                    ForEach(0..<5, id: \.self) { i in
+                        Rectangle().fill(color).frame(width: 8, height: 3)
+                            .position(x: 10 + CGFloat(i) * (g.size.width-20)/4, y: 2)
+                    }
+                } else if stadium.theme == .grove {
+                    Rectangle().fill(color).frame(width: 5, height: max(0,g.size.height-8)).position(x: 3,y:g.size.height/2)
+                    Rectangle().fill(color).frame(width: 5, height: max(0,g.size.height-8)).position(x: g.size.width-3,y:g.size.height/2)
+                } else {
+                    ForEach(0..<(stadium.variation+3), id: \.self) { i in
+                        Rectangle().fill(color).frame(width: stadium.theme == .metro ? 12 : 5, height: 3)
+                            .position(x: g.size.width-10-CGFloat(i)*16,y: g.size.height-2)
+                    }
+                }
+            }
+        }
     }
 }

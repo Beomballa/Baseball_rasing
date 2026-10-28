@@ -61,6 +61,9 @@ ART_HASHES.update({'BM/Resources/Assets.xcassets/ClubhouseRoomV2.imageset/room.p
 # V51 original unlettered practice environments and transparent tee prop.
 ART_HASHES.update({'BM/Resources/MatchArt/training-environments-v51.png': 'd24db8aec23b203258f4a33dc5cf8120d12d828764f9ecad5bea4fbed4a04bf4', 'BM/Resources/MatchArt/training-tee-v51.png': '4c982b5b8cd5d2870d7cb0ca484ec5fe9082cfbf5fef958ad414b02b41887d66'})
 
+# V52 original separated gameplay backgrounds and opponent motion atlases.
+ART_HASHES.update({'BM/Resources/MatchArt/batter-field-v52.png': 'eed2ed3029d972bedec8f8ff93f2e97de2ae32b4ebbf426425d949e367aae9b5', 'BM/Resources/MatchArt/pitcher-field-v52.png': '5903dc03813a6b1ff62463d1f4a9a8d13e69627d954b38132b4a545c2920c2e2', 'BM/Resources/MatchArt/opponent-pitcher-v52.png': '30674d027a7ca42a645e2c4de602d4de478b3203e9cd051f1e7132e1c7f35b3c', 'BM/Resources/MatchArt/opponent-batter-v52.png': '5a80ba6d7366eac47f3188ffad0dbb52b37c8650094d129a3ec24c948bcdd2b5'})
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):
