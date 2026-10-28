@@ -16,6 +16,65 @@ import SwiftData
         let input = player.role == .batter ? TrainingInput(x: target.x, y: target.y, timing: MatchDelivery.contactPhase) : TrainingInput(release: 0.68)
         try CareerTrainingStore.attempt(player: player, state: calendar, record: record, revision: record.revision, input: input, in: context)
     }
+    func testV43NewCareerTrainingMatchResumeAndNextDayBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let url = dir.appendingPathComponent("release-smoke.store")
+            var playerID: UUID!, trainingBytes: Data!, matchBytes: Data!, frozenReports: [Data] = []
+            try autoreleasepool {
+                let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+                var draft = PlayerDraft(); draft.name = "출시검증"; draft.schoolID = "hs-ref-001"; draft.role = role
+                let p = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: c)
+                playerID = p.id
+                let state = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let row = try CareerTrainingStore.start(player: p, state: state, pitchCode: role == .pitcher ? p.pitches.first?.code : nil, in: c)
+                for _ in 0..<2 { try attempt(p, state, row, c) }
+                trainingBytes = row.payload
+                XCTAssertFalse(state.hasAction(on: p.gameDate))
+            }
+            try autoreleasepool {
+                let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+                let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == playerID })
+                let state = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let row = try CareerTrainingStore.start(player: p, state: state, pitchCode: role == .pitcher ? p.pitches.first?.code : nil, in: c)
+                XCTAssertEqual(row.payload, trainingBytes)
+                for _ in 0..<3 { try attempt(p, state, row, c) }
+                XCTAssertTrue(row.completed); XCTAssertTrue(state.hasAction(on: p.gameDate))
+                let fatigue = p.fatigue, result = row.payload
+                XCTAssertThrowsError(try attempt(p, state, row, c))
+                XCTAssertEqual(row.payload, result); XCTAssertEqual(p.fatigue, fatigue)
+                let game = try CareerMatchStore.start(player: p, state: state, in: c)
+                try CareerMatchStore.advance(player: p, state: state, record: game, revision: game.revision,
+                    input: role == .batter ? .watch : .pitch, pitchCode: p.pitches.first?.code,
+                    control: role == .batter ? nil : ManualMatchInput(release: 0.68), in: c)
+                matchBytes = game.payload
+                frozenReports = try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload)
+                XCTAssertThrowsError(try CalendarProgression.advanceDay(player: p, state: state, revision: state.revision, in: c))
+            }
+            try autoreleasepool {
+                let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+                let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == playerID })
+                let state = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let game = try CareerMatchStore.start(player: p, state: state, in: c)
+                XCTAssertEqual(game.payload, matchBytes)
+                try CareerMatchStore.advance(player: p, state: state, record: game, revision: game.revision, input: .automatic, in: c)
+                XCTAssertTrue(game.completed)
+                let result = game.payload, fatigue = p.fatigue
+                XCTAssertThrowsError(try CareerMatchStore.advance(player: p, state: state, record: game, revision: game.revision, input: .automatic, in: c))
+                XCTAssertEqual(game.payload, result); XCTAssertEqual(p.fatigue, fatigue)
+                let reports = try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload)
+                XCTAssertTrue(frozenReports.allSatisfy { reports.contains($0) })
+                let before = p.gameDate
+                try CalendarProgression.advanceDay(player: p, state: state, revision: state.revision, in: c)
+                XCTAssertEqual(p.gameDate, try GameDate(before).adding(days: 1).description)
+                XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerTrainingRecord>()), 1)
+                XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerMatchRecord>()), 1)
+            }
+        }
+    }
+
     func testV30LegacyReceiptNilAndNoProjectPracticeRemainCompatible() throws {
         let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
         let (p,s)=try setup(c, date:"2026-04-02")

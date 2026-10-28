@@ -2754,7 +2754,7 @@ extension CareerCalendarTests {
 }
 
 extension CareerCalendarTests {
-    private func overseasRenewalFixture(_ role:PlayerRole,route:OverseasRoute = .mlbDevelopment,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,OverseasOffer) {
+    private func overseasRenewalFixture(_ role:PlayerRole,route:OverseasRoute = .mlbDevelopment,legacyURL:URL?=nil,fundedIncumbent:Bool=false) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,OverseasOffer) {
         let store:ModelContainer,p:CareerPlayer,s:CareerCalendarState,entry:OverseasOffer
         if route == .mlbDevelopment {
             (store,p,s,entry)=try overseasOfferFixture(role,legacyURL:legacyURL)
@@ -2769,7 +2769,9 @@ extension CareerCalendarTests {
         let year=try XCTUnwrap((firstYear..<(firstYear+40)).first {year in
             let date=try! GameDate("\(year)-11-01"),period=try! ScoutingPeriod(origin:GameDate(s.originDate),today:date).index
             let seed=p.id.uuidString+"/overseas-market-v1/"+String(period)
-            return DomesticSelection.hash(seed+route.id+"/"+club+"/"+entry.roleID)%5 != 0
+            let bits=DomesticSelection.hash(seed+route.id+"/"+club+"/"+entry.roleID)
+            // The resume test needs a funded renewal, not merely a vacant roster seat.
+            return bits%5 != 0 && (!fundedIncumbent || 300+Int((bits/23)%401) >= 600)
         })
         for (index,fixture) in try s.fixtures(for:p,year:year).filter({$0.isAppearance(for:role)}).enumerated() {
             p.gameDate=fixture.date.description
@@ -2884,9 +2886,10 @@ extension CareerCalendarTests {
     }
     func testOverseasRenewalNextSeasonResumeAndOneTimeResultBothRoles() throws {
         for role in PlayerRole.allCases {
-            let (store,p,s,_)=try overseasRenewalFixture(role),c=store.mainContext
+            let (store,p,s,_)=try overseasRenewalFixture(role,fundedIncumbent:true),c=store.mainContext
             try OverseasContractStore.evaluateRenewal(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
-            let terms=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer?.renewalReviews?.last?.offer)
+            let review=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).overseasCareer?.renewalReviews?.last)
+            let terms=try XCTUnwrap(review.offer,review.reasons.joined(separator:" / "))
             try OverseasContractStore.decideRenewal(player:p,calendar:s,offerID:terms.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
             p.gameDate=terms.effective;try c.save();try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
             let record=try CareerMatchStore.start(player:p,state:s,in:c)
