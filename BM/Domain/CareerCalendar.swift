@@ -509,6 +509,10 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
     let incumbent: String
     let selected: String
     let holdUntil: String?
+    var neutralPerformance:Bool?
+    func score(_ candidate:ClubSelectionCandidate) -> Double {neutralPerformance == true ? 0.60*candidate.h+0.25*50+0.15*candidate.readiness:candidate.score}
+    var ownScore:Double {score(own)}
+    var rivalScore:Double {score(rival)}
     var rivalAbilities:PlayerInitialValues? = nil
     var rivalPositionMastery:Double? = nil
     var rivalEvidence: NPCSelectionEvidence? = nil
@@ -518,25 +522,29 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
         (try? GameDate(week).adding(days: 7).description) ?? week
     }
     var reason: String {
+        if neutralPerformance == true {return "공식 성과 표본 미확인 · 양쪽 성과 중립 비교 / 5점 차·14일 관찰 유지"}
         if let holdUntil, date < holdUntil, incumbent == selected { return "기용 변경 후 관찰 중 · " + holdUntil + "까지 유지" }
         if selected != incumbent { return "도전자가 기존 선수보다 출전점수 5 이상 높음" }
         return "동률 또는 점수 차 5 미만 · 기존 기용 유지"
     }
     static func make(context: String, membershipID: String, teamID: String, level: String, position: String, roleID: String,
-                     date: GameDate, own: ClubSelectionCandidate, rival: ClubSelectionCandidate, previous: Self?, rivalAbilities:PlayerInitialValues?=nil, rivalPositionMastery:Double?=nil, rivalEvidence:NPCSelectionEvidence?=nil) throws -> Self {
+                     date: GameDate, own: ClubSelectionCandidate, rival: ClubSelectionCandidate, previous: Self?, rivalAbilities:PlayerInitialValues?=nil, rivalPositionMastery:Double?=nil, rivalEvidence:NPCSelectionEvidence?=nil,neutralPerformance:Bool?=nil) throws -> Self {
         let incumbent = previous?.selected ?? own.id
         let held = previous?.holdUntil.map { date.description < $0 } ?? false
         let current = incumbent == own.id ? own : rival
         let challenger = incumbent == own.id ? rival : own
-        let selected = !held && challenger.score >= current.score + 5 ? challenger.id : incumbent
+        func score(_ c:ClubSelectionCandidate) -> Double {neutralPerformance == true ? 0.6*c.h+12.5+0.15*c.readiness:c.score}
+        let selected = !held && score(challenger) >= score(current) + 5 ? challenger.id : incumbent
         let until = selected != incumbent ? date.adding(days: 14).description : previous?.holdUntil
         var value = Self(context: context, membershipID: membershipID, teamID: teamID, level: level, position: position, roleID: roleID,
                          date: date.description, week: date.monday.description, own: own, rival: rival, incumbent: incumbent, selected: selected, holdUntil: until)
+        value.neutralPerformance=neutralPerformance
         value.rivalAbilities=rivalAbilities;value.rivalPositionMastery=rivalPositionMastery;value.rivalEvidence=rivalEvidence
         try value.validate(previous: previous)
         return value
     }
     func validateRivalBasis() throws {
+        guard neutralPerformance == nil || (neutralPerformance == true && own.evidence == nil && ["mlb-development","npb-first-team","mlb-first-team"].contains(level)) else {throw ContractRegistrationError.invalid}
         try rivalEvidence?.validate(review:self)
         guard let values=rivalAbilities else {guard rivalPositionMastery == nil else {throw ContractRegistrationError.invalid};return}
         guard let mastery=rivalPositionMastery,mastery.isFinite,(0...100).contains(mastery),
@@ -548,6 +556,7 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
     func validate(previous: Self?) throws {
         let day = try GameDate(date)
         try own.validate(); try rival.validate();try validateRivalBasis()
+        guard neutralPerformance == nil || (neutralPerformance == true && own.evidence == nil && ["mlb-development","npb-first-team","mlb-first-team"].contains(level)) else {throw ContractRegistrationError.invalid}
         guard version == 1, week == day.monday.description,
               context == [membershipID,teamID,level,String(day.year),position].joined(separator:"/"),
               !membershipID.isEmpty, !teamID.isEmpty,
@@ -557,7 +566,7 @@ struct ClubSelectionReview: Codable, Equatable, Identifiable {
               previous.map({ $0.context == context && $0.week < week && $0.own.id == own.id && $0.rival.id == rival.id }) ?? true else { throw ContractRegistrationError.invalid }
         let held = previous?.holdUntil.map { date < $0 } ?? false
         let current = incumbent == own.id ? own : rival, challenger = incumbent == own.id ? rival : own
-        let expected = !held && challenger.score >= current.score + 5 ? challenger.id : incumbent
+        let expected = !held && score(challenger) >= score(current) + 5 ? challenger.id : incumbent
         guard selected == expected, holdUntil == (selected != incumbent ? day.adding(days:14).description : previous?.holdUntil) else { throw ContractRegistrationError.invalid }
     }
 }
@@ -706,8 +715,8 @@ struct ClubCoachFeedback {
     let nextEvaluation:String
     let reconsideration:String
     let deficits:[ClubCoachDeficit]
-    var scoreGap:Double {review.own.score-review.rival.score}
-    var pointsToChallenge:Double {max(0,review.rival.score+5-review.own.score)}
+    var scoreGap:Double {review.ownScore-review.rivalScore}
+    var pointsToChallenge:Double {max(0,review.rivalScore+5-review.ownScore)}
     var hasAbilityBasis:Bool {review.rivalAbilities != nil}
     static func dates(review:ClubSelectionReview,on date:GameDate) throws -> (next:String,change:String) {
         func scheduled(_ day:GameDate) throws -> GameDate {

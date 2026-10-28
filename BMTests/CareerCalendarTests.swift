@@ -6164,3 +6164,57 @@ extension CareerCalendarTests {
         XCTAssertEqual(capped.0["homeVelocity"],100);XCTAssertEqual(capped.1,Dictionary(uniqueKeysWithValues:retired.abilities.pitches.map {($0.id,$0.current)}))
     }
 }
+
+extension CareerCalendarTests {
+    private func v40Review(_ own:ClubSelectionCandidate,_ rival:ClubSelectionCandidate,date:String,previous:ClubSelectionReview?,neutral:Bool?) throws -> ClubSelectionReview {
+        try ClubSelectionReview.make(context:"entry/team/npb-first-team/2030/CF",membershipID:"entry",teamID:"team",level:"npb-first-team",position:"CF",roleID:"field",date:GameDate(date),own:own,rival:rival,previous:previous,neutralPerformance:neutral)
+    }
+    func testV40MissingSampleNeutralComparisonUnlocksAbilityReturnWithoutChangingRawEvidence() throws {
+        let rival=ClubSelectionCandidate(id:"npc",h:90,p:4,readiness:100,evidence:"actual-npc",note:"actual")
+        let weak=ClubSelectionCandidate(id:"me",h:20,p:0,readiness:100,evidence:nil,note:"missing")
+        let before=try v40Review(weak,rival,date:"2030-04-01",previous:nil,neutral:nil)
+        XCTAssertFalse(before.isStarter)
+        let strong=ClubSelectionCandidate(id:"me",h:99,p:0,readiness:100,evidence:nil,note:"missing")
+        let legacy=try v40Review(strong,rival,date:"2030-04-22",previous:before,neutral:nil)
+        let fair=try v40Review(strong,rival,date:"2030-04-22",previous:before,neutral:true)
+        XCTAssertFalse(legacy.isStarter);XCTAssertTrue(fair.isStarter);XCTAssertEqual(fair.holdUntil,"2030-05-06")
+        XCTAssertEqual(fair.rival,rival);XCTAssertEqual(fair.own,strong);XCTAssertGreaterThanOrEqual(fair.ownScore-fair.rivalScore,5)
+        XCTAssertFalse(try v40Review(strong,rival,date:"2030-04-08",previous:before,neutral:true).isStarter)
+        let tired=ClubSelectionCandidate(id:"me",h:99,p:0,readiness:50,evidence:nil,note:"missing")
+        XCTAssertFalse(try v40Review(tired,rival,date:"2030-04-22",previous:before,neutral:true).isStarter)
+        let qualified=ClubSelectionCandidate(id:"me",h:99,p:1,readiness:100,evidence:"official-report",note:"verified")
+        XCTAssertThrowsError(try v40Review(qualified,rival,date:"2030-04-22",previous:before,neutral:true))
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        let bytes=try encoder.encode(before);XCTAssertNil(try JSONDecoder().decode(ClubSelectionReview.self,from:bytes).neutralPerformance)
+        XCTAssertEqual(try encoder.encode(before),bytes)
+    }
+    func testV40NeutralPolicyRequiresOverseasAndKeepsDomesticLegacy() throws {
+        let me=ClubSelectionCandidate(id:"me",h:80,p:0,readiness:100,evidence:nil,note:"missing"),npc=ClubSelectionCandidate(id:"npc",h:70,p:4,readiness:100,evidence:"actual",note:"actual")
+        var value=try v40Review(me,npc,date:"2030-04-01",previous:nil,neutral:true)
+        value.neutralPerformance=false;XCTAssertThrowsError(try value.validate(previous:nil))
+        value.neutralPerformance=true;value=try v40Review(me,npc,date:"2030-04-01",previous:nil,neutral:true)
+        XCTAssertEqual(value.ownScore,75.5);XCTAssertEqual(value.rivalScore,69.5)
+        XCTAssertEqual(value.rival.score,79.5)
+        let (db,p,s)=try v32Fixture(.batter),c=db.mainContext
+        XCTAssertNil(try ClubSelectionStore.projection(player:p,calendar:s,in:c)?.neutralPerformance)
+    }
+    func testV40ActualOverseasProjectionFreezesAndParentSaveRollsBackBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s,offer)=try overseasOfferFixture(role),c=db.mainContext
+            try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            p.gameDate=offer.effective;try c.save()
+            let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),before=row.payload
+            let review=try XCTUnwrap(ClubSelectionStore.projection(player:p,calendar:s,in:c));XCTAssertEqual(review.neutralPerformance,true);XCTAssertNil(review.own.evidence)
+            XCTAssertEqual(row.payload,before);XCTAssertFalse(c.hasChanges)
+            _=try ClubSelectionStore.capture(player:p,calendar:s,in:c);c.rollback();XCTAssertEqual(row.payload,before)
+            _=try ClubSelectionStore.capture(player:p,calendar:s,in:c);try c.save();let saved=row.payload
+            p.fatigue=100;try c.save();XCTAssertEqual(try ClubSelectionStore.projection(player:p,calendar:s,in:c),review);XCTAssertEqual(row.payload,saved)
+            let encoded=try JSONEncoder().encode(review),decoded=try JSONDecoder().decode(ClubSelectionReview.self,from:encoded);XCTAssertEqual(decoded,review)
+            try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let match=try CareerMatchStore.start(player:p,state:s,in:c);XCTAssertEqual(try match.snapshot().clubSelection?.review,review)
+            try CareerMatchStore.advance(player:p,state:s,record:match,revision:match.revision,input:.automatic,in:c)
+            let final=match.payload,fatigue=p.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:match,revision:match.revision,input:.automatic,in:c));XCTAssertEqual(match.payload,final);XCTAssertEqual(p.fatigue,fatigue)
+        }
+    }
+}

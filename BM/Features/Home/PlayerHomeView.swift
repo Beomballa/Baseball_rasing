@@ -2783,7 +2783,7 @@ struct ClubSelectionHomePanel: View {
                         }
                     }
                     Text(review.reason).font(.subheadline)
-                    Text("평가 점수차 · 내 점수 − 경쟁자 "+String(format:"%+.1f",review.own.score-review.rival.score)).font(.subheadline.monospacedDigit()).accessibilityIdentifier("clubSelectionGap")
+                    Text("평가 점수차 · 내 점수 − 경쟁자 "+String(format:"%+.1f",review.ownScore-review.rivalScore)).font(.subheadline.monospacedDigit()).accessibilityIdentifier("clubSelectionGap")
                     Text(review.nextReview <= player.gameDate ? "오프시즌 · 다음 개막 후 평가":"다음 평가 "+ManagementDisplay.date(review.nextReview)).font(.subheadline.monospacedDigit()).accessibilityIdentifier("clubSelectionNext")
                     NavigationLink { ClubSelectionScreen(player:player,calendar:calendar,review:review,frozen:frozen) } label: {Text("코치 피드백 · 출전 경쟁")}
                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubSelection")
@@ -2854,14 +2854,14 @@ struct ClubSelectionScreen: View {
     }
     private func candidate(_ value:ClubSelectionCandidate,title:String,isOwn:Bool) -> some View {
         GamePanel(title:title,onBoard:true,contentSpacing:12) {
-            Text("D "+n(value.score)+(review.selected == value.id ? " · 기용":" · 도전")).font(.title2.monospacedDigit().bold()).foregroundStyle(review.selected == value.id ? GameTheme.gold:GameTheme.boardInk).accessibilityIdentifier(isOwn ? "selectionOwnScore":"selectionRivalScore")
-            ForEach([("역할 기량 H",value.h),("성과",value.performance),("준비",value.readiness)],id:\.0) {name,number in
+            Text("D "+n(review.score(value))+(review.selected == value.id ? " · 기용":" · 도전")).font(.title2.monospacedDigit().bold()).foregroundStyle(review.selected == value.id ? GameTheme.gold:GameTheme.boardInk).accessibilityIdentifier(isOwn ? "selectionOwnScore":"selectionRivalScore")
+            ForEach([("역할 기량 H",value.h),("성과",review.neutralPerformance == true ? 50:value.performance),("준비",value.readiness)],id:\.0) {name,number in
                 VStack(alignment:.leading,spacing:6) {
                     Text(name+" "+n(number)).font(.subheadline.monospacedDigit())
                     ProgressView(value:number,total:100).tint(isOwn ? GameTheme.growth:GameTheme.gold).accessibilityHidden(true)
                 }
             }
-            Text("P "+n(value.p)).font(.subheadline.monospacedDigit())
+            Text((review.neutralPerformance == true ? "원 성과 P (비교 미사용) ":"P ")+n(value.p)).font(.subheadline.monospacedDigit())
             Text(value.note).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             if let evidence=value.evidence {DisclosureGroup("고정 성적 출처") {Text(evidence).font(.caption).textSelection(.enabled)}}
         }.frame(maxWidth:.infinity,alignment:.topLeading)
@@ -2955,18 +2955,32 @@ private struct ClubCoachPanel: View {
         GamePanel(title:"DUGOUT · 코치 피드백",onBoard:true,contentSpacing:14) {
             if let feedback {
                 Text(review.isStarter ? "현재 자리를 지키는 준비":"다음 출전 기회를 준비하세요").font(.headline).foregroundStyle(GameTheme.gold)
-                Text("내 점수 "+n(review.own.score)+" · 경쟁자 "+n(review.rival.score))
+                Text("내 점수 "+n(review.ownScore)+" · 경쟁자 "+n(review.rivalScore))
                     .font(.headline.monospacedDigit()).accessibilityIdentifier("coachScores")
                 Text("점수 차이 "+String(format:"%+.1f",feedback.scoreGap)+" · 내 점수 − 경쟁자")
                     .font(.subheadline.monospacedDigit()).accessibilityIdentifier("coachScoreGap")
                 if !review.isStarter {
                     Text(feedback.pointsToChallenge>0 ? "교체 비교선까지 약 "+n((feedback.pointsToChallenge*10).rounded(.up)/10)+"점 · 경쟁자보다 5점 높아야 합니다.":"점수 조건 충족 · 관찰 기간과 다음 평가를 확인하세요.").font(.subheadline)
                 }
+                if review.neutralPerformance == true {
+                    Text("실제 성과 원문 보존 · 이번 기용 비교에서만 양쪽 성과50 사용").font(.subheadline).accessibilityIdentifier("coachNeutralPerformance")
+                    Text("수집 표본이 갖춰진 다음 평가부터 기존 성과 비교로 돌아갑니다. 평가전 점수를 공식 성과로 대체하지 않습니다.").font(.subheadline)
+                }
                 Text("다음 평가 · "+ManagementDisplay.date(feedback.nextEvaluation)).font(.headline).accessibilityIdentifier("coachNextEvaluation")
                 if feedback.nextEvaluation != feedback.reconsideration {
                     Text("기용 관찰 중 · 교체 재검토 "+ManagementDisplay.date(feedback.reconsideration)+"부터").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("coachReconsideration")
                 }
                 Text("점수는 "+ManagementDisplay.date(review.date)+" 평가 기준입니다. 오늘 훈련·휴식으로 이미 확정된 기용을 다시 뽑지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                let rested=0.6*review.own.h+0.25*(review.neutralPerformance == true ? 50:review.own.performance)+15
+                Text("당시 기량·성과를 유지하고 완전 회복하면 비교선까지 \(max(0,review.rivalScore+5-rested),specifier:"%.1f")점").font(.subheadline).accessibilityIdentifier("coachRestedGap")
+                Text("현재 경쟁자와 당시 기량/성과를 고정한 조건 비교입니다. 휴식1회로 피로가0이 되거나 복귀가 확정되는 뜻은 아닙니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                if let development=(try? player.lifecycle)?.development {
+                    Text("성장 준비 · "+development.timing.label+" · 고구간 성장 감속 적용").font(.subheadline).accessibilityIdentifier("coachDevelopment")
+                    if let window=development.active(on:player.gameDate) {
+                        Text(window.kind.label+" 집중 · 남은 \(8-window.used)세트 · "+ManagementDisplay.date(window.expires)+"까지").font(.headline)
+                        NavigationLink {CareerTrainingView(player:player,calendar:calendar,initialKind:window.kind)} label: {Text("집중 능력 훈련 준비")}.buttonStyle(MatchPixelButtonStyle()).disabled(!actionState.canTrain).accessibilityIdentifier("coachFocusedTraining")
+                    }
+                }
                 if !feedback.deficits.isEmpty {
                     Text("현재 내 능력 ↔ 평가 당시 경쟁자").font(.subheadline.bold())
                     ForEach(feedback.deficits) {deficit in

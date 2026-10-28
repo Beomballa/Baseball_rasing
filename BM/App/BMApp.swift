@@ -294,6 +294,19 @@ struct CareerPathVerification: View {
                     if args.contains("-college-pro-verification"),age == 20,args.contains("-selection-qualified") {
                         try seedCollegePro(player:p,calendar:calendar,in:c.mainContext)
                     }
+                    if args.contains("-v40-bench-verification"),args.contains("-college-pro-verification") {
+                        let context=c.mainContext
+                        try OverseasContractStore.register(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
+                        try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
+                        try OverseasContractStore.evaluate(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
+                        guard let offer=try ContractRegistrationStore.journal(player:p,calendar:calendar,in:context).overseasCareer?.evaluations.last?.offers.first else {throw OverseasProgressError.requirements}
+                        try OverseasContractStore.decide(player:p,calendar:calendar,offerID:offer.id,accept:true,date:p.gameDate,revision:calendar.revision,in:context)
+                        p.gameDate=offer.effective;p.contact=20;p.power=20;p.defense=20;p.speed=20;p.arm=20;p.discipline=20;p.fatigue=55
+                        let profile=try PlayerAbilityStore.profile(playerID:p.id,in:context)!
+                        profile.mental=20;if role == .pitcher {profile.velocity=20;profile.control=20;profile.stuff=20;profile.stamina=20;for pitch in p.pitches {pitch.mastery=20}}
+                        try context.save();try DevelopmentStore.adopt(player:p,calendar:calendar,in:context)
+                        _=try ClubSelectionStore.capture(player:p,calendar:calendar,in:context);try context.save()
+                    }
                     if args.contains("-career-objectives-verification"),args.contains("-college-pro-verification") {
                         try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:c.mainContext)
                         if (args.contains("-goal-special-verification") || args.contains("-observation-review-verification") || args.contains("-club-assignment-verification")),

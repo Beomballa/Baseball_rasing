@@ -2,6 +2,33 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV40OverseasReturnCoachingBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-v40-bench-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:120))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app)
+            app.buttons["managementTab-game"].tap();app.buttons["facility-game"].tap();reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+            let policy=app.staticTexts["coachNeutralPerformance"];reveal(policy,app);XCTAssertTrue(policy.label.contains("양쪽 성과50"));capture(app,"v40-"+(pitcher ? "pitcher":"batter")+"-neutral-comparison")
+            reveal(app.staticTexts["coachRestedGap"],app);XCTAssertTrue(app.staticTexts["coachRestedGap"].exists);capture(app,"v40-"+(pitcher ? "pitcher":"batter")+"-return-plan")
+            reveal(app.buttons["coachRest"],app);XCTAssertTrue(app.buttons["coachRest"].isEnabled);app.buttons["coachRest"].tap();capture(app,"v40-"+(pitcher ? "pitcher":"batter")+"-rest-confirm")
+            app.buttons["취소 · 돌아가기"].tap()
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);XCTAssertEqual(status(app),before);app.buttons["managementTab-home"].tap()
+        }
+    }
+
+    @MainActor func testV40SmallLargestTextReturnPlan() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification","-v40-bench-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:120))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            app.buttons["managementLargeMenu"].tap();app.buttons["경기"].tap();reveal(app.buttons["facility-game"],app);app.buttons["facility-game"].tap();reveal(app.buttons["openClubSelection"],app);app.buttons["openClubSelection"].tap()
+            let policy=app.staticTexts["coachNeutralPerformance"];for _ in 0..<30 {if policy.isHittable {break};app.swipeUp()};XCTAssertTrue(policy.isHittable);capture(app,"v40-small-"+(pitcher ? "pitcher":"batter"))
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app)
+        }
+    }
     @MainActor func testV39FrozenForecastBothRolesAndLegacy() {
         continueAfterFailure=false
         for legacy in [false,true] {

@@ -1465,7 +1465,7 @@ enum GoalSpecialError:LocalizedError {
             guard let rating=try ScoutingRoleEvaluation.grades(role:.batter,abilities:ScoutingClubCatalog.abilities(values,role:.batter),positionMastery:rivalMastery).first(where:{$0.id == roleID})?.score else {throw ContractRegistrationError.invalid}
             rival=ClubSelectionCandidate(id:npc.id,h:rating,p:npcEvidence.p,readiness:100-npcEvidence.fatigue,evidence:npcEvidence.source,note:NPCSelectionStore.note(npcEvidence))
         }
-        return try ClubSelectionReview.make(context:contextID,membershipID:member.offerID,teamID:member.teamID,level:member.level,position:position,roleID:roleID,date:date,own:own,rival:rival,previous:previous,rivalAbilities:values,rivalPositionMastery:rivalMastery,rivalEvidence:npcEvidence)
+        return try ClubSelectionReview.make(context:contextID,membershipID:member.offerID,teamID:member.teamID,level:member.level,position:position,roleID:roleID,date:date,own:own,rival:rival,previous:previous,rivalAbilities:values,rivalPositionMastery:rivalMastery,rivalEvidence:npcEvidence,neutralPerformance:["mlb-development","npb-first-team","mlb-first-team"].contains(member.level) && performance.source == nil ? true:nil)
     }
 
     static func frozenPerformance(player:CareerPlayer,calendar:CareerCalendarState,level:String,owner:CareerContractJournal,in context:ModelContext) throws -> (p:Double,source:String?,note:String) {
