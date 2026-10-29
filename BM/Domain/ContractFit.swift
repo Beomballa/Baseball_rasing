@@ -3120,3 +3120,48 @@ enum ContractMarketOrder {
         return id < otherID
     }
 }
+
+
+// Read-only next step derived from existing project counters; never awards progress.
+enum CareerProjectNextAction:Equatable {
+    case report,nextDay,training,position,officialGame
+    static func make(project:CareerDevelopmentProject,progress:CareerProjectProgress,on date:String,actionUsed:Bool) -> Self {
+        if date > project.end || progress.complete {return .report}
+        if actionUsed {return .nextDay}
+        if progress.trainingKeys.count < (progress.task?.trainingGoal ?? 3) || progress.qualitySessions < (progress.task?.qualityGoal ?? 2) {return .training}
+        if let task=progress.task,task.value < task.goal,task.metric == .position {return .position}
+        return .officialGame
+    }
+    var title:String {switch self {
+    case .report:"관찰 결과 확인"
+    case .nextDay:"오늘 행동 완료 · 다음 일정 준비"
+    case .training:"집중 능력 훈련"
+    case .position:"선택 포지션 숙련 훈련"
+    case .officialGame:"공식 출전에서 근거 쌓기"
+    }}
+    var detail:String {switch self {
+    case .report:"완료/마감된 과제의 저장 근거와 다음 관찰을 확인하세요. 같은 주기 자료는 다시 평가하지 않습니다."
+    case .nextDay:"남은 경기와 저장한 진행을 확인한 뒤 홈에서 날짜를 진행하세요. 오늘 행동을 추가 지급하지 않습니다."
+    case .training:"관련 훈련 횟수 또는 우수 훈련 조건이 남아 있습니다. 시작/이어하기 화면에서 오늘 가능 여부를 확인하세요."
+    case .position:"훈련 횟수는 확보했습니다. 저장된 과제의 포지션 숙련 조건을 확인하세요."
+    case .officialGame:"훈련 조건은 확보했습니다. 같은 소속 수준의 공식 출전·역할 수행이 남아 있는지 확인하세요."
+    }}
+}
+
+enum CareerEvidenceKind:CaseIterable {
+    case official,training,diagnostic,certification,practice
+    var label:String {switch self {
+    case .official:"공식 개인 출전"
+    case .training:"실제 성장 훈련"
+    case .diagnostic:"목표 구단 진단 평가전"
+    case .certification:"무소속 표본 인증"
+    case .practice:"저장 반영 없는 자유 연습"
+    }}
+    var purpose:String {switch self {
+    case .official:"완료한 본인 공식 출전만 시즌·심사 표본에 반영"
+    case .training:"기존 5회 평균·성장/행동/피로와 결과1회 적용"
+    case .diagnostic:"별도 진단 근거 · 공식 표본/XP/인증 자격에 합산하지 않음"
+    case .certification:"인증 조건 충족 시 재입단 표본 자격 보완 · 공식 성적/XP 아님"
+    case .practice:"날짜·피로·성장·커리어 기록에 반영하지 않음"
+    }}
+}

@@ -77,7 +77,9 @@ struct CareerLifecyclePanel:View {
         ManagementPanel("커리어 변화 · 은퇴") {
             if let life=try? player.lifecycle {
                 Text("게임 나이 \((try? calendar.age(of:player)) ?? player.startAge)세 · 41세 기념일 은퇴").managementFont(.label)
-                Text("31세부터 매년 기념일에 능력별 노화가 반영됩니다. 멘탈·포지션 숙련도는 자동 감소하지 않습니다.").managementFont(.body)
+                Text(life.development == nil ? "기존 노화 V1 · 31세부터 매년 기념일에 능력별 노화 반영":"노화 V2 · 구속/주력27세, 파워/송구/지구력29세, 컨택/수비/구위31세, 제구/선구안/구종34세부터 게임용 감소")
+                    .managementFont(.body).accessibilityIdentifier("lifecycleAgingPolicy")
+                Text("멘탈·포지션 숙련도는 자동 감소하지 않습니다. 저장된 정책에 따른 미래 기념일만 적용하며 과거를 다시 계산하지 않습니다.").managementFont(.body)
                 if let latest=life.aging.last {
                     Text("\(latest.age)세 기념일 · \(latest.date)").managementFont(.label)
                     ForEach(latest.before.keys.sorted(),id:\.self) {key in
@@ -102,7 +104,7 @@ struct CareerLifecyclePanel:View {
             Button("은퇴하고 기록 보존",role:.destructive) {
                 do {try CareerLifecycleStore.retire(player:player,state:calendar,date:player.gameDate,revision:calendar.revision,in:context)} catch {self.error=error.localizedDescription}
             }.accessibilityIdentifier("confirmRetirement")
-            Button("취소",role:.cancel) {}
+            Button("취소") {showConfirmation=false}
         } message: {Text("능력치·구종·경기와 소속 이력은 보존됩니다. 이후 날짜·훈련·경기는 진행할 수 없고 새 커리어를 만들 수 있습니다. 미래 경제 지급은 종료되며 자동 FA나 방출로 처리하지 않습니다.")}
     }
     static func label(_ key:String) -> String {
@@ -115,6 +117,7 @@ struct RetirementArchiveView:View {
     let players:[CareerPlayer]
     let select:(UUID)->Void
     let create:()->Void
+    @State private var showSaveProtection=false
     var body:some View {
         ScrollView {
             VStack(spacing:16) {
@@ -139,6 +142,9 @@ struct RetirementArchiveView:View {
                     }
                     Text("원 경기·훈련·관찰·소속 원장은 저장소에 보존됩니다. 이 화면은 은퇴 당시 요약을 읽습니다.").managementFont(.helper)
                 }
+                CareerManagementNote(title:"기기에 보관한 은퇴 선수 \(players.filter(\.isRetired).count)명",
+                    detail:"진행 중 선수 \(players.filter {!$0.isRetired}.count)명 · 새 커리어는 별도 ID로 시작합니다. 원 기록은 자동 삭제하지 않으며 전체 백업에 함께 포함돼 용량이 늘어날 수 있습니다.",identifier:"retirementStorageSummary")
+                Button("설정 · 전체 커리어 백업") {showSaveProtection=true}.buttonStyle(ManagementButtonStyle(variant:.secondary)).accessibilityIdentifier("archiveSaveProtection")
                 RetirementSavedHistoryView(player:player)
                 if PlayerRole.allCases.contains(where:{role in !players.contains {$0.role == role && !$0.isRetired}}) {
                     Button("새 커리어 만들기",action:create).buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("archiveNewCareer")
@@ -149,6 +155,7 @@ struct RetirementArchiveView:View {
             }.padding(16)
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).preferredColorScheme(.dark).tint(GameTheme.gold)
             .navigationTitle("커리어 기록실").toolbarBackground(GameTheme.board,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar)
+            .sheet(isPresented:$showSaveProtection) {SaveProtectionView()}
     }
 }
 

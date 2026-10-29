@@ -236,6 +236,7 @@ struct DevelopmentHomePanel:View {
                         Spacer(minLength:8)
                         Text("정책 V2").font(.caption.monospaced())
                     }
+                    CareerManagementNote(title:"현재 저장된 발현 · 실제 훈련에 적용",detail:"발현 시기와 이미 열린 집중을 표시합니다. 아래 준비 횟수는 미래 발동 확률이나 최대 잠재력 수치가 아닙니다.",identifier:"developmentCurrentBasis")
                     if let window=development.active(on:player.gameDate) {
                         Text((window.pitchCode.flatMap {PitchType(rawValue:$0)?.label} ?? window.kind.label)+" · 성장 집중 중").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("developmentActiveWindow")
                         Text("남은 \(8-window.used)회 · "+ManagementDisplay.date(window.expires)+"까지").font(.subheadline.monospacedDigit())
@@ -283,6 +284,7 @@ struct OverseasGrowthPanel:View {
     let date:String
     var body:some View {
         GamePanel(title:"2년 성장 전망 · 역할 기량",onBoard:true,contentSpacing:12) {
+            CareerManagementNote(title:"보고서 당시 고정된 가정 · 실제 성장과 구분",detail:"기준일 "+ManagementDisplay.date(date)+". 현재 선수의 준비 횟수로 전망을 다시 계산하지 않으며 미래 발현 확률을 예측하지 않습니다.",identifier:"growthForecastBasis")
                         ForEach(projections) {row in
                             Text(DomesticContractOffer.roleName(row.roleID)).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
                             Text("현재 \(number(row.current)) → 기준 \(number(row.baseline))\n보수 \(number(row.conservative)) / 낙관 \(number(row.optimistic))")
@@ -298,4 +300,30 @@ struct OverseasGrowthPanel:View {
         }
     }
     private func number(_ n:Double?) -> String {n.map {String(format:"%.1f",$0)} ?? "자료 부족"}
+}
+
+
+struct CareerManagementNote:View {
+    let title:String
+    let detail:String
+    let identifier:String
+    var body:some View {
+        VStack(alignment:.leading,spacing:10) {
+            Text(title).font(.headline).foregroundStyle(GameTheme.gold)
+            Text(detail).font(.subheadline).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal:false,vertical:true)
+        }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
+            .background(GameTheme.boardPanel,in:ManagementStepFrame())
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine,lineWidth:1))
+            .accessibilityElement(children:.combine).accessibilityIdentifier(identifier)
+    }
+}
+struct CareerEvidenceTag:View {
+    let kind:CareerEvidenceKind
+    var body:some View {
+        VStack(alignment:.leading,spacing:6) {
+            Text(kind.label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+            Text(kind.purpose).font(.subheadline).fixedSize(horizontal:false,vertical:true)
+        }.padding(10).frame(maxWidth:.infinity,alignment:.leading).background(GameTheme.board,in:ManagementStepFrame())
+            .accessibilityElement(children:.combine).accessibilityIdentifier("careerEvidence-"+String(describing:kind))
+    }
 }

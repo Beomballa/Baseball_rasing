@@ -1386,6 +1386,7 @@ struct CertificationView:View {
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
                 GamePanel(title:"무소속 인증 평가전",onBoard:true) {
+                    CareerEvidenceTag(kind:.certification)
                     Text(player.name+" · 동일 환경 자동 평가").font(.title3.bold()).foregroundStyle(GameTheme.gold)
                     Text("시작 시 능력·구종 고정 / 표준 컨디션 / 특성 제외 / 야수 숙련60").font(.caption)
                     Text("타자4경기 · 12타석/출루율25% 이상 / 투수2경기 · 12타자/평가지수45 이상").font(.caption)
@@ -2104,6 +2105,7 @@ struct CareerProjectPanel:View {
     @Environment(\.modelContext) private var context
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var failure:String?
+    @State private var showTasks=false
     var body:some View {
         GamePanel(title:"PLAYER PROJECT · 28일 관찰 과제",onBoard:true,contentSpacing:16) {
             Text("선수가 선택한 성장 프로젝트").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
@@ -2167,6 +2169,11 @@ struct CareerProjectPanel:View {
             Text(review?.progress.complete == true ? "보고서 확인 · 프로젝트 완료":player.gameDate > project.end ? "기간 종료 · 달성 기록 보존":progress.complete ? "목표 달성 · 다음 보고서 관찰 대기":"진행 중")
                 .font(.headline).foregroundStyle(progress.complete ? GameTheme.growth:GameTheme.gold)
                 .padding(.vertical,8).accessibilityIdentifier("projectStatus")
+            let next=CareerProjectNextAction.make(project:project,progress:progress,on:player.gameDate,actionUsed:calendar.hasAction(on:player.gameDate))
+            CareerManagementNote(title:"오늘 먼저 · "+next.title,detail:next.detail,identifier:"projectTodayRecommendation")
+            projectNextAction(next,project:project)
+            HomeDetailButton(title:"전체 과제 · 조건과 훈련 경로",expanded:$showTasks,identifier:"projectAllTasks")
+            if showTasks {
             taskRow("관련 능력 훈련",value:progress.trainingKeys.count,total:progress.task?.trainingGoal ?? 3,unit:"회")
             taskRow("평균75점 이상 훈련",value:progress.qualitySessions,total:progress.task?.qualityGoal ?? 2,unit:"회")
             if let task=progress.task,task.goal>0 {taskRow(task.metric.label,value:task.value,total:task.goal,unit:task.metric.unit)}
@@ -2179,9 +2186,22 @@ struct CareerProjectPanel:View {
                 NavigationLink {PositionTrainingView(player:player,calendar:calendar,initialPosition:project.assignment?.position.flatMap(FieldPosition.init(rawValue:)))} label: {Text("시작 포지션 "+(project.assignment?.position ?? "")+" 숙련 훈련")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("projectPositionAction")
             }
             Text("훈련 종류: "+project.training.label+" / 경기 수준: "+project.level+". 연습 모드·인증 평가전·미완료 경기·다른 수준 경기는 제외합니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            }
             ForEach((owner.developmentReviews ?? []).filter {$0.projectID == project.id}) {review in
                 Text("관찰 확정 "+review.date+" · 훈련 \(review.progress.trainingKeys.count)/\(review.progress.task?.trainingGoal ?? 3) · 우수 \(review.progress.qualitySessions)/\(review.progress.task?.qualityGoal ?? 2) · 표본 \(review.progress.sample)/\(project.requiredSample)").font(.subheadline).accessibilityIdentifier("projectFrozenReview")
             }
+        }
+    }
+    @ViewBuilder private func projectNextAction(_ action:CareerProjectNextAction,project:CareerDevelopmentProject) -> some View {
+        switch action {
+        case .training:
+            NavigationLink {CareerTrainingView(player:player,calendar:calendar,initialKind:project.training)} label: {Text(project.training.label+" · 준비/이어하기")}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("projectTodayAction")
+        case .position:
+            NavigationLink {PositionTrainingView(player:player,calendar:calendar,initialPosition:project.assignment?.position.flatMap(FieldPosition.init(rawValue:)))} label: {Text("포지션 훈련 준비")}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("projectTodayAction")
+        case .officialGame,.nextDay:
+            NavigationLink {ObservationScheduleView(player:player,calendar:calendar)} label: {Text("공식 경기 · 저장 진행 확인")}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("projectTodayAction")
+        case .report:
+            NavigationLink {OverseasScoutingReportView(player:player,calendar:calendar)} label: {Text("고정 관찰 보고서 확인")}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("projectTodayAction")
         }
     }
     private func datePlate(_ title:String,date:String) -> some View {
@@ -2280,6 +2300,7 @@ struct CareerProjectReportEvidence:View {
                     ForEach(report.evidence) {evidence in
                         Text(evidence.date+" · "+evidence.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reportGoalSpecialEvidence")
                         Text(String(format:"점수 %.1f · 실제 훈련 성장 +%.1f",evidence.score,evidence.growth)).font(.caption)
+                        CareerEvidenceTag(kind:evidence.kind == .training ? .training:.diagnostic)
                     }
                     Text("특별 훈련은 기존 훈련 기록,평가전은 별도 진단 자료입니다. 공식 표본/인증 자격·H/P/F 보너스를 추가하지 않습니다.").font(.caption)
                 }
@@ -2347,6 +2368,7 @@ struct GoalSpecialActivitiesView:View {
     }
     @ViewBuilder private func trainingPanel(club:CareerTargetClub,live:ScoutingObservation) -> some View {
         GamePanel(title:"SPECIAL DRILL · 부족 능력 보완",onBoard:true,contentSpacing:12) {
+            CareerEvidenceTag(kind:.training)
             if let recommendation=GoalSpecialRecommendation.make(club:club,abilities:live.abilities) {
                 Text(recommendation.reason).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("specialTrainingRecommendation")
                 Text(String(format:"현재 %.1f · 기존 5회 미니게임 / 완료 피로 +6",recommendation.current)).font(.caption)
@@ -2362,6 +2384,7 @@ struct GoalSpecialActivitiesView:View {
     }
     @ViewBuilder private func assessmentPanel(owner:CareerContractJournal,club:CareerTargetClub) -> some View {
         GamePanel(title:"SCOUT TEST · 목표 수준 평가전",onBoard:true,contentSpacing:12) {
+            CareerEvidenceTag(kind:.diagnostic)
             Text("실제 능력·보유 구종·시작 피로를 고정한 2경기 진단입니다. 자동 또는 직접 조작을 선택하고 시작 후에는 방식을 재추첨하지 않습니다.").font(.subheadline)
             Text("완료 시 오늘 행동 소비 · 피로 +8 · 능력/XP·공식 성적·무소속 인증 자격 지급 없음").font(.caption).foregroundStyle(GameTheme.gold)
             if let assessment {
@@ -2626,6 +2649,9 @@ struct ClubSeasonGoalsScreen:View {
                             .font(.title3.bold()).foregroundStyle(goal.result != nil ? GameTheme.growth:GameTheme.gold).accessibilityIdentifier("clubSeasonGoalStatus")
                         Text(ManagementDisplay.date(goal.started)+" 확정 · 예정 개인 \(goal.appearances)경기").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                         if let result=progress[goal.id] {
+                            let met=zip(goal.targets,result.values).filter {$0.1 >= $0.0.target}.count
+                            CareerManagementNote(title:"목표 진척 · \(met)/\(goal.targets.count) 조건 충족",
+                                detail:"완료 개인 경기 \(result.matchKeys.count)개 · "+(goal.result == nil ? "현재까지 진척":"결산 당시 고정 진척")+". 출전 기회 부족과 성과 미달은 구단 시즌 평가의 당시 근거로 따로 확인합니다.",identifier:"seasonGoalProgressSummary")
                             ForEach(Array(goal.targets.enumerated()),id:\.offset) {index,target in
                                 targetCard(target,value:result.values[index])
                             }
@@ -2828,6 +2854,7 @@ struct ClubSeasonReviewScreen:View {
                             if let basis=review.basis {
                                 Text("근거 보고서 · "+ManagementDisplay.date(basis.date)).font(.subheadline.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("clubReviewReportBasis")
                             }
+                            CareerManagementNote(title:"진척 · 표본 · 다음 역할은 별도 판단",detail:"목표 달성은 아래 결산 진척, 기회/표본은 당시 기용 근거, 기량·경쟁은 저장된 평가를 읽습니다. 다음 역할 의견은 실제 기용·계약 확정이 아닙니다.",identifier:"seasonReviewInterpretation")
                             ClubParticipationFeedbackPanel(player:player,calendar:calendar,feedback:ClubParticipationFeedback.season(review,goal:goal),prefix:"seasonParticipation",showFinding:false,sampleScope:"시즌 표본은 해당 목표의 공식 개인 경기 합계입니다. 계약의 단일 환경 표본과 구분합니다.")
                             if ClubParticipationFeedback.season(review,goal:goal).finding != .opportunityLimited {
                                 NavigationLink {nextStep(review.advice)} label: {Text(nextLabel(review.advice))}.buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("clubReviewNextAction")
@@ -2904,6 +2931,10 @@ struct ClubSelectionHomePanel: View {
     @State private var review: ClubSelectionReview?
     @State private var failure: String?
     @State private var frozen = false
+    @State private var emptyReason:String?
+    #if DEBUG
+    @State private var injectedFailure=false
+    #endif
     var body: some View {
         VStack(alignment:.leading,spacing:12) {
             if let review {
@@ -2924,19 +2955,31 @@ struct ClubSelectionHomePanel: View {
                 }
             } else if let failure {
                 Text("기용 자료 확인 필요 · "+failure).font(.subheadline).accessibilityIdentifier("clubSelectionError")
-                Button("기용 자료 다시 확인") {load()}.buttonStyle(MatchPixelButtonStyle())
+                Button("기용 자료 다시 확인") {load()}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("retryClubSelection")
+            } else if let emptyReason {
+                GamePanel(title:"LINEUP · 기용 자료 대기",onBoard:true) {
+                    Text(emptyReason).font(.subheadline).accessibilityIdentifier("clubSelectionWaiting")
+                    Text("자료 없음은 벤치 판정이나 조회 실패가 아닙니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    Button("기용 자료 다시 확인") {load()}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("retryClubSelection")
+                }
             }
         }.task(id:"\(player.id)-\(player.gameDate)-\(calendar.revision)") {load()}
     }
     private func load() {
         do {
-            frozen=false
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-v55-selection-detail-failure"),!injectedFailure {
+                injectedFailure=true;throw MatchError.invalidRecord
+            }
+            #endif
+            frozen=false;emptyReason=nil
             if let fixture=try calendar.fixtures(for:player,year:GameDate(player.gameDate).year).first(where:{$0.date.description == player.gameDate}),
                let record=try CareerMatchStore.record(player:player,fixture:fixture,in:context) {
                 review=try record.snapshot().clubSelection?.review;frozen=true
             } else {review=try ClubSelectionStore.projection(player:player,calendar:calendar,in:context)}
+            if review == nil {emptyReason=frozen ? "이 경기에는 기용 평가가 저장되지 않았습니다. 당시 경기를 다시 평가하지 않습니다.":"현재 경로의 주간 기용 평가가 없습니다. 입단/시즌·다음 평가일을 확인하세요."}
             failure=nil
-        } catch {review=nil;failure=error.localizedDescription}
+        } catch {review=nil;emptyReason=nil;failure=error.localizedDescription}
     }
 }
 struct ClubSelectionScreen: View {
@@ -2956,6 +2999,8 @@ struct ClubSelectionScreen: View {
                     Text(review.reason).font(.subheadline)
                     Text(review.nextReview <= player.gameDate ? "오프시즌 · 다음 개막 후 평가":"다음 평가 "+ManagementDisplay.date(review.nextReview)).font(.subheadline.monospacedDigit())
                 }
+                CareerManagementNote(title:frozen ? "경기 시작 때 고정된 기용":"주간 평가일에 고정된 기용",
+                    detail:"기용 근거일 "+ManagementDisplay.date(review.date)+" · NPC 성과 집계는 "+(review.rivalEvidence.map {ManagementDisplay.date($0.through)} ?? "당시 자료 미기록")+". 시작한 경기의 능력·성과·피로는 현재 조회로 다시 적용하지 않습니다.",identifier:"selectionEvidenceClock")
                 ClubCoachPanel(player:player,calendar:calendar,review:review)
                 let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:14)):AnyLayout(HStackLayout(alignment:.top,spacing:12))
                 layout {

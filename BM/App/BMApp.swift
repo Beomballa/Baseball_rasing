@@ -583,6 +583,8 @@ struct SaveProtectionView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("bm-haptics-enabled") private var haptics = true
     @State private var document: SaveBackupDocument?
+    @State private var exportBytes:Int?
+    @Query private var archivePlayers:[CareerPlayer]
     @State private var exporting=false
     @State private var importing=false
     @State private var prepared: PreparedSave?
@@ -597,12 +599,24 @@ struct SaveProtectionView: View {
                         Text("화면 읽기와 동작 줄이기는 iPhone의 손쉬운 사용 설정을 따릅니다. 배경음·효과음은 아직 제공하지 않습니다.").managementFont(.body)
                     }
                     ManagementPanel("저장 내보내기") {
+                        if protection?.recoveryOnly == true {
+                            Text("현재 저장 열기 실패 · 선수 수 확인 필요").managementFont(.label).accessibilityIdentifier("saveCareerCountsUnavailable")
+                        } else {
+                            Text("진행 중 \(archivePlayers.filter {!$0.isRetired}.count)명 · 은퇴 보관 \(archivePlayers.filter(\.isRetired).count)명")
+                                .managementFont(.label).accessibilityIdentifier("saveCareerCounts")
+                        }
                         Text("모든 선수·날짜·능력치·고정 보고서·진행 중인 경기와 훈련을 함께 보관합니다. 파일에는 선수 이름과 기록이 포함됩니다. 외부 서버로 자동 전송하지 않습니다.").managementFont(.body)
                         Button("백업 파일 만들기") {
                             do { guard let protection, !protection.recoveryOnly else { throw SaveProtectionError.unavailable }
-                                document=SaveBackupDocument(data: try SaveArchiveStore.export(container: protection.container)); exporting=true
+                                let data=try SaveArchiveStore.export(container:protection.container)
+                                document=SaveBackupDocument(data:data);exportBytes=data.count;exporting=true
                             } catch { message=error.localizedDescription }
                         }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("exportSave").disabled(protection?.recoveryOnly == true)
+                        if let exportBytes {
+                            Text("이번에 만든 백업 파일 · "+ByteCountFormatter.string(fromByteCount:Int64(exportBytes),countStyle:.file))
+                                .managementFont(.body).accessibilityIdentifier("saveExportSize")
+                        } else {Text("백업 용량은 파일 생성 후 실제 바이트 수로 표시합니다. 크기를 미리 추정하거나 자동으로 내보내지 않습니다.").managementFont(.helper).accessibilityIdentifier("saveSizePending")}
+                        Text("은퇴 기록은 자동 삭제하지 않습니다. 표시된 백업 파일 크기와 아래 DB 복원 상한은 서로 다른 값입니다.").managementFont(.helper)
                     }
                     ManagementPanel("검증 후 전체 복원") {
                         Text("파일을 선택하면 별도 저장소에서 먼저 검증합니다. 확정하면 현재 커리어 전체가 백업 시점으로 돌아갑니다. 기록을 합치지 않으며 복원 전 저장은 기기에 보관합니다.").managementFont(.body)

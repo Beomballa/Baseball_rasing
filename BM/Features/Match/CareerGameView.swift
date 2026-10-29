@@ -1151,7 +1151,7 @@ struct MatchPlanOutcomePanel:View {
     var body:some View {
         GamePanel(title:"GAME PLAN · 수행 결과",onBoard:true,contentSpacing:12) {
             Text(preparation.choice.label+" · "+outcome.label).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gamePlanOutcome")
-            Text(preparation.choice.criteria).font(.caption)
+            CareerManagementNote(title:"이번 계획의 측정 행동 · "+preparation.choice.primaryMeasure,detail:preparation.choice.criteria,identifier:"gamePlanMeasureResult")
             ForEach(Array(outcome.checks.enumerated()),id:\.offset) {_,check in
                 Text(check.detail+" · "+(check.met ? "충족":"미달")).font(.subheadline)
             }
@@ -1448,6 +1448,7 @@ struct MatchOpponentCenter:View {
             }
             GamePanel(title:locked ? "고정된 경기 계획":"내 경기 계획",onBoard:true,contentSpacing:14) {
                 Text("추천 · "+analysis.recommended(role:ownRole).label).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                if let choice {CareerManagementNote(title:"이번에 먼저 볼 행동 · "+choice.primaryMeasure,detail:"최종 판단은 최소 표본과 전체 조건을 함께 확인합니다. AI 전술 변경이나 선택 보너스가 아닙니다.",identifier:"gamePlanPrimaryMeasure")}
                 ForEach(MatchPlanChoice.choices(ownRole)) {plan in
                     Button {if !locked {choice=plan}} label: {
                         HStack(spacing:10) {

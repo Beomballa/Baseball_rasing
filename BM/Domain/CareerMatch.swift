@@ -721,6 +721,7 @@ enum MatchPlanChoice:String,Codable,CaseIterable,Identifiable {
     case .innings:"삼진만 노리기보다 정확한 투구로 투구 수와 실점을 관리하세요."
     }}
     static func choices(_ role:String) -> [Self] {role == "batter" ? [.onBase,.contact,.power]:[.control,.strikeout,.innings]}
+    var primaryMeasure:String {criteria.components(separatedBy:" · ").last?.components(separatedBy:" / ").first ?? criteria}
     var criteria:String {switch self {
     case .onBase:"3타석 이상 · 안타+볼넷1개 이상 / 삼진1개 이하"
     case .contact:"3타석 이상 · 안타1개 이상 / 삼진0개"

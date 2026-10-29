@@ -6323,3 +6323,43 @@ extension CareerCalendarTests {
         XCTAssertFalse(c.hasChanges)
     }
 }
+
+extension CareerCalendarTests {
+    func testV55ProjectRecommendationUsesSavedCountersAndNeverCreatesProgressBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (db,p,s)=try goalSpecialFixture(role),c=db.mainContext
+            try OverseasContractStore.startProject(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),raw=row.payload
+            let project=try XCTUnwrap(ContractRegistrationStore.journal(player:p,calendar:s,in:c).developmentProjects?.last)
+            let progress=try CareerProjectStore.progress(project,player:p,on:p.gameDate,in:c)
+            let date=p.gameDate,fatigue=p.fatigue,revision=s.revision
+            XCTAssertEqual(CareerProjectNextAction.make(project:project,progress:progress,on:date,actionUsed:false),.training)
+            XCTAssertEqual(CareerProjectNextAction.make(project:project,progress:progress,on:date,actionUsed:true),.nextDay)
+            XCTAssertEqual(CareerProjectNextAction.make(project:project,progress:progress,on:try GameDate(project.end).adding(days:1).description,actionUsed:false),.report)
+            let required=project.requiredSample
+            var remaining=CareerProjectProgress(matchKeys:[],trainingKeys:(0..<3).map(String.init),qualitySessions:2,sample:0,growth:0,requiredSample:required)
+            remaining.task=CareerProjectTaskProgress(metric:.position,value:0,goal:2,keys:[],trainingGoal:3,qualityGoal:2)
+            XCTAssertEqual(CareerProjectNextAction.make(project:project,progress:remaining,on:date,actionUsed:false),.position)
+            remaining.task=CareerProjectTaskProgress(metric:.position,value:2,goal:2,keys:[],trainingGoal:3,qualityGoal:2)
+            XCTAssertEqual(CareerProjectNextAction.make(project:project,progress:remaining,on:date,actionUsed:false),required>0 ? .officialGame:.report)
+            let complete=CareerProjectProgress(matchKeys:[],trainingKeys:(0..<3).map(String.init),qualitySessions:2,sample:required,growth:0,requiredSample:required)
+            XCTAssertEqual(CareerProjectNextAction.make(project:project,progress:complete,on:date,actionUsed:true),.report)
+            XCTAssertEqual(row.payload,raw);XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.revision,revision);XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testV55PlanFocusPreservesAllExistingThresholdsAndOutcomeBytes() throws {
+        for role in PlayerRole.allCases {
+            var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? "SS":"P",values:PlayerArchetype.initial(for:role).values,seed:101,home:true,tracked:true)
+            let roster=MatchNPCFielders.make(year:2030,competition:"highschool",homeID:"home",awayID:"away")
+            for choice in MatchPlanChoice.choices(role.rawValue) {
+                match.preparation=MatchPreparation(version:1,fixtureID:"focus",choice:choice,analysis:MatchOppositionAnalysis.make(roster:roster,isHome:true))
+                match.completed=true;match.line.plateAppearances=3;match.line.pitchingOuts=18
+                let before=try JSONEncoder().encode(match),outcome=try XCTUnwrap(MatchPlanOutcome.make(match:match))
+                XCTAssertFalse(choice.primaryMeasure.isEmpty);XCTAssertTrue(choice.criteria.contains(choice.primaryMeasure))
+                XCTAssertFalse(choice.primaryMeasure.contains(" / "));XCTAssertEqual(outcome.checks.count,2)
+                let after=try JSONEncoder().encode(match)
+                XCTAssertEqual(try JSONSerialization.jsonObject(with:before) as? NSDictionary,try JSONSerialization.jsonObject(with:after) as? NSDictionary)
+            }
+        }
+    }
+}
