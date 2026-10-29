@@ -20,6 +20,8 @@ struct CareerRestConfirmation: View {
     @State private var recovering = false
     @State private var recoveryTask: Task<Void, Never>?
     @State private var displayFatigue = 0.0
+    @State private var scheduleRetry = 0
+    private var scheduleStatus: CalendarScheduleStatus { CalendarScheduleStatus(player: player, state: state) }
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -41,6 +43,10 @@ struct CareerRestConfirmation: View {
                         ProgressView(value: completed ? displayFatigue : Double(player.fatigue), total: 100).tint(Color(hex: 0x237459))
                             .accessibilityLabel("피로").accessibilityValue("\(player.fatigue) / 100")
                         Text("휴식 최대 −\(DailyRecovery.rest) · 다음 날 수면 −\(DailyRecovery.sleep)은 별도").managementFont(.helper)
+                        if let error = scheduleStatus.errorMessage, !completed {
+                            Text("일정 확인 전에는 휴식할 수 없습니다. " + error).managementFont(.body).accessibilityIdentifier("restScheduleError")
+                            Button("일정 다시 확인") { scheduleRetry += 1 }.frame(minHeight: 44).id(scheduleRetry)
+                        }
                         if pending && !completed { Text("진행 중인 훈련을 먼저 마쳐 주세요.").managementFont(.body).accessibilityIdentifier("restPendingGate") }
                         else if used && !completed { Text("오늘 행동을 이미 사용했습니다.").managementFont(.body).accessibilityIdentifier("restActionGate") }
                         if let failure { Text(failure).managementFont(.body).foregroundStyle(Color(hex: 0x8b431b)).accessibilityIdentifier("restError") }
@@ -90,5 +96,28 @@ struct CareerRestConfirmation: View {
                 }
             }
         } catch { failure = error.localizedDescription }
+    }
+}
+
+
+// Read-only route selection; commands remain in their existing destination screens.
+enum GameLobbyAction: Equatable {
+    case unavailable, schedule, training, season, game(String)
+    var title: String {
+        switch self {
+        case .unavailable: "일정 다시 확인"
+        case .schedule: "다음 일정 확인"
+        case .training: "훈련 이어하기"
+        case .season: "시즌 결산 확인"
+        case .game(let title): title
+        }
+    }
+    static func resolve(scheduleAvailable: Bool, trainingPending: Bool, seasonComplete: Bool,
+                        fixture: SeasonFixture?, saved: CalendarSavedMatch, entry: String) -> Self {
+        guard scheduleAvailable else { return .unavailable }
+        if trainingPending { return .training }
+        if case .playing = saved { return .game(entry) }
+        if seasonComplete { return .season }
+        return fixture == nil ? .schedule : .game(entry)
     }
 }

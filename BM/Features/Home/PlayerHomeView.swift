@@ -113,7 +113,7 @@ struct PlayerHomeView: View {
                 }
             }.accessibilityIdentifier("gameLobbyScroll")
             VStack(spacing: 8) {
-                Button("경기 준비") { chooseFacility("facility-game") }.buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("roomPrimary").padding(.horizontal, 12)
+                Button(gameLobbyAction.title, action: openGameLobbyAction).buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("roomPrimary").padding(.horizontal, 12)
                 ManagementTabBar(selection: $selectedTab)
             }
                 .padding(.top, 8).background(ManagementTheme.Spatial.canvas).dynamicTypeSize(...DynamicTypeSize.accessibility1)
@@ -125,23 +125,54 @@ struct PlayerHomeView: View {
                                 used: calendar?.hasAction(on: player.gameDate) == true,
                                 pending: todayTraining?.completed == false) { roomDetail = .profile }
     }
+    private var gameLobbyDay: CalendarDayPresentation? {
+        guard let calendar else { return nil }
+        let fixture = CalendarScheduleStatus(player: player, state: calendar).schedule?.today
+        let saved = fixture.flatMap { f in gameRecords.first { $0.playerID == player.id && $0.fixtureID == f.id } }
+        return CalendarDayPresentation(role: player.role, fixture: fixture, saved: CalendarSavedMatch.read(saved),
+            starter: clubSelection?.isStarter, selectionFailed: clubSelectionFailure != nil,
+            actionUsed: calendar.hasAction(on: player.gameDate), trainingPending: todayTraining?.completed == false)
+    }
+    private var gameLobbyAction: GameLobbyAction {
+        guard let calendar else { return .unavailable }
+        let status = CalendarScheduleStatus(player: player, state: calendar)
+        let saved = status.schedule?.today.flatMap { f in gameRecords.first { $0.playerID == player.id && $0.fixtureID == f.id } }
+        let finished = (try? GameDate(player.gameDate).year).flatMap { year in
+            try? AnnualLeagueStore.snapshot(player: player, state: calendar, year: year, records: gameRecords).isComplete
+        } ?? false
+        return GameLobbyAction.resolve(scheduleAvailable: status.schedule != nil, trainingPending: todayTraining?.completed == false,
+            seasonComplete: finished, fixture: status.schedule?.today, saved: CalendarSavedMatch.read(saved),
+            entry: gameLobbyDay?.entry ?? "다음 일정 확인")
+    }
+    private func openGameLobbyAction() {
+        switch gameLobbyAction {
+        case .unavailable, .schedule: showCalendar = true
+        case .training: chooseFacility("facility-training")
+        case .season: chooseFacility("facility-standings")
+        case .game: chooseFacility("facility-game")
+        }
+    }
     private var gameLobbyBoard: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let calendar {
                 let status = CalendarScheduleStatus(player: player, state: calendar)
                 if let error = status.errorMessage {
+                    Text("일정 확인 필요").font(ManagementPixelFont.readable(.label))
                     Text(error).managementFont(.body).accessibilityIdentifier("gameLobbyScheduleError")
                 } else if let fixture = status.schedule?.today {
-                    Text("오늘 경기 · \(fixture.number)/30차전").font(ManagementPixelFont.readable(.label))
-                    Text(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools))
-                        .managementFont(.body).accessibilityIdentifier("gameLobbyOpponent")
-                    Text(clubSelectionFailure != nil ? "기용 조회 확인 필요" : clubSelection?.isStarter == false ? "벤치 · 팀 경기" : fixture.isAppearance(for: player.role) ? "기본 출전 차례 · 기용 확인" : "선발 순번 휴식 · 팀 경기")
-                        .managementFont(.label)
+                    Text("\(fixture.number)/30차전 · 오늘").font(ManagementPixelFont.readable(.label))
+                    if let team = try? calendar.teamID(for: player, on: fixture.date) {
+                        Text(CareerTeamDirectory.name(fixture.opponent(of: team), schools: schools)).managementFont(.body)
+                            .accessibilityIdentifier("gameLobbyOpponent")
+                    } else { Text("소속 확인 필요").managementFont(.body) }
+                    if let day = gameLobbyDay {
+                        Text(day.participation).managementFont(.body)
+                    }
                 } else {
-                    Text("오늘은 비경기일").font(ManagementPixelFont.readable(.label))
-                    Text("일정에서 다음 경기를 확인하세요.").managementFont(.body)
+                    Text(gameLobbyAction == .season ? "시즌 경기 완료" : "오늘은 비경기일").font(ManagementPixelFont.readable(.label))
+                    Text(gameLobbyAction == .season ? "최종 순위와 내 시즌 성적을 확인하세요." : "일정에서 다음 경기를 확인하세요.").managementFont(.body)
                 }
-            }
+            } else { Text("일정 자료 확인 필요").managementFont(.body) }
             Text("피로 \(player.fatigue) / 100 · \(ManagementDisplay.fatigueLabel(player.fatigue))").managementFont(.label)
         }.foregroundStyle(GameTheme.navy).frame(maxWidth: .infinity, alignment: .leading)
     }

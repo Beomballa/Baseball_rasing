@@ -2257,3 +2257,26 @@ extension ManagementDetailFlowTests {
         XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); close(app)
     }
 }
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV68GamePreparationRoutesAndReturnKeepStateBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app)
+            app.buttons["managementTab-game"].tap()
+            XCTAssertEqual(app.buttons["roomPrimary"].label, "오늘 경기 준비")
+            capture(app, pitcher ? "v68-pitcher-game" : "v68-batter-game")
+            app.buttons["roomPrimary"].tap()
+            XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); close(app)
+            XCTAssertTrue(app.buttons["roomPrimary"].waitForExistence(timeout: 8))
+            let analysis = app.buttons["facility-analysis"]; v60Reveal(analysis, app); analysis.tap()
+            XCTAssertTrue(app.buttons["gameSection-analysis"].waitForExistence(timeout: 8)); close(app)
+            let records = app.buttons["facility-gameRecords"]; v60Reveal(records, app); records.tap()
+            XCTAssertTrue(app.buttons["gameSection-records"].waitForExistence(timeout: 8)); close(app)
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
+        }
+    }
+}

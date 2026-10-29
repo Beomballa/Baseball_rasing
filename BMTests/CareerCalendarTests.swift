@@ -6363,3 +6363,22 @@ extension CareerCalendarTests {
         }
     }
 }
+
+
+extension CareerCalendarTests {
+    func testV68LobbyRoutesKeepExistingStatePriority() throws {
+        let fixture = SeasonFixture(number: 1, date: try GameDate("2026-04-01"), homeID: "a", awayID: "b")
+        func action(_ available: Bool = true, _ training: Bool = false, _ season: Bool = false,
+                    _ today: SeasonFixture? = nil, _ saved: CalendarSavedMatch = .none, _ title: String = "오늘") -> GameLobbyAction {
+            GameLobbyAction.resolve(scheduleAvailable: available, trainingPending: training, seasonComplete: season, fixture: today, saved: saved, entry: title)
+        }
+        XCTAssertEqual(action(false, true, true), .unavailable)
+        XCTAssertEqual(action(true, true, false, fixture), .training)
+        XCTAssertEqual(action(), .schedule)
+        XCTAssertEqual(action(true, false, false, fixture, .none, "오늘 경기 준비"), .game("오늘 경기 준비"))
+        XCTAssertEqual(action(true, false, true, fixture, .playing(true), "경기 이어하기"), .game("경기 이어하기"))
+        XCTAssertEqual(action(true, false, false, fixture, .completed(true), "경기 결과 보기"), .game("경기 결과 보기"))
+        XCTAssertEqual(action(true, false, false, fixture, .invalid, "경기 기록 확인"), .game("경기 기록 확인"))
+        XCTAssertEqual(action(true, false, true), .season)
+    }
+}
