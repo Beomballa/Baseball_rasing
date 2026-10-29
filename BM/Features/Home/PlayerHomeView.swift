@@ -73,11 +73,90 @@ struct PlayerHomeView: View {
     @State private var roomCalendarLines = ["자료", "없음"]
     @State private var roomGrowthLines = ["기록 없음"]
     @State private var roomContractLines = ["자료 확인"]
+    private var gameLobby: some View {
+        VStack(spacing: 0) {
+            if !typeSize.isAccessibilitySize { gameLobbyHeader }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if typeSize.isAccessibilitySize { gameLobbyHeader }
+                    let toolbarLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout())
+                    toolbarLayout {
+                        Button("‹ 홈") { selectedTab = .home }.frame(minHeight: 44)
+                        Spacer()
+                        Text("경기 준비").font(ManagementPixelFont.readable(.sectionTitle))
+                        Spacer()
+                        Button("설정") { showSettings = true }.frame(minHeight: 44)
+                    }.padding(.horizontal, 16)
+                    if typeSize.isAccessibilitySize {
+                        Image("GameDugoutV67").resizable().interpolation(.none).scaledToFit().accessibilityHidden(true)
+                        gameLobbyBoard.padding(16).background(GameTheme.boardInk)
+                    } else {
+                        ZStack {
+                            Image("GameDugoutV67").resizable().interpolation(.none).scaledToFit().accessibilityHidden(true)
+                            GeometryReader { g in
+                                gameLobbyBoard.frame(width: g.size.width * 0.43)
+                                    .position(x: g.size.width * 0.665, y: g.size.height * 0.35)
+                            }
+                        }
+                    }
+                    VStack(spacing: 8) {
+                        let linksLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+                        linksLayout {
+                            lobbyLink("상대 분석", id: "facility-analysis")
+                            lobbyLink("일정", id: "facility-calendar")
+                        }
+                        linksLayout {
+                            lobbyLink("기록", id: "facility-gameRecords")
+                            lobbyLink("순위", id: "facility-standings")
+                        }
+                    }.padding(16)
+                }
+            }.accessibilityIdentifier("gameLobbyScroll")
+            VStack(spacing: 8) {
+                Button("경기 준비") { chooseFacility("facility-game") }.buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("roomPrimary").padding(.horizontal, 12)
+                ManagementTabBar(selection: $selectedTab)
+            }
+                .padding(.top, 8).background(ManagementTheme.Spatial.canvas).dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        }.background(ManagementTheme.Spatial.canvas).foregroundStyle(GameTheme.boardInk)
+            .toolbar(.hidden, for: .navigationBar).preferredColorScheme(.dark)
+    }
+    private var gameLobbyHeader: some View {
+        ManagementSpatialHeader(player: player, affiliation: affiliationLabel, age: age,
+                                used: calendar?.hasAction(on: player.gameDate) == true,
+                                pending: todayTraining?.completed == false) { roomDetail = .profile }
+    }
+    private var gameLobbyBoard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let calendar {
+                let status = CalendarScheduleStatus(player: player, state: calendar)
+                if let error = status.errorMessage {
+                    Text(error).managementFont(.body).accessibilityIdentifier("gameLobbyScheduleError")
+                } else if let fixture = status.schedule?.today {
+                    Text("오늘 경기 · \(fixture.number)/30차전").font(ManagementPixelFont.readable(.label))
+                    Text(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools))
+                        .managementFont(.body).accessibilityIdentifier("gameLobbyOpponent")
+                    Text(clubSelectionFailure != nil ? "기용 조회 확인 필요" : clubSelection?.isStarter == false ? "벤치 · 팀 경기" : fixture.isAppearance(for: player.role) ? "기본 출전 차례 · 기용 확인" : "선발 순번 휴식 · 팀 경기")
+                        .managementFont(.label)
+                } else {
+                    Text("오늘은 비경기일").font(ManagementPixelFont.readable(.label))
+                    Text("일정에서 다음 경기를 확인하세요.").managementFont(.body)
+                }
+            }
+            Text("피로 \(player.fatigue) / 100 · \(ManagementDisplay.fatigueLabel(player.fatigue))").managementFont(.label)
+        }.foregroundStyle(GameTheme.navy).frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func lobbyLink(_ title: String, id: String) -> some View {
+        Button { chooseFacility(id) } label: {
+            HStack { Text(title); Spacer(); Text("›") }.frame(minHeight: 44)
+        }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier(id)
+    }
     private var roomRefreshKey: String {
         "\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)-\(roomReports.first(where: { $0.playerID == player.id })?.payload.hashValue ?? 0)"
     }
     var body: some View {
-        ManagementSpatialRoom(asset: roomAsset, title: roomTitle, facilities: roomFacilities,
+        Group {
+        if selectedTab == .game { gameLobby }
+        else { ManagementSpatialRoom(asset: roomAsset, title: roomTitle, facilities: roomFacilities,
                               selection: $selectedTab, choose: chooseFacility, home: { selectedTab = .home }) {
             ManagementSpatialHeader(player: player, affiliation: affiliationLabel, age: age,
                                     used: calendar?.hasAction(on: player.gameDate) == true,
@@ -90,6 +169,8 @@ struct PlayerHomeView: View {
             }
         } action: { roomAction }
         .spatialAbilities(HomeAbilitySummary(player: player, abilities: abilities).originals)
+        }
+        }
         .task(id: "selection-\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)") {
             refreshSelection()
         }
@@ -143,7 +224,7 @@ struct PlayerHomeView: View {
             }
         }
         .sheet(isPresented: $showRest) {
-            if let calendar { CareerRestConfirmation(player: player, state: calendar, revision: calendar.revision) }
+            if let calendar { CareerRestConfirmation(player: player, state: calendar, revision: calendar.revision, onContinue: { selectedTab = .game }) }
         }
             .onChange(of: player.id) { _, _ in roomDetail = nil; showOriginals = false; playerSection = .abilities; trainingSection = .abilities; gameSection = .schedule; careerSection = .observation; trainingKind = player.role == .pitcher ? .pitch : .contact }
             .onChange(of: recentRecords.map(MatchDisplaySnapshot.Token.init), initial: true) { _, _ in

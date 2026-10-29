@@ -2041,7 +2041,7 @@ extension ManagementDetailFlowTests {
     }
     @MainActor private func v60Reveal(_ element: XCUIElement, _ app: XCUIApplication) {
         for _ in 0..<14 {
-            let scroll = app.scrollViews["roomPropScroll"]
+            let scroll = app.scrollViews["roomPropScroll"].exists ? app.scrollViews["roomPropScroll"] : app.scrollViews["gameLobbyScroll"]
             guard scroll.exists else { return }
             if element.isHittable && element.frame.minY >= scroll.frame.minY + 44 && element.frame.maxY <= scroll.frame.maxY { return }
             if element.exists && element.frame.minY < scroll.frame.minY + 44 { scroll.swipeDown() } else { scroll.swipeUp() }
@@ -2213,5 +2213,47 @@ extension ManagementDetailFlowTests {
             XCTAssertFalse(app.staticTexts["homePlayerName"].exists)
             app.buttons["creationSection-information"].tap(); reveal(name, app); XCTAssertEqual(name.value as? String, "V66Draft")
         }
+    }
+}
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV67RestCompletionOnceAndGamePreparationBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            let rest = app.buttons["clubhouse-rest"]; v60Reveal(rest, app); rest.tap()
+            XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 8)); capture(app, "v67-" + role + "-rest-ready")
+            app.buttons["confirmRest"].tap()
+            XCTAssertTrue(app.staticTexts["restSaved"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["restFatigueForecast"].label.contains(pitcher ? "52 → 34" : "24 → 6")); capture(app, "v67-" + role + "-rest-complete")
+            app.buttons["restGoGame"].tap()
+            XCTAssertTrue(app.buttons["roomProfile"].waitForExistence(timeout: 8)); XCTAssertTrue(app.scrollViews["gameLobbyScroll"].exists)
+            let after = status(app); XCTAssertEqual(after[0], before[0]); XCTAssertEqual(after[2], "행동 0/1")
+            capture(app, "v67-" + role + "-game-preparation")
+            app.buttons["managementTab-home"].tap(); v60Reveal(rest, app); rest.tap()
+            XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 8)); XCTAssertFalse(app.buttons["confirmRest"].isEnabled)
+            app.buttons["취소 · 돌아가기"].tap(); XCTAssertEqual(status(app), after)
+        }
+    }
+}
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV67LargestTextRestAndGameControlsStayReachable() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30)); let before = status(app)
+        let rest = app.buttons["clubhouse-rest"]; revealLocationChoice(rest, app); rest.tap()
+        let confirm = app.buttons["confirmRest"]; XCTAssertTrue(confirm.waitForExistence(timeout: 8)); XCTAssertTrue(confirm.isHittable)
+        XCTAssertGreaterThanOrEqual(confirm.frame.height, 44); capture(app, "v67-large-rest")
+        confirm.tap(); XCTAssertTrue(app.staticTexts["restSaved"].waitForExistence(timeout: 10)); app.buttons["restGoGame"].tap()
+        XCTAssertTrue(app.buttons["roomPrimary"].waitForExistence(timeout: 8)); XCTAssertTrue(app.buttons["roomPrimary"].isHittable)
+        XCTAssertEqual(status(app)[0], before[0]); capture(app, "v67-large-game")
+        let analysis = app.buttons["facility-analysis"]; revealLocationChoice(analysis, app); analysis.tap()
+        XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); close(app)
     }
 }

@@ -70,6 +70,9 @@ ART_HASHES.update({'BM/Resources/MatchArt/batter-field-v52.png': 'eed2ed3029d972
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/ManagementPixelFontV59.dataset/Contents.json', 'BM/Resources/Assets.xcassets/ClubhouseRoomV59.imageset/Contents.json', 'BM/Resources/Assets.xcassets/LockerRoomV59.imageset/Contents.json', 'BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/Contents.json', 'BM/Resources/Assets.xcassets/ScoutRoomV59.imageset/Contents.json'})
 ART_HASHES.update({'BM/Resources/Assets.xcassets/ClubhouseRoomV59.imageset/room.png': 'af30b326fc4530bfcbf7ce91a7196dc4f6e991c6dabf90a5aa95a5536cc8f97d', 'BM/Resources/Assets.xcassets/LockerRoomV59.imageset/room.png': '866705e794460649530359412d71d3b7cfba08570139545b8bea18261fa78be3', 'BM/Resources/Assets.xcassets/ScoutRoomV59.imageset/room.png': 'a87c7544c89145456010d7d01d4be40b430e2fc8226a098a3d1399dee46c5a23', 'BM/Resources/Assets.xcassets/ManagementPixelFontV59.dataset/neodgm.ttf': '77305267996073aae07bad9313dad2e306a4128e55bfafbed4c41558fee57b4d', 'BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/OFL.txt': '4d3155f4caba9970c8b386064b398822c29d9181cfba07964ba7b07ccc6cca91'})
 
+EXACT_PATHS.update({'BM/Resources/Assets.xcassets/RestBenchV67.imageset/Contents.json', 'BM/Resources/Assets.xcassets/GameDugoutV67.imageset/Contents.json'})
+ART_HASHES.update({'BM/Resources/Assets.xcassets/RestBenchV67.imageset/room.png': 'ac353dcb72560a2a2a25bc399c743534c5ef0e1658ae797b7af8a8c49daf69f4', 'BM/Resources/Assets.xcassets/GameDugoutV67.imageset/room.png': '800cb87d289ab9b7bc6eb643be123d6c83dc0d5ef692b30aedb94b73f3dc43cd'})
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):
