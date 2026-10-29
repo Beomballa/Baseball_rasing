@@ -234,3 +234,14 @@
 !/BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/
 !/BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/OFL.txt
 !/BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/Contents.json
+
+# Reviewed room-only V62 generated game backgrounds.
+!/BM/Resources/Assets.xcassets/BattingRoomV62.imageset/
+!/BM/Resources/Assets.xcassets/BattingRoomV62.imageset/room.png
+!/BM/Resources/Assets.xcassets/BattingRoomV62.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/BullpenRoomV62.imageset/
+!/BM/Resources/Assets.xcassets/BullpenRoomV62.imageset/room.png
+!/BM/Resources/Assets.xcassets/BullpenRoomV62.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/StadiumRoomV62.imageset/
+!/BM/Resources/Assets.xcassets/StadiumRoomV62.imageset/room.png
+!/BM/Resources/Assets.xcassets/StadiumRoomV62.imageset/Contents.json

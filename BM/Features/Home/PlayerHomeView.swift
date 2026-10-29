@@ -245,8 +245,8 @@ struct PlayerHomeView: View {
         switch selectedTab {
         case .home: "ClubhouseRoomV59"
         case .player: "LockerRoomV59"
-        case .training: player.role == .batter ? "BattingRoomV2" : "BullpenRoomV2"
-        case .game: "StadiumRoomV2"
+        case .training: player.role == .batter ? "BattingRoomV62" : "BullpenRoomV62"
+        case .game: "StadiumRoomV62"
         case .career: "ScoutRoomV59"
         }
     }
@@ -279,21 +279,27 @@ struct PlayerHomeView: View {
                 .spatial("facility-records", "선수 수첩", "성장 · 최근 5경기 · 시즌", preview: [player.name, "#" + String(player.jerseyNumber)]),
                 .spatial("facility-positions", player.role == .batter ? "포지션 수첩" : "구종 수첩", player.role == .batter ? player.roleDetail : "보유 \(player.pitches.count)개 · 숙련도")]
         case .training:
+            let pitching = player.role == .pitcher
             return [
-                .attached("facility-training", player.role == .batter ? "타격 케이지" : "불펜 투구", todayTraining?.completed == false ? "진행 중 · 이어하기" : action,
-                          x: 0.48, y: 0.32, preview: [todayTraining?.completed == false ? "이어하기" : "능력 훈련"], recommended: true),
-                .attached("facility-physical", "피지컬", "주루·수비·멘탈 · 능력별 전용 훈련", x: 0.20, y: 0.64, preview: ["주루 · 수비 · 멘탈"]),
-                .attached("facility-traitTraining", "특성 일지", "조건 · 습득 진척", x: 0.80, y: 0.62, preview: ["조건 · 진척"]),
-                .attached("facility-positionTraining", player.role == .batter ? "포지션 수첩" : "구종 수첩", player.role == .batter ? "포지션 XP · 숙련" : "보유 \(player.pitches.count)개 · 숙련도",
-                          x: 0.80, y: 0.80, preview: [player.role == .batter ? "XP · 숙련" : "보유 \(player.pitches.count)개"]),
-                .attached("facility-practice", "자유 연습", "행동 · 피로 소모 없음 · 실제 성장 없음", x: 0.20, y: 0.83, preview: ["저장 성장 없음"])]
+                .object("facility-training", pitching ? "불펜 투구" : "타격 케이지", todayTraining?.completed == false ? "진행 중 · 이어하기" : action,
+                        x: 0.50, y: 0.213, width: pitching ? 0.26 : 0.35, recommended: true),
+                .object("facility-physical", "피지컬", "주루·수비·멘탈 · 능력별 전용 훈련", x: pitching ? 0.08 : 0.135, y: pitching ? 0.405 : 0.386, width: pitching ? 0.12 : 0.15, height: 0.09, kind: .roomChalk),
+                .object("facility-traitTraining", "특성", "특성 훈련 · 조건 · 습득 진척", x: 0.94, y: pitching ? 0.54 : 0.63, width: 0.10, height: 0.075),
+                .object("facility-positionTraining", pitching ? "구종" : "포지션", pitching ? "보유 \(player.pitches.count)개 · 숙련도" : "포지션 XP · 숙련",
+                        x: pitching ? 0.94 : 0.925, y: pitching ? 0.627 : 0.71, width: pitching ? 0.115 : 0.13, kind: .roomNote),
+                .object("facility-practice", "자유 연습", "행동 · 피로 소모 없음 · 실제 성장 없음", x: 0.18, y: pitching ? 0.735 : 0.73, width: 0.23)]
         case .game:
+            let status = calendar.map { CalendarScheduleStatus(player: player, state: $0) }
+            let fixture = status?.schedule?.today
             return [
-                .init(id: "facility-calendar", title: "경기 일정", status: ManagementDisplay.date(player.gameDate), x: 0.2, y: 0.25),
-                .init(id: "facility-analysis", title: "상대 분석", status: "투수 · 타선 · 계획", x: 0.8, y: 0.33),
-                .init(id: "facility-game", title: "경기 준비", status: clubSelectionFailure != nil ? "기용 조회 실패 · 재확인" : clubSelection?.isStarter == false ? "벤치 · 팀 경기" : "기용 · 경기 이어하기", x: 0.8, y: 0.65, recommended: true),
-                .init(id: "facility-gameRecords", title: "경기 기록", status: "최근 5경기 · 시즌", x: 0.2, y: 0.77),
-                .init(id: "facility-standings", title: "리그 순위", status: "연간 순위 · 결산", x: 0.8, y: 0.88)]
+                .object("facility-calendar", "경기 일정", ManagementDisplay.date(player.gameDate), x: 0.13, y: 0.365, width: 0.18, height: 0.10, kind: .roomNote,
+                        preview: [ManagementDisplay.date(player.gameDate)]),
+                .object("facility-analysis", "상대 분석", "상대 투수 · 타선 · 계획", x: 0.88, y: 0.325, width: 0.18),
+                .object("facility-game", "경기장 입구", clubSelectionFailure != nil ? "기용 조회 실패 · 재확인" : clubSelection?.isStarter == false ? "벤치 · 팀 경기" : "기용 · 경기 이어하기",
+                        x: 0.50, y: 0.133, width: 0.26, recommended: true),
+                .object("facility-gameRecords", "경기 기록", "최근 5경기 · 시즌", x: 0.145, y: 0.585, width: 0.22, kind: .roomNote,
+                        preview: [fixture.map { "오늘 \($0.number)/30" } ?? "최근 5경기"]),
+                .object("facility-standings", "리그 순위", "연간 순위 · 결산", x: 0.84, y: 0.624, width: 0.17, kind: .roomChalk)]
         case .career:
             return [
                 .spatial("facility-observation", "관찰 보고서", roomObservationLines.joined(separator: " · "), preview: roomObservationLines, recommended: true),
@@ -572,6 +578,9 @@ struct PlayerHomeView: View {
             .disabled(status.schedule == nil || calendar.hasAction(on: player.gameDate) && todayTraining == nil)
     }
     @ViewBuilder private func gameContent(_ section: ManagementGameSection) -> some View {
+        ManagementFileHeader(eyebrow: section == .analysis ? "DUGOUT / PLAN" : section == .records ? "SCOREBOOK" : section == .standings ? "LEAGUE TABLE" : "GAME DAY",
+                             title: section == .analysis ? "오늘 상대와 준비" : section == .records ? "내 경기 기록" : section == .standings ? "팀의 시즌 경쟁" : "오늘 경기 · 다음 일정",
+                             note: section == .records ? "완료된 내 경기와 시즌 합계" : section == .standings ? "팀 순위 · 개인 성적과 구분" : "입장 전 준비 · 진행 경기는 저장된 상태로 이어갑니다")
         ManagementSectionTabs(options: ManagementGameSection.allCases, selection: Binding(get: { section }, set: { gameSection = $0; roomDetail = .game($0) }), title: { $0.title }, identifier: "gameSection", horizontal: true)
         if let calendar {
             let status = CalendarScheduleStatus(player: player, state: calendar)

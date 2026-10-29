@@ -25,6 +25,8 @@ ART_HASHES = {'BM/Resources/MatchArt/opponent-avatar-v1.png': '7ce1e3b33f8d5a0ea
 
 # Individually reviewed normal and QA application artwork.
 ART_HASHES.update({'BM/Resources/Assets.xcassets/AppIconQA.appiconset/AppIconQA.png': 'd7268e9dbf30d216574638782d616042b5f309b307c7225f8d1a581983a28f0f', 'BM/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png': 'ce3f1f1922c8b384d6c2170c7390b169bf9711b3e41db029e94d4edd11f52703'})
+EXACT_PATHS.update({'BM/Resources/Assets.xcassets/BullpenRoomV62.imageset/Contents.json', 'BM/Resources/Assets.xcassets/StadiumRoomV62.imageset/Contents.json', 'BM/Resources/Assets.xcassets/BattingRoomV62.imageset/Contents.json'})
+ART_HASHES.update({'BM/Resources/Assets.xcassets/BattingRoomV62.imageset/room.png': 'f1b8c2c71036db244b7f88608dd5f15c683a24370e3a97617bc615c19ccfbca6', 'BM/Resources/Assets.xcassets/BullpenRoomV62.imageset/room.png': 'e49490d20636bc456bd7ad8e4557fb307c444e98a4cac7b4e4e140e942d8f1e3', 'BM/Resources/Assets.xcassets/StadiumRoomV62.imageset/room.png': '2b50995cf1ea5e3fe264ac9073a9ef5f24fe40e71f3d4152b87bf9a783ae9270'})
 
 # Reviewed management foundation assets; no other catalog files are allowed.
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/ClubhouseV1.imageset/Contents.json', 'BM/Resources/Assets.xcassets/NavCareerV1.imageset/Contents.json', 'BM/Resources/Assets.xcassets/NavGameV1.imageset/Contents.json', 'BM/Resources/Assets.xcassets/NavTrainingV1.imageset/Contents.json', 'BM/Resources/Assets.xcassets/NavPlayerV1.imageset/Contents.json', 'BM/Resources/Assets.xcassets/NavHomeV1.imageset/Contents.json'})

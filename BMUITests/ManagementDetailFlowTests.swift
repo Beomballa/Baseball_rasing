@@ -2092,3 +2092,29 @@ extension ManagementDetailFlowTests {
         }
     }
 }
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV62GameHubFilesRemainReadOnlyBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-game"].tap(); capture(app, "v62-" + role + "-stadium")
+            for (facility, section) in [("facility-calendar", "schedule"), ("facility-analysis", "analysis"), ("facility-gameRecords", "records"), ("facility-standings", "standings")] {
+                let button = app.buttons[facility]; v60Reveal(button, app); button.tap()
+                if facility == "facility-calendar" {
+                    XCTAssertTrue(app.scrollViews["calendarDetailScroll"].waitForExistence(timeout: 8))
+                    capture(app, "v62-" + role + "-" + section)
+                    app.buttons["닫기"].tap()
+                } else {
+                    XCTAssertTrue(app.buttons["gameSection-" + section].waitForExistence(timeout: 8))
+                    capture(app, "v62-" + role + "-" + section); close(app)
+                }
+            }
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
+        }
+    }
+}

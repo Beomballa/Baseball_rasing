@@ -31,7 +31,7 @@ struct ManagementFacility: Identifiable {
     var preview: [String] = []
 }
 
-enum ManagementPropKind { case sign, radar, notebook, document, day, calendar, facilityTag }
+enum ManagementPropKind { case sign, radar, notebook, document, day, calendar, roomSign, roomNote, roomChalk }
 
 struct ManagementPropPlacement {
     let x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat
@@ -41,6 +41,13 @@ struct ManagementPropPlacement {
     var bodyOffset = CGSize.zero
     var titleWidth: CGFloat = 0.22
     var bodyWidth: CGFloat = 0.20
+    func hitRect(in size: CGSize) -> CGRect {
+        let w = max(ManagementTheme.Control.hit, size.width * width)
+        let h = max(ManagementTheme.Control.hit, size.height * height)
+        let cx = min(size.width - w / 2, max(w / 2, size.width * x))
+        let cy = min(size.height - h / 2, max(h / 2, size.height * y))
+        return CGRect(x: cx - w / 2, y: cy - h / 2, width: w, height: h)
+    }
     static func at(_ id: String) -> Self {
         switch id {
         case "clubhouse-game": .init(x: 0.5, y: 0.095, width: 0.25, height: 0)
@@ -64,11 +71,11 @@ struct ManagementPropPlacement {
 }
 
 extension ManagementFacility {
-    static func attached(_ id: String, _ title: String, _ status: String, x: CGFloat, y: CGFloat, preview: [String], recommended: Bool = false) -> Self {
-        let prop = ManagementPropPlacement(x: x, y: y, width: 0.34, height: 0.10, kind: .facilityTag)
+    static func object(_ id: String, _ title: String, _ status: String, x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat = 0.06,
+                       kind: ManagementPropKind = .roomSign, preview: [String] = [], recommended: Bool = false) -> Self {
+        let prop = ManagementPropPlacement(x: x, y: y, width: width, height: height, kind: kind)
         return .init(id: id, title: title, status: status, x: x, y: y, recommended: recommended, prop: prop, preview: preview)
     }
-
     static func spatial(_ id: String, _ title: String, _ status: String, preview: [String] = [], recommended: Bool = false) -> Self {
         let prop = ManagementPropPlacement.at(id)
         return .init(id: id, title: title, status: status, x: prop.x, y: prop.y, recommended: recommended, prop: prop, preview: preview)
@@ -151,7 +158,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
     @ViewBuilder let action: Action
     @Environment(\.dynamicTypeSize) private var typeSize
     var propAbilities: [HomeAbilityValue] = []
-    private var usesProps: Bool { asset.hasSuffix("V59") || ["BattingRoomV2", "BullpenRoomV2"].contains(asset) }
+    private var usesProps: Bool { asset.hasSuffix("V59") || asset.hasSuffix("V62") }
 
     var body: some View {
         if usesProps { propRoom } else { legacyRoom }
@@ -255,16 +262,14 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                 if let p = facility.prop {
                     Button { choose(facility.id) } label: {
                         ZStack {
-                            if p.kind == .facilityTag {
-                                VStack(spacing: 0) {
-                                    Text(facility.title + " ›").font(ManagementPixelFont.font(14))
-                                        .foregroundStyle(GameTheme.boardInk).padding(.vertical, 7).frame(maxWidth: .infinity)
-                                        .background(ManagementTheme.Spatial.wood)
-                                    Text(facility.preview.joined(separator: " · ")).font(ManagementPixelFont.font(12))
-                                        .foregroundStyle(GameTheme.navy).padding(.vertical, 6).padding(.horizontal, 4)
-                                        .frame(maxWidth: .infinity).background(GameTheme.boardInk)
-                                }.multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                                    .overlay(ManagementStepFrame().strokeBorder(facility.recommended ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
+                            if [.roomSign, .roomNote, .roomChalk].contains(p.kind) {
+                                VStack(spacing: 4) {
+                                    Text(facility.title).font(ManagementPixelFont.font(13)).lineLimit(2)
+                                    if !facility.preview.isEmpty {
+                                        ForEach(facility.preview, id: \.self) { line in Text(line).font(ManagementPixelFont.font(12)).lineLimit(2) }
+                                    }
+                                }.foregroundStyle(p.kind == .roomNote ? GameTheme.navy : GameTheme.boardInk)
+                                    .multilineTextAlignment(.center).frame(width: width * p.width * 0.88)
                             } else if p.kind == .radar {
                                 if propAbilities.count >= 3 {
                                     ManagementChalkRadar(values: propAbilities).frame(width: width * 0.405, height: width * 0.27)
@@ -291,7 +296,8 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                     }.buttonStyle(.plain).foregroundStyle(ManagementTheme.Spatial.onCanvas)
                         .accessibilityLabel(facility.title + " · " + facility.status)
                         .accessibilityHint("상세 열기").accessibilityIdentifier(facility.id)
-                        .position(x: width * p.x, y: height * p.y)
+                        .position(x: p.hitRect(in: .init(width: width, height: height)).midX,
+                                  y: p.hitRect(in: .init(width: width, height: height)).midY)
                 }
             }
         }.frame(width: width, height: height)

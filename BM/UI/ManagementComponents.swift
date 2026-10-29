@@ -184,3 +184,21 @@ struct ManagementPlayerHeader: View {
         .foregroundStyle(ManagementTheme.Palette.onDark).background(ManagementTheme.Palette.canvas)
     }
 }
+
+
+struct ManagementFileHeader: View {
+    let eyebrow: String
+    let title: String
+    let note: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.inline) {
+            Text(eyebrow).managementFont(.label).foregroundStyle(GameTheme.gold)
+            Text(title).font(ManagementPixelFont.font(22)).fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text(note).managementFont(.helper).foregroundStyle(GameTheme.boardMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(GameTheme.boardInk)
+            .padding(.bottom, ManagementTheme.Space.inline)
+            .accessibilityIdentifier("managementFileHeader")
+    }
+}

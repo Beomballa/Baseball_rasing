@@ -5,6 +5,17 @@ import UIKit
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV62EdgeObjectsKeep44PointTargetsInsideRoom() {
+        for width in [320.0, 375, 390, 430] {
+            let size = CGSize(width: width, height: width * 1660 / 948)
+            for x in [0.08, 0.13, 0.5, 0.84, 0.94] {
+                let p = ManagementPropPlacement(x: x, y: 0.54, width: 0.10, height: 0.06, kind: .roomSign)
+                let rect = p.hitRect(in: size)
+                XCTAssertGreaterThanOrEqual(rect.width, 44); XCTAssertGreaterThanOrEqual(rect.height, 44)
+                XCTAssertGreaterThanOrEqual(rect.minX, 0); XCTAssertLessThanOrEqual(rect.maxX, size.width)
+            }
+        }
+    }
     func testV60PropTargetsRemainSeparateAndAtLeast44Points() {
         let groups = [["clubhouse-game", "clubhouse-training", "clubhouse-career", "clubhouse-player", "clubhouse-rest", "facility-calendar"],
                       ["facility-abilities", "facility-profile", "facility-traits", "facility-records", "facility-positions"],
