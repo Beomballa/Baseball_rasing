@@ -6382,3 +6382,20 @@ extension CareerCalendarTests {
         XCTAssertEqual(action(true, false, true), .season)
     }
 }
+
+extension CareerCalendarTests {
+    @MainActor func testV69RestFramesReuseMatchArtAndPersonalizeUniform() throws {
+        let base = RestPlayerArt.frames(appearance: PlayerAppearance(), number: 12)
+        var changed = PlayerAppearance(); changed.kit = 2; changed.skin = 2; changed.hair = 3
+        let alternate = RestPlayerArt.frames(appearance: changed, number: 44)
+        XCTAssertEqual(base.count, RestPlayerPose.allCases.count)
+        XCTAssertEqual(alternate.count, base.count)
+        for i in base.indices {
+            XCTAssertEqual(base[i].size, CGSize(width: 160, height: 170))
+            XCTAssertNotEqual(base[i].pngData(), alternate[i].pngData())
+            let attachment = XCTAttachment(image: base[i]); attachment.name = "v69-rest-pose-\(i)"; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        XCTAssertNotEqual(base[RestPlayerPose.standing.rawValue].pngData(), base[RestPlayerPose.seated.rawValue].pngData())
+        XCTAssertNotEqual(base[RestPlayerPose.seated.rawValue].pngData(), base[RestPlayerPose.drink.rawValue].pngData())
+    }
+}

@@ -73,6 +73,9 @@ ART_HASHES.update({'BM/Resources/Assets.xcassets/ClubhouseRoomV59.imageset/room.
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/RestBenchV67.imageset/Contents.json', 'BM/Resources/Assets.xcassets/GameDugoutV67.imageset/Contents.json'})
 ART_HASHES.update({'BM/Resources/Assets.xcassets/RestBenchV67.imageset/room.png': 'ac353dcb72560a2a2a25bc399c743534c5ef0e1658ae797b7af8a8c49daf69f4', 'BM/Resources/Assets.xcassets/GameDugoutV67.imageset/room.png': '800cb87d289ab9b7bc6eb643be123d6c83dc0d5ef692b30aedb94b73f3dc43cd'})
 
+EXACT_PATHS.add('BM/Resources/Assets.xcassets/RestBenchV69.imageset/Contents.json')
+ART_HASHES['BM/Resources/Assets.xcassets/RestBenchV69.imageset/room.png'] = '24b8760b17d7b43155e7d987b234cefd37e12b0b026c54ab7a2f6b5ec98e6bb1'
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):

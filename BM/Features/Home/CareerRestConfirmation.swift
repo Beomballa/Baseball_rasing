@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct CareerRestConfirmation: View {
     let player: CareerPlayer
@@ -21,6 +22,7 @@ struct CareerRestConfirmation: View {
     @State private var recoveryTask: Task<Void, Never>?
     @State private var displayFatigue = 0.0
     @State private var scheduleRetry = 0
+    @State private var restPose = RestPlayerPose.standing
     private var scheduleStatus: CalendarScheduleStatus { CalendarScheduleStatus(player: player, state: state) }
     var body: some View {
         NavigationStack {
@@ -34,7 +36,7 @@ struct CareerRestConfirmation: View {
                         }
                         Spacer(minLength: 0)
                     }.padding(16)
-                    Image("RestBenchV67").resizable().interpolation(.none).scaledToFit().accessibilityHidden(true)
+                    RestBenchScene(appearance: player.appearance, number: player.jerseyNumber, pose: restPose)
                     VStack(alignment: .leading, spacing: 12) {
                         Text(recovering ? "잠시 숨을 돌리는 중…" : completed ? "몸을 충분히 쉬었어요" : "오늘은 회복에 집중하자")
                             .font(ManagementPixelFont.readable(.sectionTitle)).accessibilityAddTraits(.isHeader)
@@ -76,9 +78,10 @@ struct CareerRestConfirmation: View {
                 .toolbar { ManagementToolbarAction(title: "닫기") { dismiss() } }
         }.preferredColorScheme(.dark).presentationDragIndicator(.visible)
             .onDisappear { recoveryTask?.cancel() }
+            .onChange(of: reduced) { _, value in if value && recovering { finishRecovery() } }
     }
     private func finishRecovery() {
-        recoveryTask?.cancel(); displayFatigue = Double(player.fatigue); recovering = false
+        recoveryTask?.cancel(); displayFatigue = Double(player.fatigue); recovering = false; restPose = .standing
     }
     private func save() {
         do {
@@ -89,10 +92,15 @@ struct CareerRestConfirmation: View {
             if reduced { finishRecovery() }
             else {
                 recovering = true
-                withAnimation(.easeOut(duration: 2.2)) { displayFatigue = Double(player.fatigue) }
+                restPose = .sitDown
+                withAnimation(.easeOut(duration: 3.2)) { displayFatigue = Double(player.fatigue) }
                 recoveryTask = Task { @MainActor in
-                    do { try await Task.sleep(for: .seconds(2.4)) } catch { return }
-                    guard !Task.isCancelled else { return }; finishRecovery()
+                    let steps: [(RestPlayerPose, Double)] = [(.seated, 0.35), (.raiseBottle, 0.45), (.drink, 0.45), (.lowerBottle, 1.1), (.standUp, 0.4), (.standing, 0.45)]
+                    for (pose, seconds) in steps {
+                        do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+                        guard !Task.isCancelled else { return }; restPose = pose
+                    }
+                    finishRecovery()
                 }
             }
         } catch { failure = error.localizedDescription }
@@ -119,5 +127,89 @@ enum GameLobbyAction: Equatable {
         if case .playing = saved { return .game(entry) }
         if seasonComplete { return .season }
         return fixture == nil ? .schedule : .game(entry)
+    }
+}
+
+// Presentation-only poses. Their transitions never invoke a career command.
+enum RestPlayerPose: Int, CaseIterable {
+    case standing, sitDown, seated, raiseBottle, drink, lowerBottle, standUp
+}
+
+@MainActor enum RestPlayerArt {
+    static func frames(appearance: PlayerAppearance, number: Int) -> [UIImage] {
+        guard appearance.isValid,
+              let sample = FieldRasterArt.samples(FieldSpriteMotion(facing: .south, stage: .ready), kind: "fielder", left: false).first,
+              let source = FieldRasterArt.image(sample, kit: PlayerAppearance.kitColors[appearance.kit],
+                  skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: number, back: false),
+              let pixels = source.cgImage,
+              let head = pixels.cropping(to: CGRect(x: 0, y: 0, width: pixels.width, height: Int(Double(pixels.height) * 0.44))) else { return [] }
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        return RestPlayerPose.allCases.map { pose in
+            UIGraphicsImageRenderer(size: CGSize(width: 160, height: 170), format: format).image { renderer in
+                let c = renderer.cgContext; c.interpolationQuality = .none
+                if pose == .standing {
+                    source.draw(in: CGRect(x: 17, y: 8, width: 126, height: 145)); return
+                }
+                let lift: CGFloat = pose == .sitDown || pose == .standUp ? -10 : 0
+                func box(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ color: Int) {
+                    c.setFillColor(UIColor(Color(hex: color)).cgColor)
+                    c.fill(CGRect(x: x, y: y + lift, width: w, height: h))
+                }
+                let kit = PlayerAppearance.kitColors[appearance.kit], skin = PlayerAppearance.skinColors[appearance.skin]
+                // Bent thighs, shins and cleats use the same field uniform palette.
+                box(48, 105, 65, 19, 0x102336); box(50, 107, 61, 13, 0xf1f3e9)
+                box(94, 117, 19, 36, 0x102336); box(97, 119, 13, 29, 0xf1f3e9)
+                box(54, 117, 18, 34, 0x102336); box(57, 119, 12, 27, 0xd1dcda)
+                box(92, 147, 29, 9, 0x102336); box(51, 146, 28, 9, 0x102336)
+                box(95, 153, 24, 3, 0xf1f3e9); box(54, 152, 23, 3, 0xf1f3e9)
+                box(47, 68, 66, 41, 0x102336); box(50, 70, 60, 36, kit)
+                box(50, 72, 5, 32, 0x7690a0); box(75, 71, 5, 34, 0xf1f3e9)
+                box(40, 75, 12, 18, kit); box(40, 91, 12, 19, skin)
+                let raised = pose == .raiseBottle || pose == .drink
+                box(109, 76, 13, raised ? 13 : 19, kit)
+                box(114, raised ? 62 : 93, 11, raised ? 25 : 17, skin)
+                if raised { box(101, 58, 23, 10, skin) }
+                if pose == .drink {
+                    box(101, 59, 29, 13, 0x102336)
+                    box(103, 61, 25, 9, 0x55bdeb)
+                    box(111, 61, 8, 9, 0xf1f3e9)
+                    box(98, 62, 6, 7, 0xd8f1f2)
+                } else {
+                    let bottleX: CGFloat = raised ? 102 : 118, bottleY: CGFloat = raised ? 49 : 102
+                    box(bottleX, bottleY, 12, 24, 0x102336)
+                    box(bottleX + 2, bottleY + 2, 8, 20, 0x55bdeb)
+                    box(bottleX + 3, bottleY + 6, 6, 7, 0xf1f3e9)
+                    box(bottleX + 2, bottleY - 3, 8, 5, 0xd8f1f2)
+                }
+                // Reuse the actual personalized match head; only the resting limbs are new.
+                UIImage(cgImage: head).draw(in: CGRect(x: 17, y: 8 + lift, width: 126, height: 64))
+                let text = String(number) as NSString
+                text.draw(at: CGPoint(x: 84, y: 83 + lift), withAttributes: [.font: UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .black), .foregroundColor: UIColor.white])
+            }
+        }
+    }
+}
+
+struct RestBenchScene: View {
+    let appearance: PlayerAppearance
+    let number: Int
+    let pose: RestPlayerPose
+    @State private var frames: [UIImage] = []
+    private var identity: String { "\(appearance.skin)-\(appearance.hair)-\(appearance.kit)-\(number)" }
+    var body: some View {
+        ZStack {
+            Image("RestBenchV69").resizable().interpolation(.none).scaledToFit()
+            GeometryReader { g in
+                if frames.indices.contains(pose.rawValue) {
+                    Image(uiImage: frames[pose.rawValue]).resizable().interpolation(.none)
+                        .frame(width: g.size.width * 0.42, height: g.size.width * 0.446)
+                        .position(x: g.size.width * 0.56, y: g.size.height * 0.65)
+                } else {
+                    PixelPlayer(appearance: appearance).frame(width: 64, height: 80)
+                        .position(x: g.size.width * 0.56, y: g.size.height * 0.65)
+                }
+            }
+        }.accessibilityHidden(true)
+            .task(id: identity) { frames = RestPlayerArt.frames(appearance: appearance, number: number) }
     }
 }

@@ -253,3 +253,8 @@
 !/BM/Resources/Assets.xcassets/GameDugoutV67.imageset/
 !/BM/Resources/Assets.xcassets/GameDugoutV67.imageset/room.png
 !/BM/Resources/Assets.xcassets/GameDugoutV67.imageset/Contents.json
+
+# Reviewed empty recovery background; actors remain runtime-personalized.
+!/BM/Resources/Assets.xcassets/RestBenchV69.imageset/
+!/BM/Resources/Assets.xcassets/RestBenchV69.imageset/room.png
+!/BM/Resources/Assets.xcassets/RestBenchV69.imageset/Contents.json
