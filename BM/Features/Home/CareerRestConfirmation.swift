@@ -18,6 +18,7 @@ struct CareerRestConfirmation: View {
     private var used: Bool { state.hasAction(on: player.gameDate) }
     var onContinue: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var recovering = false
     @State private var recoveryTask: Task<Void, Never>?
     @State private var displayFatigue = 0.0
@@ -36,14 +37,12 @@ struct CareerRestConfirmation: View {
                         }
                         Spacer(minLength: 0)
                     }.padding(16)
+                    if typeSize.isAccessibilitySize { fatigueReceipt.padding(16).background(GameTheme.boardInk).foregroundStyle(GameTheme.navy) }
                     RestBenchScene(appearance: player.appearance, number: player.jerseyNumber, pose: restPose)
                     VStack(alignment: .leading, spacing: 12) {
                         Text(recovering ? "잠시 숨을 돌리는 중…" : completed ? "몸을 충분히 쉬었어요" : "오늘은 회복에 집중하자")
                             .font(ManagementPixelFont.readable(.sectionTitle)).accessibilityAddTraits(.isHeader)
-                        Text(completed ? "피로 \(before) → \(player.fatigue)" : "피로 \(player.fatigue) → \(DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest))")
-                            .managementFont(.metric).monospacedDigit().accessibilityIdentifier("restFatigueForecast")
-                        ProgressView(value: completed ? displayFatigue : Double(player.fatigue), total: 100).tint(Color(hex: 0x237459))
-                            .accessibilityLabel("피로").accessibilityValue("\(player.fatigue) / 100")
+                        if !typeSize.isAccessibilitySize { fatigueReceipt }
                         Text("휴식 최대 −\(DailyRecovery.rest) · 다음 날 수면 −\(DailyRecovery.sleep)은 별도").managementFont(.helper)
                         if let error = scheduleStatus.errorMessage, !completed {
                             Text("일정 확인 전에는 휴식할 수 없습니다. " + error).managementFont(.body).accessibilityIdentifier("restScheduleError")
@@ -58,6 +57,9 @@ struct CareerRestConfirmation: View {
             }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 8) {
+                        if typeSize.isAccessibilitySize {
+                            Text(fatigueText).managementFont(.label).accessibilityIdentifier("restPinnedFatigue")
+                        }
                         Text(completed ? "오늘 행동 사용 완료 · 날짜 유지" : "오늘 행동 1회 · 날짜 유지").managementFont(.helper)
                         if recovering {
                             Button("회복 연출 건너뛰기") { finishRecovery() }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("skipRestPresentation")
@@ -79,6 +81,17 @@ struct CareerRestConfirmation: View {
         }.preferredColorScheme(.dark).presentationDragIndicator(.visible)
             .onDisappear { recoveryTask?.cancel() }
             .onChange(of: reduced) { _, value in if value && recovering { finishRecovery() } }
+    }
+    private var fatigueText: String {
+        completed ? "피로 \(before) → \(player.fatigue)" : "피로 \(player.fatigue) → \(DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest))"
+    }
+    private var fatigueReceipt: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(fatigueText).managementFont(.metric).monospacedDigit().accessibilityIdentifier("restFatigueForecast")
+            ProgressView(value: completed ? displayFatigue : Double(player.fatigue), total: 100).tint(Color(hex: 0x237459))
+                .accessibilityLabel("피로")
+                .accessibilityValue("\(player.fatigue) / 100")
+        }
     }
     private func finishRecovery() {
         recoveryTask?.cancel(); displayFatigue = Double(player.fatigue); recovering = false; restPose = .standing

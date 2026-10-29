@@ -810,7 +810,7 @@ struct CareerTrainingView: View {
 
     private func result(_ value: CareerTraining) -> some View {
         VStack(spacing: 16) {
-            TrainingResultHeading(player: player, name: pitchName, average: value.average, practice: practice)
+            TrainingResultHeading(player: player, name: pitchName, kind: value.selectedKind, average: value.average, practice: practice)
             if !practice {Text("완료 결과 보관 · 재열기/연출은 성장·피로를 다시 적용하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("trainingResultStored")}
             ManagementPanel("5회 훈련 성적표") {
                 scores(value, expanded: true)
@@ -956,6 +956,7 @@ private struct TrainingAttemptStrip: View {
 private struct TrainingResultHeading: View {
     let player: CareerPlayer
     let name: String
+    let kind: TrainingKind
     let average: Double
     let practice: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -969,9 +970,7 @@ private struct TrainingResultHeading: View {
                 Text(player.name + " · #\(player.jerseyNumber)").font(.caption).foregroundStyle(GameTheme.boardMuted)
             }.frame(maxWidth: .infinity, alignment: .leading)
             if !typeSize.isAccessibilitySize {
-                DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber,
-                                   hand: player.throwingHandRaw, label: player.name + "의 훈련 도트")
-                    .frame(width: 82, height: 108)
+                TrainingResultPortrait(player: player, kind: kind).frame(width: 82, height: 108)
             }
         }.padding(16).background(GameTheme.boardPanel)
             .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
@@ -1169,5 +1168,34 @@ struct PitchRepertoireView: View {
                 CareerTrainingView(player: player, calendar: calendar, initialKind: .pitch,
                                    initialPitchStudyCode: selectedCode, replacingPitchCode: replacing.isEmpty ? nil : replacing)
             }
+    }
+}
+
+
+// A training-themed pose, never a second judgment of the saved result.
+struct TrainingResultPortrait: View {
+    let player: CareerPlayer
+    let kind: TrainingKind
+    var body: some View {
+        Group {
+            if kind.isField || kind == .stamina || kind == .mental {
+                Canvas { context, size in
+                    let motion = FieldSpriteMotion(facing: .southEast,
+                        stage: kind == .defense ? .gather : kind == .arm ? .followThrough : [.speed, .stamina].contains(kind) ? .run : .ready,
+                        progress: 0.5, gait: 1.2, chestCatch: kind == .defense)
+                    FieldRasterArt.draw(in: context, at: CGPoint(x: size.width * 0.5, y: size.height * 0.86),
+                        scale: size.height / 32, motion: motion, kind: [.speed, .stamina].contains(kind) ? "runner" : "fielder",
+                        kit: PlayerAppearance.kitColors[player.appearance.kit], skin: PlayerAppearance.skinColors[player.appearance.skin],
+                        hair: PlayerAppearance.hairColors[player.appearance.hair], number: player.jerseyNumber,
+                        left: player.throwingHandRaw == "left", selected: false, out: false)
+                }
+                .accessibilityLabel(player.name + "의 " + kind.label + " 훈련 도트")
+                .accessibilityAddTraits(.isImage)
+            } else {
+                DetailGamePortrait(role: [.pitch, .velocity, .control, .stuff].contains(kind) ? .pitcher : .batter,
+                    appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw,
+                    label: player.name + "의 " + kind.label + " 훈련 도트")
+            }
+        }.accessibilityIdentifier("trainingResultArt-" + kind.rawValue)
     }
 }

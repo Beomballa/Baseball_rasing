@@ -27,7 +27,10 @@ final class ManagementDetailFlowTests: XCTestCase {
                 XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout:10));app.buttons["trainingNext"].tap()
             }
             XCTAssertTrue(app.staticTexts["trainingResultStored"].waitForExistence(timeout:8))
-            let growth=app.staticTexts["trainingGrowth"].label;capture(app,"v56-"+role+"-training-stored")
+            let growth=app.staticTexts["trainingGrowth"].label
+            let art=app.descendants(matching:.any).matching(identifier:"trainingResultArt-"+kind).firstMatch
+            XCTAssertTrue(art.exists);XCTAssertTrue(art.label.contains(pitcher ? "제구" : "수비"))
+            capture(app,"v70-"+role+"-training-stored")
             app.navigationBars.buttons.element(boundBy:0).tap();XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout:5));close(app);app.buttons["managementTab-home"].tap()
             let completed=status(app);XCTAssertEqual(completed[0],afterAttempt[0]);XCTAssertEqual(completed[2],"행동 0/1");XCTAssertNotEqual(completed[1],afterAttempt[1])
             app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
@@ -2249,7 +2252,9 @@ extension ManagementDetailFlowTests {
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30)); let before = status(app)
         let rest = app.buttons["clubhouse-rest"]; revealLocationChoice(rest, app); rest.tap()
         let confirm = app.buttons["confirmRest"]; XCTAssertTrue(confirm.waitForExistence(timeout: 8)); XCTAssertTrue(confirm.isHittable)
-        XCTAssertGreaterThanOrEqual(confirm.frame.height, 44); capture(app, "v67-large-rest")
+        XCTAssertGreaterThanOrEqual(confirm.frame.height, 44)
+        let receipt=app.staticTexts["restPinnedFatigue"];XCTAssertTrue(receipt.isHittable);XCTAssertTrue(receipt.label.contains("24 → 6"))
+        capture(app, "v70-large-rest")
         confirm.tap(); XCTAssertTrue(app.staticTexts["restSaved"].waitForExistence(timeout: 10)); app.buttons["restGoGame"].tap()
         XCTAssertTrue(app.buttons["roomPrimary"].waitForExistence(timeout: 8)); XCTAssertTrue(app.buttons["roomPrimary"].isHittable)
         XCTAssertEqual(status(app)[0], before[0]); capture(app, "v67-large-game")
