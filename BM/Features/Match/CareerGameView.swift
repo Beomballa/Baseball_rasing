@@ -570,12 +570,18 @@ struct CareerGameView: View {
         let summary = MatchResultSummary(match: match, fatigueBefore: record.fatigueBefore, fatigueAfter: record.fatigueAfter)
         return VStack(spacing: 10) {
             GamePanel(title: "FINAL · 팀 경기 결과", onBoard: true) {
-                HStack(spacing: 12) {
-                    PixelPlayer(appearance: player.appearance).frame(width: 36, height: 48).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(summary.outcome).font(.system(.title, design: .monospaced, weight: .heavy))
+                let heading = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+                heading {
+                    DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber,
+                                       hand: player.throwingHandRaw, label: player.name + "의 경기 도트")
+                        .frame(width: 64, height: 84).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(summary.outcome).font(ManagementPixelFont.readable(.metric))
                             .foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerGameFinished")
-                        Text("\(player.name) #\(player.jerseyNumber)").font(.subheadline.bold())
+                        Text("내 팀 \(match.teamScore) : \(match.opponentScore) 상대")
+                            .managementFont(.metric).monospacedDigit().fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("gameFinalScore")
+                        Text("\(player.name) #\(player.jerseyNumber)").managementFont(.label)
                     }
                 }
                 Text("결과 저장 완료 · 재열기는 기록·XP·피로 추가 반영 없음").font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
@@ -709,7 +715,7 @@ struct CareerGameView: View {
             }
             MatchProjectFeedbackPanel(feedback:match.projectFeedback)
             CareerProjectNextActions(player:player,calendar:calendar)
-            Button("선수 홈으로") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("gameReturnHome")
+            Button("경기 화면 닫기") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("gameReturnHome")
             Text("홈에서 다음 날로 진행할 수 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }.accessibilityElement(children: .contain)
     }

@@ -852,7 +852,7 @@ struct CareerTrainingView: View {
             }
             if !practice { TrainingProjectFeedbackPanel(training: value); CareerProjectNextActions(player: player, calendar: calendar) }
             if let result = value.lastContact { ContactTrainingFeedback(result: result) }
-            Button(practice ? "연습 메뉴로" : "선수 홈으로") { dismiss() }
+            Button(practice ? "연습 화면 닫기" : "훈련 화면 닫기") { dismiss() }
                 .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingReturnHome")
         }
     }
@@ -963,7 +963,7 @@ private struct TrainingResultHeading: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(practice ? "PRACTICE COMPLETE" : "TRAINING COMPLETE").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                Text(name + " 훈련 완료").font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
+                Text(name + " 훈련 완료").font(ManagementPixelFont.readable(.sectionTitle)).fixedSize(horizontal: false, vertical: true)
                 Text("평균 \(average, specifier: "%.1f")점").font(.title.monospacedDigit().bold())
                     .accessibilityIdentifier("trainingAverage")
                 Text(player.name + " · #\(player.jerseyNumber)").font(.caption).foregroundStyle(GameTheme.boardMuted)
