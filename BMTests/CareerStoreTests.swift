@@ -1,9 +1,37 @@
 import XCTest
 import SwiftData
 import SQLite3
+import UIKit
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV60PropTargetsRemainSeparateAndAtLeast44Points() {
+        let groups = [["clubhouse-game", "clubhouse-training", "clubhouse-career", "clubhouse-player", "clubhouse-rest", "facility-calendar"],
+                      ["facility-abilities", "facility-profile", "facility-traits", "facility-records", "facility-positions"],
+                      ["facility-observation", "facility-goals", "facility-observation-calendar", "facility-review", "facility-contracts"]]
+        for width in [320.0, 375, 390, 430] {
+            let height = width * 1660 / 948
+            for ids in groups {
+                let boxes = ids.map { id -> CGRect in
+                    let p = ManagementPropPlacement.at(id), w = max(44, width * p.width), h = max(44, height * p.height)
+                    return CGRect(x: width*p.x-w/2, y: height*p.y-h/2, width: w, height: h)
+                }
+                for i in boxes.indices {
+                    XCTAssertGreaterThanOrEqual(boxes[i].width, 44); XCTAssertGreaterThanOrEqual(boxes[i].height, 44)
+                    for j in boxes.indices where j > i {
+                        let overlap = boxes[i].intersection(boxes[j])
+                        XCTAssertTrue(overlap.isNull || overlap.width < 1 || overlap.height < 1, "\(width): \(ids[i])/\(ids[j])")
+                    }
+                }
+            }
+        }
+    }
+    func testV60PixelFontAndBundledLicenseAreAvailable() throws {
+        XCTAssertNotNil(ManagementPixelFont.name)
+        let data = try XCTUnwrap(NSDataAsset(name: "ManagementPixelLicenseV59")?.data)
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("SIL OPEN FONT LICENSE"))
+    }
+
     func testV50SchoolIdentitiesHaveDistinctRegionalNamesAndValidEmblems() throws {
         let schools = try SchoolCatalog.load()
         XCTAssertEqual(Set(schools.map(\.name)).count, 50)

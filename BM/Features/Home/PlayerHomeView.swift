@@ -67,6 +67,15 @@ struct PlayerHomeView: View {
     @State private var rootAction: ManagementRootAction?
     @State private var careerSection = ManagementCareerSection.observation
     @Query private var contractEvaluations: [CareerContractEvaluation]
+    @Query(sort: \CareerScoutingReport.period, order: .reverse) private var roomReports: [CareerScoutingReport]
+    @State private var roomObservationLines = ["보고서 없음", "상세에서 확인"]
+    @State private var roomProjectLines = ["과제 미설정"]
+    @State private var roomCalendarLines = ["자료", "없음"]
+    @State private var roomGrowthLines = ["기록 없음"]
+    @State private var roomContractLines = ["자료 확인"]
+    private var roomRefreshKey: String {
+        "\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)-\(roomReports.first(where: { $0.playerID == player.id })?.payload.hashValue ?? 0)"
+    }
     var body: some View {
         ManagementSpatialRoom(asset: roomAsset, title: roomTitle, facilities: roomFacilities,
                               selection: $selectedTab, choose: chooseFacility, home: { selectedTab = .home }) {
@@ -80,9 +89,11 @@ struct PlayerHomeView: View {
                 }.foregroundStyle(GameTheme.boardInk).padding(12).background(GameTheme.boardPanel)
             }
         } action: { roomAction }
+        .spatialAbilities(HomeAbilitySummary(player: player, abilities: abilities).originals)
         .task(id: "selection-\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)") {
             refreshSelection()
         }
+        .task(id: roomRefreshKey) { refreshRoomProjection() }
         .id(player.id)
         .preferredColorScheme(.dark)
         .sheet(item: $roomDetail, onDismiss: performRootAction) { [trainingKind] detail in
@@ -149,6 +160,54 @@ struct PlayerHomeView: View {
     }
 
 
+    /// Read-only projection: never ensures a report, acknowledges an offer, or saves a result.
+    private func refreshRoomProjection() {
+        roomObservationLines = ["보고서 없음", "상세에서 확인"]
+        roomCalendarLines = ["자료", "없음"]
+        roomGrowthLines = ["기록 없음"]
+        do {
+            if let row = roomReports.first(where: { $0.playerID == player.id }) {
+                let report = try row.snapshot()
+                if let interests = report.interests {
+                    if let interest = interests.entries.first {
+                        roomObservationLines = [interest.name, interest.roleLabel]
+                    } else { roomObservationLines = ["관심 구단 없음", "관찰 자료 확인"] }
+                } else { roomObservationLines = ["이전 보고서", "관심 기록 없음"] }
+                if report.nextDate > player.gameDate {
+                    let date = report.nextDate.split(separator: "-")
+                    if date.count == 3, let month = Int(date[1]), let day = Int(date[2]) { roomCalendarLines = ["\(month)월", "\(day)일"] }
+                } else { roomCalendarLines = ["관찰", "확인"] }
+                let changed = report.abilities.originals.filter { $0.growth != nil }.max { abs($0.growth ?? 0) < abs($1.growth ?? 0) }
+                if let changed, let growth = changed.growth {
+                    if growth == 0 { roomGrowthLines = ["변화 없음"] }
+                    else if abs(growth) < 0.05 { roomGrowthLines = ["미세 변화"] }
+                    else { roomGrowthLines = [(changed.id == "homeVelocity" ? "구속" : changed.label) + (growth > 0 ? "+" : "") + growth.formatted(.number.precision(.fractionLength(1)))] }
+                }
+            }
+        } catch {
+            roomObservationLines = ["보고서 조회 오류", "상세에서 재확인"]
+            roomCalendarLines = ["자료", "확인"]
+        }
+        roomProjectLines = ["과제 미설정"]
+        roomContractLines = ["자료 확인"]
+        guard let calendar else { return }
+        do {
+            let owner = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+            if let project = owner.activeProject(on: player.gameDate) {
+                let progress = try CareerProjectStore.progress(project, player: player, on: player.gameDate, in: context)
+                let goal = progress.task?.trainingGoal ?? 3
+                roomProjectLines = ["훈련 \(progress.trainingKeys.count)/\(goal)", "\(player.role == .batter ? "타석" : "아웃") \(progress.sample)/\(progress.requiredSample)"]
+            }
+            let domestic = try ContractMarketStore.domestic(player: player, calendar: calendar, in: context)
+            let foreign = (owner.overseasCareer ?? OverseasCareerJournal()).marketEntries(on: player.gameDate)
+            let count = domestic.filter { $0.status == "검토 가능" }.count + foreign.filter { $0.status == "검토 가능" }.count
+            roomContractLines = ["제의 \(count)건"]
+        } catch {
+            roomProjectLines = ["과제 조회 오류"]
+            roomContractLines = ["제의 조회 오류"]
+        }
+    }
+
     private func refreshSelection() {
         do {
             #if DEBUG
@@ -184,17 +243,17 @@ struct PlayerHomeView: View {
     }
     private var roomAsset: String {
         switch selectedTab {
-        case .home: "ClubhouseRoomV2"
-        case .player: "LockerRoomV2"
+        case .home: "ClubhouseRoomV59"
+        case .player: "LockerRoomV59"
         case .training: player.role == .batter ? "BattingRoomV2" : "BullpenRoomV2"
         case .game: "StadiumRoomV2"
-        case .career: "ScoutRoomV2"
+        case .career: "ScoutRoomV59"
         }
     }
     private var roomTitle: String {
         switch selectedTab {
         case .home: "클럽하우스"
-        case .player: "선수 라커"
+        case .player: "선수 라커룸"
         case .training: player.role == .batter ? "타격 훈련장" : "불펜 훈련장"
         case .game: "경기장"
         case .career: "스카우트실"
@@ -205,18 +264,20 @@ struct PlayerHomeView: View {
         switch selectedTab {
         case .home:
             return [
-                .init(id: "clubhouse-settings", title: "설정 · 저장", status: "백업 · 복원", x: 0.2, y: 0.15),
-                .init(id: "clubhouse-game", title: "경기장", status: "일정 · 상대 분석", x: 0.78, y: 0.17),
-                .init(id: "clubhouse-training", title: "훈련장", status: action, x: 0.2, y: 0.37, recommended: true),
-                .init(id: "clubhouse-career", title: "스카우트실", status: "관찰 · 계약", x: 0.8, y: 0.48),
-                .init(id: "clubhouse-rest", title: "휴식 라운지", status: "피로 회복 최대 −\(DailyRecovery.rest)", x: 0.2, y: 0.78),
-                .init(id: "clubhouse-player", title: "선수 라커", status: "능력 · 특성 · 기록", x: 0.8, y: 0.83)]
+                .spatial("clubhouse-game", "경기장", "일정 · 상대 분석"),
+                .spatial("clubhouse-training", "훈련장", action, recommended: true),
+                .spatial("clubhouse-career", "스카우트실", "관찰 · 계약"),
+                .spatial("clubhouse-rest", "휴식", "피로 회복 최대 −\(DailyRecovery.rest)"),
+                .spatial("clubhouse-player", "선수 라커룸", "능력 · 특성 · 기록"),
+                .spatial("facility-calendar", "오늘 일정", ManagementDisplay.date(player.gameDate), preview: [Int(player.gameDate.suffix(2)).map(String.init) ?? "확인"])]
         case .player:
+            let summary = HomeAbilitySummary(player: player, abilities: abilities)
             return [
-                .init(id: "facility-abilities", title: "능력치 보드", status: "현재 능력 · 성장", x: 0.2, y: 0.36, recommended: true),
-                .init(id: "facility-traits", title: "특성 보관함", status: "보유 · 최대 3개 활성", x: 0.8, y: 0.18),
-                .init(id: "facility-records", title: "시즌 기록", status: "최근 5경기 · 누적", x: 0.26, y: 0.65),
-                .init(id: "facility-positions", title: player.role == .batter ? "포지션 수첩" : "구종 보관함", status: player.role == .batter ? player.roleDetail : "보유 \(player.pitches.count)개 · 숙련도", x: 0.8, y: 0.84)]
+                .spatial("facility-abilities", "능력치 보드", summary.originals.map { $0.label + " " + $0.current.formatted(.number.precision(.fractionLength(1))) }.joined(separator: ", "), recommended: true),
+                .spatial("facility-profile", "라커룸", player.name + " · #" + String(player.jerseyNumber)),
+                .spatial("facility-traits", "특성 관리", "보유 · 최대 3개 활성"),
+                .spatial("facility-records", "선수 수첩", "성장 · 최근 5경기 · 시즌", preview: [player.name, "#" + String(player.jerseyNumber)]),
+                .spatial("facility-positions", player.role == .batter ? "포지션 수첩" : "구종 수첩", player.role == .batter ? player.roleDetail : "보유 \(player.pitches.count)개 · 숙련도")]
         case .training:
             return [
                 .init(id: "facility-training", title: player.role == .batter ? "타격 케이지" : "불펜 투구", status: todayTraining?.completed == false ? "진행 중 · 이어하기" : action, x: 0.2, y: 0.37, recommended: true),
@@ -233,10 +294,11 @@ struct PlayerHomeView: View {
                 .init(id: "facility-standings", title: "리그 순위", status: "연간 순위 · 결산", x: 0.8, y: 0.88)]
         case .career:
             return [
-                .init(id: "facility-observation", title: "관찰 보고서", status: "고정된 28일 자료", x: 0.25, y: 0.2, recommended: true),
-                .init(id: "facility-goals", title: "선수 프로젝트", status: "목표 구단 · 시즌 목표", x: 0.8, y: 0.4),
-                .init(id: "facility-review", title: "관찰 결산", status: "변화 · 다음 행동", x: 0.2, y: 0.64),
-                .init(id: "facility-contracts", title: "계약 서류", status: contractEvaluations.contains { $0.playerID == player.id && !$0.acknowledged } ? "새 평가 · 확인 필요" : "자격 · 제의 · 소속", x: 0.8, y: 0.84)]
+                .spatial("facility-observation", "관찰 보고서", roomObservationLines.joined(separator: " · "), preview: roomObservationLines, recommended: true),
+                .spatial("facility-goals", "목표 과제", roomProjectLines.joined(separator: " · "), preview: roomProjectLines),
+                .spatial("facility-observation-calendar", "관찰", roomCalendarLines.joined(separator: " "), preview: roomCalendarLines),
+                .spatial("facility-review", "성장 비교", "관찰 확정 당시 시작 대비 · " + roomGrowthLines.joined(separator: " · "), preview: roomGrowthLines),
+                .spatial("facility-contracts", "계약", roomContractLines.joined(separator: " · "), preview: roomContractLines)]
         }
     }
     private func chooseFacility(_ id: String) {
@@ -247,6 +309,7 @@ struct PlayerHomeView: View {
         case "clubhouse-career": selectedTab = .career
         case "clubhouse-player": selectedTab = .player
         case "clubhouse-rest": showRest = true
+        case "facility-profile": roomDetail = .profile
         case "facility-abilities": playerSection = .abilities; roomDetail = .player(playerSection)
         case "facility-traits": playerSection = .traits; roomDetail = .player(playerSection)
         case "facility-records": playerSection = .records; roomDetail = .player(playerSection)
@@ -264,6 +327,7 @@ struct PlayerHomeView: View {
         case "facility-game": gameSection = .schedule; roomDetail = .game(gameSection)
         case "facility-gameRecords": gameSection = .records; roomDetail = .game(gameSection)
         case "facility-standings": gameSection = .standings; roomDetail = .game(gameSection)
+        case "facility-observation-calendar": careerSection = .observation; roomDetail = .career(careerSection)
         case "facility-observation", "facility-review": careerSection = .observation; roomDetail = .career(careerSection)
         case "facility-goals": careerSection = .goals; roomDetail = .career(careerSection)
         case "facility-contracts": careerSection = .contracts; roomDetail = .career(careerSection)
@@ -325,8 +389,8 @@ struct PlayerHomeView: View {
             PlayerNotebookHighlights(values: summary.originals)
             ManagementPanel("기량 분포 · 현재와 시작", surface: .paper) {
                 if let abilities { Text(abilities.label).managementFont(.helper).foregroundStyle(Color(hex: 0x237459)).accessibilityIdentifier("homeArchetype") }
-                let chart = player.role == .batter ? summary.originals : summary.axes
-                if chart.count == (player.role == .batter ? 7 : 6) { HomeRadarChart(values: chart, onPaper: true) }
+                let chart = summary.originals
+                if chart.count == (player.role == .batter ? 7 : 8) { HomeRadarChart(values: chart, onPaper: true) }
                 else { Text("능력 자료를 확인할 수 없습니다.").managementFont(.helper) }
             }
             DisclosureGroup("능력별 성장 기록", isExpanded: $showOriginals) {

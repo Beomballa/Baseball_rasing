@@ -64,6 +64,10 @@ ART_HASHES.update({'BM/Resources/MatchArt/training-environments-v51.png': 'd24db
 # V52 original separated gameplay backgrounds and opponent motion atlases.
 ART_HASHES.update({'BM/Resources/MatchArt/batter-field-v52.png': 'eed2ed3029d972bedec8f8ff93f2e97de2ae32b4ebbf426425d949e367aae9b5', 'BM/Resources/MatchArt/pitcher-field-v52.png': '5903dc03813a6b1ff62463d1f4a9a8d13e69627d954b38132b4a545c2920c2e2', 'BM/Resources/MatchArt/opponent-pitcher-v52.png': '30674d027a7ca42a645e2c4de602d4de478b3203e9cd051f1e7132e1c7f35b3c', 'BM/Resources/MatchArt/opponent-batter-v52.png': '5a80ba6d7366eac47f3188ffad0dbb52b37c8650094d129a3ec24c948bcdd2b5'})
 
+# Individually reviewed V60 room assets and official OFL distribution files.
+EXACT_PATHS.update({'BM/Resources/Assets.xcassets/ManagementPixelFontV59.dataset/Contents.json', 'BM/Resources/Assets.xcassets/ClubhouseRoomV59.imageset/Contents.json', 'BM/Resources/Assets.xcassets/LockerRoomV59.imageset/Contents.json', 'BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/Contents.json', 'BM/Resources/Assets.xcassets/ScoutRoomV59.imageset/Contents.json'})
+ART_HASHES.update({'BM/Resources/Assets.xcassets/ClubhouseRoomV59.imageset/room.png': 'af30b326fc4530bfcbf7ce91a7196dc4f6e991c6dabf90a5aa95a5536cc8f97d', 'BM/Resources/Assets.xcassets/LockerRoomV59.imageset/room.png': '866705e794460649530359412d71d3b7cfba08570139545b8bea18261fa78be3', 'BM/Resources/Assets.xcassets/ScoutRoomV59.imageset/room.png': 'a87c7544c89145456010d7d01d4be40b430e2fc8226a098a3d1399dee46c5a23', 'BM/Resources/Assets.xcassets/ManagementPixelFontV59.dataset/neodgm.ttf': '77305267996073aae07bad9313dad2e306a4128e55bfafbed4c41558fee57b4d', 'BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/OFL.txt': '4d3155f4caba9970c8b386064b398822c29d9181cfba07964ba7b07ccc6cca91'})
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):

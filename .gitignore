@@ -217,3 +217,20 @@
 
 # Required-reason API declarations only; no private distribution credentials.
 !/BM/Resources/PrivacyInfo.xcprivacy
+
+# Approved V59 spatial backgrounds and OFL font bundled by native V60.
+!/BM/Resources/Assets.xcassets/ClubhouseRoomV59.imageset/
+!/BM/Resources/Assets.xcassets/ClubhouseRoomV59.imageset/room.png
+!/BM/Resources/Assets.xcassets/ClubhouseRoomV59.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/LockerRoomV59.imageset/
+!/BM/Resources/Assets.xcassets/LockerRoomV59.imageset/room.png
+!/BM/Resources/Assets.xcassets/LockerRoomV59.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/ScoutRoomV59.imageset/
+!/BM/Resources/Assets.xcassets/ScoutRoomV59.imageset/room.png
+!/BM/Resources/Assets.xcassets/ScoutRoomV59.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/ManagementPixelFontV59.dataset/
+!/BM/Resources/Assets.xcassets/ManagementPixelFontV59.dataset/neodgm.ttf
+!/BM/Resources/Assets.xcassets/ManagementPixelFontV59.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/
+!/BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/OFL.txt
+!/BM/Resources/Assets.xcassets/ManagementPixelLicenseV59.dataset/Contents.json

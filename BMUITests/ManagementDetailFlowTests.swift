@@ -2003,3 +2003,67 @@ extension ManagementDetailFlowTests {
         app.buttons["닫기"].tap();XCTAssertEqual(status(app),before)
     }
 }
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV60PropRoomsBothRolesKeepDateFatigueAndRoutes() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            capture(app, "v60-" + role + "-home")
+            app.buttons["managementTab-player"].tap()
+            let graph = app.buttons["facility-abilities"]; v60Reveal(graph, app)
+            XCTAssertTrue(graph.label.contains(pitcher ? "구위" : "컨택")); XCTAssertTrue(graph.label.contains("멘탈"))
+            capture(app, "v60-" + role + "-chalk")
+            graph.tap(); XCTAssertTrue(app.otherElements["homeAbilityRadar"].waitForExistence(timeout: 8)); close(app)
+            let book = app.buttons["facility-positions"]; v60Reveal(book, app)
+            XCTAssertTrue(book.label.contains(pitcher ? "구종 수첩" : "포지션 수첩")); capture(app, "v60-" + role + "-notebooks")
+            app.buttons["managementTab-career"].tap()
+            let report = app.buttons["facility-observation"]; v60Reveal(report, app); capture(app, "v60-" + role + "-observation")
+            let contracts = app.buttons["facility-contracts"]; v60Reveal(contracts, app); capture(app, "v60-" + role + "-desk")
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
+        }
+    }
+    @MainActor func testV60LargestTextKeepsAbilityValuesAndSettingsReachable() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        let before = status(app)
+        app.buttons["managementLargeMenu"].tap(); app.buttons["선수"].tap()
+        let graph = app.buttons["facility-abilities"]; revealLocationChoice(graph, app)
+        XCTAssertTrue(graph.label.contains("컨택")); capture(app, "v60-large-ability-list")
+        graph.tap(); XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); close(app)
+        app.buttons["managementLargeMenu"].tap(); app.buttons["홈"].tap(); XCTAssertEqual(status(app), before)
+        revealLocationChoice(app.buttons["clubhouse-settings"], app); XCTAssertTrue(app.buttons["clubhouse-settings"].isHittable)
+    }
+    @MainActor private func v60Reveal(_ element: XCUIElement, _ app: XCUIApplication) {
+        for _ in 0..<14 {
+            let scroll = app.scrollViews["roomPropScroll"]
+            guard scroll.exists else { return }
+            if element.isHittable && element.frame.minY >= scroll.frame.minY + 44 && element.frame.maxY <= scroll.frame.maxY { return }
+            if element.exists && element.frame.minY < scroll.frame.minY + 44 { scroll.swipeDown() } else { scroll.swipeUp() }
+        }
+    }
+}
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV60SavedProjectSummaryUsesActualSampleUnits() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-college-pro-verification", "-v31-match-completed"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 120))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app)
+            app.buttons["managementTab-career"].tap()
+            let goal = app.buttons["facility-goals"]; v60Reveal(goal, app)
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "훈련"), object: goal)], timeout: 10), .completed)
+            XCTAssertTrue(goal.label.contains(pitcher ? "아웃" : "타석"))
+            capture(app, pitcher ? "v60-pitcher-active-project" : "v60-batter-active-project")
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
+        }
+    }
+}
