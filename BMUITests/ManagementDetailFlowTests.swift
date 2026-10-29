@@ -2145,3 +2145,33 @@ extension ManagementDetailFlowTests {
         }
     }
 }
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV64FrozenReviewChangesAndContractFilesBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-college-pro-verification", "-career-objectives-verification", "-observation-review-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 120))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-career"].tap()
+            let observation = app.buttons["facility-observation"]; v60Reveal(observation, app); observation.tap()
+            reveal(app.buttons["openObservationReview"], app); app.buttons["openObservationReview"].tap()
+            XCTAssertTrue(app.staticTexts["reviewCurrentDate"].waitForExistence(timeout: 15))
+            let date = app.staticTexts["reviewCurrentDate"].label
+            let change = app.staticTexts["reviewAbility-homeSpeed"]; reveal(change, app)
+            XCTAssertTrue(change.label.contains("+1.0")); capture(app, "v64-" + role + "-fixed-change")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            let contracts = app.buttons["facility-contracts"]; v60Reveal(contracts, app); contracts.tap()
+            reveal(app.buttons["openContractMarket"], app); app.buttons["openContractMarket"].tap()
+            XCTAssertTrue(app.staticTexts["marketSummary"].waitForExistence(timeout: 15)); capture(app, "v64-" + role + "-market")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            v60Reveal(observation, app); observation.tap(); reveal(app.buttons["openObservationReview"], app); app.buttons["openObservationReview"].tap()
+            XCTAssertTrue(app.staticTexts["reviewCurrentDate"].waitForExistence(timeout: 10)); XCTAssertEqual(app.staticTexts["reviewCurrentDate"].label, date)
+            app.navigationBars.buttons.element(boundBy: 0).tap(); close(app)
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
+        }
+    }
+}

@@ -202,3 +202,24 @@ struct ManagementFileHeader: View {
             .accessibilityIdentifier("managementFileHeader")
     }
 }
+
+
+/// Both values come from fixed reports, never from today's mutable player model.
+struct ManagementObservationChange: View {
+    let title: String
+    let before: Double
+    let after: Double
+    let identifier: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title + String(format: "  %.1f → %.1f  (%+.1f)", before, after, after - before))
+                .managementFont(.label).monospacedDigit().fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier)
+            VStack(spacing: 6) {
+                ManagementProgress(title: "이전 관찰", value: .init(current: before, target: 100), color: GameTheme.boardMuted)
+                ManagementProgress(title: "이번 관찰", value: .init(current: after, target: 100), color: GameTheme.gold)
+            }.accessibilityHidden(true)
+        }.padding(12).background(GameTheme.board)
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+    }
+}

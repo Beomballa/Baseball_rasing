@@ -619,6 +619,9 @@ struct PlayerHomeView: View {
         }
     }
     @ViewBuilder private func careerContent(_ section: ManagementCareerSection) -> some View {
+        ManagementFileHeader(eyebrow: section == .observation ? "SCOUT FILE" : section == .goals ? "DEVELOPMENT NOTE" : "CONTRACT DESK",
+                             title: section == .observation ? "관찰한 근거와 변화" : section == .goals ? "목표 구단으로 가는 과제" : "제의와 현재 소속",
+                             note: section == .observation ? "보고서는 확정 당시 자료 · 오늘 상태와 구분" : section == .goals ? "실제 완료한 훈련·경기로 진척 · 계약 보장 아님" : "관심 → 제의 → 수락 → 발효를 구분합니다")
         ManagementSectionTabs(options: ManagementCareerSection.allCases, selection: Binding(get: { section }, set: { careerSection = $0; roomDetail = .career($0) }), title: { $0.title }, identifier: "careerSection", horizontal: true)
         if let calendar {
             switch section {
@@ -2522,9 +2525,9 @@ struct ObservationReviewView:View {
             VStack(alignment:.leading,spacing:16) {
                 if let review {
                     GamePanel(title:"SCOUT REVIEW · 28일 관찰 결산",onBoard:true,contentSpacing:12) {
-                        Text(review.current.observedDate+" 확정 · \(review.current.period+1)차 관찰").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewCurrentDate")
+                        Text(ManagementDisplay.date(review.current.observedDate)+" 확정 · \(review.current.period+1)차 관찰").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewCurrentDate")
                         if let previous=review.previous {
-                            Text(previous.observedDate+" → "+review.current.observedDate).font(.subheadline).accessibilityIdentifier("reviewPreviousDate")
+                            Text(ManagementDisplay.date(previous.observedDate)+" → "+ManagementDisplay.date(review.current.observedDate)).font(.subheadline).accessibilityIdentifier("reviewPreviousDate")
                             Text("위의 실제 관찰일 사이 변화이며,정확히28일 간격이 아닐 수 있습니다.").font(.caption)
                             if review.current.period-previous.period>1 {Text("중간 보고서가 없어 최근 저장 자료와 비교합니다. 연속28일의 변화가 아닙니다.").font(.caption)}
                         } else {Text("첫 관찰 자료 · 이전 보고서가 없어 변화량을 계산하지 않습니다.").font(.subheadline).accessibilityIdentifier("reviewNoPrevious")}
@@ -2534,7 +2537,7 @@ struct ObservationReviewView:View {
                     if review.previous != nil {
                         GamePanel(title:"GROWTH · 관찰일 사이의 변화",onBoard:true,contentSpacing:12) {
                             ForEach(review.abilities+review.pitches) {row in
-                                Text(row.label+String(format:"  %.1f → %.1f  (%+.1f)",row.before,row.after,row.difference)).font(.subheadline.monospaced()).accessibilityIdentifier("reviewAbility-"+row.id)
+                                ManagementObservationChange(title: row.label, before: row.before, after: row.after, identifier: "reviewAbility-" + row.id)
                             }
                             Text("양쪽 보고서에 있는 같은 능력·구종만 비교합니다. 훈련·경기·그 외 변화를 포함하며 특정 활동의 효과로 단정하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         }
