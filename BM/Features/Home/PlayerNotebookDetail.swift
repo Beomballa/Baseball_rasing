@@ -40,7 +40,7 @@ struct PlayerNotebookIdentity: View {
         let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 8))
         layout {
             VStack(alignment: .leading, spacing: 8) {
-                Text("PLAYER FILE  /  #\(player.jerseyNumber)").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                Text("선수 수첩  /  #\(player.jerseyNumber)").font(ManagementPixelFont.readable(.label)).foregroundStyle(GameTheme.gold)
                 Text(player.name).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
                 Text(affiliation).font(.subheadline)
                 Text("\(age)세 · \(player.role.label) · \(player.roleDetail)").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
@@ -94,11 +94,11 @@ struct NotebookAbilityStrip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(value.label).font(.subheadline.bold())
+                Text(value.label).managementFont(.label).bold()
                 Spacer()
-                Text(value.current, format: .number.precision(.fractionLength(1))).font(.headline.monospacedDigit()).foregroundStyle(onPaper ? GameTheme.navy : GameTheme.gold)
+                Text(value.current, format: .number.precision(.fractionLength(1))).managementFont(.metric).monospacedDigit().foregroundStyle(onPaper ? GameTheme.navy : GameTheme.gold)
             }
-            Text(value.growthFeedback).font(.caption).fixedSize(horizontal: false, vertical: true)
+            Text(value.growthFeedback).managementFont(.helper).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 3) {
                 ForEach(0..<10, id: \.self) { index in
                     Rectangle().fill(Double(index) < min(10, max(0, value.current / 10)) ? (onPaper ? Color(hex: 0x237459) : GameTheme.growth) : GameTheme.boardLine.opacity(0.24))

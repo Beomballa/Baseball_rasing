@@ -396,6 +396,7 @@ struct PlayerHomeView: View {
         case .abilities:
             PlayerNotebookHighlights(values: summary.originals)
             ManagementPanel("기량 분포 · 현재와 시작", surface: .paper) {
+                Text("원 능력 0~100점 · 숙련도/포지션 XP와 별도").managementFont(.helper).foregroundStyle(GameTheme.navy)
                 if let abilities { Text(abilities.label).managementFont(.helper).foregroundStyle(Color(hex: 0x237459)).accessibilityIdentifier("homeArchetype") }
                 let chart = summary.originals
                 if chart.count == (player.role == .batter ? 7 : 8) { HomeRadarChart(values: chart, onPaper: true) }
@@ -406,6 +407,12 @@ struct PlayerHomeView: View {
             }.font(.subheadline.bold()).tint(GameTheme.gold).foregroundStyle(GameTheme.boardInk)
                 .padding(14).background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(GameTheme.boardLine))
                 .accessibilityIdentifier("homeAbilityDetails")
+            if let weakest = summary.originals.min(by: { $0.current < $1.current }),
+               let kind = TrainingKind.allCases.first(where: { "home" + $0.rawValue.lowercased() == weakest.id.lowercased() && $0.allows(player.roleRaw) }) {
+                Button(kind.label + " 훈련 고르기") {
+                    trainingKind = kind; trainingSection = .abilities; roomDetail = .training(.abilities)
+                }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("abilityTrainWeakest")
+            }
             if let calendar { DevelopmentHomePanel(player: player, calendar: calendar) }
             if player.role == .pitcher {
                 ManagementPanel("보유 구종 · 숙련도") {

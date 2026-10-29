@@ -2118,3 +2118,30 @@ extension ManagementDetailFlowTests {
         }
     }
 }
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV63PlayerFilesAndWeaknessTrainingAreReadOnlyBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-player"].tap()
+            let graph = app.buttons["facility-abilities"]; v60Reveal(graph, app); graph.tap()
+            XCTAssertTrue(app.otherElements["homeAbilityRadar"].waitForExistence(timeout: 8))
+            capture(app, "v63-" + role + "-abilities")
+            let train = app.buttons["abilityTrainWeakest"]; reveal(train, app)
+            let expected = train.label.replacingOccurrences(of: " 훈련 고르기", with: "")
+            train.tap(); XCTAssertTrue(app.buttons["openTraining"].waitForExistence(timeout: 8))
+            XCTAssertTrue(app.buttons["openTraining"].label.contains(expected)); capture(app, "v63-" + role + "-weakness-training")
+            close(app)
+            let traits = app.buttons["facility-traits"]; v60Reveal(traits, app); traits.tap()
+            XCTAssertTrue(app.buttons["traitDetails"].waitForExistence(timeout: 8)); capture(app, "v63-" + role + "-traits"); close(app)
+            let book = app.buttons["facility-positions"]; v60Reveal(book, app); book.tap()
+            XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); capture(app, "v63-" + role + "-mastery"); close(app)
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
+        }
+    }
+}

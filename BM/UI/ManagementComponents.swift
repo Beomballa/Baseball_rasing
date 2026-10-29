@@ -193,7 +193,7 @@ struct ManagementFileHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: ManagementTheme.Space.inline) {
             Text(eyebrow).managementFont(.label).foregroundStyle(GameTheme.gold)
-            Text(title).font(ManagementPixelFont.font(22)).fixedSize(horizontal: false, vertical: true)
+            Text(title).font(ManagementPixelFont.readable(.screenTitle)).fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
             Text(note).managementFont(.helper).foregroundStyle(GameTheme.boardMuted)
                 .fixedSize(horizontal: false, vertical: true)

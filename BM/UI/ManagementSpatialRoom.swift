@@ -92,6 +92,9 @@ enum ManagementPixelFont {
         guard CTFontManagerRegisterGraphicsFont(font, &error) else { return nil }
         return name
     }()
+    static func readable(_ type: ManagementType) -> Font {
+        name.map { .custom($0, size: type.size, relativeTo: type.relativeTo) } ?? .system(type.relativeTo, design: .monospaced)
+    }
     static func font(_ size: CGFloat) -> Font {
         name.map { .custom($0, fixedSize: size) } ?? .system(size: size, weight: .semibold, design: .monospaced)
     }
