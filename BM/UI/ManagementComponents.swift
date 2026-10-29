@@ -223,3 +223,35 @@ struct ManagementObservationChange: View {
             .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
     }
 }
+
+
+struct ManagementToolbarButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(ManagementPixelFont.readable(.label))
+            .padding(.horizontal, 10).frame(minWidth: 44, minHeight: 44)
+            .foregroundStyle(enabled ? GameTheme.gold : GameTheme.boardMuted)
+            .background(configuration.isPressed ? GameTheme.navy : GameTheme.boardPanel, in: ManagementStepFrame())
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+    }
+}
+
+
+/// Avoid a second system glass surface over the opaque pixel control on newer iOS.
+struct ManagementToolbarAction: ToolbarContent {
+    let title: String
+    var identifier = ""
+    var placement = ToolbarItemPlacement.confirmationAction
+    var disabled = false
+    let action: () -> Void
+    var body: some ToolbarContent {
+        if #available(iOS 26.0, *) { item.sharedBackgroundVisibility(.hidden) }
+        else { item }
+    }
+    private var item: some ToolbarContent {
+        ToolbarItem(placement: placement) {
+            Button(title, action: action).buttonStyle(ManagementToolbarButtonStyle())
+                .disabled(disabled).accessibilityIdentifier(identifier)
+        }
+    }
+}

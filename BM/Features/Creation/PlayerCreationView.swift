@@ -33,7 +33,7 @@ struct PlayerCreationView: View {
                 HStack(alignment: .center, spacing: 12) {
                     PixelPlayer(appearance: draft.appearance).frame(width: 48, height: 64)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("NEW CAREER · 16세 고1").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                        Text("새 커리어 · 16세 고1").font(ManagementPixelFont.readable(.label)).foregroundStyle(GameTheme.gold)
                         Text(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "나의 첫 시즌" : draft.name)
                             .font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
                         Text("\(selectedSchool?.name ?? "학교 미선택") · \(draft.role.label)")
@@ -208,7 +208,7 @@ struct PlayerCreationView: View {
         .navigationTitle("선수 생성").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if focusedField != nil {
-                ToolbarItem(placement: .topBarTrailing) { Button("입력 완료") { focusedField = nil }.foregroundStyle(GameTheme.gold) }
+                ManagementToolbarAction(title: "입력 완료", placement: .topBarTrailing) { focusedField = nil }
             }
         }
         .sheet(isPresented: $showSchools) {
@@ -236,7 +236,7 @@ struct PlayerCreationView: View {
                     focusedField = nil; section = target
                     withAnimation(reduced ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo(target.rawValue, anchor: .top) }
                 } label: {
-                    Text(target.title).managementFont(.label).fixedSize(horizontal: false, vertical: true)
+                    Text(target.title).font(ManagementPixelFont.readable(.label)).fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }.buttonStyle(GameButtonStyle(secondary: section != target, onBoard: true))
                     .accessibilityAddTraits(section == target ? .isSelected : [])
@@ -481,7 +481,7 @@ private struct SchoolPicker: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .navigationTitle("소속 학교").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("닫기") { searchFocused = false; dismiss() }.frame(minWidth: 44, minHeight: 44).foregroundStyle(GameTheme.gold) }
+                ManagementToolbarAction(title: "닫기", identifier: "closeSchoolPicker", placement: .cancellationAction) { searchFocused = false; dismiss() }
                 if searchFocused {
                     ToolbarItem(placement: .topBarTrailing) { Button("검색 완료") { searchFocused = false }.foregroundStyle(GameTheme.gold) }
                 }

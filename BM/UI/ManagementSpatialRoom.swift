@@ -137,6 +137,12 @@ struct ManagementChalkRadar: View {
     }
 }
 
+struct ManagementPropButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
 struct ManagementFacilityStyle: ButtonStyle {
     let recommended: Bool
     func makeBody(configuration: Configuration) -> some View {
@@ -297,7 +303,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                                 }
                             }
                         }.frame(width: max(44, width * p.width), height: max(44, height * p.height)).contentShape(Rectangle())
-                    }.buttonStyle(.plain).foregroundStyle(ManagementTheme.Spatial.onCanvas)
+                    }.buttonStyle(ManagementPropButtonStyle()).foregroundStyle(ManagementTheme.Spatial.onCanvas)
                         .accessibilityLabel(facility.title + " · " + facility.status)
                         .accessibilityHint("상세 열기").accessibilityIdentifier(facility.id)
                         .position(x: p.hitRect(in: .init(width: width, height: height)).midX,

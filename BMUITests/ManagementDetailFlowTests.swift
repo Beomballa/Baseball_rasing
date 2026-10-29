@@ -2175,3 +2175,43 @@ extension ManagementDetailFlowTests {
         }
     }
 }
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV66LargestTextRoomRoutesCloseAndSettingsStayReadable() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        let before = status(app)
+        for (tab, facility) in [("선수", "facility-abilities"), ("훈련", "facility-training"), ("경기", "facility-analysis"), ("커리어", "facility-contracts")] {
+            app.buttons["managementLargeMenu"].tap(); app.buttons[tab].tap()
+            let target = app.buttons[facility]; revealLocationChoice(target, app); target.tap()
+            let close = app.buttons["closeRoomDetail"]; XCTAssertTrue(close.waitForExistence(timeout: 8))
+            XCTAssertGreaterThanOrEqual(close.frame.height, 44); capture(app, "v66-large-" + facility); close.tap()
+        }
+        app.buttons["managementLargeMenu"].tap(); app.buttons["홈"].tap()
+        let settings = app.buttons["clubhouse-settings"]; revealLocationChoice(settings, app); settings.tap()
+        let export = app.buttons["exportSave"]; revealLocationChoice(export, app); XCTAssertTrue(export.isHittable)
+        capture(app, "v66-large-save"); app.buttons["closeSettings"].tap(); XCTAssertEqual(status(app), before)
+    }
+    @MainActor func testV66CreationDraftReviewAndSchoolCancelBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-empty-verification"]; app.launch()
+        let name = app.textFields["playerName"]; XCTAssertTrue(name.waitForExistence(timeout: 30))
+        name.tap(); name.typeText("V66Draft"); app.buttons["입력 완료"].tap()
+        for pitcher in [false, true] {
+            let role = pitcher ? "pitcher" : "batter"
+            app.buttons["creationSection-information"].tap()
+            reveal(app.buttons["role-" + role], app); app.buttons["role-" + role].tap()
+            reveal(app.buttons["randomSchool"], app); app.buttons["randomSchool"].tap()
+            reveal(app.buttons["schoolPicker"], app); app.buttons["schoolPicker"].tap()
+            let close = app.buttons["closeSchoolPicker"]; XCTAssertTrue(close.waitForExistence(timeout: 8))
+            XCTAssertGreaterThanOrEqual(close.frame.height, 44); close.tap()
+            app.buttons["creationSection-review"].tap()
+            let readiness = app.staticTexts["creationReadiness"]; reveal(readiness, app)
+            XCTAssertTrue(readiness.label.contains("확인 완료")); capture(app, "v66-" + role + "-registration-review")
+            XCTAssertFalse(app.staticTexts["homePlayerName"].exists)
+            app.buttons["creationSection-information"].tap(); reveal(name, app); XCTAssertEqual(name.value as? String, "V66Draft")
+        }
+    }
+}

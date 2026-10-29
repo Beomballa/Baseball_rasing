@@ -595,6 +595,7 @@ struct SaveProtectionView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
+                    ManagementFileHeader(eyebrow: "LOCAL SAVE", title: "이 기기의 커리어 보관", note: "내보내기 → 파일 검증 → 전체 복원 확인")
                     ManagementPanel("기기 설정") {
                         Toggle("훈련 햅틱", isOn: $haptics).accessibilityIdentifier("settingHaptics")
                         Text("화면 읽기와 동작 줄이기는 iPhone의 손쉬운 사용 설정을 따릅니다. 배경음·효과음은 아직 제공하지 않습니다.").managementFont(.body)
@@ -638,7 +639,7 @@ struct SaveProtectionView: View {
             }.safeAreaInset(edge:.bottom) {
                 if let working {HStack(spacing:12) {ProgressView();Text(working).font(.subheadline)}.padding(14).frame(maxWidth:.infinity).background(GameTheme.boardPanel).foregroundStyle(GameTheme.boardInk).accessibilityElement(children:.combine).accessibilityIdentifier("saveOperationProgress")}
             }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("설정 · 저장 보호")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { dismiss() }.frame(minWidth:44,minHeight:44).disabled(working != nil) } }
+                .toolbar { ManagementToolbarAction(title: "닫기", identifier: "closeSettings", disabled: working != nil) { dismiss() } }
         }
         .interactiveDismissDisabled(working != nil)
         .task {

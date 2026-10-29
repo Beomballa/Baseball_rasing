@@ -50,7 +50,7 @@ struct CareerRestConfirmation: View {
                 }.clipped()
             }.background(GameTheme.board)
                 .navigationTitle("휴식 라운지").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { dismiss() }.frame(minWidth: 44, minHeight: 44) } }
+                .toolbar { ManagementToolbarAction(title: "닫기") { dismiss() } }
                 .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         }.preferredColorScheme(.dark).presentationDragIndicator(.visible)
     }

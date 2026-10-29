@@ -127,9 +127,7 @@ struct PlayerHomeView: View {
                 }
                 .navigationTitle(detail.title).navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("닫기") { roomDetail = nil }.frame(minWidth: 44, minHeight: 44).accessibilityIdentifier("closeRoomDetail")
-                    }
+                    ManagementToolbarAction(title: "닫기", identifier: "closeRoomDetail") { roomDetail = nil }
                 }
                 .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             }.presentationDragIndicator(.visible).presentationDetents([.large]).preferredColorScheme(.dark)
@@ -140,7 +138,7 @@ struct PlayerHomeView: View {
                 NavigationStack {
                     ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }.accessibilityIdentifier("calendarDetailScroll")
                         .background(GameTheme.board).navigationTitle("일정 · 날짜 관리")
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showCalendar = false }.frame(minWidth: 44, minHeight: 44) } }
+                        .toolbar { ManagementToolbarAction(title: "닫기", identifier: "closeCalendar") { showCalendar = false } }
                 }.preferredColorScheme(.dark)
             }
         }
