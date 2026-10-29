@@ -1123,14 +1123,20 @@ struct PitchRepertoireView: View {
                 ManagementPanel("새 구종 · 습득과 등록", surface: .paper) {
                     Text("5회 훈련 성적에 따라 습득 진척이 쌓입니다. 100에 도달하면 숙련도20으로 등록합니다.")
                         .font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                    Picker("등록할 자리", selection: $replacing) {
-                        Text(player.pitches.count < 5 ? "빈 슬롯에 추가" : "교체할 구종 선택").tag("")
-                        ForEach(ordered) { pitch in Text(pitch.name + " 자리 · 기존 숙련 보관").tag(pitch.code) }
-                    }.accessibilityIdentifier("pitchStudyReplacement")
-                    if let blocked { Text(blocked).font(.caption).foregroundStyle(GameTheme.navy) }
+                    Text("1 · 등록할 자리").managementFont(.label)
+                    VStack(spacing: 8) {
+                        if ordered.count < 5 {
+                            slotButton(code: "", title: "빈 슬롯에 추가", detail: "등록 \(ordered.count) / 5 · 기존 구종 유지")
+                        }
+                        ForEach(ordered) { pitch in
+                            slotButton(code: pitch.code, title: pitch.name + " 자리 교체", detail: "기존 숙련 \(pitch.mastery.formatted(.number.precision(.fractionLength(1)))) 보관")
+                        }
+                    }.accessibilityElement(children: .contain)
+                    if let blocked { Text(blocked).font(.subheadline).foregroundStyle(GameTheme.navy).accessibilityIdentifier("pitchStudyBlocked") }
                     if player.pitches.count >= 5 && replacing.isEmpty {
                         Text("등록5개 · 교체할 구종을 먼저 선택하세요.").font(.caption.bold())
                     }
+                    Text("2 · 배울 구종").managementFont(.label)
                     ForEach(choices) { pitch in
                         let archived = archives.first { $0.code == pitch.rawValue }
                         VStack(alignment: .leading, spacing: 8) {
@@ -1168,6 +1174,25 @@ struct PitchRepertoireView: View {
                 CareerTrainingView(player: player, calendar: calendar, initialKind: .pitch,
                                    initialPitchStudyCode: selectedCode, replacingPitchCode: replacing.isEmpty ? nil : replacing)
             }
+    }
+
+    private func slotButton(code: String, title: String, detail: String) -> some View {
+        let selected = replacing == code
+        return Button { replacing = code } label: {
+            HStack(spacing: 10) {
+                if !code.isEmpty {
+                    MatchGrip(code: code, hand: player.throwingHandRaw).frame(width: 32, height: 38).accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).managementFont(.label)
+                    Text(detail).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Text(selected ? "선택됨" : "선택").font(.subheadline.bold())
+            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }.buttonStyle(ManagementButtonStyle(variant: selected ? .primary : .secondary))
+            .accessibilityIdentifier("pitchStudySlot-" + (code.isEmpty ? "empty" : code))
+            .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

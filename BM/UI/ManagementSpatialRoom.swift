@@ -210,7 +210,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                         }
                     }
                     VStack(spacing: 8) {
-                        action.frame(minHeight: ManagementTheme.Control.primaryHeight).padding(.horizontal, ManagementTheme.Spatial.screenInset)
+                        if selection != .player { action.frame(minHeight: ManagementTheme.Control.primaryHeight).padding(.horizontal, ManagementTheme.Spatial.screenInset) }
                         ManagementTabBar(selection: $selection)
                     }.dynamicTypeSize(...DynamicTypeSize.accessibility1)
                         .padding(.top, 8).background(ManagementTheme.Spatial.canvas.opacity(0.97))
@@ -259,7 +259,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                     }
                 }
                 VStack(spacing: 8) {
-                    action.frame(minHeight: ManagementTheme.Control.primaryHeight).padding(.horizontal, 12)
+                    if selection != .player { action.frame(minHeight: ManagementTheme.Control.primaryHeight).padding(.horizontal, 12) }
                     ManagementTabBar(selection: $selection)
                 }.dynamicTypeSize(...DynamicTypeSize.accessibility1).padding(.top, 8).background(ManagementTheme.Spatial.canvas)
             }.frame(width: geometry.size.width, height: geometry.size.height)
@@ -390,7 +390,7 @@ struct ManagementSpatialHeader: View {
 enum ManagementRoomDetail: Equatable, Identifiable {
     case player(ManagementPlayerSection), training(ManagementTrainingSection)
     case game(ManagementGameSection), career(ManagementCareerSection)
-    case profile, gameEntry
+    case profile, gameEntry, pitchLibrary
     var id: String {
         switch self {
         case .player: "player"
@@ -399,6 +399,7 @@ enum ManagementRoomDetail: Equatable, Identifiable {
         case .career: "career"
         case .profile: "profile"
         case .gameEntry: "gameEntry"
+        case .pitchLibrary: "pitchLibrary"
         }
     }
     var title: String {
@@ -409,6 +410,16 @@ enum ManagementRoomDetail: Equatable, Identifiable {
         case .career: "스카우트 서류"
         case .profile: "나의 선수"
         case .gameEntry: "오늘 경기"
+        case .pitchLibrary: "구종 보관함"
         }
     }
+}
+
+/// The sheet identity remains stable while its selected section changes.
+struct ManagementLiveDetail<Content: View>: View {
+    @Binding var detail: ManagementRoomDetail?
+    @Binding var trainingKind: TrainingKind
+    let fallback: ManagementRoomDetail
+    @ViewBuilder let content: (ManagementRoomDetail, TrainingKind) -> Content
+    var body: some View { content(detail ?? fallback, trainingKind) }
 }

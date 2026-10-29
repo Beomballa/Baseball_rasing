@@ -54,8 +54,9 @@ struct PlayerNotebookIdentity: View {
                         .frame(width: size.size.width, height: size.size.height).clipped()
                         .overlay(GameTheme.navy.opacity(0.85))
                 }
+                .allowsHitTesting(false).accessibilityHidden(true)
             }
-            .overlay(ManagementStepFrame().stroke(GameTheme.gold, lineWidth: 2))
+            .overlay(ManagementStepFrame().stroke(GameTheme.gold, lineWidth: 2).allowsHitTesting(false))
             .accessibilityIdentifier("notebookIdentity")
     }
 }

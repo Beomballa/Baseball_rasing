@@ -8,6 +8,8 @@ struct CareerCalendarPanel: View {
     let schools: [School]
     let transition: CareerTransition
     var compact = false
+    var progressionOnly = false
+    var onTraining: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var showSchedule = false
@@ -98,6 +100,7 @@ struct CareerCalendarPanel: View {
     }
 
     var body: some View {
+        let concise = compact || progressionOnly
         let _=state.revision
         let status = CalendarScheduleStatus(player: player, state: state)
         let schedule = status.schedule
@@ -112,11 +115,11 @@ struct CareerCalendarPanel: View {
         }()
         let todayState=CalendarDayPresentation(role:player.role,fixture:today,saved:CalendarSavedMatch.read(savedGame),
             starter:selection.starter,selectionFailed:selection.failed,actionUsed:hasAction,trainingPending:trainingPending)
-        return GamePanel(title: "오늘 일정", onBoard: true) {
+        return GamePanel(title: progressionOnly ? "다음 행동 · 일정" : "오늘 일정", onBoard: true) {
             if let life=try? player.lifecycle,!life.traitRisk.isEmpty {
                 Text("! 특성 유지 주의 · 커리어의 변화 기록을 확인하세요").font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("calendarTraitWarning")
             }
-            if !compact, status.errorMessage == nil {
+            if !concise, status.errorMessage == nil {
                 let guidance = EarlyPlayGuidance.make(trainingPending: trainingPending,
                     gamePending: gameRecords.contains { $0.playerID == player.id && !$0.completed },
                     actionUsed: hasAction, gameDue: today != nil, gameCompleted: gameCompleted)
@@ -128,7 +131,7 @@ struct CareerCalendarPanel: View {
                 }
             }
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
-            if !compact {
+            if !concise {
             layout {
                 Text(ManagementDisplay.date(player.gameDate)).monospacedDigit().bold().accessibilityIdentifier("calendarDate")
                 if !typeSize.isAccessibilitySize { Spacer() }
@@ -150,7 +153,7 @@ struct CareerCalendarPanel: View {
             if let message = status.errorMessage {
                 scheduleError(message)
             } else {
-                if !compact {
+                if !concise {
                 if let today {
                     Text("\(today.number) / 30차전 · \(todayState.participation)")
                         .font(.headline).accessibilityIdentifier("todaySchedule")
@@ -174,11 +177,22 @@ struct CareerCalendarPanel: View {
                 }
             }                }
 
+            if progressionOnly {
+                Text(status.errorMessage != nil ? "일정을 다시 확인한 뒤 진행하세요" : evaluationUnread ? "새 계약 평가를 확인한 뒤 진행하세요" : trainingPending ? "진행 중인 훈련을 먼저 마쳐 주세요" : !hasAction ? "훈련 또는 휴식을 선택한 뒤 하루를 마무리하세요" : gameCompleted ? "오늘 경기 저장 완료 · 다음 날로 진행할 수 있어요" : today != nil ? "오늘 경기를 먼저 마쳐 주세요" : "오늘 행동 완료 · 다음 날로 진행할 수 있어요")
+                    .font(.subheadline).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("lobbyProgressStatus")
+            }
             layout {
+                if progressionOnly, !hasAction, !trainingPending, let onTraining {
+                    Button("훈련장 가기", action: onTraining).buttonStyle(ManagementButtonStyle(variant: .secondary))
+                        .disabled(advancing || schedule == nil)
+                        .accessibilityIdentifier("lobbyGoTraining")
+                }
+                if !progressionOnly || (!hasAction && !trainingPending) {
                 Button(hasAction ? (trainedToday ? "오늘 행동 완료" : "휴식 완료") : "오늘 휴식 −\(DailyRecovery.rest)") {
                     showRest = true
                 }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).disabled(hasAction || trainingPending || advancing || schedule == nil)
                     .accessibilityIdentifier("restToday")
+                }
                 Button("다음 날") { nextDay() }.buttonStyle(GameButtonStyle(onBoard: true))
                     .disabled(evaluationUnread || trainingPending || !hasAction || (today != nil && !gameCompleted) || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
             }
@@ -203,7 +217,7 @@ struct CareerCalendarPanel: View {
                 Button("연간 30경기 일정 보기") { showSchedule = true }
                     .font(.caption.bold()).frame(minHeight: 44).accessibilityIdentifier("showSeasonSchedule")
                 if !typeSize.isAccessibilitySize { Spacer() }
-                Button(showHelp ? "안내 닫기" : "진행 안내") { showHelp.toggle() }.font(.caption).frame(minHeight: 44)
+                if !progressionOnly { Button(showHelp ? "안내 닫기" : "진행 안내") { showHelp.toggle() }.font(.caption).frame(minHeight: 44) }
             }.foregroundStyle(GameTheme.gold)
             if showHelp {
                 Text("게임 달력 1년당 팀 30경기 · 시즌 종료만으로 나이가 오르지 않습니다.\n하루에 훈련 또는 휴식 1회 · 수면 회복 −\(DailyRecovery.sleep)\n묶음 진행은 최대 30일 · 매일 저장 · 경기일/나이 변경 전에 정지합니다.")

@@ -127,7 +127,7 @@ enum GameLobbyAction: Equatable {
     var title: String {
         switch self {
         case .unavailable: "일정 다시 확인"
-        case .schedule: "다음 일정 확인"
+        case .schedule: "다음 일정 · 날짜 진행"
         case .training: "훈련 이어하기"
         case .season: "시즌 결산 확인"
         case .game(let title): title
@@ -139,6 +139,7 @@ enum GameLobbyAction: Equatable {
         if trainingPending { return .training }
         if case .playing = saved { return .game(entry) }
         if seasonComplete { return .season }
+        if case .completed = saved { return .schedule }
         return fixture == nil ? .schedule : .game(entry)
     }
 }
