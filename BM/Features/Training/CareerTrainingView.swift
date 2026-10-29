@@ -811,6 +811,7 @@ struct CareerTrainingView: View {
     private func result(_ value: CareerTraining) -> some View {
         VStack(spacing: 16) {
             TrainingResultHeading(player: player, name: pitchName, average: value.average, practice: practice)
+            if !practice {Text("완료 결과 보관 · 재열기/연출은 성장·피로를 다시 적용하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("trainingResultStored")}
             ManagementPanel("5회 훈련 성적표") {
                 scores(value, expanded: true)
                 TrainingMissionBanner(kind: value.selectedKind, scores: value.scores, completed: true)

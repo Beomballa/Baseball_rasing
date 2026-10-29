@@ -1,5 +1,6 @@
 import XCTest
 import SwiftData
+import SQLite3
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
@@ -321,6 +322,125 @@ extension CareerStoreTests {
             if let bytes=original.1 {let training=try XCTUnwrap(c.fetch(FetchDescriptor<CareerTrainingRecord>()).first);XCTAssertEqual(training.payload,bytes);XCTAssertEqual(training.revision,3);XCTAssertEqual(try training.snapshot().scores.count,1)}
             if let bytes=original.2 {XCTAssertEqual(try c.fetch(FetchDescriptor<CareerMatchRecord>()).first?.payload,bytes)}
             XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:folder.path).contains {$0.hasPrefix("before-v15-")})
+        }
+    }
+}
+
+
+extension CareerStoreTests {
+    func testV56LargeArchiveSynchronousBaseline() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("large.store"),db=try CareerStore.makeContainer(url:url)
+        _ = try CareerStore.create(draft(),schools:SchoolCatalog.load(),in:db.mainContext)
+        var sqlite:OpaquePointer?;defer {sqlite3_close(sqlite)}
+        XCTAssertEqual(sqlite3_open(url.path,&sqlite),SQLITE_OK)
+        let bytes=SaveArchiveStore.maximumBytes-512*1024
+        XCTAssertEqual(sqlite3_exec(sqlite,"CREATE TABLE BM_QA_PADDING (payload BLOB); INSERT INTO BM_QA_PADDING VALUES (zeroblob(\(bytes)));",nil,nil,nil),SQLITE_OK)
+        let start=ProcessInfo.processInfo.systemUptime
+        let data=try SaveArchiveStore.export(container:db),exported=ProcessInfo.processInfo.systemUptime
+        let archive=try JSONDecoder().decode(CareerSaveArchive.self,from:data)
+        let candidate=try SaveArchiveStore.prepare(data,base:url),finished=ProcessInfo.processInfo.systemUptime
+        XCTAssertLessThanOrEqual(archive.database.count,SaveArchiveStore.maximumBytes)
+        XCTAssertGreaterThan(archive.database.count,63*1024*1024);XCTAssertEqual(candidate.players.count,1)
+        print("V56_BASELINE dbBytes=\(archive.database.count) archiveBytes=\(data.count) exportMs=\((exported-start)*1000) decodeAndPrepareMs=\((finished-exported)*1000)")
+    }
+}
+
+extension CareerStoreTests {
+    func testV56RejectsSlotAndAbilityCorruptionBeforeSwitchAndRevalidatesPreview() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let base=dir.appendingPathComponent("original.store"),db=try CareerStore.makeContainer(url:base),c=db.mainContext
+        let p=try CareerStore.create(draft(),schools:SchoolCatalog.load(),in:c)
+        let archive=try SaveArchiveStore.export(container:db),session=SaveProtection(container:db,base:base)
+        let prepared=try SaveArchiveStore.prepare(archive,base:base),pc=prepared.container.mainContext
+        let slot=try XCTUnwrap(pc.fetch(FetchDescriptor<ActiveCareerSlot>()).first);slot.roleRaw="pitcher";try pc.save()
+        XCTAssertThrowsError(try session.restore(prepared));XCTAssertTrue(session.container === db)
+        XCTAssertEqual(try SaveArchiveStore.activeURL(base:base),base)
+        let sourceSlot=try XCTUnwrap(c.fetch(FetchDescriptor<ActiveCareerSlot>()).first);c.delete(sourceSlot);try c.save()
+        XCTAssertThrowsError(try SaveArchiveStore.prepare(SaveArchiveStore.export(container:db),base:base))
+        c.insert(ActiveCareerSlot(role:p.role,playerID:p.id));try c.save()
+        let abilities=try XCTUnwrap(PlayerAbilityStore.profile(playerID:p.id,in:c));abilities.mental=101;try c.save()
+        XCTAssertThrowsError(try SaveArchiveStore.prepare(SaveArchiveStore.export(container:db),base:base))
+        XCTAssertEqual(p.gameDate,"2026-04-01");XCTAssertEqual(try SaveArchiveStore.activeURL(base:base),base)
+    }
+    func testV56RecoveryCommitFailureRetryAndDuplicateRestoreIsNoOp() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let db=try CareerStore.makeContainer(url:dir.appendingPathComponent("source.store"))
+        _ = try CareerStore.create(draft(),schools:SchoolCatalog.load(),in:db.mainContext)
+        let base=dir.appendingPathComponent("broken.store"),bytes=Data("unreadable-original".utf8);try bytes.write(to:base)
+        let prepared=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:db),base:base)
+        let fallback=try CareerStore.makeContainer(inMemory:true),session=SaveProtection(container:fallback,base:base,recoveryOnly:true)
+        XCTAssertThrowsError(try session.restore(prepared,commit:{_,_ in throw SaveProtectionError.busy}))
+        XCTAssertTrue(session.recoveryOnly);XCTAssertTrue(session.container === fallback)
+        try session.restore(prepared);let generation=session.generation
+        XCTAssertFalse(session.recoveryOnly);XCTAssertTrue(session.container === prepared.container)
+        try session.restore(prepared,commit:{_,_ in XCTFail("duplicate pointer commit")})
+        XCTAssertEqual(session.generation,generation);XCTAssertEqual(try Data(contentsOf:base),bytes)
+    }
+    func testV56BackgroundArchiveNearLimitAndImportFailureKeepOriginal() async throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("large.store"),db=try CareerStore.makeContainer(url:url)
+        _ = try CareerStore.create(draft(.pitcher),schools:SchoolCatalog.load(),in:db.mainContext)
+        var sqlite:OpaquePointer?;defer {sqlite3_close(sqlite)}
+        XCTAssertEqual(sqlite3_open(url.path,&sqlite),SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(sqlite,"CREATE TABLE BM_QA_PADDING (payload BLOB); INSERT INTO BM_QA_PADDING VALUES (zeroblob(\(SaveArchiveStore.maximumBytes-512*1024)));",nil,nil,nil),SQLITE_OK)
+        var ticks=0
+        let ticker=Task { @MainActor in while !Task.isCancelled {ticks += 1;try? await Task.sleep(for:.milliseconds(10))} }
+        defer {ticker.cancel()}
+        let start=ProcessInfo.processInfo.systemUptime,data=try await SaveArchiveStore.exportAsync(container:db)
+        let archive=try JSONDecoder().decode(CareerSaveArchive.self,from:data)
+        XCTAssertGreaterThan(archive.database.count,63*1024*1024);XCTAssertLessThanOrEqual(archive.database.count,SaveArchiveStore.maximumBytes)
+        let file=dir.appendingPathComponent("roundtrip.bmbackup");try data.write(to:file)
+        let prepared=try await SaveArchiveStore.prepareFileAsync(file,base:url)
+        XCTAssertEqual(prepared.players.count,1);XCTAssertGreaterThan(ticks,1)
+        let session=SaveProtection(container:db,base:url)
+        try session.restore(prepared);XCTAssertFalse(session.recoveryOnly)
+        let broken=dir.appendingPathComponent("bad.bmbackup");try Data("broken".utf8).write(to:broken)
+        do {_ = try await SaveArchiveStore.prepareFileAsync(broken,base:url);XCTFail("invalid file accepted")} catch {}
+        XCTAssertTrue(session.container === prepared.container)
+        let oversized=dir.appendingPathComponent("oversized.bmbackup");_ = FileManager.default.createFile(atPath:oversized.path,contents:nil)
+        let handle=try FileHandle(forWritingTo:oversized);try handle.truncate(atOffset:UInt64(SaveArchiveStore.maximumBytes*2+1));try handle.close()
+        do {_ = try await SaveArchiveStore.prepareFileAsync(oversized,base:url);XCTFail("oversized input accepted")} catch {}
+        print("V56_ASYNC dbBytes=\(archive.database.count) archiveBytes=\(data.count) elapsedMs=\((ProcessInfo.processInfo.systemUptime-start)*1000) mainActorTicks=\(ticks)")
+    }
+    private func v56PayloadDigests(_ url:URL) throws -> [String:[String]] {
+        var db:OpaquePointer?,query:OpaquePointer?;defer {sqlite3_finalize(query);sqlite3_close(db)}
+        guard sqlite3_open_v2(url.path,&db,SQLITE_OPEN_READONLY,nil)==SQLITE_OK else {throw SaveProtectionError.invalid}
+        var tables:[String]=[]
+        guard sqlite3_prepare_v2(db,"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Z%'",-1,&query,nil)==SQLITE_OK else {throw SaveProtectionError.invalid}
+        while sqlite3_step(query)==SQLITE_ROW {if let t=sqlite3_column_text(query,0) {tables.append(String(cString:t))}}
+        sqlite3_finalize(query);query=nil
+        var result:[String:[String]]=[:]
+        for table in tables {
+            let name=table.replacingOccurrences(of:"\"",with:"\"\"")
+            if sqlite3_prepare_v2(db,"SELECT ZPAYLOAD FROM \"\(name)\"",-1,&query,nil)==SQLITE_OK {
+                var values:[String]=[]
+                while sqlite3_step(query)==SQLITE_ROW {if let raw=sqlite3_column_blob(query,0) {values.append(SaveArchiveStore.hash(Data(bytes:raw,count:Int(sqlite3_column_bytes(query,0)))))}}
+                result[table]=values.sorted()
+            }
+            sqlite3_finalize(query);query=nil
+        }
+        return result
+    }
+    func testV56ExistingSavedCopiesReopenKeepingOriginalPayloadsAndFrozenReports() throws {
+        let source=FileManager.default.temporaryDirectory.appendingPathComponent("v56-existing-copies")
+        guard FileManager.default.fileExists(atPath:source.path) else {throw XCTSkip("Explicit existing-copy input not provided")}
+        for name in ["normal","qa"] {
+            let input=source.appendingPathComponent(name+".store"),original=try Data(contentsOf:input)
+            let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
+            let url=dir.appendingPathComponent("working.store");try SaveArchiveStore.snapshot(from:input,to:url)
+            let before=try v56PayloadDigests(url)
+            try autoreleasepool {let db=try CareerStore.makeContainer(url:url);_ = try SaveArchiveStore.validate(db)}
+            let first=try v56PayloadDigests(url)
+            for (table,hashes) in before {XCTAssertTrue(hashes.allSatisfy {first[table]?.contains($0)==true},"original payload changed: "+table)}
+            try autoreleasepool {let db=try CareerStore.makeContainer(url:url);_ = try SaveArchiveStore.validate(db)}
+            XCTAssertEqual(try v56PayloadDigests(url),first);XCTAssertEqual(try Data(contentsOf:input),original)
+            print("V56_EXISTING_COPY kind=\(name) payloadTables=\(before.count) preserved=true")
         }
     }
 }

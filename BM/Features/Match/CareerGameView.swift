@@ -578,7 +578,7 @@ struct CareerGameView: View {
                         Text("\(player.name) #\(player.jerseyNumber)").font(.subheadline.bold())
                     }
                 }
-                Text("결과 저장 완료").font(.caption.bold()).foregroundStyle(GameTheme.growth)
+                Text("결과 저장 완료 · 재열기는 기록·XP·피로 추가 반영 없음").font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
                     .accessibilityIdentifier("gameResultSaved")
             }
 

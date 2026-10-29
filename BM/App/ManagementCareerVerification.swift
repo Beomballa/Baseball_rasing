@@ -17,12 +17,19 @@ struct ManagementCareerVerification: View {
             guard container == nil && error == nil else { return }
             do {
                 let catalog = try SchoolCatalog.load()
-                let saveQA=ProcessInfo.processInfo.arguments.contains("-save-protection-verification")
-                let base=FileManager.default.temporaryDirectory.appendingPathComponent("save-qa-"+UUID().uuidString).appendingPathComponent("Career.store")
+                let args=ProcessInfo.processInfo.arguments
+                var diskSession:UUID?
+                if let index=args.firstIndex(of:"-v56-disk-session") {
+                    guard index+1<args.count,let id=UUID(uuidString:args[index+1]) else {throw SaveProtectionError.invalid};diskSession=id
+                }
+                let saveQA=args.contains("-save-protection-verification") || diskSession != nil
+                let base=FileManager.default.temporaryDirectory.appendingPathComponent(diskSession.map {"v56-resume-"+$0.uuidString} ?? ("save-qa-"+UUID().uuidString)).appendingPathComponent("Career.store")
                 if saveQA { try FileManager.default.createDirectory(at:base.deletingLastPathComponent(),withIntermediateDirectories:true) }
-                let memory = try saveQA ? CareerStore.makeContainer(url:base) : CareerStore.makeContainer(inMemory: true)
+                let memory = try saveQA ? CareerStore.makeContainer(url:SaveArchiveStore.activeURL(base:base)) : CareerStore.makeContainer(inMemory:true)
                 if saveQA { protection=SaveProtection(container:memory,base:base) }
-                let roles: [PlayerRole] = ProcessInfo.processInfo.arguments.contains("-management-empty-verification") ? []
+                let existingCount=try memory.mainContext.fetchCount(FetchDescriptor<CareerPlayer>())
+                let reopening=diskSession != nil && existingCount>0
+                let roles: [PlayerRole] = reopening || ProcessInfo.processInfo.arguments.contains("-management-empty-verification") ? []
                     : ProcessInfo.processInfo.arguments.contains("-management-single-role-verification") ? [.batter] : PlayerRole.allCases
                 for role in roles {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role

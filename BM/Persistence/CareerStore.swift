@@ -116,7 +116,7 @@ import SQLite3
 import CryptoKit
 import Observation
 
-struct CareerSaveArchive: Codable {
+struct CareerSaveArchive: Codable, Sendable {
     let format: Int
     let schema: Int
     let created: Date
@@ -134,13 +134,13 @@ enum SaveProtectionError: LocalizedError {
     }
 }
 @MainActor enum SaveArchiveStore {
-    static let maximumBytes = 64 * 1024 * 1024
-    static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    nonisolated static let maximumBytes = 64 * 1024 * 1024
+    nonisolated static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     static func defaultURL() -> URL {
         ModelConfiguration("Career", schema: Schema(versionedSchema: CareerSchemaV15.self), cloudKitDatabase: .none).url
     }
     static func pointer(_ base: URL) -> URL { base.appendingPathExtension("active-generation") }
-    static func generationURL(_ id: UUID, base: URL) -> URL {
+    nonisolated static func generationURL(_ id: UUID, base: URL) -> URL {
         base.deletingLastPathComponent().appendingPathComponent("restored-" + id.uuidString).appendingPathComponent("Career.store")
     }
     static func activeURL(base: URL) throws -> URL {
@@ -152,7 +152,7 @@ enum SaveProtectionError: LocalizedError {
         guard FileManager.default.fileExists(atPath: url.path) else { throw SaveProtectionError.invalid }
         return url
     }
-    static func snapshot(from source: URL, to destination: URL) throws {
+    nonisolated static func snapshot(from source: URL, to destination: URL) throws {
         var input: OpaquePointer?, output: OpaquePointer?
         defer { sqlite3_close(input); sqlite3_close(output) }
         guard sqlite3_open_v2(source.path, &input, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
@@ -162,7 +162,7 @@ enum SaveProtectionError: LocalizedError {
         guard step == SQLITE_DONE, finish == SQLITE_OK,
               sqlite3_exec(output, "PRAGMA journal_mode=DELETE", nil, nil, nil) == SQLITE_OK else { throw SaveProtectionError.busy }
     }
-    static func checkSQLite(_ url: URL) throws {
+    nonisolated static func checkSQLite(_ url: URL) throws {
         var db: OpaquePointer?, statement: OpaquePointer?
         defer { sqlite3_finalize(statement); sqlite3_close(db) }
         guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
@@ -175,6 +175,13 @@ enum SaveProtectionError: LocalizedError {
     }
     static func export(container: ModelContainer) throws -> Data {
         guard !container.mainContext.hasChanges, let source = container.configurations.first?.url else { throw SaveProtectionError.busy }
+        return try exportSnapshot(source:source)
+    }
+    static func exportAsync(container:ModelContainer) async throws -> Data {
+        guard !container.mainContext.hasChanges,let source=container.configurations.first?.url else {throw SaveProtectionError.busy}
+        return try await Task.detached(priority:.utility) {try exportSnapshot(source:source)}.value
+    }
+    nonisolated private static func exportSnapshot(source:URL) throws -> Data {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -184,7 +191,20 @@ enum SaveProtectionError: LocalizedError {
         guard data.count <= maximumBytes else { throw SaveProtectionError.invalid }
         return try JSONEncoder().encode(CareerSaveArchive(format: 1, schema: 15, created: Date(), digest: hash(data), database: data))
     }
-    static func prepare(_ data: Data, base: URL) throws -> PreparedSave {
+    static func prepare(_ data: Data, base: URL) throws -> PreparedSave {try open(try stage(data,base:base))}
+    static func prepareAsync(_ data:Data,base:URL) async throws -> PreparedSave {
+        let staged=try await Task.detached(priority:.utility) {try stage(data,base:base)}.value
+        return try open(staged)
+    }
+    static func prepareFileAsync(_ file:URL,base:URL) async throws -> PreparedSave {
+        let staged=try await Task.detached(priority:.utility) {
+            let size=try file.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0
+            guard size>0,size<=maximumBytes*2 else {throw SaveProtectionError.invalid}
+            return try stage(Data(contentsOf:file),base:base)
+        }.value
+        return try open(staged)
+    }
+    nonisolated private static func stage(_ data:Data,base:URL) throws -> StagedSave {
         guard data.count <= maximumBytes * 2 else { throw SaveProtectionError.invalid }
         let archive = try JSONDecoder().decode(CareerSaveArchive.self, from: data)
         guard archive.format == 1, archive.schema == 15, !archive.database.isEmpty,
@@ -193,14 +213,30 @@ enum SaveProtectionError: LocalizedError {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         do {
             try archive.database.write(to: url, options: .atomic); try checkSQLite(url)
+            return StagedSave(id:id,url:url,created:archive.created)
+        } catch {try? FileManager.default.removeItem(at:url.deletingLastPathComponent());throw error}
+    }
+    private static func open(_ staged:StagedSave) throws -> PreparedSave {
+        let url=staged.url
+        do {
             let schema = Schema(versionedSchema: CareerSchemaV15.self)
             let candidate = try ModelContainer(for: schema, configurations: [ModelConfiguration("Career", schema: schema, url: url, cloudKitDatabase: .none)])
+            let players=try validate(candidate)
+            return PreparedSave(id:staged.id,url:url,container:candidate,created:staged.created,players:players)
+        } catch {try? FileManager.default.removeItem(at:url.deletingLastPathComponent());throw error}
+    }
+    static func validate(_ candidate:ModelContainer) throws -> [String] {
             let c = candidate.mainContext
             c.autosaveEnabled=false
+            guard !c.hasChanges else {throw SaveProtectionError.busy}
             let players = try c.fetch(FetchDescriptor<CareerPlayer>())
             let calendars = try c.fetch(FetchDescriptor<CareerCalendarState>())
             guard Set(players.map(\.id)).count == players.count,
-                  calendars.count == players.count else { throw SaveProtectionError.invalid }
+                  Set(calendars.map(\.playerID)) == Set(players.map(\.id)),calendars.count == players.count else {throw SaveProtectionError.invalid}
+            let active=try players.filter {try $0.lifecycle.retirement == nil},slots=try c.fetch(FetchDescriptor<ActiveCareerSlot>())
+            guard Set(active.map(\.roleRaw)).count == active.count,slots.count == active.count,
+                  Set(slots.map(\.playerID)) == Set(active.map(\.id)),Set(slots.map(\.roleRaw)).count == slots.count,
+                  slots.allSatisfy({slot in active.contains {$0.id == slot.playerID && $0.roleRaw == slot.roleRaw}}) else {throw SaveProtectionError.invalid}
             for p in players {
                 guard let state = calendars.first(where: { $0.playerID == p.id }) else { throw SaveProtectionError.invalid }
                 _ = try p.lifecycle; _ = try state.age(of: p)
@@ -221,21 +257,29 @@ enum SaveProtectionError: LocalizedError {
             guard try c.fetchCount(FetchDescriptor<PlayerAbilities>()) == players.count,
                   try c.fetchCount(FetchDescriptor<PlayerTraits>()) == players.count,
                   try c.fetchCount(FetchDescriptor<PlayerPositions>()) == players.filter({$0.role == .batter}).count else { throw SaveProtectionError.invalid }
-            for row in try c.fetch(FetchDescriptor<PlayerAbilities>()) { _ = try owner(row.playerID) }
+            let abilityRows=try c.fetch(FetchDescriptor<PlayerAbilities>())
+            guard Set(abilityRows.map(\.playerID)) == Set(players.map(\.id)) else {throw SaveProtectionError.invalid}
+            for row in abilityRows {
+                let (p,_)=try owner(row.playerID)
+                for kind in p.role == .pitcher ? [TrainingKind.mental,.velocity,.control,.stuff,.stamina]:[.mental] {_ = try row.value(for:kind)}
+            }
             for row in try c.fetch(FetchDescriptor<CareerTrainingRecord>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
             for row in try c.fetch(FetchDescriptor<CareerMatchRecord>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
             for row in try c.fetch(FetchDescriptor<CareerLeagueGameRecord>()) { _ = try row.snapshot() }
-            for row in try c.fetch(FetchDescriptor<CareerScoutingReport>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
+            for p in players {
+                let (_,state)=try owner(p.id)
+                _ = try ScoutingObservationStore.reports(player:p,calendar:state,in:c)
+            }
             for row in try c.fetch(FetchDescriptor<PlayerTraits>()) { _ = try row.snapshot() }
             for row in try c.fetch(FetchDescriptor<PlayerPositions>()) { _ = try row.snapshot() }
             guard !c.hasChanges else { throw SaveProtectionError.invalid }
-            return PreparedSave(id: id, url: url, container: candidate, created: archive.created,
-                                players: players.map { $0.name + " · " + $0.role.rawValue + " · " + $0.gameDate }.sorted())
-        } catch {
-            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
-            throw error
-        }
+            return players.map {$0.name+" · "+$0.role.label+" · "+$0.gameDate+($0.isRetired ? " · 은퇴 보관":" · 진행 중")}.sorted()
     }
+}
+private struct StagedSave:Sendable {
+    let id:UUID
+    let url:URL
+    let created:Date
 }
 @MainActor final class PreparedSave {
     let id: UUID
@@ -251,13 +295,15 @@ enum SaveProtectionError: LocalizedError {
     var container: ModelContainer
     var generation = UUID()
     let base: URL
-    let recoveryOnly: Bool
+    private(set) var recoveryOnly: Bool
     init(container: ModelContainer, base: URL, recoveryOnly: Bool = false) { self.container=container; self.base=base; self.recoveryOnly=recoveryOnly }
     func restore(_ prepared: PreparedSave, commit: (URL, Data) throws -> Void = { try $1.write(to: $0, options: .atomic) }) throws {
-        guard !container.mainContext.hasChanges, !prepared.container.mainContext.hasChanges else { throw SaveProtectionError.busy }
         guard prepared.url == SaveArchiveStore.generationURL(prepared.id, base: base) else { throw SaveProtectionError.invalid }
+        if container === prepared.container {return}
+        guard !container.mainContext.hasChanges, !prepared.container.mainContext.hasChanges else { throw SaveProtectionError.busy }
         try SaveArchiveStore.checkSQLite(prepared.url)
+        _ = try SaveArchiveStore.validate(prepared.container)
         try commit(SaveArchiveStore.pointer(base), Data(prepared.id.uuidString.utf8))
-        container=prepared.container; generation=UUID()
+        container=prepared.container;recoveryOnly=false;generation=UUID()
     }
 }

@@ -213,6 +213,7 @@ import SwiftUI
         XCTAssertEqual(player.fatigue, fatigue); XCTAssertEqual(state.revision, startRevision)
         XCTAssertThrowsError(try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context))
         var expected = before; try expected.advance(.automatic)
+        expected.projectFeedback=MatchProjectFeedback(version:1,activityKey:saved.key,date:saved.gameDate,project:nil,clubName:nil,before:nil,after:nil)
         try CareerMatchStore.advance(player: player, state: state, record: saved, revision: 0, input: .automatic, in: context)
         XCTAssertEqual(try saved.snapshot(), expected); XCTAssertTrue(saved.completed)
     }
@@ -239,6 +240,7 @@ import SwiftUI
         let saved = try CareerMatchStore.start(player: batter, state: state, in: context)
         XCTAssertEqual(try saved.snapshot(), expected)
         var next = expected; try next.advance(.automatic)
+        next.projectFeedback=MatchProjectFeedback(version:1,activityKey:saved.key,date:saved.gameDate,project:nil,clubName:nil,before:nil,after:nil)
         try CareerMatchStore.advance(player: batter, state: state, record: saved, revision: saved.revision, input: .automatic, in: context)
         XCTAssertEqual(try saved.snapshot(), next)
         XCTAssertTrue(next.fieldPlays?.allSatisfy {$0.battedBall != nil} == true)

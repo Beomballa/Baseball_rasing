@@ -2,6 +2,95 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV56TrainingTerminationResumeAndStoredRewardBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication()
+        for pitcher in [false,true] {
+            app.terminate();app.launchArguments=["-management-career-verification","-v56-disk-session",UUID().uuidString];app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
+            let kind=pitcher ? "control":"defense",role=pitcher ? "pitcher":"batter"
+            func openTraining() {
+                app.buttons["managementTab-training"].tap();app.buttons["facility-physical"].tap()
+                reveal(app.buttons["trainingKind-"+kind],app);app.buttons["trainingKind-"+kind].tap()
+                reveal(app.buttons["openTraining"],app);app.buttons["openTraining"].tap()
+            }
+            openTraining();reveal(app.buttons["startTraining"],app);app.buttons["startTraining"].tap()
+            reveal(app.buttons["trainingAttempt"],app);app.buttons["trainingAttempt"].tap()
+            // The command has saved this attempt before presentation starts. Terminate the app itself.
+            app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
+            let afterAttempt=status(app);openTraining()
+            let progress=app.descendants(matching:.any).matching(identifier:"trainingProgress").firstMatch
+            XCTAssertTrue(progress.waitForExistence(timeout:8));XCTAssertTrue(progress.label.contains("2 / 5"));capture(app,"v56-"+role+"-training-relaunch")
+            for _ in 0..<4 {
+                reveal(app.buttons["trainingAttempt"],app);app.buttons["trainingAttempt"].tap()
+                XCTAssertFalse(app.buttons["trainingNext"].exists)
+                XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout:10));app.buttons["trainingNext"].tap()
+            }
+            XCTAssertTrue(app.staticTexts["trainingResultStored"].waitForExistence(timeout:8))
+            let growth=app.staticTexts["trainingGrowth"].label;capture(app,"v56-"+role+"-training-stored")
+            app.navigationBars.buttons.element(boundBy:0).tap();XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout:5));close(app);app.buttons["managementTab-home"].tap()
+            let completed=status(app);XCTAssertEqual(completed[0],afterAttempt[0]);XCTAssertEqual(completed[2],"행동 0/1");XCTAssertNotEqual(completed[1],afterAttempt[1])
+            app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
+            XCTAssertEqual(status(app),completed);openTraining()
+            XCTAssertTrue(app.staticTexts["trainingResultStored"].waitForExistence(timeout:8));XCTAssertEqual(app.staticTexts["trainingGrowth"].label,growth)
+        }
+    }
+    @MainActor func testV56MatchTerminationResumeAndCompletedResultBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication()
+        for pitcher in [false,true] {
+            app.terminate();app.launchArguments=["-management-career-verification","-v56-disk-session",UUID().uuidString];app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
+            app.buttons["clubhouse-rest"].tap();app.buttons["confirmRest"].tap();app.buttons["restDone"].tap();app.buttons["homeTodayGame"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout:8));app.buttons["opponentTab-plan"].tap()
+            reveal(app.buttons["confirmGamePlan"],app);app.buttons["confirmGamePlan"].tap()
+            XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:12))
+            if pitcher {app.buttons["gamePitch"].tap();app.buttons["gameRelease"].tap()}
+            else {app.buttons["gameInput-watch"].tap();app.buttons["battingTouchSurface"].tap()}
+            let automatic=app.buttons["gameAutomatic"]
+            XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"enabled == true"),object:automatic)],timeout:35),.completed)
+            let board=app.descendants(matching:.any).matching(identifier:"careerGameScore").firstMatch.label
+            app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
+            app.buttons["homeTodayGame"].tap();XCTAssertTrue(automatic.waitForExistence(timeout:12))
+            XCTAssertEqual(app.descendants(matching:.any).matching(identifier:"careerGameScore").firstMatch.label,board)
+            capture(app,pitcher ? "v56-pitcher-match-resumed":"v56-batter-match-resumed")
+            automatic.tap();app.buttons["진행하고 결과 저장"].tap();XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:30))
+            capture(app,pitcher ? "v56-pitcher-match-stored":"v56-batter-match-stored")
+            app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
+            let completed=status(app);app.buttons["homeTodayGame"].tap();XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:12))
+            app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
+            XCTAssertEqual(status(app),completed)
+        }
+    }
+    @MainActor func testV56BackupPreviewRestoreAndPickerCancellation() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-save-protection-verification","-save-protection-preview"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));let before=status(app)
+        app.buttons["clubhouse-settings"].tap();XCTAssertTrue(app.buttons["importSave"].waitForExistence(timeout:8))
+        let scope=app.descendants(matching:.any).matching(identifier:"restoreScopeSummary").firstMatch;reveal(scope,app);XCTAssertTrue(scope.exists);capture(app,"v56-backup-verified-comparison")
+        let confirm=app.buttons["confirmRestoreSave"];reveal(confirm,app);confirm.tap();app.buttons["취소"].tap();XCTAssertTrue(confirm.exists)
+        reveal(app.buttons["importSave"],app);app.buttons["importSave"].tap()
+        let cancel=app.buttons.matching(NSPredicate(format:"label IN %@",["Cancel","취소"])).firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout:10));cancel.tap();XCTAssertTrue(confirm.waitForExistence(timeout:8));capture(app,"v56-backup-picker-cancel")
+        reveal(confirm,app);confirm.tap();app.buttons["전체 복원"].tap();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:12));XCTAssertEqual(status(app),before)
+    }
+    @MainActor func testV56SmallLargestTextExportCancellationAndRestoreControls() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-save-protection-verification","-save-protection-preview","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL","-management-reduced-motion-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));let before=status(app)
+        revealLocationChoice(app.buttons["clubhouse-settings"],app);app.buttons["clubhouse-settings"].tap()
+        let export=app.buttons["exportSave"];revealLocationChoice(export,app);XCTAssertTrue(export.isHittable);XCTAssertGreaterThanOrEqual(export.frame.height,44);capture(app,"v56-small-large-export")
+        export.tap()
+        let cancel=app.buttons.matching(NSPredicate(format:"label IN %@",["Cancel","취소"])).firstMatch
+        XCTAssertTrue(app.buttons["DOCPicker.actionButton"].waitForExistence(timeout:12));capture(app,"v56-small-file-exporter")
+        // The system picker exposes Cancel at its root, not inside On My iPhone.
+        if !cancel.exists {app.navigationBars.buttons["BackButton"].tap()}
+        XCTAssertTrue(cancel.waitForExistence(timeout:5));cancel.tap()
+        let size=app.staticTexts["saveExportSize"];revealLocationChoice(size,app);XCTAssertTrue(size.exists)
+        let scope=app.descendants(matching:.any).matching(identifier:"restoreScopeSummary").firstMatch;revealLocationChoice(scope,app);XCTAssertTrue(scope.isHittable);capture(app,"v56-small-large-restore-scope")
+        let confirm=app.buttons["confirmRestoreSave"];revealLocationChoice(confirm,app);XCTAssertTrue(confirm.isHittable);confirm.tap();XCTAssertTrue(app.buttons["전체 복원"].waitForExistence(timeout:5));capture(app,"v56-small-large-confirm");app.buttons["취소"].tap()
+        app.buttons["닫기"].tap();XCTAssertEqual(status(app),before)
+    }
     @MainActor func testV51TrainingScreensAndSelectedRoutes() {
         captureV51TrainingRoutes(["contact", "power", "discipline", "velocity", "control", "stuff", "speed", "defense", "arm", "stamina", "mental"])
     }
