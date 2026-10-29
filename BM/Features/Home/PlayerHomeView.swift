@@ -2525,9 +2525,9 @@ struct ObservationReviewView:View {
             VStack(alignment:.leading,spacing:16) {
                 if let review {
                     GamePanel(title:"SCOUT REVIEW · 28일 관찰 결산",onBoard:true,contentSpacing:12) {
-                        Text(ManagementDisplay.date(review.current.observedDate)+" 확정 · \(review.current.period+1)차 관찰").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewCurrentDate")
+                        Text(ManagementDisplay.date(review.current.observedDate, includeYear: true)+" 확정 · \(review.current.period+1)차 관찰").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewCurrentDate")
                         if let previous=review.previous {
-                            Text(ManagementDisplay.date(previous.observedDate)+" → "+ManagementDisplay.date(review.current.observedDate)).font(.subheadline).accessibilityIdentifier("reviewPreviousDate")
+                            Text(ManagementDisplay.date(previous.observedDate, includeYear: true)+" → "+ManagementDisplay.date(review.current.observedDate, includeYear: true)).font(.subheadline).accessibilityIdentifier("reviewPreviousDate")
                             Text("위의 실제 관찰일 사이 변화이며,정확히28일 간격이 아닐 수 있습니다.").font(.caption)
                             if review.current.period-previous.period>1 {Text("중간 보고서가 없어 최근 저장 자료와 비교합니다. 연속28일의 변화가 아닙니다.").font(.caption)}
                         } else {Text("첫 관찰 자료 · 이전 보고서가 없어 변화량을 계산하지 않습니다.").font(.subheadline).accessibilityIdentifier("reviewNoPrevious")}
@@ -2536,8 +2536,19 @@ struct ObservationReviewView:View {
                     }
                     if review.previous != nil {
                         GamePanel(title:"GROWTH · 관찰일 사이의 변화",onBoard:true,contentSpacing:12) {
-                            ForEach(review.abilities+review.pitches) {row in
+                            let changes = review.abilities + review.pitches
+                            let changed = changes.filter { $0.difference != 0 }
+                            let unchanged = changes.filter { $0.difference == 0 }
+                            if changed.isEmpty { Text("관찰한 능력·구종 변화 없음").managementFont(.label) }
+                            ForEach(changed) { row in
                                 ManagementObservationChange(title: row.label, before: row.before, after: row.after, identifier: "reviewAbility-" + row.id)
+                            }
+                            if !unchanged.isEmpty {
+                                DisclosureGroup("변화 없는 능력·구종 \(unchanged.count)개") {
+                                    ForEach(unchanged) { row in
+                                        ManagementObservationChange(title: row.label, before: row.before, after: row.after, identifier: "reviewAbility-" + row.id)
+                                    }
+                                }.tint(GameTheme.gold)
                             }
                             Text("양쪽 보고서에 있는 같은 능력·구종만 비교합니다. 훈련·경기·그 외 변화를 포함하며 특정 활동의 효과로 단정하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         }

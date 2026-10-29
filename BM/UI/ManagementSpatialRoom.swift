@@ -3,7 +3,8 @@ import CoreText
 
 /// Presentation only: dates and thresholds never change the saved calendar or fatigue.
 enum ManagementDisplay {
-    static func date(_ raw: String) -> String {
+    static func date(_ raw: String) -> String { date(raw, includeYear: false) }
+    static func date(_ raw: String, includeYear: Bool) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ko_KR")
         formatter.calendar = Calendar(identifier: .gregorian)
@@ -11,7 +12,7 @@ enum ManagementDisplay {
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.isLenient = false
         guard let value = formatter.date(from: raw) else { return raw }
-        formatter.dateFormat = "M월 d일 (E)"
+        formatter.dateFormat = includeYear ? "yyyy년 M월 d일 (E)" : "M월 d일 (E)"
         return formatter.string(from: value)
     }
     static func fatigueLabel(_ value: Int) -> String { value <= 40 ? "양호" : value < 60 ? "주의" : "높음" }
