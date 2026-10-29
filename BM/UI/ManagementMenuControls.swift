@@ -91,3 +91,21 @@ enum ManagementGameSection: CaseIterable { case schedule, analysis, records, sta
 enum ManagementCareerSection: CaseIterable { case observation, goals, contracts
     var title: String { switch self { case .observation: "관찰"; case .goals: "목표"; case .contracts: "계약" } }
 }
+
+
+/// A forecast only; starting/finishing still belongs to the existing training command.
+struct TrainingCostStrip: View {
+    let fatigue: Int
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { labels }
+            VStack(alignment: .leading, spacing: 8) { labels }
+        }.managementFont(.label).accessibilityElement(children: .combine)
+            .accessibilityIdentifier("trainingCostStrip")
+    }
+    @ViewBuilder private var labels: some View {
+        Text("5회")
+        Text("행동 1회")
+        Text("완료 피로 \(fatigue) → \(min(100, fatigue + TrainingRules.fatigueCost))")
+    }
+}

@@ -31,7 +31,7 @@ struct ManagementFacility: Identifiable {
     var preview: [String] = []
 }
 
-enum ManagementPropKind { case sign, radar, notebook, document, day, calendar }
+enum ManagementPropKind { case sign, radar, notebook, document, day, calendar, facilityTag }
 
 struct ManagementPropPlacement {
     let x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat
@@ -64,6 +64,11 @@ struct ManagementPropPlacement {
 }
 
 extension ManagementFacility {
+    static func attached(_ id: String, _ title: String, _ status: String, x: CGFloat, y: CGFloat, preview: [String], recommended: Bool = false) -> Self {
+        let prop = ManagementPropPlacement(x: x, y: y, width: 0.34, height: 0.10, kind: .facilityTag)
+        return .init(id: id, title: title, status: status, x: x, y: y, recommended: recommended, prop: prop, preview: preview)
+    }
+
     static func spatial(_ id: String, _ title: String, _ status: String, preview: [String] = [], recommended: Bool = false) -> Self {
         let prop = ManagementPropPlacement.at(id)
         return .init(id: id, title: title, status: status, x: prop.x, y: prop.y, recommended: recommended, prop: prop, preview: preview)
@@ -146,7 +151,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
     @ViewBuilder let action: Action
     @Environment(\.dynamicTypeSize) private var typeSize
     var propAbilities: [HomeAbilityValue] = []
-    private var usesProps: Bool { asset.hasSuffix("V59") }
+    private var usesProps: Bool { asset.hasSuffix("V59") || ["BattingRoomV2", "BullpenRoomV2"].contains(asset) }
 
     var body: some View {
         if usesProps { propRoom } else { legacyRoom }
@@ -250,7 +255,17 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                 if let p = facility.prop {
                     Button { choose(facility.id) } label: {
                         ZStack {
-                            if p.kind == .radar {
+                            if p.kind == .facilityTag {
+                                VStack(spacing: 0) {
+                                    Text(facility.title + " ›").font(ManagementPixelFont.font(14))
+                                        .foregroundStyle(GameTheme.boardInk).padding(.vertical, 7).frame(maxWidth: .infinity)
+                                        .background(ManagementTheme.Spatial.wood)
+                                    Text(facility.preview.joined(separator: " · ")).font(ManagementPixelFont.font(12))
+                                        .foregroundStyle(GameTheme.navy).padding(.vertical, 6).padding(.horizontal, 4)
+                                        .frame(maxWidth: .infinity).background(GameTheme.boardInk)
+                                }.multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                                    .overlay(ManagementStepFrame().strokeBorder(facility.recommended ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
+                            } else if p.kind == .radar {
                                 if propAbilities.count >= 3 {
                                     ManagementChalkRadar(values: propAbilities).frame(width: width * 0.405, height: width * 0.27)
                                 } else { Text("자료 확인").font(ManagementPixelFont.font(12)) }

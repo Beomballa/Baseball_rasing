@@ -2067,3 +2067,28 @@ extension ManagementDetailFlowTests {
         }
     }
 }
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV61TrainingRoomsPreparationAndRestBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        for pitcher in [false, true] {
+            if pitcher { pickPitcher(app) }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-training"].tap()
+            capture(app, "v61-" + role + "-training-room")
+            let facility = app.buttons["facility-training"]; v60Reveal(facility, app); facility.tap()
+            XCTAssertTrue(app.buttons["openTraining"].waitForExistence(timeout: 8))
+            capture(app, "v61-" + role + "-training-choice")
+            close(app); app.buttons["managementTab-home"].tap()
+            let rest = app.buttons["clubhouse-rest"]; v60Reveal(rest, app); rest.tap()
+            XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 8))
+            capture(app, "v61-" + role + "-rest-confirmation")
+            app.buttons["취소 · 돌아가기"].tap()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 8))
+            XCTAssertEqual(status(app), before)
+        }
+    }
+}

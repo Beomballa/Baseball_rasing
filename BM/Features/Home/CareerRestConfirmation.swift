@@ -29,7 +29,8 @@ struct CareerRestConfirmation: View {
                             ManagementPanel(completed ? "오늘 회복 완료" : "오늘은 몸을 쉬게 할까요?", surface: .paper) {
                                 Text(completed ? "피로 \(before) → \(player.fatigue)" : "피로 \(player.fatigue) → \(DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest))")
                                     .managementFont(.metric).accessibilityIdentifier("restFatigueForecast")
-                                Text("오늘 행동 1회 소모").font(.subheadline.bold()).padding(8).background(GameTheme.gold.opacity(0.4))
+                                ManagementProgress(title: completed ? "현재 피로" : "휴식 후 피로", value: .init(current: Double(completed ? player.fatigue : DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest)), target: 100), color: GameTheme.growth)
+                                Text(completed ? "오늘 행동 사용 완료" : "오늘 행동 1회 소모").managementFont(.label).padding(8).background(GameTheme.gold.opacity(0.4))
                                 Text("지금 최대 −\(DailyRecovery.rest)  ·  취침 시 추가 −\(DailyRecovery.sleep)").managementFont(.body)
                                 Text("지금 날짜는 그대로 · 피로는 0 아래로 내려가지 않습니다.").managementFont(.helper)
                                 if completed {

@@ -90,20 +90,21 @@ struct PlayerNotebookHighlights: View {
 
 struct NotebookAbilityStrip: View {
     let value: HomeAbilityValue
+    var onPaper = false
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(value.label).font(.subheadline.bold())
                 Spacer()
-                Text(value.current, format: .number.precision(.fractionLength(1))).font(.headline.monospacedDigit()).foregroundStyle(GameTheme.gold)
+                Text(value.current, format: .number.precision(.fractionLength(1))).font(.headline.monospacedDigit()).foregroundStyle(onPaper ? GameTheme.navy : GameTheme.gold)
             }
             Text(value.growthFeedback).font(.caption).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 3) {
                 ForEach(0..<10, id: \.self) { index in
-                    Rectangle().fill(Double(index) < min(10, max(0, value.current / 10)) ? GameTheme.growth : GameTheme.boardLine.opacity(0.24))
+                    Rectangle().fill(Double(index) < min(10, max(0, value.current / 10)) ? (onPaper ? Color(hex: 0x237459) : GameTheme.growth) : GameTheme.boardLine.opacity(0.24))
                 }
             }.frame(height: 9).accessibilityHidden(true)
-        }.padding(.vertical, 5).foregroundStyle(GameTheme.boardInk)
+        }.padding(.vertical, 5).foregroundStyle(onPaper ? GameTheme.navy : GameTheme.boardInk)
             .accessibilityElement(children: .combine).accessibilityIdentifier(value.id)
     }
 }

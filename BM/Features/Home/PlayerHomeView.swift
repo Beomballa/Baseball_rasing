@@ -280,11 +280,13 @@ struct PlayerHomeView: View {
                 .spatial("facility-positions", player.role == .batter ? "포지션 수첩" : "구종 수첩", player.role == .batter ? player.roleDetail : "보유 \(player.pitches.count)개 · 숙련도")]
         case .training:
             return [
-                .init(id: "facility-training", title: player.role == .batter ? "타격 케이지" : "불펜 투구", status: todayTraining?.completed == false ? "진행 중 · 이어하기" : action, x: 0.2, y: 0.37, recommended: true),
-                .init(id: "facility-physical", title: "주루·수비·멘탈", status: "능력별 전용 훈련", x: 0.2, y: 0.76),
-                .init(id: "facility-traitTraining", title: "특성 훈련", status: "조건 · 습득 진척", x: 0.8, y: 0.57),
-                .init(id: "facility-positionTraining", title: player.role == .batter ? "포지션 훈련" : "구종 그립", status: player.role == .batter ? "포지션 XP · 숙련" : "보유 \(player.pitches.count)개 · 숙련도", x: 0.8, y: 0.2),
-                .init(id: "facility-practice", title: "자유 연습", status: "행동 · 피로 소모 없음", x: 0.8, y: 0.88)]
+                .attached("facility-training", player.role == .batter ? "타격 케이지" : "불펜 투구", todayTraining?.completed == false ? "진행 중 · 이어하기" : action,
+                          x: 0.48, y: 0.32, preview: [todayTraining?.completed == false ? "이어하기" : "능력 훈련"], recommended: true),
+                .attached("facility-physical", "피지컬", "주루·수비·멘탈 · 능력별 전용 훈련", x: 0.20, y: 0.64, preview: ["주루 · 수비 · 멘탈"]),
+                .attached("facility-traitTraining", "특성 일지", "조건 · 습득 진척", x: 0.80, y: 0.62, preview: ["조건 · 진척"]),
+                .attached("facility-positionTraining", player.role == .batter ? "포지션 수첩" : "구종 수첩", player.role == .batter ? "포지션 XP · 숙련" : "보유 \(player.pitches.count)개 · 숙련도",
+                          x: 0.80, y: 0.80, preview: [player.role == .batter ? "XP · 숙련" : "보유 \(player.pitches.count)개"]),
+                .attached("facility-practice", "자유 연습", "행동 · 피로 소모 없음 · 실제 성장 없음", x: 0.20, y: 0.83, preview: ["저장 성장 없음"])]
         case .game:
             return [
                 .init(id: "facility-calendar", title: "경기 일정", status: ManagementDisplay.date(player.gameDate), x: 0.2, y: 0.25),
@@ -502,7 +504,10 @@ struct PlayerHomeView: View {
         return VStack(alignment: .leading, spacing: 16) {
             ManagementPanel(activeTrainingKind.label + " 훈련", surface: .paper) {
                 Text(trainingMethod(activeTrainingKind)).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
-                Text("5회 · 오늘 행동 1회 · 완료 시 피로 +\(TrainingRules.fatigueCost)").managementFont(.label)
+                TrainingCostStrip(fatigue: player.fatigue)
+                if let current = HomeAbilitySummary(player: player, abilities: abilities).originals.first(where: { $0.id.lowercased() == "home" + activeTrainingKind.rawValue.lowercased() }) {
+                    NotebookAbilityStrip(value: current, onPaper: true)
+                }
                 NavigationLink { CareerTrainingDestination(player: player, calendar: calendar, initialKind: activeTrainingKind) } label: { Text(activeTrainingKind.label + " 훈련 준비") }
                     .buttonStyle(ManagementButtonStyle()).disabled(todayTraining != nil || calendar.hasAction(on: player.gameDate))
                     .accessibilityIdentifier(todayTraining == nil ? "openTraining" : "openNewAbilityTraining")
@@ -533,12 +538,14 @@ struct PlayerHomeView: View {
                     Text("5회 결과·나이·피로에 따라 성장 · 준비 화면 이동은 오늘 행동을 사용하지 않습니다.").managementFont(.helper)
                 }.tint(GameTheme.navy).accessibilityIdentifier("trainingPreparationDetails")
             }
+
             Text("훈련 종류").managementFont(.sectionTitle)
             ManagementSectionTabs(options: TrainingKind.allCases.filter { $0.allows(player.roleRaw) }, selection: Binding(get: { activeTrainingKind }, set: { trainingKind = $0 }), title: { kind in
                 let summary = HomeAbilitySummary(player: player, abilities: abilities)
                 let current = summary.originals.first { $0.id.lowercased() == "home" + kind.rawValue.lowercased() }?.current
                 return kind.label + (current.map { String(format: " %.1f", $0) } ?? "")
             }, identifier: "trainingKind")
+
         }
     }
     private func trainingMethod(_ activeTrainingKind: TrainingKind) -> String {
