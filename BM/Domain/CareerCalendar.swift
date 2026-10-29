@@ -330,7 +330,7 @@ struct CareerRoute: Identifiable, Equatable {
                 Self(id:"college",title:"대학 입단",status:status,
                      detail:"20~23세 · 대학 모집·성적·자리 심사가 필요합니다. 자동 입학하지 않습니다."),
                 Self(id:"unsigned",title:"무소속 준비",status:age < 19 ? "고교 졸업 후 가능" : "훈련·휴식으로 준비 가능",
-                     detail:"계약 없이 육성을 계속할 수 있습니다. 인증 평가전과 실제 진로 신청은 후속 단계입니다.")]
+                     detail:"계약 없이 육성을 계속할 수 있습니다. 방출 근거가 있는 무소속은 인증 평가전·재입단 창을 확인하세요.")]
     }
 }
 
@@ -349,7 +349,7 @@ struct ContractEvaluationWindow: Codable, Equatable {
         switch month {
         case 4: return age <= 23 ? ["국내 신인","대학 입단"]:["국내 전력/검증 테스트"]
         case 7: return age <= 23 ? ["국내 신인"]:["국내 전력/검증 테스트"]
-        default: return [] // Professional affiliation/rights are not yet implemented.
+        default: return [] // Registered professional/college routes are evaluated separately.
         }
     }
 }

@@ -400,7 +400,7 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         let observation = try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
         var value = ContractEvaluationSnapshot(rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
             calendarRevision:calendar.revision,affiliation:history.current,routes:routes,observation:observation,
-            pending:observation.age <= 23 ? ["실제 제의 발행·수락/등록·성인 소속/일정 전환은 후속입니다.","인증 평가전 원장 미연결 · 자료 누락 시 심사 보류"] : ["국내 전력/검증 테스트 선발 심사 대기"])
+            pending:observation.age <= 23 ? ["선발·실제 제의는 같은 창 최초 자료로 고정 · 상세에서 수락/거절을 결정합니다.","신규 신청과 방출 후 재입단·인증 경로를 구분하며 자료 부족은 심사 보류입니다."] : ["국내 전력/검증 테스트 선발 심사 대기"])
         if (20...23).contains(observation.age) {
             let seed=player.id.uuidString+"/\(window.year)",seats=DomesticSelection.market(seed:seed)
             let april=try rows.first(where:{$0.key == CareerContractEvaluation.key(player.id,"\(window.year)-04")})?.snapshot(player:player,calendar:calendar).selection

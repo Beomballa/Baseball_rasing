@@ -471,7 +471,7 @@ struct DomesticOffersView: View {
                 if let selected=command {
                     Button(selected.accept ? "수락 확정":"거절 확정",role:selected.accept ? nil:.destructive) {complete(selected)}.accessibilityIdentifier("confirmOfferDecision")
                 }
-                Button("취소",role:.cancel) {command=nil}
+                Button("취소") {command=nil}
             } message: {
                 if let selected=command {Text(selected.accept ? "\(selected.offer.name) 계약을 수락합니다. \(selected.offer.collegeEntry.map { $0.effectiveDate+"부터 프로 소속으로 전환하며 그 전까지 대학 소속을 유지합니다." } ?? "오늘 소속을 등록합니다.") 다른 열린 제의는 닫히며 날짜·피로·능력치는 유지합니다.":"이 제의를 거절합니다. 같은 창에서 다시 발행하지 않으며 다른 열린 제의는 유지합니다.")}
             }
@@ -498,8 +498,9 @@ struct DomesticOffersView: View {
         if packet.offers.isEmpty {
             GamePanel(title:"이번 평가 · 제의 없음",onBoard:true,contentSpacing:16) {
                 Text("다음 기회를 준비할 수 있습니다").font(.title3.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOffersEmpty")
+                Text("당시 평가의 부족 조건과 구단 모집 사유를 구분해 준비하세요. 기량을 올려도 같은 창을 다시 추첨하지 않습니다.").font(.subheadline)
                 ForEach(packet.emptyReasons,id:\.self) {Text($0).font(.subheadline).lineSpacing(4)}
-                Text(value.version == 4 ? "다음 국내 육성팀 재입단 평가는4월·7월입니다.":value.window.month == 4 ? "다음 국내 신인 창은7월 · 대학은 다음 해4월입니다.":"다음 국내 신인·대학 창은 다음 해4월입니다.")
+                Text(value.retry != nil ? "다음 국내 육성팀 재입단 평가는4월·7월입니다.":value.college != nil ? "대학 재학생 프로 진출은 다음11월에 나이·재학 조건을 다시 확인합니다.":value.window.month == 4 ? "다음 국내 신인 창은7월 · 대학은 다음 해4월입니다.":"다음 국내 신인·대학 창은 다음 해4월입니다.")
                     .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 Text("훈련으로 보완해도 이번 창의 결과는 다시 뽑지 않습니다.").font(.footnote)
             }
@@ -589,7 +590,7 @@ struct DomesticOffersView: View {
         GamePanel(title:"제의 조건 · 나란히 비교",onBoard:true,contentSpacing:18) {
             if packet.offers.count == 2 {
                 let a=packet.offers[0],b=packet.offers[1]
-                Text("경제 지수와 역할·기간을 함께 확인하세요").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                Text("역할 → 배치·발효 → 기간 → 경제 지수 순으로 확인하세요").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 LazyVGrid(columns:Array(repeating:GridItem(.flexible(),alignment:.top),count:typeSize.isAccessibilitySize ? 1:2),alignment:.leading,spacing:12) {
                     comparisonCard(a)
                     comparisonCard(b)
@@ -609,7 +610,10 @@ struct DomesticOffersView: View {
     private func comparisonCard(_ offer:DomesticContractOffer) -> some View {
         VStack(alignment:.leading,spacing:12) {
             Text(offer.name).font(.headline).foregroundStyle(GameTheme.gold)
-            Text(DomesticContractOffer.roleName(offer.roleID)).font(.subheadline)
+            Text(DomesticContractOffer.roleName(offer.roleID)).font(.headline)
+            Text("배치 · "+offer.placement).font(.subheadline)
+            Text("발효 · "+(offer.collegeEntry?.effectiveDate ?? "수락일 즉시")).font(.subheadline.monospacedDigit())
+            Text("출전 보장 없음 · 입단 후 경쟁").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:offer.period)
             Text(status(offer)).font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
             Text("마감 · "+ManagementDisplay.date(offer.expiresDate)).font(.footnote.monospacedDigit())
@@ -692,5 +696,62 @@ struct ContractStateLane<Content: View>: View {
         }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
             .background(GameTheme.navy,in:ManagementStepFrame())
             .overlay {ManagementStepFrame().strokeBorder(GameTheme.boardLine,lineWidth:2)}
+    }
+}
+
+struct ContractNextStep: View {
+    let title:String
+    let timing:String
+    let action:String
+    let identifier:String
+    var body:some View {
+        VStack(alignment:.leading,spacing:10) {
+            Text(title).font(.headline).foregroundStyle(GameTheme.gold)
+            Text(timing).font(.subheadline.monospacedDigit())
+            Text(action).font(.subheadline).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal:false,vertical:true)
+        }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
+            .background(GameTheme.navy,in:ManagementStepFrame())
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine,lineWidth:2))
+            .accessibilityElement(children:.combine).accessibilityIdentifier(identifier)
+    }
+}
+struct ContractReasonGroups:View {
+    let reasons:[String]
+    let identifier:String
+    var body:some View {
+        let groups=ContractSelectionReasons(reasons)
+        VStack(alignment:.leading,spacing:12) {
+            if !groups.preparation.isEmpty {group("선수 준비 · 부족 조건",groups.preparation,"preparation")}
+            if !groups.market.isEmpty {group("구단 사정 · 자리/예산/경쟁",groups.market,"market")}
+            if !groups.other.isEmpty {group("추가 확인",groups.other,"other")}
+        }
+    }
+    private func group(_ title:String,_ reasons:[String],_ code:String) -> some View {
+        VStack(alignment:.leading,spacing:6) {
+            Text(title).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+            ForEach(Array(reasons.enumerated()),id:\.offset) {_,reason in Text(reason).font(.subheadline).fixedSize(horizontal:false,vertical:true)}
+        }.accessibilityElement(children:.combine).accessibilityIdentifier(identifier+"-"+code)
+    }
+}
+struct ContractPendingRegistration:View {
+    let owner:CareerContractJournal
+    let date:GameDate
+    var body:some View {
+        switch Result(catching:{try ContractRegistrationPresentation(owner:owner,on:date)}) {
+        case .success(let state):
+            ContractNextStep(title:"현재 · "+state.current,timing:"예약 · "+state.reserved,action:"발효 · "+state.effective,identifier:"contractRegistrationTimeline")
+        case .failure(let error):Text(error.localizedDescription).font(.subheadline).accessibilityIdentifier("contractTimelineError")
+        }
+    }
+}
+
+struct ContractEvaluationReviewScreen:View {
+    let player:CareerPlayer
+    let calendar:CareerCalendarState
+    var body:some View {
+        ScrollView {ContractEvaluationHomePanel(player:player,calendar:calendar).padding(14)}
+            .background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+            .navigationTitle("고정 평가 확인").navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark,for:.navigationBar).tint(GameTheme.gold)
     }
 }

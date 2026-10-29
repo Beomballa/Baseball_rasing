@@ -194,7 +194,11 @@ struct CareerCalendarPanel: View {
                     retryEnabled:!advancing && !trainingPending && today == nil && schedule != nil && receipt.lastSavedDate == player.gameDate,
                     retry:advanceBatch)
             }
-            if evaluationUnread {Text("새 계약 평가 자료를 홈에서 확인한 뒤 날짜를 진행해 주세요.").font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractEvaluationDateGate")}
+            if evaluationUnread {
+                Text("새 계약 평가 미확인 · 날짜 진행이 잠겨 있습니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractEvaluationDateGate")
+                NavigationLink {ContractEvaluationReviewScreen(player:player,calendar:state)} label: {Text("고정 평가 확인 · 날짜 진행 잠금 해제")}
+                    .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("calendarOpenContractEvaluation")
+            }
             layout {
                 Button("연간 30경기 일정 보기") { showSchedule = true }
                     .font(.caption.bold()).frame(minHeight: 44).accessibilityIdentifier("showSeasonSchedule")

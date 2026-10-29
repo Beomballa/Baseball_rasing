@@ -1013,7 +1013,7 @@ extension CareerCalendarTests {
             XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
             XCTAssertEqual(row.payload,payload)
             XCTAssertEqual(try c.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reports)
-            XCTAssertNotNil(saved.selection);XCTAssertTrue(saved.pending.contains(where:{$0.contains("후속")}))
+            XCTAssertNotNil(saved.selection);XCTAssertTrue(saved.pending.contains(where:{$0.contains("같은 창 최초 자료로 고정")}))
         }
     }
     func testContractEvaluationBulkStopsAtArrivalAndConfirmationDoesNotConsumeDay() async throws {
@@ -1914,8 +1914,8 @@ extension CareerCalendarTests {
 }
 
 extension CareerCalendarTests {
-    private func releaseFixture(_ role:PlayerRole,games:Bool=true,url:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,String) {
-        let (store,p,s,packet)=try acceptance(role,legacyURL:url),c=store.mainContext
+    private func releaseFixture(_ role:PlayerRole,games:Bool=true,url:URL?=nil,legacyVersion:Int=12) throws -> (ModelContainer,CareerPlayer,CareerCalendarState,String) {
+        let (store,p,s,packet)=try acceptance(role,legacyURL:url,legacyVersion:legacyVersion),c=store.mainContext
         let offer=try XCTUnwrap(packet.offers.first {$0.route == .rookie})
         try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
         let member=try XCTUnwrap(s.registration(for:p)),year=2035
@@ -2108,12 +2108,12 @@ extension CareerCalendarTests {
         XCTAssertEqual(evaluation.payload,frozen)
         XCTAssertNil(try evaluation.snapshot(player:p,calendar:s).retry?.certificate)
     }
-    func testCertificationV12MigrationDiskReopenKeepsOriginalsAndPendingProgress() throws {
+    func testCertificationV15DiskReopenKeepsOriginalsAndPendingProgress() throws {
         let url=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString+".sqlite")
         defer {for suffix in ["","-wal","-shm"] {try? FileManager.default.removeItem(atPath:url.path+suffix)}}
         var journal=Data(),official:[Data]=[],progress=Data()
         do {
-            let (store,p,s,key)=try releaseFixture(.pitcher,games:false,url:url),c=store.mainContext
+            let (store,p,s,key)=try releaseFixture(.pitcher,games:false,url:url,legacyVersion:15),c=store.mainContext
             p.gameDate="2035-11-15";try c.save()
             try ContractRegistrationStore.release(player:p,calendar:s,evaluationKey:key,date:p.gameDate,revision:s.revision,in:c)
             journal=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)).payload
@@ -2129,7 +2129,7 @@ extension CareerCalendarTests {
         }
         let store=try CareerStore.makeContainer(url:url),c=store.mainContext
         let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first)
-        let row=try CertificationStore.start(player:p,calendar:s,in:c)
+        let row=try XCTUnwrap(CertificationStore.resumable(player:p,calendar:s,in:c))
         XCTAssertEqual(row.payload,progress);XCTAssertFalse(row.completed)
         try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)
         XCTAssertTrue(row.completed)
@@ -6219,5 +6219,107 @@ extension CareerCalendarTests {
             let final=match.payload,fatigue=p.fatigue
             XCTAssertThrowsError(try CareerMatchStore.advance(player:p,state:s,record:match,revision:match.revision,input:.automatic,in:c));XCTAssertEqual(match.payload,final);XCTAssertEqual(p.fatigue,fatigue)
         }
+    }
+}
+
+extension CareerCalendarTests {
+    func testV54PreparationDistinguishesAgeRegistrationAndPendingWithoutEligibilityAwards() throws {
+        let today=try GameDate("2030-04-01"),adult=try GameDate("2030-04-01")
+        let young=ContractPreparationGuide.entry(age:19,adultDate:adult,member:nil,hasProfessionalHistory:false,pending:false)
+        XCTAssertTrue(young.title.contains("심사 전"));XCTAssertTrue(young.timing.contains("2030-04-01"))
+        let adultGuide=ContractPreparationGuide.entry(age:20,adultDate:adult,member:nil,hasProfessionalHistory:false,pending:false)
+        XCTAssertTrue(adultGuide.title.contains("나이 조건"));XCTAssertTrue(adultGuide.action.contains("입단 확정은 아닙니다"))
+        let retiredRoute=ContractPreparationGuide.entry(age:24,adultDate:adult,member:nil,hasProfessionalHistory:false,pending:false)
+        XCTAssertTrue(retiredRoute.title.contains("나이 종료"))
+        let retry=ContractPreparationGuide.entry(age:24,adultDate:adult,member:nil,hasProfessionalHistory:true,pending:false)
+        XCTAssertTrue(retry.title.contains("재도전"))
+        let pending=ContractPreparationGuide.entry(age:20,adultDate:adult,member:nil,hasProfessionalHistory:false,pending:true)
+        XCTAssertTrue(pending.title.contains("예약"))
+        XCTAssertEqual(ContractEvaluationWindow.nextStart(after:today,months:[4,7])?.description,"2030-07-01")
+        XCTAssertEqual(ContractEvaluationWindow.nextStart(after:try GameDate("2030-11-14"),months:[11])?.description,"2031-11-01")
+        XCTAssertNil(ContractEvaluationWindow.nextStart(after:today,months:[5]))
+    }
+    func testV54SelectionReasonsPreserveUnknownAndSeparatePreparationFromMarket() {
+        let raw=["기량 여유 F -1.0 · 기준0 필요","동일 환경 대학 공식 성적40타석/15이닝 필요","연간 모집 자리 충원 완료","예산 부족 · 필요200/잔여0지수","후보 경쟁 탈락 · F 내림차순/고정 ID 순","기존 미분류 사유 보존"]
+        let groups=ContractSelectionReasons(raw)
+        XCTAssertEqual(groups.preparation,Array(raw.prefix(2)));XCTAssertEqual(groups.market,Array(raw[2...4]))
+        XCTAssertEqual(groups.other,[raw[5]])
+        XCTAssertEqual(Set(groups.preparation+groups.market+groups.other),Set(raw))
+        let criterion=ContractSelectionReasons(["국내 역할/고정 후보 경쟁 기준 미달 · F 0 필요"])
+        XCTAssertEqual(criterion.preparation.count,1);XCTAssertTrue(criterion.market.isEmpty)
+    }
+    func testV54CollegeReservationReadOnlyThenEffectiveDoesNotRewriteHistoryBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try collegeProFixture(role),c=store.mainContext
+            let offer=try collegeProOffer(p,s,c),before=try XCTUnwrap(s.registration(for:p))
+            try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+            let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),raw=row.payload,revision=s.revision,fatigue=p.fatigue
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            let reserved=try ContractRegistrationPresentation(owner:owner,on:GameDate(p.gameDate))
+            XCTAssertTrue(reserved.current.contains(before.name));XCTAssertFalse(reserved.reserved.contains("없음"))
+            XCTAssertTrue(reserved.effective.contains(offer.collegeEntry!.effectiveDate))
+            let effective=try ContractRegistrationPresentation(owner:owner,on:GameDate(offer.collegeEntry!.effectiveDate))
+            XCTAssertTrue(effective.current.contains(offer.name));XCTAssertTrue(effective.reserved.contains("없음"))
+            XCTAssertEqual(row.payload,raw);XCTAssertEqual(s.revision,revision);XCTAssertEqual(p.fatigue,fatigue);XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testV54OverseasRenewalPresentationKeepsAffiliationSeparateFromEconomicEffectiveDate() throws {
+        let (store,p,s,_)=try overseasRenewalFixture(.pitcher,route:.npbFirstTeam,fundedIncumbent:true),c=store.mainContext
+        try OverseasContractStore.evaluateRenewal(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),offer=try XCTUnwrap(owner.overseasCareer?.renewalReviews?.last?.offer)
+        try OverseasContractStore.decideRenewal(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
+        let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),raw=row.payload
+        let value=try ContractRegistrationPresentation(owner:ContractRegistrationStore.journal(player:p,calendar:s,in:c),on:GameDate(p.gameDate))
+        XCTAssertTrue(value.reserved.contains("경제 조건 갱신"));XCTAssertTrue(value.effective.contains(offer.effective));XCTAssertTrue(value.effective.contains("소속/권리 유지"))
+        XCTAssertEqual(raw,row.payload);XCTAssertFalse(c.hasChanges)
+    }
+    func testV54CertificationResumeReadDoesNotStartAdvanceOrPayAgainBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try certificationFixture(role),c=store.mainContext
+            XCTAssertNil(try CertificationStore.resumable(player:p,calendar:s,in:c));XCTAssertFalse(c.hasChanges)
+            let row=try CertificationStore.start(player:p,calendar:s,in:c)
+            try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)
+            let raw=row.payload,revision=s.revision,date=p.gameDate,fatigue=p.fatigue,action=s.actionDate
+            for _ in 0..<2 {XCTAssertEqual(try CertificationStore.resumable(player:p,calendar:s,in:c)?.payload,raw)}
+            XCTAssertEqual(s.revision,revision);XCTAssertEqual(p.gameDate,date);XCTAssertEqual(p.fatigue,fatigue);XCTAssertEqual(s.actionDate,action);XCTAssertFalse(c.hasChanges)
+            while !row.completed {try CertificationStore.advance(player:p,calendar:s,row:row,revision:row.revision,in:c)}
+            let completed=row.payload,completedFatigue=p.fatigue,completedRevision=s.revision
+            XCTAssertEqual(try CertificationStore.resumable(player:p,calendar:s,in:c)?.payload,completed)
+            XCTAssertEqual(p.fatigue,completedFatigue);XCTAssertEqual(s.revision,completedRevision);XCTAssertFalse(c.hasChanges)
+        }
+    }
+    func testV54FAGuideUsesExistingDeclarationRulesAndKeepsUnverifiedDistinctFromZero() throws {
+        let (store,p,s)=try faFixture(.pitcher,route:.mlbFirstTeam),c=store.mainContext
+        let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),member=try XCTUnwrap(s.registration(for:p)),date=try GameDate(p.gameDate)
+        let row=try XCTUnwrap(ContractRegistrationStore.row(player:p,in:c)),raw=row.payload
+        let valid=FAQualificationPresentation(member:member,service:owner.overseasCareer?.faService,on:date)
+        XCTAssertTrue(valid.canDeclare);XCTAssertTrue(valid.timing.contains("6/6"))
+        let unknown=FAQualificationPresentation(member:member,service:nil,on:date)
+        XCTAssertFalse(unknown.canDeclare);XCTAssertTrue(unknown.title.contains("미확인"));XCTAssertFalse(unknown.timing.contains("0/6"))
+        let zero=FAQualificationPresentation(member:member,service:[],on:date)
+        XCTAssertFalse(zero.canDeclare);XCTAssertTrue(zero.timing.contains("0/6"))
+        let offWindow=FAQualificationPresentation(member:member,service:owner.overseasCareer?.faService,on:try GameDate("\(date.year)-10-31"))
+        XCTAssertFalse(offWindow.canDeclare);XCTAssertEqual(row.payload,raw);XCTAssertFalse(c.hasChanges)
+    }
+    func testV54MarketOrderPrioritizesLiveDeadlineThenPendingWithoutCurrencyRanking() {
+        let items=[("수락 · 발효 대기","2030-04-02","pending",999),("만료","2030-04-01","old",500),("검토 가능","2030-04-07","late",999),("검토 가능","2030-04-03","soon",10)]
+        let sorted=items.sorted {ContractMarketOrder.precedes(status:$0.0,expires:$0.1,id:$0.2,otherStatus:$1.0,otherExpires:$1.1,otherID:$1.2)}
+        XCTAssertEqual(sorted.map {$0.2},["soon","late","pending","old"])
+    }
+}
+
+extension CareerCalendarTests {
+    func testV54OldPendingGuidanceRemainsFrozenWithoutReissuingOffers() throws {
+        let (store,p,s)=try evaluationFixture(date:"2030-04-01",role:.batter),c=store.mainContext
+        _ = try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c);try c.save()
+        let row=try XCTUnwrap(ContractEvaluationStore.records(player:p,calendar:s,in:c).first)
+        var object=try XCTUnwrap(JSONSerialization.jsonObject(with:row.payload) as? [String:Any])
+        object["pending"]=["실제 제의 발행·수락/등록·성인 소속/일정 전환은 후속입니다."]
+        row.payload=try JSONSerialization.data(withJSONObject:object);try c.save()
+        let raw=row.payload,offers=try ContractOfferStore.records(player:p,calendar:s,in:c).map(\.payload)
+        XCTAssertTrue(try row.snapshot(player:p,calendar:s).pending[0].contains("후속"))
+        XCTAssertFalse(try ContractEvaluationStore.captureIfDue(player:p,calendar:s,in:c))
+        XCTAssertEqual(row.payload,raw);XCTAssertEqual(try ContractOfferStore.records(player:p,calendar:s,in:c).map(\.payload),offers)
+        XCTAssertFalse(c.hasChanges)
     }
 }

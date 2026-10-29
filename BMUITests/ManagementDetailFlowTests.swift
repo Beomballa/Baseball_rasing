@@ -1678,3 +1678,123 @@ extension ManagementDetailFlowTests {
         }
     }
 }
+
+extension ManagementDetailFlowTests {
+    @MainActor private func v54Contracts(_ app:XCUIApplication) {
+        app.buttons["managementTab-career"].tap();app.buttons["facility-contracts"].tap()
+    }
+    @MainActor private func v54Element(_ id:String,_ app:XCUIApplication) -> XCUIElement {
+        app.descendants(matching:.any).matching(identifier:id).firstMatch
+    }
+    @MainActor func testV54EvaluationGatePreparationAndNoOfferBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:60))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app),role=pitcher ? "pitcher":"batter"
+            app.buttons["managementTab-game"].tap();app.buttons["facility-calendar"].tap()
+            let review=app.buttons["calendarOpenContractEvaluation"];reveal(review,app);XCTAssertTrue(review.isHittable);capture(app,"v54-"+role+"-calendar-evaluation-gate");review.tap()
+            let guide=v54Element("contractEvaluationNextStep",app);XCTAssertTrue(guide.waitForExistence(timeout:8));XCTAssertTrue(guide.label.contains("정지"))
+            capture(app,"v54-"+role+"-fixed-review")
+            let acknowledge=app.buttons["acknowledgeContractEvaluation"];reveal(acknowledge,app);acknowledge.tap()
+            XCTAssertFalse(app.buttons["acknowledgeContractEvaluation"].exists)
+            reveal(app.buttons["openDomesticOffers"],app);app.buttons["openDomesticOffers"].tap()
+            XCTAssertTrue(app.staticTexts["liveOffersEmpty"].waitForExistence(timeout:6));capture(app,"v54-"+role+"-no-offer")
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            let reasons=v54Element("selectionReasons-rookie-preparation",app);reveal(reasons,app);XCTAssertTrue(reasons.exists);capture(app,"v54-"+role+"-selection-reasons")
+            app.navigationBars.buttons.element(boundBy:0).tap();app.buttons["닫기"].firstMatch.tap()
+            v54Contracts(app)
+            let entry=v54Element("careerEntryGuide",app);reveal(entry,app);XCTAssertTrue(entry.label.contains("나이 조건"));capture(app,"v54-"+role+"-career-entry")
+            close(app);app.buttons["managementTab-home"].tap();XCTAssertEqual(status(app),before)
+        }
+    }
+    @MainActor func testV54OfferPriorityAndCollegeReservationBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication()
+        for college in [false,true] {
+            app.terminate();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified"]
+            if college {app.launchArguments.append("-college-pro-verification")}
+            app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+            for pitcher in [false,true] {
+                if pitcher {pickPitcher(app)}
+                let before=status(app),role=pitcher ? "pitcher":"batter"
+                v54Contracts(app);reveal(app.buttons["openDomesticOffers"],app);app.buttons["openDomesticOffers"].tap()
+                if !college {
+                    reveal(app.buttons["liveOffersCompare"],app);app.buttons["liveOffersCompare"].tap()
+                    XCTAssertTrue(app.staticTexts["liveOfferCompareCaution"].waitForExistence(timeout:8));capture(app,"v54-"+role+"-offer-comparison-priority")
+                    app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+                } else {
+                    reveal(app.buttons["liveOfferDetail-rookie"],app);app.buttons["liveOfferDetail-rookie"].tap()
+                    let accept=app.buttons["acceptLiveOffer"];revealLocationChoice(accept,app);capture(app,"v54-"+role+"-college-pro-offer");accept.tap()
+                    XCTAssertTrue(app.buttons["confirmOfferDecision"].firstMatch.waitForExistence(timeout:5));app.buttons["취소"].firstMatch.tap();XCTAssertTrue(accept.exists)
+                    revealLocationChoice(accept,app);accept.tap();app.buttons["confirmOfferDecision"].firstMatch.tap()
+                    let receipt=app.staticTexts["liveOfferDecisionReceipt"];reveal(receipt,app);XCTAssertTrue(receipt.label.contains("예약"));capture(app,"v54-"+role+"-college-accept-receipt")
+                    app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+                    let timeline=v54Element("contractRegistrationTimeline",app);reveal(timeline,app)
+                    XCTAssertTrue(timeline.label.contains("대학"));XCTAssertTrue(timeline.label.contains("2033-04-01"));capture(app,"v54-"+role+"-pending-affiliation")
+                    let market=app.buttons["openContractMarket"];reveal(market,app);market.tap()
+                    XCTAssertTrue(v54Element("marketPendingTransition",app).waitForExistence(timeout:8));XCTAssertFalse(app.staticTexts["marketEmpty"].exists)
+                    capture(app,"v54-"+role+"-pending-market");app.navigationBars.buttons.element(boundBy:0).tap()
+                }
+                close(app);app.buttons["managementTab-home"].tap();XCTAssertEqual(status(app),before)
+            }
+        }
+    }
+    @MainActor func testV54ReleasedCertificationReopensSavedAttemptBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification","-release-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:100))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app),role=pitcher ? "pitcher":"batter"
+            v54Contracts(app);let release=app.buttons["confirmClubRelease"];reveal(release,app);capture(app,"v54-"+role+"-release-ready");release.tap();app.buttons["commitClubRelease"].firstMatch.tap()
+            let next=v54Element("reentryNextStep",app);reveal(next,app);XCTAssertTrue(next.exists);capture(app,"v54-"+role+"-reentry-next-step")
+            let open=app.buttons["openCertification"];reveal(open,app);open.tap();app.buttons["startCertification"].tap()
+            let advance=app.buttons["advanceCertification"];reveal(advance,app);advance.tap()
+            let progress=app.staticTexts["certificationProgress"].label
+            app.navigationBars.buttons.element(boundBy:0).tap();reveal(open,app);open.tap()
+            XCTAssertTrue(app.staticTexts["certificationProgress"].waitForExistence(timeout:8));XCTAssertEqual(app.staticTexts["certificationProgress"].label,progress)
+            XCTAssertFalse(app.buttons["startCertification"].exists);capture(app,"v54-"+role+"-certification-resume")
+            for _ in 1..<(pitcher ? 2:4) {reveal(advance,app);advance.tap()}
+            let result=app.staticTexts["certificationResult"];reveal(result,app);XCTAssertTrue(result.exists);capture(app,"v54-"+role+"-certification-complete")
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);app.buttons["managementTab-home"].tap()
+            XCTAssertEqual(status(app)[0],before[0])
+        }
+    }
+    @MainActor func testV54OverseasFAAndMarketReadOnlyBothRoles() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-renewal-verification","-pro-career-verification","-fa-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:150))
+        for pitcher in [false,true] {
+            if pitcher {pickPitcher(app)}
+            let before=status(app),role=pitcher ? "pitcher":"batter"
+            v54Contracts(app)
+            let context=app.staticTexts["overseasEntryContext"];reveal(context,app);XCTAssertTrue(context.exists);capture(app,"v54-"+role+"-overseas-route-context")
+            let fa=v54Element("faQualificationGuide",app);reveal(fa,app);XCTAssertTrue(fa.exists);capture(app,"v54-"+role+"-fa-qualification")
+            let declare=app.buttons["declareFA"];revealLocationChoice(declare,app);XCTAssertEqual(declare.isEnabled,pitcher)
+            if pitcher {declare.tap();XCTAssertTrue(app.buttons["confirmFADeclaration"].firstMatch.waitForExistence(timeout:5));app.buttons["취소"].firstMatch.tap()}
+            let market=app.buttons["openContractMarket"];reveal(market,app);market.tap()
+            XCTAssertTrue(app.staticTexts["marketComparisonPriority"].waitForExistence(timeout:8));capture(app,"v54-"+role+"-market-priority")
+            let summary=app.staticTexts["marketSummary"].label
+            app.navigationBars.buttons.element(boundBy:0).tap();reveal(market,app);market.tap();XCTAssertEqual(app.staticTexts["marketSummary"].label,summary)
+            app.navigationBars.buttons.element(boundBy:0).tap();close(app);app.buttons["managementTab-home"].tap();XCTAssertEqual(status(app),before)
+        }
+    }
+}
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV54SmallLargestTextEvaluationAndMarket() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:60));let before=status(app)
+        app.buttons["managementLargeMenu"].tap();app.buttons["경기"].tap();revealLocationChoice(app.buttons["facility-calendar"],app);app.buttons["facility-calendar"].tap()
+        let open=app.buttons["calendarOpenContractEvaluation"];revealLocationChoice(open,app);capture(app,"v54-large-evaluation-gate");open.tap()
+        let acknowledge=app.buttons["acknowledgeContractEvaluation"];revealLocationChoice(acknowledge,app);XCTAssertTrue(acknowledge.isHittable);capture(app,"v54-large-fixed-evaluation");acknowledge.tap()
+        app.navigationBars.buttons.element(boundBy:0).tap();app.buttons["닫기"].firstMatch.tap()
+        app.buttons["managementLargeMenu"].tap();app.buttons["커리어"].tap();revealLocationChoice(app.buttons["facility-contracts"],app);app.buttons["facility-contracts"].tap()
+        let market=app.buttons["openContractMarket"];revealLocationChoice(market,app);market.tap()
+        let priority=app.staticTexts["marketComparisonPriority"];reveal(priority,app);XCTAssertTrue(priority.isHittable);capture(app,"v54-large-market-priority")
+        app.navigationBars.buttons.element(boundBy:0).tap();close(app);app.buttons["managementLargeMenu"].tap();app.buttons["홈"].tap();XCTAssertEqual(status(app),before)
+    }
+}

@@ -345,6 +345,13 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
     static func hasPending(player:CareerPlayer,in context:ModelContext) throws -> Bool {
         try records(playerID:player.id,in:context).contains {!$0.completed}
     }
+    static func resumable(player:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> CareerCertificationRecord? {
+        let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+        guard let release=owner.activeRetryRelease else {return nil}
+        let window=try target(on:GameDate(player.gameDate))
+        let candidates=try records(playerID:player.id,in:context).filter {try $0.snapshot().releaseOfferID == release.membershipOfferID}
+        return try candidates.first(where:{!$0.completed}) ?? candidates.first(where:{try $0.snapshot().window == window})
+    }
     static func target(on date:GameDate) throws -> ContractEvaluationWindow {
         guard let window=(date.year...min(date.year+1,9998)).flatMap({year in [4,7].map {ContractEvaluationWindow(year:year,month:$0)}}).first(where:{$0.start>date}) else {throw ContractEvaluationError.invalid}
         return window

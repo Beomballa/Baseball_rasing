@@ -281,7 +281,7 @@ import SwiftData
 
 extension CareerStoreTests {
     func testV31RealV1AndV14FilesMigrateKeepingIdentityMasteryAndPendingBytes() throws {
-        for old in [CareerSchemaV1.self as any VersionedSchema.Type,CareerSchemaV14.self] {
+        for old in [CareerSchemaV1.self as any VersionedSchema.Type,CareerSchemaV12.self,CareerSchemaV14.self] {
             let folder=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
             defer {try? FileManager.default.removeItem(at:folder)}
@@ -293,7 +293,7 @@ extension CareerStoreTests {
                 historical.contact=68.1234;historical.pitches[0].mastery=84.25
                 db.mainContext.insert(historical)
                 var trainingBytes:Data?,matchBytes:Data?
-                if old.versionIdentifier == CareerSchemaV14.versionIdentifier {
+                if old.versionIdentifier != CareerSchemaV1.versionIdentifier {
                     // Construct dependent records with an uninserted player of the same identity.
                     let projection=CareerPlayer(draft:draft(.pitcher),school:schools[0]);projection.id=historical.id
                     let state=CareerCalendarState(player:projection,schools:schools,legacySave:false)

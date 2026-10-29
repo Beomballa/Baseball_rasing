@@ -3039,3 +3039,84 @@ struct ClubParticipationFeedback {
                     performanceBelow:review.p<0,roleBelow:review.h.flatMap {h in review.criterion.map {h<$0}} ?? false)
     }
 }
+
+// Presentation only: never creates eligibility, evaluations or contract decisions.
+struct ContractPreparationGuide: Equatable {
+    let title: String
+    let timing: String
+    let action: String
+    static func entry(age:Int,adultDate:GameDate,member:CareerMembership?,hasProfessionalHistory:Bool,pending:Bool) -> Self {
+        if pending {return Self(title:"소속 변경 예약 있음",timing:"저장된 발효일에 적용",action:"현재 소속과 예약 내용을 먼저 확인하세요. 중복 지원·수락은 제한됩니다.")}
+        if let member {
+            return Self(title:member.route == .college ? "대학 재학 중":"구단 등록 중",timing:member.route == .college ? "프로 지원 22~23세 · 재학 2년 이상 · 11월":"재계약·외부 진출은 현재 소속 경로의 창 확인",action:"신규 신인·대학 신청 나이 조건만으로 지원할 수 없습니다. 소속·보유권리를 함께 확인하세요.")
+        }
+        if age < 20 {return Self(title:"정식 진로 심사 전 · 육성/관찰",timing:"20세 도달 · "+adultDate.description,action:"훈련과 공식 경기 근거를 준비하세요. 19세 진로 준비와 20세 선발·제의는 별도입니다.")}
+        if hasProfessionalHistory {return Self(title:"무소속 · 재도전 경로 확인",timing:"국내 재입단 4·7월 · 해외는 자격별 창",action:"신인 경로와 구분합니다. 방출·권리 해제 근거와 인증 평가전/기존 표본을 확인하세요.")}
+        if age > 23 {return Self(title:"국내 신인·대학 신규 신청 나이 종료",timing:"20~23세 신규 신청 기준",action:"현재 구현에 없는 신규 전력 입단을 보장하지 않습니다. 이미 있는 소속·방출 근거의 재도전 경로를 확인하세요.")}
+        return Self(title:"신규 진로 나이 조건 충족",timing:"국내 신인 4·7월 / 대학 입단 4월",action:"성적·역할·자리·예산·후보 경쟁을 심사합니다. 나이 충족이 입단 확정은 아닙니다.")
+    }
+}
+struct ContractSelectionReasons: Equatable {
+    let preparation:[String]
+    let market:[String]
+    let other:[String]
+    init(_ reasons:[String]) {
+        let marketTerms=["자리","예산","후보 경쟁 탈락","다른 프로 진출 자리","이미 선발"]
+        let prepTerms=["표본","자료","성적","기량","숙련","원본 수비","F 0 필요"]
+        let marketReasons=reasons.filter {r in marketTerms.contains {r.contains($0)} && !r.contains("기준 미달")}
+        let preparationReasons=reasons.filter {r in !marketReasons.contains(r) && prepTerms.contains {r.contains($0)}}
+        market=marketReasons;preparation=preparationReasons
+        other=reasons.filter {!marketReasons.contains($0) && !preparationReasons.contains($0)}
+    }
+}
+struct ContractRegistrationPresentation: Equatable {
+    let current:String
+    let reserved:String
+    let effective:String
+    init(owner:CareerContractJournal,on date:GameDate) throws {
+        let member=try owner.current(on:date)
+        current=member.map {$0.name+" · "+$0.label} ?? "등록 소속 없음 · 고교/진로 이력 별도"
+        if let next=owner.membershipHistory().first(where:{$0.since > date.description}) {
+            reserved=next.name+" · "+next.label;effective=next.since+" 소속 변경 발효"
+        } else if let renewal=(owner.renewals ?? []).last(where:{$0.terms.effectiveDate > date.description}) {
+            reserved="같은 구단 경제 조건 갱신";effective=renewal.terms.effectiveDate+" 경제 조건 발효 · 소속/권리 유지"
+        } else if let state=owner.overseasCareer,let renewal=(state.renewalReviews ?? []).last(where:{r in
+            guard let offer=r.offer,offer.effective > date.description else {return false}
+            return (state.renewalDecisions ?? []).contains {$0.offerID == offer.id && $0.kind == .accepted}
+        })?.offer {
+            reserved="같은 해외 구단 경제 조건 갱신";effective=renewal.effective+" 경제 조건 발효 · 소속/권리 유지"
+        } else if let fa=(owner.overseasCareer?.faDeclarations ?? []).last(where:{$0.effective > date.description}) {
+            reserved="게임 FA 선언 · 권리 해제 예약";effective=fa.effective+" 등록/권리 종료 · 새 소속은 별도 계약"
+        } else {reserved="수락된 미래 변경 없음";effective="현재 등록·경제·권리 상태 적용"}
+    }
+}
+extension ContractEvaluationWindow {
+    static func nextStart(after date:GameDate,months:[Int]) -> GameDate? {
+        guard !months.isEmpty,months.allSatisfy({[4,7,11].contains($0)}) else {return nil}
+        return (date.year...min(date.year+1,9998)).flatMap {year in months.sorted().map {Self(year:year,month:$0).start}}.first {$0 > date}
+    }
+}
+struct FAQualificationPresentation:Equatable {
+    let canDeclare:Bool
+    let title:String
+    let timing:String
+    let action:String
+    init(member:CareerMembership,service:[FASeasonEvidence]?,on date:GameDate) {
+        guard let service else {canDeclare=false;title="FA 경력 미확인";timing="저장된 공식 경기 근거 확인 필요";action="미확인을 0시즌이나 자격 충족으로 바꾸지 않습니다. 경력 근거 확인 후 별도 선언합니다.";return}
+        let count=Set(service.filter {$0.level == member.level && $0.year<=date.year}.map(\.year)).count
+        let required=FADeclaration.minimum(member.level)
+        canDeclare=(try? FADeclaration.make(member:member,on:date,service:service)) != nil
+        title=canDeclare ? "게임 FA 경력·기간 기준 충족":"게임 FA 선언 준비"
+        timing="\(member.level == "mlb-first-team" ? "MLB":"NPB 해외") \(count)/\(required) 인정 시즌 · 11월1~14일/계약 마지막 해"
+        action=canDeclare ? "선언은 별도 확인이 필요합니다. 진행 중 경기·훈련과 전환 예약은 확정 시 검사하며 다음4월1일 권리 해제 전까지 오늘 소속은 유지합니다.":"등록/공식 출전 근거와 마지막 계약 해를 확인하세요. 계약 만료·재계약 거절·방출로 FA 경력이 자동 충족되지 않습니다."
+    }
+}
+enum ContractMarketOrder {
+    static func precedes(status:String,expires:String,id:String,otherStatus:String,otherExpires:String,otherID:String) -> Bool {
+        func rank(_ value:String) -> Int {value == "검토 가능" ? 0:value == "수락 · 발효 대기" ? 1:2}
+        let a=rank(status),b=rank(otherStatus)
+        if a != b {return a < b}
+        if expires != otherExpires {return a == 0 ? expires < otherExpires:expires > otherExpires}
+        return id < otherID
+    }
+}
