@@ -120,7 +120,7 @@ import SwiftUI
         let style = PlayerAppearance(skin: 5, hair: 4, kit: 1, hairStyle: 2, expression: 2)
         for role in PlayerRole.allCases {
             for frame in 0..<6 {
-                let source = try XCTUnwrap(MatchArt.cell(role == .pitcher ? "pitcher-delivery-v2" : "batter-actions", column: frame % 3, row: frame / 3, columns: 3, rows: 2))
+                let source = try XCTUnwrap(MatchArt.cell(PlayerMotionArt.sourceName(role: role), column: frame % 3, row: frame / 3, columns: 3, rows: 2))
                 let before = try motionPixels(source)
                 let image = try XCTUnwrap(PlayerMotionArt.image(role: role, frame: frame, appearance: style, number: 9, hand: role == .pitcher ? "left" : "right"))
                 let after = try motionPixels(image)
@@ -167,7 +167,7 @@ import SwiftUI
             XCTAssertEqual(ratios[0],ratios[1],accuracy:0.08); XCTAssertEqual(ratios[1],ratios[2],accuracy:0.08)
         }
         for (role,points) in [(PlayerRole.pitcher,[CGPoint(x:205,y:241),CGPoint(x:270,y:342)]),(.batter,[CGPoint(x:155,y:69),CGPoint(x:220,y:339)])] {
-            let original = try motionPixels(XCTUnwrap(MatchArt.cell(role == .pitcher ? "pitcher-delivery-v2" : "batter-actions", column:0,row:0,columns:3,rows:2)))
+            let original = try motionPixels(XCTUnwrap(MatchArt.cell(PlayerMotionArt.sourceName(role: role), column:0,row:0,columns:3,rows:2)))
             let personalized = try motionPixels(XCTUnwrap(PlayerMotionArt.image(role:role,frame:0,appearance:style,number:27,hand:"right")))
             for point in points {
                 let i = (Int(point.y)*512+Int(point.x))*4
@@ -1258,20 +1258,20 @@ extension ManualMatchTests {
         for hand in ["left","right"] {for side in [OpponentBatterSide.left,.right] {
             let scene=BallparkScene(size:CGSize(width:320,height:340))
             scene.configure(hand:hand,kit:2,batterSide:side)
-            XCTAssertEqual(scene.childNode(withName:"fixedStadiumBackground")?.xScale,1)
+            XCTAssertEqual(scene.childNode(withName:"fixedStadiumBackground")?.xScale,hand == "left" ? -1 : 1)
             let pitcher=try XCTUnwrap(scene.childNode(withName:"animatedPitcher") as? SKSpriteNode)
             let batter=try XCTUnwrap(scene.childNode(withName:"animatedBatter") as? SKSpriteNode)
-            XCTAssertEqual(pitcher.position.x,scene.size.width*0.76,accuracy:0.001)
+            XCTAssertEqual(pitcher.position.x,scene.size.width*(hand == "left" ? 0.24 : 0.76),accuracy:0.001)
             XCTAssertEqual(pitcher.position.y,scene.size.height*(1-0.895),accuracy:0.001)
             XCTAssertEqual(pitcher.size.width,pitcher.size.height,accuracy:0.001)
             XCTAssertEqual(batter.position.x,scene.size.width*(side == .left ? 0.32:0.70),accuracy:0.001)
             XCTAssertNotNil(pitcher.texture);XCTAssertNotNil(batter.texture)
             scene.preparePitch(phase:0.3,reduced:true)
             XCTAssertEqual(scene.pitchStage,.preparing)
-            XCTAssertEqual(pitcher.position.x,scene.size.width*0.76,accuracy:0.001)
+            XCTAssertEqual(pitcher.position.x,scene.size.width*(hand == "left" ? 0.24 : 0.76),accuracy:0.001)
             let sourcePivot=PitcherPresentationPose(role:.pitcher,frame:1,hand:"right").pivot
             let planted=Double(pitcher.position.x)+(sourcePivot.x-pitcher.anchorPoint.x)*pitcher.size.width*pitcher.xScale
-            XCTAssertEqual(planted,scene.size.width*0.76,accuracy:0.001,"The actual source foot, not only the node origin, must sit on the rubber")
+            XCTAssertEqual(planted,scene.size.width*(hand == "left" ? 0.24 : 0.76),accuracy:0.001,"The actual source foot, not only the node origin, must sit on the rubber")
             let right=PitcherPresentationPose(role:.pitcher,frame:1,hand:"right")
             let left=PitcherPresentationPose(role:.pitcher,frame:1,hand:"left")
             XCTAssertEqual(right.pivot.x+left.pivot.x,1,accuracy:0.001)
@@ -1332,5 +1332,59 @@ extension ManualMatchTests {
             let attachment=XCTAttachment(image:image);attachment.name="v52-component-\(stadium.theme.title)-\(role.rawValue)";attachment.lifetime = .keepAlways;add(attachment)
             view.presentScene(nil)
         }}
+    }
+}
+
+extension ManualMatchTests {
+    func testV75StrideFootFollowsPlantAndReleaseUsesSameDisplayedHand() throws {
+        for hand in ["left", "right"] {
+            let load = PitcherPresentationPose(role: .pitcher, frame: 2, hand: hand)
+            let release = PitcherPresentationPose(role: .pitcher, frame: 3, hand: hand)
+            let front = hand == "left" ? 0.71 : 0.29
+            XCTAssertEqual(load.foot.x + load.width * (front-load.pivot.x), release.foot.x, accuracy: 0.001)
+            XCTAssertLessThan(release.foot.y, load.foot.y)
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+            scene.configure(hand: hand, kit: 2)
+            XCTAssertTrue(scene.demonstrate(reduceMotion: true, flightDuration: 1, preparedRelease: true))
+            let ball = try XCTUnwrap(scene.childNode(withName: "baseball"))
+            XCTAssertEqual(ball.position.x, 320 * (release.foot.x + release.width * (release.hand.x-release.pivot.x)), accuracy: 0.001)
+            let pitcher = try XCTUnwrap(scene.childNode(withName: "animatedPitcher"))
+            XCTAssertLessThan(pitcher.frame.minX, 320); XCTAssertGreaterThan(pitcher.frame.maxX, 0)
+            scene.cancelDelivery()
+        }
+    }
+    func testV75ActualSceneMotionFramesBothHandsAndPracticeSetting() throws {
+        for hand in ["left", "right"] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+            scene.configure(hand: hand, kit: 1, appearance: PlayerAppearance(kit: 1), jerseyNumber: 27)
+            let view = SKView(frame: CGRect(origin: .zero, size: scene.size)); view.presentScene(scene)
+            func capture(_ name: String) throws {
+                let image = UIImage(cgImage: try XCTUnwrap(view.texture(from: scene)?.cgImage()))
+                let attachment = XCTAttachment(image: image); attachment.name = "v75-pitch-" + hand + "-" + name
+                attachment.lifetime = .keepAlways; add(attachment)
+            }
+            try capture("ready"); scene.preparePitch(phase: 0.3, reduced: false); try capture("load")
+            scene.preparePitch(phase: 0.7, reduced: false); try capture("stride")
+            XCTAssertTrue(scene.demonstrate(reduceMotion: false, flightDuration: 1, preparedRelease: true))
+            let now = ProcessInfo.processInfo.systemUptime
+            try capture("release"); scene.advanceDelivery(at: now + 0.5); try capture("follow")
+            scene.advanceDelivery(at: now + 1.01); try capture("received")
+            scene.cancelDelivery(); scene.usePracticeSetting(); try capture("bullpen")
+            XCTAssertTrue(try XCTUnwrap(scene.childNode(withName: "animatedBatter")).isHidden)
+            view.presentScene(nil)
+        }
+        let scene = BallparkScene(size: CGSize(width: 320, height: 320)); scene.configure(hand: "right", kit: 1, role: .batter)
+        scene.usePracticeSetting()
+        XCTAssertNil(scene.children.first { ($0.name ?? "").hasPrefix("stadiumDress") })
+        let view = SKView(frame: CGRect(origin: .zero, size: scene.size)); view.presentScene(scene)
+        let ready = XCTAttachment(image: UIImage(cgImage: try XCTUnwrap(view.texture(from: scene)?.cgImage())))
+        ready.name = "v75-batting-practice-ready"; ready.lifetime = .keepAlways; add(ready)
+        let timeline = MatchInputTimeline(windup: MatchDelivery.windup, duration: 1.6)
+        XCTAssertTrue(scene.demonstrate(reduceMotion: false, flightDuration: 1.6, inputTimeline: timeline))
+        scene.finishBat(action: "swing", outcome: "헛스윙", reduced: false) {}
+        scene.advanceDelivery(at: timeline.contactAt + 0.01)
+        let contact = XCTAttachment(image: UIImage(cgImage: try XCTUnwrap(view.texture(from: scene)?.cgImage())))
+        contact.name = "v75-batting-contact-facing-pitcher"; contact.lifetime = .keepAlways; add(contact)
+        scene.cancelDelivery(); view.presentScene(nil)
     }
 }

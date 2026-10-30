@@ -78,6 +78,9 @@ struct LocationDrillReplay: Equatable {
         let rect = area(kind)
         return CGPoint(x: rect.minX + value.x * rect.width, y: rect.minY + value.y * rect.height)
     }
+    static func surfaceInput(at point: CGPoint, in size: CGSize) -> TrainingTarget {
+        TrainingTarget(x: min(1, max(0, point.x / max(1, size.width))), y: min(1, max(0, point.y / max(1, size.height))))
+    }
     static func input(at point: CGPoint, kind: TrainingKind) -> TrainingTarget {
         let rect = area(kind)
         return TrainingTarget(x: min(1, max(0, (point.x - rect.minX) / rect.width)), y: min(1, max(0, (point.y - rect.minY) / rect.height)))
@@ -101,8 +104,10 @@ struct LocationDrillReplay: Equatable {
     private(set) var finished = false
     override init(size: CGSize) { super.init(size: size); scaleMode = .aspectFit }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    private func point(_ value: CGPoint) -> CGPoint { CGPoint(x: value.x, y: 220 - value.y) }
-    private func facing(from: CGPoint, to: CGPoint) -> FieldFacing { .direction(dx: to.x - from.x, dy: from.y - to.y) }
+    private func point(_ value: CGPoint) -> CGPoint { CGPoint(x: value.x, y: size.height * (1 - value.y / 220)) }
+    // SpriteKit already uses an upward y axis; FieldFacing.direction expects that same axis.
+    static func facing(from: CGPoint, to: CGPoint) -> FieldFacing { .direction(dx: to.x - from.x, dy: to.y - from.y) }
+    private func facing(from: CGPoint, to: CGPoint) -> FieldFacing { Self.facing(from: from, to: to) }
     private func contact(_ motion: FieldSpriteMotion, at origin: CGPoint, hand: Bool) -> CGPoint {
         let offset = FieldRasterArt.contact(motion, kind: "fielder", left: self.hand == "left", hand: hand) ?? .zero
         return CGPoint(x: origin.x + offset.x * 1.7, y: origin.y - offset.y * 1.7)
@@ -112,7 +117,7 @@ struct LocationDrillReplay: Equatable {
         let texture = SKTexture(rect: rect, in: SKTexture(image: image)); texture.filteringMode = .nearest; return texture
     }
     private func backdrop(_ texture: SKTexture?, rect: CGRect) {
-        let node = SKSpriteNode(texture: texture, size: rect.size)
+        let node = SKSpriteNode(texture: texture, size: CGSize(width: rect.width, height: rect.height * size.height / 220))
         node.position = point(CGPoint(x: rect.midX, y: rect.midY)); addChild(node)
     }
     func configure(kind: TrainingKind, appearance: PlayerAppearance, number: Int, hand: String) {
@@ -121,21 +126,21 @@ struct LocationDrillReplay: Equatable {
         backgroundColor = UIColor(Color(hex: 0x163b32))
         if kind == .control {
             backdrop(TrainingEnvironmentArt.texture(.bullpen), rect: CGRect(origin: .zero, size: TrainingStageLayout.size))
+            children.last?.xScale = hand == "left" ? -1 : 1
             let plate = SKSpriteNode(color: .white, size: CGSize(width: 18, height: 3)); plate.position = point(CGPoint(x: 150, y: 118)); addChild(plate)
             frames = PlayerMotionArt.textures(role: .pitcher, appearance: appearance, number: number, hand: hand)
             catchFrames = (0..<4).compactMap { i in
                 cropped("catcher-parts", rect: CGRect(x: Double(i % 2) / 2, y: 1 - Double(i / 2 + 1) / 2, width: 0.5, height: 0.5))
             }
-            actor.position = point(CGPoint(x: 248, y: 218)); actor.anchorPoint = CGPoint(x: 0.5, y: 0.05)
-            actor.size = CGSize(width: 119, height: 147); actor.xScale = hand == "left" ? -1 : 1
+            actor.size = CGSize(width: 128, height: 128); actor.xScale = hand == "left" ? -1 : 1
             receiver.xScale = 1; receiver.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             receiver.size = CGSize(width: 51, height: 55); receiver.position = point(CGPoint(x: 150, y: 87))
             receiver.texture = catchFrames.first; receiver.zPosition = 2; addChild(receiver)
             mitt.size = CGSize(width: 20, height: 20); mitt.texture = catchFrames.count == 4 ? catchFrames[2] : nil
-            mitt.zPosition = 5; addChild(mitt); actor.texture = frames.first
+            mitt.zPosition = 5; addChild(mitt); pitchingPose(0)
         } else {
             backdrop(TrainingEnvironmentArt.texture(.field), rect: CGRect(origin: .zero, size: TrainingStageLayout.size))
-            let coachMotion = FieldSpriteMotion(facing: .direction(dx: 0, dy: -1), stage: .ready)
+            let coachMotion = FieldSpriteMotion(facing: .north, stage: .ready)
             setFieldActor(receiver, motion: coachMotion, number: 0); receiver.position = point(CGPoint(x: 160, y: 216))
             receiver.zPosition = 3; addChild(receiver); actor.xScale = 1
         }
@@ -164,7 +169,7 @@ struct LocationDrillReplay: Equatable {
         goal.position = point(LocationDrillReplay.point(target, kind: kind)); aim.position = point(LocationDrillReplay.point(input, kind: kind))
         ball.isHidden = true
         if kind == .control {
-            actor.texture = frames.first; receiver.texture = catchFrames.first; mitt.texture = catchFrames.count == 4 ? catchFrames[2] : nil; mitt.position = goal.position
+            pitchingPose(0); receiver.texture = catchFrames.first; mitt.texture = catchFrames.count == 4 ? catchFrames[2] : nil; mitt.position = goal.position
         } else {
             let destination = point(LocationDrillReplay.point(input, kind: kind)), delta = CGPoint(x: destination.x - actor.position.x, y: destination.y - actor.position.y)
             movement = animated && hypot(delta.x, delta.y) > 0.5 ? (actor.position, destination, ProcessInfo.processInfo.systemUptime) : nil
@@ -191,11 +196,9 @@ struct LocationDrillReplay: Equatable {
         let destination = point(LocationDrillReplay.point(kind == .control ? playback.replay.input : playback.replay.target, kind: kind))
         if kind == .control {
             let frame = elapsed < 0.2 ? 1 : elapsed < LocationDrillReplay.windup ? 2 : p < 0.3 ? 3 : p < 1 ? 4 : 5
-            if frames.indices.contains(frame) { actor.texture = frames[frame] }
-            let anchors = [(0.42, 0.56), (0.38, 0.52), (0.72, 0.37), (0.78, 0.11)]
-            let held = anchors[min(3, frame)]
-            let release = CGPoint(x: actor.position.x + (0.78 - 0.5) * actor.size.width * actor.xScale, y: actor.position.y + (1 - 0.11 - 0.05) * actor.size.height)
-            ball.position = elapsed < LocationDrillReplay.windup ? CGPoint(x: actor.position.x + (held.0 - 0.5) * actor.size.width * actor.xScale, y: actor.position.y + (1 - held.1 - 0.05) * actor.size.height) : CGPoint(x: release.x + (destination.x - release.x) * p + sin(p * .pi) * playback.curve, y: release.y + (destination.y - release.y) * p)
+            pitchingPose(frame)
+            let release = pitchingHand(3)
+            ball.position = elapsed < LocationDrillReplay.windup ? pitchingHand(frame) : CGPoint(x: release.x + (destination.x - release.x) * p + sin(p * .pi) * playback.curve, y: release.y + (destination.y - release.y) * p)
             mitt.position = CGPoint(x: goal.position.x + (destination.x - goal.position.x) * p, y: goal.position.y + (destination.y - goal.position.y) * p)
             if p == 1, catchFrames.count == 4 { receiver.texture = catchFrames[1]; mitt.texture = catchFrames[3] }
         } else {
@@ -203,9 +206,11 @@ struct LocationDrillReplay: Equatable {
             let origin = contact(FieldSpriteMotion(facing: direction, stage: .release), at: receiver.position, hand: true)
             let catching = FieldSpriteMotion(facing: facing(from: destination, to: receiver.position), stage: .catchBall, progress: 1, chestCatch: false)
             let end = contact(catching, at: destination, hand: false)
-            setFieldActor(receiver, motion: FieldSpriteMotion(facing: direction, stage: elapsed < LocationDrillReplay.windup ? .windup : p < 0.2 ? .release : .followThrough, progress: p), number: 0)
+            let preparing = elapsed < LocationDrillReplay.windup
+            let phase = preparing ? elapsed / LocationDrillReplay.windup : p < 0.2 ? p / 0.2 : (p - 0.2) / 0.8
+            setFieldActor(receiver, motion: FieldSpriteMotion(facing: direction, stage: preparing ? .windup : p < 0.2 ? .release : .followThrough, progress: phase), number: 0)
             ball.position = CGPoint(x: origin.x + (end.x - origin.x) * p, y: origin.y + (end.y - origin.y) * p + abs(sin(p * .pi * 3)) * 5 * (1-p))
-            setFieldActor(actor, motion: FieldSpriteMotion(facing: facing(from: actor.position, to: receiver.position), stage: p < 0.8 ? .ready : .catchBall, progress: p, chestCatch: false), number: number)
+            setFieldActor(actor, motion: FieldSpriteMotion(facing: facing(from: actor.position, to: receiver.position), stage: p < 0.8 ? .ready : .catchBall, progress: max(0, (p - 0.8) / 0.2), chestCatch: false), number: number)
         }
         ball.isHidden = elapsed < LocationDrillReplay.windup && kind == .defense
         if elapsed >= LocationDrillReplay.windup + playback.flight + LocationDrillReplay.receive {
@@ -216,11 +221,27 @@ struct LocationDrillReplay: Equatable {
         guard !playing else { return }
         goal.isHidden = true; aim.isHidden = true
         let frame = phase < 0.27 ? 0 : phase < 0.56 ? 1 : 2
-        if frames.indices.contains(frame) { actor.texture = frames[frame] }
-        let anchors = [(0.42, 0.56), (0.38, 0.52), (0.72, 0.37)], held = anchors[frame]
+        pitchingPose(frame)
         ball.isHidden = false
-        ball.position = CGPoint(x: actor.position.x + (held.0 - 0.5) * actor.size.width * actor.xScale,
-                                y: actor.position.y + (1 - held.1 - 0.05) * actor.size.height)
+        ball.position = pitchingHand(frame)
+    }
+    private func pitchingPose(_ frame: Int) {
+        guard frames.indices.contains(frame) else { return }
+        let source = PitcherPresentationPose(role: .pitcher, frame: frame, hand: "right")
+        actor.texture = frames[frame]
+        actor.anchorPoint = CGPoint(x: source.pivot.x, y: 1-source.pivot.y)
+        actor.position = pitchingFoot(frame)
+    }
+    private func pitchingFoot(_ frame: Int) -> CGPoint {
+        // Both hands travel toward the catcher; the planted foot changes at the stride, not at every atlas crop.
+        let x: CGFloat = frame < 3 ? 259 : 201.4
+        return point(CGPoint(x: hand == "left" ? 320 - x : x, y: frame < 3 ? 194 : 187))
+    }
+    private func pitchingHand(_ frame: Int) -> CGPoint {
+        let pose = PitcherPresentationPose(role: .pitcher, frame: frame, hand: hand)
+        let foot = pitchingFoot(frame)
+        return CGPoint(x: foot.x+(pose.hand.x-pose.pivot.x)*actor.size.width,
+                       y: foot.y-(pose.hand.y-pose.pivot.y)*actor.size.height)
     }
     func cancel() { playback = nil; movement = nil; playing = false; removeAllActions(); actor.removeAllActions(); ball.isHidden = true }
 }
@@ -241,7 +262,8 @@ struct LocationPracticeBoard: View {
                 GeometryReader { geometry in
                     Color.clear.contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { value in
                         guard !locked else { return }
-                        let input = LocationDrillReplay.input(at: TrainingStageLayout.world(value.location, in: geometry.size), kind: kind)
+                        let surface = LocationDrillReplay.surfaceInput(at: value.location, in: geometry.size)
+                        let input = LocationDrillReplay.input(at: CGPoint(x: surface.x * 320, y: surface.y * 220), kind: kind)
                         x = input.x; y = input.y
                     })
                 }.accessibilityHidden(true)
@@ -262,8 +284,9 @@ struct LocationPracticeBoard: View {
                             Text("◇").foregroundStyle(GameTheme.growth).position(x: target.x * geometry.size.width, y: target.y * geometry.size.height)
                             Text("+").foregroundStyle(GameTheme.gold).position(x: x * geometry.size.width, y: y * geometry.size.height)
                         }.contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
-                            guard !locked else { return }; let point = TrainingStageLayout.fieldInput(event.location, in: geometry.size)
-                x = point.x; y = point.y
+                            guard !locked else { return }
+                            let point = LocationDrillReplay.surfaceInput(at: event.location, in: geometry.size)
+                            x = point.x; y = point.y
                         })
                     }.frame(width: edge, height: edge).overlay(Rectangle().strokeBorder(GameTheme.boardLine))
                 }.padding(5).background(GameTheme.navy).padding(6).accessibilityHidden(true)

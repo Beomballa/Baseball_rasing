@@ -92,6 +92,9 @@
 /.build/
 
 !/BM/Resources/MatchArt/batter-actions.png
+!/BM/Resources/MatchArt/batter-actions-v75.png
+!/BM/Resources/MatchArt/pitcher-delivery-v75.png
+!/BM/Resources/MatchArt/batting-practice-v75.png
 !/BM/Resources/MatchArt/grip-fastball.png
 !/BM/Resources/MatchArt/grip-changeup.png
 !/BM/Resources/MatchArt/batter-view-clean.png

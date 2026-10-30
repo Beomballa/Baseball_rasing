@@ -350,7 +350,7 @@ final class CareerFlowTests: XCTestCase {
         app.segmentedControls["practiceRole"].buttons["투수"].tap()
         XCTAssertTrue(app.staticTexts["practicePlayerName"].label.contains("OwnPitcher"))
         app.buttons["practiceGeneralTraining"].tap()
-        XCTAssertTrue(app.buttons["trainingPitchPicker"].label.contains("62.0"))
+        XCTAssertTrue(app.buttons["trainingPitch-four-seam"].label.contains("62.0"))
         app.buttons["startTraining"].tap()
         action.tap()
         XCTAssertTrue(app.staticTexts["팔 준비 중 · 노란 구간에 릴리스"].waitForExistence(timeout: 2))
@@ -451,8 +451,7 @@ final class CareerFlowTests: XCTestCase {
         reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
         XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 5))
         if pitcher {
-            app.buttons["trainingPitchPicker"].tap()
-            let slider = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "슬라이더")).firstMatch
+            let slider = app.buttons["trainingPitch-slider"]
             XCTAssertTrue(slider.waitForExistence(timeout: 3)); slider.tap()
         }
         app.buttons["startTraining"].tap()
@@ -3458,5 +3457,55 @@ extension CareerFlowTests {
             app.navigationBars.buttons.element(boundBy:0).tap()
         }
         app.terminate()
+    }
+}
+
+extension CareerFlowTests {
+    @MainActor func testV75GripSelectionPreparationAndPitchFeedback() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        app.buttons["roomProfile"].tap(); app.buttons["homeRole-pitcher"].tap()
+        if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
+        app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        let slider = app.buttons["trainingPitch-slider"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 5)); reveal(slider, in: app); slider.tap()
+        XCTAssertTrue(slider.isSelected)
+        XCTAssertFalse(app.pickers.firstMatch.exists)
+        var shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "v75-grip-selection"; shot.lifetime = .keepAlways; add(shot)
+        reveal(app.buttons["startTraining"], in: app)
+        shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "v75-bullpen-preparation"; shot.lifetime = .keepAlways; add(shot)
+        app.buttons["startTraining"].tap()
+        let action = app.buttons["trainingAttempt"]
+        XCTAssertTrue(action.waitForExistence(timeout: 5)); XCTAssertTrue(action.isHittable)
+        shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "v75-bullpen-ready"; shot.lifetime = .keepAlways; add(shot)
+        action.tap(); action.tap()
+        XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout: 10))
+        shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "v75-bullpen-feedback"; shot.lifetime = .keepAlways; add(shot)
+        app.buttons["trainingNext"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch.label.contains("2 / 5"))
+    }
+    @MainActor func testV75LocationLargeTextReducedMotionKeepsControlsAndResult() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-management-reduced-motion-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        app.buttons["managementLargeMenu"].tap(); app.buttons["훈련"].tap(); reveal(app.buttons["facility-physical"], in: app); app.buttons["facility-physical"].tap()
+        reveal(app.buttons["trainingKind-defense"], in: app); app.buttons["trainingKind-defense"].tap()
+        reveal(app.buttons["openTraining"], in: app); app.buttons["openTraining"].tap()
+        reveal(app.buttons["startTraining"], in: app); app.buttons["startTraining"].tap()
+        reveal(app.buttons["locationMove-오른쪽"], in: app); app.buttons["locationMove-오른쪽"].tap()
+        reveal(app.buttons["trainingAttempt"], in: app)
+        XCTAssertTrue(app.buttons["trainingAttempt"].isHittable)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "v75-defense-largest-text-controls"; shot.lifetime = .keepAlways; add(shot)
+        app.buttons["trainingAttempt"].tap()
+        XCTAssertTrue(app.buttons["trainingNext"].waitForExistence(timeout: 10)); reveal(app.buttons["trainingNext"], in: app)
+        let review = XCTAttachment(screenshot: app.screenshot()); review.name = "v75-defense-largest-text-feedback"; review.lifetime = .keepAlways; add(review)
+        app.buttons["trainingNext"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch.label.contains("2 / 5"))
     }
 }

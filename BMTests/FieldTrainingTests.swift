@@ -123,7 +123,7 @@ import SpriteKit
                 XCTAssertEqual(ball.position.x, judged.x, accuracy: 0.0001)
                 XCTAssertEqual(ball.position.y, 220 - judged.y, accuracy: 0.0001)
             } else {
-                let catchFacing = FieldFacing.direction(dx: 160 - judged.x, dy: 216 - judged.y)
+                let catchFacing = FieldFacing.direction(dx: 160 - judged.x, dy: judged.y - 216)
                 let offset = try XCTUnwrap(FieldRasterArt.contact(FieldSpriteMotion(facing: catchFacing, stage: .catchBall, progress: 1, chestCatch: false), kind: "fielder", left: true, hand: false))
                 XCTAssertEqual(ball.position.x, judged.x + offset.x * 1.7, accuracy: 0.0001)
                 XCTAssertEqual(ball.position.y, 220 - judged.y - offset.y * 1.7, accuracy: 0.0001)
@@ -2677,5 +2677,64 @@ extension FieldTrainingTests {
                 view.presentScene(nil)
             }}
         }
+    }
+}
+
+extension FieldTrainingTests {
+    func testV75AimBoardUsesItsOwnNormalizedCoordinatesAndClampsEdges() {
+        for size in [CGSize(width: 44, height: 44), CGSize(width: 84, height: 84), CGSize(width: 390, height: 414)] {
+            for value in [0.0, 0.25, 0.5, 0.75, 1] {
+                let input = LocationDrillReplay.surfaceInput(at: CGPoint(x: size.width * value, y: size.height * (1-value)), in: size)
+                XCTAssertEqual(input.x, value, accuracy: 0.000001)
+                XCTAssertEqual(input.y, 1-value, accuracy: 0.000001)
+            }
+            XCTAssertEqual(LocationDrillReplay.surfaceInput(at: CGPoint(x: -20, y: 900), in: size), TrainingTarget(x: 0, y: 1))
+        }
+    }
+    func testV75PracticeDirectionPortraitActorsAndJudgedEndpointAgree() throws {
+        XCTAssertEqual(LocationDrillScene.facing(from: .zero, to: CGPoint(x: 0, y: 10)), .north)
+        XCTAssertEqual(LocationDrillScene.facing(from: .zero, to: CGPoint(x: 0, y: -10)), .south)
+        for hand in ["left", "right"] {
+            let scene = LocationDrillScene(size: CGSize(width: 320, height: 340))
+            scene.configure(kind: .control, appearance: PlayerAppearance(), number: 27, hand: hand)
+            let actor = try XCTUnwrap(scene.childNode(withName: "locationActor") as? SKSpriteNode)
+            XCTAssertEqual(actor.size.width, actor.size.height)
+            XCTAssertEqual(actor.position.x, hand == "left" ? 61 : 259, accuracy: 0.001)
+            let target = TrainingTarget(x: 0.2, y: 0.8), input = TrainingTarget(x: 0.8, y: 0.2)
+            var completions = 0
+            scene.play(LocationDrillReplay(kind: .control, target: target, input: input, score: 0), at: 10) { completions += 1 }
+            scene.advance(at: 10 + LocationDrillReplay.windup + LocationDrillReplay.flight)
+            XCTAssertEqual(completions, 0)
+            let ball = try XCTUnwrap(scene.childNode(withName: "locationBall"))
+            let p = LocationDrillReplay.point(input, kind: .control)
+            XCTAssertEqual(ball.position.x, p.x, accuracy: 0.001)
+            XCTAssertEqual(ball.position.y, 340 * (1-p.y/220), accuracy: 0.001)
+            scene.advance(at: 12); scene.advance(at: 13)
+            XCTAssertEqual(completions, 1)
+        }
+    }
+}
+
+extension FieldTrainingTests {
+    func testV75ActualInplayApproachCatchThrowFramesBothRolesKeepLedger() async throws {
+        let play = doublePlay(), original = try JSONEncoder().encode(doublePlay())
+        for pitcher in [false, true] {
+            let sprites = FieldReplaySprites(appearance: PlayerAppearance(kit: 1), jerseyNumber: 27, ownPosition: pitcher ? "P" : "SS", throwingHand: pitcher ? "left" : "right", ownTeamFielding: pitcher)
+            let replay = InplayReplay.field(play)
+            let planned = await sprites.requests(duration: replay.duration, reduced: false, actorsAt: { replay.actors(sprites, time: $0, reduced: false, finished: false) })
+            let requests = try XCTUnwrap(planned)
+            let images = await FieldRasterArt.prepare(requests)
+            let prepared = try XCTUnwrap(images)
+            let scene = InplayFieldScene(replay: replay, sprites: sprites, prepared: prepared, scoreText: "연습 대진", stadium: .legacy)
+            await scene.preload()
+            let view = SKView(frame: CGRect(x: 0, y: 0, width: 320, height: 480)); view.presentScene(scene)
+            for (label, time) in [("approach", play.pickupAt - 0.3), ("catch", play.pickupAt), ("gather", play.pickupAt + (play.releaseAt-play.pickupAt)*0.4), ("release", play.releaseAt), ("receive", play.ballAt)] {
+                scene.display(time: max(0, time), finished: false)
+                let image = UIImage(cgImage: try XCTUnwrap(view.texture(from: scene)?.cgImage()))
+                let shot = XCTAttachment(image: image); shot.name = "v75-field-" + (pitcher ? "pitcher-" : "batter-") + label; shot.lifetime = .keepAlways; add(shot)
+            }
+            view.presentScene(nil)
+        }
+        XCTAssertEqual(play, try JSONDecoder().decode(MatchDetailedPlay.self, from: original))
     }
 }

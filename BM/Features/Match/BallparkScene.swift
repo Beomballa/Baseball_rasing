@@ -102,6 +102,7 @@ import SwiftUI
         }
         if let flight=pitchFlight {
             let t=min(1,max(0,(now-flight.started)/flight.duration))
+            pitcherPose(t < 0.25 ? 3 : t < 0.75 ? 4 : 5)
             ball.position=MatchBallPath.point(from:flight.start,to:flight.end,size:size,role:.pitcher,hand:hand,code:flight.code,progress:t)
             ball.setScale(1.1-(2.4*t/(1+1.4*t))*0.4)
             if t >= 1 {
@@ -189,6 +190,8 @@ import SwiftUI
         let texture = SKTexture(image: image); texture.filteringMode = .nearest
         let field = SKSpriteNode(texture: texture, size: size); field.position = CGPoint(x: size.width / 2, y: size.height / 2)
         field.name = "fixedStadiumBackground"
+        // Reverse the rear camera with a left-handed pitcher, keeping the rubber under the planted foot.
+        field.xScale = role == .pitcher && hand == "left" ? -1 : 1
         addChild(field)
         let style = appearance ?? PlayerAppearance(kit: kit)
         if role == .batter {addBackgroundFielders(ownKit:PlayerAppearance.kitColors[style.kit])}
@@ -198,12 +201,12 @@ import SwiftUI
         mittFrames = Array(catcherFrames.suffix(2))
         guard pitcherFrames.count == (role == .pitcher ? 6 : 8), batterFrames.count == 6, catcherFrames.count == 4 else { ready = false; return }
         pitcher.name = "animatedPitcher";pitcher.zPosition = 4;pitcher.xScale = hand == "left" ? -1 : 1;addChild(pitcher);pitcherPose(0)
-        batter.name = "animatedBatter";batter.zPosition = 3;addChild(batter);batterPose(0)
+        batter.name = "animatedBatter";batter.zPosition = 3;batter.isHidden = false;addChild(batter);batterPose(0)
         if role == .pitcher {
             catcher.texture = catcherFrames[0]; catcher.size = CGSize(width: size.width * 0.22, height: size.height * 0.22)
             catcher.position = point(0.50, 0.41); catcher.zPosition = 2; addChild(catcher)
             mitt.texture = mittFrames[0]; mitt.size = CGSize(width: size.width * 0.09, height: size.height * 0.09)
-            mitt.position = point(0.55, 0.475); mitt.zPosition = 6; addChild(mitt)
+            mitt.position = point(hand == "left" ? 0.45 : 0.55, 0.475); mitt.zPosition = 6; addChild(mitt)
         }
         ball.name="baseball";ball.zPosition=8;ball.size=CGSize(width:10,height:10)
         ball.isHidden=true;addChild(ball)
@@ -220,6 +223,17 @@ import SwiftUI
         receivedBall.name="receivedBaseball";receivedBall.zPosition=9;receivedBall.size=CGSize(width:10,height:10)
         receivedBall.isHidden=true;addChild(receivedBall);ready=true
         setStadium(stadium)
+    }
+    func usePracticeSetting() {
+        guard let field = childNode(withName: "fixedStadiumBackground") as? SKSpriteNode else { return }
+        let image = role == .batter ? MatchArt.image("batting-practice-v75") : TrainingEnvironmentArt.image(.bullpen)
+        if let image {
+            let texture = SKTexture(image: image); texture.filteringMode = .nearest
+            field.texture = texture
+        }
+        dress?.removeFromParent(); dress = nil
+        for i in 0..<3 { childNode(withName: "backgroundFielder-\(i)")?.removeFromParent() }
+        if role == .pitcher { batter.isHidden = true }
     }
     func setStadium(_ value: StadiumIdentity) {
         stadium = value; dress?.removeFromParent()
@@ -241,7 +255,7 @@ import SwiftUI
         }
     }
     func arrivalPoint(x:Double,y:Double) -> CGPoint {
-        role == .batter ? point(0.5+(x-0.5)*0.16,0.68+(y-0.5)*0.22):point(0.54+(x-0.5)*0.22,0.43+(y-0.5)*0.24)
+        role == .batter ? point(0.5+(x-0.5)*0.16,0.68+(y-0.5)*0.22):point((hand == "left" ? 0.46 : 0.54)+(x-0.5)*0.22,0.43+(y-0.5)*0.24)
     }
     private func markArrival() {receivedBall.position=destination;receivedBall.isHidden=false}
     private func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * size.width, y: (1 - y) * size.height) }
@@ -279,7 +293,7 @@ import SwiftUI
         ball.isHidden = true; receivedBall.isHidden=true; ball.setScale(1); pitcherPose(0); batterPose(0)
         if catcherFrames.count >= 2 {
             catcher.texture = catcherFrames[0]; mitt.texture = mittFrames[0]
-            mitt.position = point(0.55, 0.475)
+            mitt.position = point(hand == "left" ? 0.45 : 0.55, 0.475)
         }
     }
     private func handPoint(_ frame: Int) -> CGPoint {
@@ -312,9 +326,6 @@ import SwiftUI
         ball.position=handPoint(0);ball.isHidden=false
         func launch() {
             self.pitchStage = .flight; self.pitcherPose(3); self.ball.position = release
-            self.pitcher.run(.sequence([.wait(forDuration: duration * 0.25), .run { [weak self] in
-                self?.pitcherPose(4)
-            }]))
             if self.role == .pitcher && !["안타", "홈런", "범타"].contains(outcome ?? "") {
                 if reduceMotion {self.mitt.position=self.destination}
                 else {self.mitt.run(.move(to: self.destination, duration: duration * 0.8))}
@@ -369,13 +380,15 @@ struct PitcherPresentationPose {
     let width: Double
     private(set) var pivot: CGPoint
     private(set) var hand: CGPoint
-    let foot: CGPoint
+    private(set) var foot: CGPoint
     init(role: PlayerRole, frame: Int, hand throwingHand: String) {
         if role == .pitcher {
             let pivots = [CGPoint(x:0.70,y:0.90),CGPoint(x:0.57,y:0.90),CGPoint(x:0.74,y:0.90),CGPoint(x:0.41,y:0.85),CGPoint(x:0.40,y:0.85),CGPoint(x:0.42,y:0.85)]
             let hands = [CGPoint(x:0.42,y:0.56),CGPoint(x:0.38,y:0.52),CGPoint(x:0.72,y:0.37),CGPoint(x:0.78,y:0.11),CGPoint(x:0.50,y:0.65),CGPoint(x:0.40,y:0.55)]
             width = 0.52; pivot = pivots[frame]; hand = hands[frame]
-            foot = CGPoint(x:frame<3 ? 0.76:0.69,y:0.895)
+            // The stride foot in frame 2 is x=.29 while the pivot foot is x=.74.
+            // Carry that planted location into release instead of stepping backward on the next frame.
+            foot = CGPoint(x: frame < 3 ? 0.76 : 0.526, y: frame < 3 ? 0.895 : 0.875)
         } else {
             width = 0.20
             let pivots = [0.5,0.53,0.65,0.65,0.55,0.52,0.50,0.5]
@@ -384,6 +397,7 @@ struct PitcherPresentationPose {
             foot = CGPoint(x:0.50,y:0.375)
         }
         if throwingHand == "left" {
+            if role == .pitcher { self.foot.x = 1 - self.foot.x }
             self.pivot = CGPoint(x:1-pivot.x,y:pivot.y)
             self.hand = CGPoint(x:1-hand.x,y:hand.y)
         }

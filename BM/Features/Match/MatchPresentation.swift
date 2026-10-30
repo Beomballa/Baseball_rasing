@@ -10,7 +10,8 @@ import os
 enum MatchArt {
     static let names = ["batter-view-clean", "stadium-clean", "batter-actions", "pitcher-delivery-v2", "catcher-parts",
                         "grip-fastball", "grip-slider", "grip-changeup", "grips-extra", "inplay-stadium-arcade-v1",
-                        "batter-field-v52", "pitcher-field-v52", "opponent-pitcher-v52", "opponent-batter-v52"]
+                        "batter-field-v52", "pitcher-field-v52", "opponent-pitcher-v52", "opponent-batter-v52",
+                        "batter-actions-v75", "pitcher-delivery-v75", "batting-practice-v75"]
     private static let images: [String: UIImage] = Dictionary(uniqueKeysWithValues: names.compactMap { name in
         guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "MatchArt"),
               let image = UIImage(contentsOfFile: url.path) else { return nil }
@@ -498,6 +499,7 @@ struct MatchResultSummary {
 }
 
 @MainActor enum PlayerMotionArt {
+    static func sourceName(role: PlayerRole) -> String { role == .pitcher ? "pitcher-delivery-v75" : "batter-actions-v75" }
     private static let cache: NSCache<NSString, NSArray> = {
         let cache = NSCache<NSString, NSArray>(); cache.totalCostLimit = 32 * 1024 * 1024
         return cache
@@ -546,10 +548,10 @@ struct MatchResultSummary {
         if result.count == 6 { cache.setObject(result as NSArray, forKey: key, cost: 6 * 512 * 512 * 4) }
         return result
     }
-    // Semantic regions use the original 512px cells. Source sheets, alpha, pose geometry and saved state stay unchanged.
+    // Semantic recoloring uses 512px cells; V75 keeps the existing palette regions and jersey anchors.
     static func image(role: PlayerRole, frame: Int, appearance: PlayerAppearance, number: Int, hand: String) -> UIImage? {
         guard (0..<6).contains(frame), appearance.isValid, (0...99).contains(number),
-              let original = MatchArt.cell(role == .pitcher ? "pitcher-delivery-v2" : "batter-actions", column: frame % 3, row: frame / 3, columns: 3, rows: 2)?.cgImage, original.width == 512, original.height == 512 else { return nil }
+              let original = MatchArt.cell(sourceName(role: role), column: frame % 3, row: frame / 3, columns: 3, rows: 2)?.cgImage, original.width == 512, original.height == 512 else { return nil }
         let width = original.width, height = original.height
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -970,6 +972,13 @@ enum FieldSpriteAnimation {
             motion.chestCatch=play.misplay == nil && index != play.fielder
             motion.relayTransfer=play.misplay == nil && play.relay?.fielder == index && [.gather,.windup].contains(motion.stage)
             return motion
+        }
+        // Turn toward the incoming ball over the final two strides, before the catch pose.
+        // Positions and arrival times remain the saved play's path.
+        if motion.stage == .run, index == play.fielder, time >= play.pickupAt - 0.32, time < play.pickupAt - 0.12 {
+            let incoming = FieldNode.sample(play.ball, at: max(0, play.pickupAt - 0.12))
+            let facing = FieldFacing.direction(dx: incoming.x - at.x, dy: incoming.y - at.y)
+            motion.facing = FieldFacing.turn(from: motion.facing, to: facing, fraction: (time - (play.pickupAt - 0.32)) / 0.20)
         }
         let catches=[(play.fielder,play.pickupAt)]+events.map {($0.receiver,$0.receivedAt)}
         if let caught=catches.last(where:{$0.0 == index && time >= $0.1-0.12 && time < $0.1+0.35}) {

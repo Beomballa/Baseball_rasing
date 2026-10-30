@@ -432,10 +432,10 @@ struct CareerGameView: View {
             } else {
                 ZStack {
                     arena(match, field: field)
-                        .overlay(alignment: player.role == .batter ? .bottomTrailing : .bottomLeading) {
+                        .overlay(alignment: player.role == .batter || player.throwingHandRaw == "left" ? .bottomTrailing : .bottomLeading) {
                             if record.appearance && match.ownPitcherChange == nil {
                                 if player.role == .batter { batterChoices.frame(width: 106).padding(.trailing, 10).padding(.bottom, 26) }
-                                else { pitcherChoices(match).frame(width: 104).padding(.leading, 10)
+                                else { pitcherChoices(match).frame(width: 104).padding(player.throwingHandRaw == "left" ? .trailing : .leading, 10)
                                     .padding(.bottom, max(12, liveControlsHeight - (available.height - field.height) / 2 + 8)) }
                             }
                         }

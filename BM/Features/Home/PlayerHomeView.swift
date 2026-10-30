@@ -646,6 +646,7 @@ struct PlayerHomeView: View {
     private func trainingAbilities(_ calendar: CareerCalendarState, selectedKind: TrainingKind) -> some View {
         let activeTrainingKind = allowedTrainingKind(selectedKind)
         return VStack(alignment: .leading, spacing: 16) {
+            TrainingScenePreview(player: player, kind: activeTrainingKind, pitchCode: player.pitches.sorted { $0.order < $1.order }.first?.code ?? "")
             ManagementPanel(activeTrainingKind.label + " 훈련", surface: .paper) {
                 Text(trainingMethod(activeTrainingKind)).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
                 TrainingCostStrip(fatigue: player.fatigue)
@@ -660,7 +661,7 @@ struct PlayerHomeView: View {
                     if activeTrainingKind == .pitch {
                         Text("보유 구종 · 준비 화면에서 선택").managementFont(.label)
                         ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
-                            ManagementMetricRow(title: pitch.name, value: String(format: "%.1f", pitch.mastery))
+                            TrainingPitchTile(code: pitch.code, hand: player.throwingHandRaw, mastery: pitch.mastery)
                         }
                         Text("준비 화면에서 훈련할 보유 구종을 선택합니다.").managementFont(.helper)
                     } else {

@@ -76,6 +76,9 @@ ART_HASHES.update({'BM/Resources/Assets.xcassets/RestBenchV67.imageset/room.png'
 EXACT_PATHS.add('BM/Resources/Assets.xcassets/RestBenchV69.imageset/Contents.json')
 ART_HASHES['BM/Resources/Assets.xcassets/RestBenchV69.imageset/room.png'] = '24b8760b17d7b43155e7d987b234cefd37e12b0b026c54ab7a2f6b5ec98e6bb1'
 
+# V75 reviewed training and player motion artwork.
+ART_HASHES.update({'BM/Resources/MatchArt/batter-actions-v75.png': '495d460d405eeea31419c1b6f3223c0a5ae3fa5d0265e2e74c5a1e5cb86eba5c', 'BM/Resources/MatchArt/pitcher-delivery-v75.png': '5c5d19bd692776c691ec47c9fad81e92571fe12a572a811c1de8c7034969cd3e', 'BM/Resources/MatchArt/batting-practice-v75.png': '4304ab31aaf4d7764a0d3d7341e5be09f7c6e0ad8c712aafa8745ae7e0d87068'})
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):

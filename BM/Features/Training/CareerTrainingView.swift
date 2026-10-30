@@ -53,7 +53,7 @@ struct CareerTrainingView: View {
     @State private var y = 0.5
     @State private var clock = MatchInputClock()
     @State private var scene = BallparkScene(size: CGSize(width: 320, height: 320))
-    @State private var locationScene = LocationDrillScene(size: TrainingStageLayout.size)
+    @State private var locationScene = LocationDrillScene(size: CGSize(width: 320, height: 340))
     @State private var locationReplay: LocationDrillReplay?
     @State private var tireScene = TirePowerScene(size: TrainingStageLayout.size)
     @State private var rhythmTaps: [Double?] = Array(repeating: nil, count: 3)
@@ -143,6 +143,7 @@ struct CareerTrainingView: View {
         if selectedKind == .discipline {
             judging = true; deliveryArrived = false
             scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
+            scene.usePracticeSetting()
             scene.demonstrate(reduceMotion: reduced, flightDuration: 0.9, x: training.targets[training.scores.count].x,
                               y: training.targets[training.scores.count].y, pitchCode: "four-seam",
                               onArrival: { deliveryArrived = true; if replay != nil { skillAnimationFinished() } },
@@ -150,6 +151,7 @@ struct CareerTrainingView: View {
             return
         }
         scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
+            scene.usePracticeSetting()
         let timeline = MatchInputTimeline(windup: selectedKind == .pitch ? 0 : MatchDelivery.windup, duration: 1.6)
         if selectedKind == .pitch { scene.preparePitch(phase: 0, reduced: reduced) }
         else { scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: training.targets[training.scores.count].x,
@@ -282,20 +284,19 @@ struct CareerTrainingView: View {
                     } else {
                         VStack(spacing: 8) {
                             VStack(spacing: 8) {
-                                HStack(spacing: 10) {
-                                    PixelPlayer(appearance: player.appearance).frame(width: 28, height: 36).accessibilityHidden(true)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(pitchName).font(.headline)
-                                        Text(isSkillDrill ? skillHint : isLocationDrill && training != nil ? (locationTarget.map { "◇ 목표 " + LocationDrillReplay.coordinate($0) } ?? "훈련 완료") : practice ? "자유 연습 · 성장·날짜·피로 변화 없음" : training == nil ? "5회 도전 · 피로 +6 · 하루 행동 1회" : "도전 기록은 시도마다 저장됩니다")
-                                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                                    }
-                                    Spacer(minLength: 0)
-                                    Text(displayTraining.map { "\(min(5, $0.scores.count + 1)) / 5" } ?? "READY")
-                                        .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                                }.padding(10).background(GameTheme.boardPanel)
-                                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
-                                    .accessibilityElement(children: .combine)
-                                    .accessibilityIdentifier("trainingProgress")
+                                if training != nil {
+                                    HStack(alignment: .top, spacing: 10) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(pitchName).font(.headline).foregroundStyle(GameTheme.gold)
+                                            Text(isSkillDrill ? skillHint : isLocationDrill ? "◇ 목표를 보고 + 위치를 맞추세요" : selectedKind == .pitch ? "그립 확인 → 릴리스 → 포구" : "공을 보고 중앙 타이밍에 맞추세요")
+                                                .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        Spacer(minLength: 4)
+                                        Text(displayTraining.map { "\(min(5, $0.scores.count + 1)) / 5" } ?? "READY")
+                                            .font(.headline.monospacedDigit()).foregroundStyle(GameTheme.gold)
+                                    }.padding(.vertical, 4).accessibilityElement(children: .combine)
+                                        .accessibilityIdentifier("trainingProgress")
+                                }
                                 if practice {
                                     Text("자유 연습 · 실제 성장·날짜·피로 변화 없음")
                                         .font(.caption.bold()).foregroundStyle(GameTheme.gold)
@@ -303,20 +304,23 @@ struct CareerTrainingView: View {
                                 }
                                 if training == nil {
                                     if !studying { selection }
+                                    TrainingScenePreview(player: player, kind: selectedKind, pitchCode: code)
                                     preparationBoard
                                 }
-                                if let training, !reviewReady, !isLocationDrill, !isSkillDrill { TrainingMissionBanner(kind: selectedKind, scores: (feedbackVisible ? self.training : displayTraining)?.scores ?? training.scores) }
                                 if dynamicTypeSize.isAccessibilitySize {
                                     Button("훈련 버튼으로 이동") { scroll.scrollTo("trainingControls", anchor: .bottom) }
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("trainingJumpControls")
                                 }
                             }.background(chromeMeasurement("top"))
-                            arena(height: fieldHeight(in: geometry.size))
+                            if training != nil {
+                                arena(height: fieldHeight(in: geometry.size))
+                                if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 4) }
+                            }
                             VStack(spacing: 8) {
                                 if reviewReady { reviewControls } else { playControls.disabled(replay != nil) }
                                 errorControls
                             }.id("trainingControls").background(chromeMeasurement("bottom"))
-                        }.padding(12)
+                        }.padding(12).frame(minHeight: max(0, geometry.size.height), alignment: .top)
                     }
                 }
                 .onPreferenceChange(TrainingChromeHeightKey.self) { chromeHeights = $0 }
@@ -329,6 +333,7 @@ struct CareerTrainingView: View {
         .toolbarBackground(GameTheme.boardPanel, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         .onAppear {
             scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
+            scene.usePracticeSetting()
             load(); if dynamicTypeSize.isAccessibilitySize { buttonInput = true }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: feedbackTick) { _, _ in UserDefaults.standard.object(forKey: "bm-haptics-enabled") as? Bool ?? true }
@@ -354,7 +359,10 @@ struct CareerTrainingView: View {
     }
     private func fieldHeight(in size: CGSize) -> CGFloat {
         let available = size.height - chromeHeights.values.reduce(0, +) - 40
-        if isSkillDrill || isLocationDrill || [.speed,.arm,.stamina,.mental].contains(selectedKind) {
+        if isLocationDrill || isSkillDrill && selectedKind != .power {
+            return min(size.width - 24, max(150 * 320 / 340, available * 320 / 340))
+        }
+        if isSkillDrill || [.speed,.arm,.stamina,.mental].contains(selectedKind) {
             return min(size.width-24,max(150*320/220,available*320/220))
         }
         return max(150,min(size.width-24,available))
@@ -384,12 +392,18 @@ struct CareerTrainingView: View {
                 }
             }
             if isPitcher && category == 0 {
-                Picker("훈련할 구종", selection: $code) {
-                    ForEach(player.pitches.sorted { $0.order < $1.order }) { Text("\($0.name) · \($0.mastery, specifier: "%.1f")").tag($0.code) }
-                }.pickerStyle(.menu).tint(GameTheme.gold)
-                    .padding(8).frame(maxWidth: .infinity, minHeight: 44).background(GameTheme.boardPanel)
-                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
-                    .accessibilityIdentifier("trainingPitchPicker")
+                Text("손에 익힐 그립을 골라주세요").font(.subheadline.bold())
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: 8) {
+                    ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
+                        Button { code = pitch.code } label: {
+                            TrainingPitchTile(code: pitch.code, hand: player.throwingHandRaw, mastery: pitch.mastery, selected: code == pitch.code)
+                        }.buttonStyle(.plain)
+                            .accessibilityLabel(pitch.name + " 숙련도 " + pitch.mastery.formatted(.number.precision(.fractionLength(1))))
+                            .accessibilityAddTraits(code == pitch.code ? .isSelected : [])
+                            .accessibilityIdentifier("trainingPitch-" + pitch.code)
+                    }
+                }.accessibilityIdentifier("trainingPitchSelection")
             } else {
                 LazyVGrid(columns: choiceColumns, spacing: 6) {
                     ForEach(category == 2 ? (isPitcher ? [TrainingKind.velocity, .control, .stuff, .stamina, .mental] : [.mental]) : category == 1 ? [.speed, .defense, .arm] : [.contact, .power, .discipline], id: \.self) { item in
@@ -586,7 +600,7 @@ struct CareerTrainingView: View {
             }
             Text(selectedKind == .power ? "POWER · 티배팅" : selectedKind == .velocity ? "VELOCITY · 리듬 불펜" : replay != nil && !feedbackVisible ? "STUFF · 목표 궤적 시연" : "STUFF · 점선 목표 / 실선 입력")
                 .font(.caption.bold()).padding(6).background(GameTheme.navy).allowsHitTesting(false)
-        }.frame(width: height, height: height * 220 / 320).clipped().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+        }.frame(width: height, height: height * (selectedKind == .power ? 220 : 340) / 320).clipped().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
             .accessibilityElement(children: .contain).accessibilityIdentifier("skillPracticeField")
             .onAppear {
                 if selectedKind == .power { tireScene.configure(player: player) }
@@ -618,7 +632,7 @@ struct CareerTrainingView: View {
             skillArena(height: height)
         } else if isLocationDrill, let target = locationTarget {
             LocationPracticeBoard(kind: selectedKind, target: target, scene: locationScene, player: player, x: $x, y: $y, locked: inputLocked)
-                .frame(width: height, height: height * 220 / 320).clipped()
+                .frame(width: height, height: height * 340 / 320).clipped()
                 .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
                 .accessibilityIdentifier("trainingField")
         } else {
@@ -692,8 +706,13 @@ struct CareerTrainingView: View {
                     .accessibilityIdentifier("trainingCatchToast")
             }
             if selectedKind == .pitch {
-                MatchGrip(code: training?.pitchCode ?? code, hand: player.throwingHandRaw)
-                    .frame(width: 74, height: 74).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                VStack(spacing: 2) {
+                    MatchGrip(code: training?.pitchCode ?? code, hand: player.throwingHandRaw).frame(width: 70, height: 70)
+                    Text(pitchName).font(.caption.bold())
+                }.padding(5).background(GameTheme.board)
+                    .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(8)
+                    .allowsHitTesting(false)
             }
             if replay != nil, feedbackVisible, !reviewReady, selectedKind != .pitch, let replayScore {
                 TrainingGradeBanner(score: replayScore)
@@ -872,20 +891,12 @@ private struct TrainingPreparationBoard: View {
     private var next: Double { min(100, floor(value ?? 0) + 1) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(practice ? "PRACTICE / 자유 연습" : "TRAINING / 오늘의 훈련").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                    Text(name).font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
-                    Text(practice ? "보유 기량으로 자유롭게 도전" : "시도마다 저장 · 5회 완료 시 성장·피로·행동 반영").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    if let value {
-                        Text("현재 \(studying ? "습득 진척" : kind == .pitch ? "구종 숙련도" : "능력치") \(value, specifier: "%.1f")")
-                            .font(.headline.monospacedDigit()).accessibilityIdentifier("trainingCurrentValue")
-                    } else { Text("현재 능력 미집계").font(.subheadline).foregroundStyle(GameTheme.gold) }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                if !typeSize.isAccessibilitySize {
-                    DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber,
-                                       hand: player.throwingHandRaw, label: player.name + "의 훈련 도트")
-                        .frame(width: 66, height: 88)
+            HStack(alignment: .firstTextBaseline) {
+                Text(name + " 훈련").font(.headline).foregroundStyle(GameTheme.gold)
+                Spacer(minLength: 4)
+                if let value {
+                    Text("현재 \(value, specifier: "%.1f")").font(.headline.monospacedDigit())
+                        .accessibilityIdentifier("trainingCurrentValue")
                 }
             }
             if let value {
@@ -904,8 +915,9 @@ private struct TrainingPreparationBoard: View {
                 TrainingRuleStamp(title: "행동", value: practice ? "제한 없음" : "오늘 1회 사용")
             }
             if let failure { Text(failure).font(.caption).foregroundStyle(GameTheme.gold).fixedSize(horizontal: false, vertical: true) }
-        }.padding(12).background(GameTheme.boardPanel)
-            .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold.opacity(0.65), lineWidth: 2))
+            Text(practice ? "연습 결과는 실제 선수 기록에 반영되지 않습니다." : "5회 완료 시 성장·피로·오늘 행동을 한 번 반영합니다.")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+        }.padding(.vertical, 10)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("trainingPreparation")
     }
@@ -1223,5 +1235,90 @@ struct TrainingResultPortrait: View {
                     label: player.name + "의 " + kind.label + " 훈련 도트")
             }
         }.accessibilityIdentifier("trainingResultArt-" + kind.rawValue)
+    }
+}
+
+// Read-only equipment and setting preview. Starting a session remains the explicit action below it.
+struct TrainingScenePreview: View {
+    let player: CareerPlayer
+    let kind: TrainingKind
+    var pitchCode: String = ""
+    private var room: TrainingEnvironmentArt.Room {
+        switch kind {
+        case .pitch, .control, .velocity, .stuff: .bullpen
+        case .speed, .stamina: .running
+        case .mental: .dugout
+        default: .field
+        }
+    }
+    private var place: String {
+        switch kind {
+        case .pitch, .control, .velocity, .stuff: "BULLPEN · 불펜"
+        case .speed, .stamina: "TRACK · 러닝 트랙"
+        case .mental: "DUGOUT · 경기 상황 훈련"
+        case .defense, .arm: "FIELD · 수비 연습장"
+        default: "BATTING · 타격 연습장"
+        }
+    }
+    private var pitcher: Bool { [.pitch, .control, .velocity, .stuff].contains(kind) }
+    private var actorImage: UIImage? {
+        if [.speed, .stamina, .defense, .arm, .mental].contains(kind) {
+            let motion = FieldSpriteMotion(facing: .southWest, stage: .ready)
+            guard let sample = FieldRasterArt.samples(motion, kind: "fielder", left: player.throwingHandRaw == "left").first else { return nil }
+            return FieldRasterArt.image(sample, kit: PlayerAppearance.kitColors[player.appearance.kit], skin: PlayerAppearance.skinColors[player.appearance.skin], hair: PlayerAppearance.hairColors[player.appearance.hair], number: player.jerseyNumber, back: false)
+        }
+        return PlayerMotionArt.image(role: pitcher ? .pitcher : .batter, frame: 0, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw)
+    }
+    var body: some View {
+        GeometryReader { g in
+            ZStack(alignment: .topLeading) {
+                if let image = TrainingEnvironmentArt.image(room) {
+                    Image(uiImage: image).resizable().interpolation(.none).scaledToFill()
+                        .frame(width: g.size.width, height: g.size.height).clipped()
+                        .scaleEffect(x: pitcher && player.throwingHandRaw == "left" ? -1 : 1, y: 1)
+                }
+                if let image = actorImage {
+                    Image(uiImage: image).resizable().interpolation(.none).scaledToFit()
+                        .scaleEffect(x: pitcher && player.throwingHandRaw == "left" ? -1 : 1, y: 1)
+                        .frame(width: 148, height: 148)
+                        .position(x: g.size.width * (pitcher && player.throwingHandRaw == "left" ? 0.27 : 0.73), y: g.size.height * 0.60)
+                }
+                Text(place).font(.caption.monospaced().bold()).foregroundStyle(GameTheme.paper)
+                    .padding(7).background(GameTheme.board).padding(8)
+                if kind == .pitch {
+                    MatchGrip(code: pitchCode, hand: player.throwingHandRaw)
+                        .frame(width: 90, height: 90).padding(6).background(GameTheme.board)
+                        .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
+                        .position(x: player.throwingHandRaw == "left" ? g.size.width - 65 : 65, y: g.size.height - 58)
+                }
+            }
+        }.frame(height: 188).clipped()
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 2))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(place + ", " + player.name + "의 " + kind.label + " 훈련 준비")
+            .accessibilityIdentifier("trainingScenePreview")
+    }
+}
+
+struct TrainingPitchTile: View {
+    let code: String
+    let hand: String
+    let mastery: Double
+    var selected = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        HStack(spacing: 8) {
+            MatchGrip(code: code, hand: hand).frame(width: typeSize.isAccessibilitySize ? 56 : 60, height: 64)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text((selected ? "◆ " : "") + (PitchType(rawValue: code)?.label ?? code))
+                    .font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                Text("숙련 \(mastery, specifier: "%.1f")").font(.caption.monospacedDigit())
+                TrainingSegmentTrack(value: mastery / 100, color: selected ? GameTheme.gold : GameTheme.growth)
+                    .accessibilityHidden(true)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(8).foregroundStyle(GameTheme.boardInk).background(GameTheme.boardPanel)
+            .overlay(ManagementStepFrame().strokeBorder(selected ? GameTheme.gold : GameTheme.boardLine, lineWidth: selected ? 2 : 1))
+            .contentShape(Rectangle())
     }
 }
