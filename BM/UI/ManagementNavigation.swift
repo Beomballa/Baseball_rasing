@@ -118,3 +118,33 @@ struct ManagementClubhouseBackdrop: View {
         Image("ClubhouseV1").resizable().interpolation(.none).scaledToFit().accessibilityHidden(true)
     }
 }
+
+/// Pixel-grid artwork, separate from the full-size accessible control.
+struct ManagementSettingsButton: View {
+    let action: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private let pixels = [
+        "......####......", "......####......", "..##..####..##..", "..############..",
+        "...##########...", "...###....###...", "######....######", "#####......#####",
+        "#####......#####", "######....######", "...###....###...", "...##########...",
+        "..############..", "..##..####..##..", "......####......", "......####......"
+    ]
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Canvas { context, size in
+                    let unit = min(size.width, size.height) / 16
+                    for (y, row) in pixels.enumerated() {
+                        for (x, pixel) in row.enumerated() where pixel == "#" {
+                            context.fill(Path(CGRect(x: CGFloat(x) * unit, y: CGFloat(y) * unit,
+                                                     width: unit, height: unit)), with: .color(GameTheme.gold))
+                        }
+                    }
+                }.frame(width: 24, height: 24).accessibilityHidden(true)
+                if typeSize.isAccessibilitySize { Text("설정").font(ManagementPixelFont.readable(.label)) }
+            }
+        }.buttonStyle(ManagementToolbarButtonStyle())
+            .accessibilityLabel("설정").accessibilityHint("설정과 저장 보호 열기")
+            .accessibilityIdentifier("clubhouse-settings")
+    }
+}

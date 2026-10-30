@@ -251,8 +251,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                                         .accessibilityIdentifier("roomBackHome")
                                 }
                                 Spacer()
-                                Button { choose("clubhouse-settings") } label: { Text("설정").font(ManagementPixelFont.font(14)).padding(.horizontal, 10).frame(minHeight: 44).background(ManagementTheme.Spatial.canvas.opacity(0.85)) }
-                                    .accessibilityIdentifier("clubhouse-settings")
+                                ManagementSettingsButton { choose("clubhouse-settings") }
                             }.buttonStyle(.plain).foregroundStyle(ManagementTheme.Spatial.onCanvas)
 
                         }.clipped()
@@ -274,7 +273,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                         ZStack {
                             if [.roomSign, .roomNote, .roomChalk].contains(p.kind) {
                                 VStack(spacing: 4) {
-                                    Text(facility.title).font(ManagementPixelFont.font(13)).lineLimit(2)
+                                    Text(facility.title).font(ManagementPixelFont.font(13)).lineLimit(1).minimumScaleFactor(0.75)
                                     if !facility.preview.isEmpty {
                                         ForEach(facility.preview, id: \.self) { line in Text(line).font(ManagementPixelFont.font(12)).lineLimit(2) }
                                     }
@@ -302,7 +301,11 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                                         .offset(x: width * p.bodyOffset.width, y: height * p.bodyOffset.height)
                                 }
                             }
-                        }.frame(width: max(44, width * p.width), height: max(44, height * p.height)).contentShape(Rectangle())
+                        }
+                        // Keep artwork centered on the prop even when the minimum hit target is clamped at an edge.
+                        .offset(x: width * p.x - p.hitRect(in: .init(width: width, height: height)).midX,
+                                y: height * p.y - p.hitRect(in: .init(width: width, height: height)).midY)
+                        .frame(width: max(44, width * p.width), height: max(44, height * p.height)).contentShape(Rectangle())
                     }.buttonStyle(ManagementPropButtonStyle()).foregroundStyle(ManagementTheme.Spatial.onCanvas)
                         .accessibilityLabel(facility.title + " · " + facility.status)
                         .accessibilityHint("상세 열기").accessibilityIdentifier(facility.id)
@@ -318,7 +321,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                 Button(action: home) { Text("‹ 클럽하우스").font(.subheadline.bold()).padding(.horizontal, 12).frame(minHeight: 44) }
                     .buttonStyle(.plain).accessibilityIdentifier("roomBackHome")
             }
-            if usesProps { Button("설정") { choose("clubhouse-settings") }.frame(minHeight: 44).accessibilityIdentifier("clubhouse-settings") }
+            if usesProps { ManagementSettingsButton { choose("clubhouse-settings") } }
             Spacer()
             Text(title).font(.subheadline.bold()).padding(.horizontal, 12)
         }.foregroundStyle(ManagementTheme.Spatial.onCanvas).background(ManagementTheme.Spatial.canvas.opacity(0.86))

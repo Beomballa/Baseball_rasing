@@ -85,7 +85,7 @@ struct PlayerHomeView: View {
                         Spacer()
                         Text("경기 준비").font(ManagementPixelFont.readable(.sectionTitle))
                         Spacer()
-                        Button("설정") { showSettings = true }.frame(minHeight: 44)
+                        ManagementSettingsButton { showSettings = true }
                     }.padding(.horizontal, 16)
                     if typeSize.isAccessibilitySize {
                         Image("GameDugoutV67").resizable().interpolation(.none).scaledToFit().accessibilityHidden(true)
@@ -404,12 +404,12 @@ struct PlayerHomeView: View {
             let pitching = player.role == .pitcher
             return [
                 .object("facility-training", pitching ? "불펜 투구" : "타격 케이지", todayTraining?.completed == false ? "진행 중 · 이어하기" : action,
-                        x: 0.50, y: 0.213, width: pitching ? 0.26 : 0.35, recommended: true),
-                .object("facility-physical", "피지컬", "주루·수비·멘탈 · 능력별 전용 훈련", x: pitching ? 0.08 : 0.135, y: pitching ? 0.405 : 0.386, width: pitching ? 0.12 : 0.15, height: 0.09, kind: .roomChalk),
-                .object("facility-traitTraining", "특성", "특성 훈련 · 조건 · 습득 진척", x: 0.94, y: pitching ? 0.54 : 0.63, width: 0.10, height: 0.075),
+                        x: 0.50, y: pitching ? 0.211 : 0.216, width: pitching ? 0.26 : 0.35, recommended: true),
+                .object("facility-physical", "피지컬", "주루·수비·멘탈 · 능력별 전용 훈련", x: pitching ? 0.087 : 0.135, y: pitching ? 0.407 : 0.386, width: pitching ? 0.12 : 0.15, height: 0.09, kind: .roomChalk),
+                .object("facility-traitTraining", "특성", "특성 훈련 · 조건 · 습득 진척", x: pitching ? 0.949 : 0.943, y: pitching ? 0.54 : 0.635, width: 0.10, height: 0.075),
                 .object("facility-positionTraining", pitching ? "구종" : "포지션", pitching ? "보유 \(player.pitches.count)개 · 숙련도" : "포지션 XP · 숙련",
-                        x: pitching ? 0.94 : 0.925, y: pitching ? 0.627 : 0.71, width: pitching ? 0.115 : 0.13, kind: .roomNote),
-                .object("facility-practice", "자유 연습", "행동 · 피로 소모 없음 · 실제 성장 없음", x: 0.18, y: pitching ? 0.735 : 0.73, width: 0.23)]
+                        x: pitching ? 0.940 : 0.931, y: pitching ? 0.630 : 0.714, width: pitching ? 0.115 : 0.13, kind: .roomNote),
+                .object("facility-practice", "자유 연습", "행동 · 피로 소모 없음 · 실제 성장 없음", x: pitching ? 0.168 : 0.18, y: pitching ? 0.735 : 0.73, width: 0.23)]
         case .game:
             let status = calendar.map { CalendarScheduleStatus(player: player, state: $0) }
             let fixture = status?.schedule?.today
