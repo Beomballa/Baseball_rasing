@@ -903,8 +903,15 @@ struct TrainingProjectFeedbackPanel: View {
 struct CareerProjectNextActions: View {
     let player:CareerPlayer
     let calendar:CareerCalendarState
+    @Environment(\.careerCompletionNavigation) private var navigate
     var body:some View {
         VStack(spacing:8) {
+            if let navigate {
+                Button("경기 · 다음 일정으로") { navigate(.game) }
+                    .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("completionGoGame")
+                Button("선수 라커룸으로") { navigate(.player) }
+                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("completionGoPlayer")
+            }
             NavigationLink {CareerObjectivesView(player:player,calendar:calendar)} label: {Text("현재 선수 프로젝트 보기")}
                 .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("completionProjectAction")
             NavigationLink {ObservationReviewView(player:player,calendar:calendar)} label: {Text("28일 관찰 결산 보기")}

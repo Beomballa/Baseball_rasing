@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct CareerCompletionNavigationKey: EnvironmentKey {
+    static let defaultValue: (@MainActor @Sendable (ManagementTab) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var careerCompletionNavigation: (@MainActor @Sendable (ManagementTab) -> Void)? {
+        get { self[CareerCompletionNavigationKey.self] }
+        set { self[CareerCompletionNavigationKey.self] = newValue }
+    }
+}
+
 struct ManagementSectionTabs<Selection: Hashable>: View {
     let options: [Selection]
     @Binding var selection: Selection

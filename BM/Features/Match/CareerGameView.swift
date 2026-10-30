@@ -9,6 +9,7 @@ struct CareerGameView: View {
     var assessmentID:String? = nil
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.careerCompletionNavigation) private var completionNavigation
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var battingSwipe: MatchBattingSwipe?
@@ -715,7 +716,7 @@ struct CareerGameView: View {
             }
             MatchProjectFeedbackPanel(feedback:match.projectFeedback)
             CareerProjectNextActions(player:player,calendar:calendar)
-            Button("경기 화면 닫기") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("gameReturnHome")
+            Button("경기 화면 닫기") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: completionNavigation == nil)).accessibilityIdentifier("gameReturnHome")
             Text("홈에서 다음 날로 진행할 수 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }.accessibilityElement(children: .contain)
     }

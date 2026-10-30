@@ -251,7 +251,8 @@ struct PlayerHomeView: View {
                     ManagementToolbarAction(title: "닫기", identifier: "closeRoomDetail") { roomDetail = nil }
                 }
                 .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
-            }.presentationDragIndicator(.visible).presentationDetents([.large]).preferredColorScheme(.dark)
+            }.environment(\.careerCompletionNavigation, { tab in leaveRoom(for: .tab(tab)) })
+                .presentationDragIndicator(.visible).presentationDetents([.large]).preferredColorScheme(.dark)
             }
         }
         .sheet(isPresented: $showSettings) { SaveProtectionView() }
@@ -348,7 +349,7 @@ struct PlayerHomeView: View {
         }
     }
 
-    private enum ManagementRootAction { case create, practice }
+    private enum ManagementRootAction { case create, practice, tab(ManagementTab) }
     private func leaveRoom(for action: ManagementRootAction) {
         rootAction = action
         roomDetail = nil
@@ -359,6 +360,7 @@ struct PlayerHomeView: View {
         switch action {
         case .create: create()
         case .practice: play()
+        case .tab(let tab): selectedTab = tab
         }
     }
     private var roomAsset: String {

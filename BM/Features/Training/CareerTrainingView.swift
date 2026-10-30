@@ -5,6 +5,7 @@ import SpriteKit
 struct CareerTrainingView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.careerCompletionNavigation) private var completionNavigation
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var chromeHeights: [String: CGFloat] = [:]
     @Environment(\.scenePhase) private var scenePhase
@@ -853,7 +854,7 @@ struct CareerTrainingView: View {
             if !practice { TrainingProjectFeedbackPanel(training: value); CareerProjectNextActions(player: player, calendar: calendar) }
             if let result = value.lastContact { ContactTrainingFeedback(result: result) }
             Button(practice ? "연습 화면 닫기" : "훈련 화면 닫기") { dismiss() }
-                .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingReturnHome")
+                .buttonStyle(MatchPixelButtonStyle(primary: practice || completionNavigation == nil)).accessibilityIdentifier("trainingReturnHome")
         }
     }
 

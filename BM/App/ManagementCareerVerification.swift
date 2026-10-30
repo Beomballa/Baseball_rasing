@@ -35,6 +35,23 @@ struct ManagementCareerVerification: View {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"
                     let player = try CareerStore.create(draft, schools: catalog, in: memory.mainContext)
+                    if args.contains("-v72-acquisition-boundary") {
+                        let context = memory.mainContext
+                        player.name = role == .batter ? "QA습득경계B" : "QA습득경계P"
+                        player.gameDate = "2026-04-02"
+                        player.speed = 80; player.defense = 80; player.arm = 80
+                        let traits = try context.fetch(FetchDescriptor<PlayerTraits>()).first { $0.playerID == player.id }!
+                        traits.payload = try JSONEncoder().encode(TraitLoadout(owned: [.cheetah, .safeHands], active: [.cheetah, .safeHands], progress: [PlayerTrait.strongArm.rawValue: 99]))
+                        if role == .pitcher {
+                            let extra = CareerPitchMastery(code: "curve", name: "커브", mastery: 61.75, order: 4)
+                            context.insert(extra); player.pitches.append(extra)
+                            var history = CareerTraining(playerID: player.id, date: "2026-03-31", role: "pitcher", pitchCode: "cutter", before: 98, fatigue: player.fatigue, age: 16, calendarRevision: 0)
+                            history.pitchStudy = try PitchStudyStore.preparation(player: player, code: "cutter", replacing: "four-seam", in: context)
+                            history.scores = [100, 100, 100, 100, 100]
+                            let row = try CareerTrainingRecord(history); row.completed = true; context.insert(row)
+                        }
+                        try context.save()
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-v53-calendar-save-failure") {
                         player.gameDate="2026-04-02";player.fatigue=90;try memory.mainContext.save()
                     }

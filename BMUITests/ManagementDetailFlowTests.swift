@@ -2379,3 +2379,184 @@ extension ManagementDetailFlowTests {
         capture(app, "v71-large-next-action")
     }
 }
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV72TrainingAndGameCompletionRoutesPreserveSavedStateBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        func ready(_ button: XCUIElement, timeout: Double = 35) {
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: button)], timeout: timeout), .completed)
+        }
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification", "-v56-disk-session", UUID().uuidString]; app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30)); if pitcher { pickPitcher(app) }
+            let role = pitcher ? "pitcher" : "batter", before = status(app)
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-physical"].tap()
+            let kind = app.buttons["trainingKind-" + (pitcher ? "control" : "defense")]; reveal(kind, app); kind.tap()
+            let open = app.buttons["openTraining"]; reveal(open, app); open.tap()
+            let start = app.buttons["startTraining"]; reveal(start, app); start.tap()
+            for _ in 0..<5 {
+                let attempt = app.buttons["trainingAttempt"]; reveal(attempt, app); ready(attempt); attempt.tap()
+                let next = app.buttons["trainingNext"]; XCTAssertTrue(next.waitForExistence(timeout: 12)); reveal(next, app); next.tap()
+            }
+            XCTAssertTrue(app.staticTexts["trainingResultStored"].waitForExistence(timeout: 8))
+            let growth = app.staticTexts["trainingGrowth"].label
+            let player = app.buttons["completionGoPlayer"]; reveal(player, app); capture(app, "v72-" + role + "-training-next-actions"); player.tap()
+            XCTAssertTrue(app.buttons["managementTab-player"].waitForExistence(timeout: 8)); XCTAssertTrue(app.buttons["managementTab-player"].isSelected)
+            let completedTraining = status(app); XCTAssertEqual(completedTraining[0], before[0]); XCTAssertEqual(completedTraining[2], "행동 0/1")
+            app.buttons["managementTab-training"].tap(); app.buttons["roomPrimary"].tap()
+            let stored = app.buttons["openTraining"]; reveal(stored, app); stored.tap()
+            XCTAssertTrue(app.staticTexts["trainingResultStored"].waitForExistence(timeout: 8)); XCTAssertEqual(app.staticTexts["trainingGrowth"].label, growth)
+            let game = app.buttons["completionGoGame"]; reveal(game, app); game.tap()
+            XCTAssertTrue(app.buttons["managementTab-game"].waitForExistence(timeout: 8)); XCTAssertTrue(app.buttons["managementTab-game"].isSelected)
+            XCTAssertEqual(status(app), completedTraining)
+            app.buttons["roomPrimary"].tap(); let entry = app.buttons["openCareerGame"]; reveal(entry, app); entry.tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 10)); app.buttons["opponentTab-plan"].tap()
+            reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
+            let automatic = app.buttons["gameAutomatic"]; XCTAssertTrue(automatic.waitForExistence(timeout: 12))
+            for index in 0..<6 {
+                ready(automatic)
+                if pitcher {
+                    app.buttons["gamePitch"].tap(); XCTAssertTrue(app.buttons["gameRelease"].waitForExistence(timeout: 5)); app.buttons["gameRelease"].tap()
+                } else {
+                    let action = ["watch", "swing", "bunt"][index % 3]
+                    app.buttons["gameInput-" + action].tap(); app.buttons["battingTouchSurface"].tap()
+                    if action != "watch" { app.buttons["battingTouchSurface"].tap() }
+                }
+                ready(automatic)
+                XCTAssertFalse(app.staticTexts["gameResultSaved"].exists)
+                if index == 2 { capture(app, "v72-" + role + "-manual-progress") }
+            }
+            let count = app.descendants(matching: .any).matching(identifier: "careerGameCount").firstMatch.label
+            app.terminate(); app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30)); if pitcher { pickPitcher(app) }
+            app.buttons["homeTodayGame"].tap(); XCTAssertTrue(automatic.waitForExistence(timeout: 12))
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "careerGameCount").firstMatch.label, count)
+            automatic.tap(); app.buttons["진행하고 결과 저장"].tap(); XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout: 30))
+            let next = app.buttons["completionGoGame"]; reveal(next, app); capture(app, "v72-" + role + "-game-next-actions"); next.tap()
+            XCTAssertTrue(app.buttons["managementTab-game"].waitForExistence(timeout: 8)); XCTAssertTrue(app.buttons["managementTab-game"].isSelected)
+            let completedGame = status(app); XCTAssertEqual(completedGame[0], before[0]); XCTAssertEqual(completedGame[2], "행동 0/1")
+            app.buttons["roomPrimary"].tap(); XCTAssertTrue(app.buttons["advanceDay"].waitForExistence(timeout: 8))
+            XCTAssertEqual(status(app)[0], before[0]); app.buttons["closeCalendar"].tap()
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), completedGame)
+        }
+    }
+}
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV72AcquisitionBoundaryTraitActivationAndPitchReplacementRestore() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-v56-disk-session", UUID().uuidString, "-v72-acquisition-boundary", "-management-reduced-motion-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        app.buttons["managementTab-player"].tap(); app.buttons["facility-traits"].tap(); app.buttons["traitDetails"].tap()
+        let trait = app.buttons["traitTraining-strong-arm"]; reveal(trait, app); trait.tap()
+        reveal(app.buttons["startTraitTraining"], app); app.buttons["startTraitTraining"].tap()
+        for index in 0..<5 {
+            let attempt = app.buttons["traitDrillSubmit"]; reveal(attempt, app); attempt.tap()
+            XCTAssertTrue(app.staticTexts["traitDrillFeedback"].waitForExistence(timeout: 10))
+            if index < 4 { let next = app.buttons["traitDrillNext"]; reveal(next, app); next.tap() }
+        }
+        XCTAssertTrue(app.staticTexts["traitAcquired"].label.contains("특성 습득")); capture(app, "v72-trait-100-boundary")
+        let player = app.buttons["completionGoPlayer"]; reveal(player, app); player.tap()
+        XCTAssertTrue(app.buttons["managementTab-player"].waitForExistence(timeout: 8)); app.buttons["facility-traits"].tap(); app.buttons["traitDetails"].tap()
+        let toggle = app.buttons["traitToggle-strong-arm"]; reveal(toggle, app); XCTAssertFalse(toggle.isEnabled)
+        app.navigationBars.buttons["BackButton"].tap(); close(app); app.buttons["managementTab-game"].tap()
+        let day = app.buttons["advanceDay"]; v60Reveal(day, app); XCTAssertTrue(day.isEnabled); day.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "행동 1/1"), object: app.staticTexts["calendarAction"])], timeout: 10), .completed)
+        app.buttons["managementTab-player"].tap(); app.buttons["facility-traits"].tap(); app.buttons["traitDetails"].tap(); reveal(toggle, app); XCTAssertTrue(toggle.isEnabled); toggle.tap()
+        XCTAssertEqual(app.staticTexts["traitActiveCount"].label, "활성 3 / 3"); capture(app, "v72-trait-three-active"); app.navigationBars.buttons["BackButton"].tap(); close(app)
+        pickPitcher(app)
+        func library() { app.buttons["managementTab-player"].tap(); let b = app.buttons["facility-positions"]; v60Reveal(b, app); b.tap(); XCTAssertTrue(app.staticTexts["pitchLibraryCount"].waitForExistence(timeout: 8)) }
+        func study(_ code: String, replacing: String) {
+            let slot = app.buttons["pitchStudySlot-" + replacing]; reveal(slot, app); slot.tap()
+            let begin = app.buttons["pitchStudyStart-" + code]; reveal(begin, app); begin.tap()
+            let confirm = app.buttons.matching(identifier: "pitchStudyConfirm").firstMatch
+            XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.tap()
+            let start = app.buttons["startTraining"]; reveal(start, app); start.tap()
+            for _ in 0..<5 {
+                let attempt = app.buttons["trainingAttempt"]; reveal(attempt, app); attempt.tap(); attempt.tap()
+                let next = app.buttons["trainingNext"]; XCTAssertTrue(next.waitForExistence(timeout: 12)); reveal(next, app); next.tap()
+            }
+            XCTAssertTrue(app.staticTexts["pitchStudyResult"].waitForExistence(timeout: 8)); XCTAssertTrue(app.staticTexts["pitchStudyResult"].label.contains("100.0"))
+            capture(app, "v72-pitch-" + code + "-registered")
+            let route = app.buttons["completionGoPlayer"]; reveal(route, app); route.tap()
+            XCTAssertTrue(app.buttons["managementTab-player"].waitForExistence(timeout: 8))
+        }
+        library(); XCTAssertFalse(app.buttons["pitchStudySlot-empty"].exists)
+        study("cutter", replacing: "four-seam")
+        library()
+        let cutter = app.descendants(matching: .any).matching(identifier: "pitchLibraryOwned-cutter").firstMatch
+        XCTAssertTrue(cutter.waitForExistence(timeout: 8)); XCTAssertTrue(cutter.label.contains("20.0"))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "pitchLibraryOwned-four-seam").firstMatch.exists)
+        close(app); app.buttons["managementTab-game"].tap(); v60Reveal(day, app); day.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "행동 1/1"), object: app.staticTexts["calendarAction"])], timeout: 10), .completed)
+        library(); study("four-seam", replacing: "cutter"); library()
+        let restored = app.descendants(matching: .any).matching(identifier: "pitchLibraryOwned-four-seam").firstMatch
+        XCTAssertTrue(restored.waitForExistence(timeout: 8)); XCTAssertTrue(restored.label.contains("62.0"))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "pitchLibraryOwned-cutter").firstMatch.exists)
+        capture(app, "v72-pitch-original-mastery-restored")
+    }
+}
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV72CoreAccessibilityAndLocalExporterProbe() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-save-protection-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .trait])
+        app.buttons["managementTab-game"].tap()
+        try app.performAccessibilityAudit(for: [.sufficientElementDescription, .trait])
+        app.buttons["managementTab-home"].tap()
+        let settings = app.buttons["clubhouse-settings"]; revealLocationChoice(settings, app); settings.tap()
+        let export = app.buttons["exportSave"]; reveal(export, app); export.tap()
+        XCTAssertTrue(app.buttons["DOCPicker.actionButton"].waitForExistence(timeout: 12))
+        capture(app, "v72-local-exporter-probe")
+        let hierarchy = XCTAttachment(string: app.debugDescription); hierarchy.name = "V72 local exporter hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        let cancel = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "취소"])).firstMatch
+        if !cancel.exists { app.navigationBars.buttons["BackButton"].tap() }
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5)); cancel.tap()
+        XCTAssertTrue(app.buttons["importSave"].waitForExistence(timeout: 8))
+    }
+}
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV72LocalFilesBackupRoundTripUsesIsolatedCareerOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-save-protection-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30)); let before = status(app)
+        let settings = app.buttons["clubhouse-settings"]; revealLocationChoice(settings, app); settings.tap()
+        let export = app.buttons["exportSave"]; reveal(export, app); export.tap()
+        let save = app.buttons["DOCPicker.actionButton"]; XCTAssertTrue(save.waitForExistence(timeout: 12))
+        let local = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source: com.apple.FileProvider.LocalStorage")).firstMatch
+        if !local.exists {
+            let back = app.navigationBars.buttons["BackButton"]; XCTAssertTrue(back.exists); back.tap()
+            let onDevice = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["On My iPhone", "나의 iPhone"])).firstMatch
+            XCTAssertTrue(onDevice.waitForExistence(timeout: 5)); onDevice.tap()
+        }
+        let name = app.textFields["DOCPicker.filenameTextField"]; XCTAssertTrue(name.exists)
+        let unique = "BM-QA-V72-" + String(UUID().uuidString.prefix(8))
+        name.tap(); name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 50)); name.typeText(unique)
+        let actual = name.value as? String ?? unique
+        save.tap()
+        let exported = app.staticTexts["saveProtectionMessage"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "백업 내보내기 완료"), object: exported)], timeout: 15), .completed)
+        capture(app, "v72-local-files-exported")
+        let importing = app.buttons["importSave"]; reveal(importing, app); importing.tap()
+        let browse = app.tabBars["DOC.browsingModeTabBar"].buttons["둘러보기"]
+        XCTAssertTrue(browse.waitForExistence(timeout: 8)); browse.tap()
+        let localFolder = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["나의 iPhone", "On My iPhone"])).firstMatch
+        XCTAssertTrue(localFolder.waitForExistence(timeout: 8)); localFolder.tap()
+        let file = app.cells.matching(NSPredicate(format: "label BEGINSWITH %@", actual)).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 10))
+        for _ in 0..<5 where file.frame.maxY > app.tabBars["DOC.browsingModeTabBar"].frame.minY {
+            app.swipeUp()
+        }
+        XCTAssertTrue(file.isHittable); file.tap()
+        let restore = app.buttons["confirmRestoreSave"]; XCTAssertTrue(restore.waitForExistence(timeout: 15)); reveal(restore, app)
+        capture(app, "v72-local-files-verified")
+        restore.tap(); XCTAssertTrue(app.buttons["취소"].waitForExistence(timeout: 5)); app.buttons["취소"].tap(); XCTAssertTrue(restore.exists)
+        restore.tap(); app.buttons["전체 복원"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15)); XCTAssertEqual(status(app), before)
+        capture(app, "v72-local-files-restored")
+    }
+}
