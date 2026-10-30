@@ -225,7 +225,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 if typeSize.isAccessibilitySize {
-                    ScrollView { VStack(spacing: 0) { header; roomToolbar; facilityList(columns: 1) } }
+                    ScrollView { VStack(spacing: 12) { header; roomToolbar; action.padding(.horizontal, 16); facilityList(columns: 1) } }
                         .accessibilityIdentifier("roomFacilityList")
                 } else {
                     header
@@ -237,7 +237,10 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                         ZStack(alignment: .top) {
                             if scrolling {
                                 ScrollViewReader { proxy in
-                                    ScrollView(.vertical) { propScene(width: width, height: height).id("propSceneTop") }
+                                    ScrollView(.vertical) {
+                                        propScene(width: width, height: height).id("propSceneTop")
+                                        Color.clear.frame(height: selection == .home ? 94 : 60).accessibilityHidden(true)
+                                    }
                                         .onChange(of: selection) { _, _ in proxy.scrollTo("propSceneTop", anchor: .top) }
                                         .accessibilityIdentifier("roomPropScroll")
                                 }
@@ -254,13 +257,14 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                                 ManagementSettingsButton { choose("clubhouse-settings") }
                             }.buttonStyle(.plain).foregroundStyle(ManagementTheme.Spatial.onCanvas)
 
-                        }.clipped()
+                        }
+                        .overlay(alignment: .bottom) {
+                            action.padding(10)
+                        }
+                        .clipped()
                     }
                 }
-                VStack(spacing: 8) {
-                    if selection != .player { action.frame(minHeight: ManagementTheme.Control.primaryHeight).padding(.horizontal, 12) }
-                    ManagementTabBar(selection: $selection)
-                }.dynamicTypeSize(...DynamicTypeSize.accessibility1).padding(.top, 8).background(ManagementTheme.Spatial.canvas)
+                ManagementTabBar(selection: $selection)
             }.frame(width: geometry.size.width, height: geometry.size.height)
         }.background(ManagementTheme.Spatial.canvas.ignoresSafeArea()).toolbar(.hidden, for: .navigationBar).preferredColorScheme(.dark)
     }
@@ -393,7 +397,7 @@ struct ManagementSpatialHeader: View {
 enum ManagementRoomDetail: Equatable, Identifiable {
     case player(ManagementPlayerSection), training(ManagementTrainingSection)
     case game(ManagementGameSection), career(ManagementCareerSection)
-    case profile, gameEntry, pitchLibrary
+    case profile, gameEntry, pitchLibrary, trainingEntry
     var id: String {
         switch self {
         case .player: "player"
@@ -403,6 +407,7 @@ enum ManagementRoomDetail: Equatable, Identifiable {
         case .profile: "profile"
         case .gameEntry: "gameEntry"
         case .pitchLibrary: "pitchLibrary"
+        case .trainingEntry: "trainingEntry"
         }
     }
     var title: String {
@@ -414,6 +419,7 @@ enum ManagementRoomDetail: Equatable, Identifiable {
         case .profile: "나의 선수"
         case .gameEntry: "오늘 경기"
         case .pitchLibrary: "구종 보관함"
+        case .trainingEntry: "훈련 기록"
         }
     }
 }
@@ -425,4 +431,19 @@ struct ManagementLiveDetail<Content: View>: View {
     let fallback: ManagementRoomDetail
     @ViewBuilder let content: (ManagementRoomDetail, TrainingKind) -> Content
     var body: some View { content(detail ?? fallback, trainingKind) }
+}
+
+/// A small scene-side entry; opening it never confirms a training or advances a date.
+struct ManagementSceneActionStyle: ButtonStyle {
+    var secondary = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(ManagementPixelFont.readable(.label))
+            .foregroundStyle(secondary ? GameTheme.boardInk : GameTheme.navy)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(minHeight: 44)
+            .background(secondary ? GameTheme.boardPanel : Color(hex: 0xf2dfb0), in: ManagementStepFrame())
+            .overlay { ManagementStepFrame().stroke(GameTheme.gold, lineWidth: 1) }
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
 }

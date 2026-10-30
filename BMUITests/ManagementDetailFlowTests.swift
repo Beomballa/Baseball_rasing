@@ -2405,7 +2405,6 @@ extension ManagementDetailFlowTests {
             XCTAssertTrue(app.buttons["managementTab-player"].waitForExistence(timeout: 8)); XCTAssertTrue(app.buttons["managementTab-player"].isSelected)
             let completedTraining = status(app); XCTAssertEqual(completedTraining[0], before[0]); XCTAssertEqual(completedTraining[2], "행동 0/1")
             app.buttons["managementTab-training"].tap(); app.buttons["roomPrimary"].tap()
-            let stored = app.buttons["openTraining"]; reveal(stored, app); stored.tap()
             XCTAssertTrue(app.staticTexts["trainingResultStored"].waitForExistence(timeout: 8)); XCTAssertEqual(app.staticTexts["trainingGrowth"].label, growth)
             let game = app.buttons["completionGoGame"]; reveal(game, app); game.tap()
             XCTAssertTrue(app.buttons["managementTab-game"].waitForExistence(timeout: 8)); XCTAssertTrue(app.buttons["managementTab-game"].isSelected)
