@@ -2261,6 +2261,8 @@ struct CareerObjectivesView:View {
     @State private var eligibility:OverseasEligibilitySnapshot?
     @State private var failure:String?
     @State private var clubID=""
+    @State private var season:AnnualLeague?
+    @State private var seasonError:String?
     @State private var choosing=false
     private var latest:OverseasScoutingReport? {owner?.overseasReports?.max {$0.period < $1.period}}
     var body:some View {
@@ -2293,7 +2295,7 @@ struct CareerObjectivesView:View {
                 if let latest {
                     NavigationStack {
                         ScrollView {
-                            CareerTargetClubPicker(clubs:CareerTargetClub.catalog(latest),reportDate:latest.observation.observedDate,selectedID:$clubID).padding(16)
+                            CareerTargetClubPicker(clubs:CareerTargetClub.catalog(latest),reportDate:latest.observation.observedDate,season:season,seasonError:seasonError,selectedID:$clubID).padding(16)
                         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
                             .safeAreaInset(edge:.bottom) {
                                 let selected=CareerTargetClub.catalog(latest).first {$0.id == clubID}
@@ -2326,6 +2328,8 @@ struct CareerObjectivesView:View {
         GamePanel(title:"목표 구단 · 나와의 거리",onBoard:true,contentSpacing:12) {
             ClubFileHeader(name:club.name,subtitle:DomesticContractOffer.roleName(club.roleID)+" · "+club.path)
             Text(club.demand).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerTargetSummary")
+            ClubRecruitmentSummary(clubs:[club])
+            Text(seasonError ?? ClubSeasonDisplay.summary(name:club.name,league:season)).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             ClubAbilityComparison(mine:progress.currentH,criterion:club.criterion,mineLabel:"현재 내 역할 기량")
             Text("기량 차이 · "+(progress.missingH.map {$0 > 0 ? String(format:"%.1f 보완",$0):"관찰 기준 충족"} ?? "기준 자료 부족"))
                 .font(.subheadline.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("targetAbilityGap")
@@ -2352,7 +2356,10 @@ struct CareerObjectivesView:View {
         }
     }
     private func number(_ value:Double?) -> String {value.map {String(format:"%.1f",$0)} ?? "자료 부족"}
-    private func load() {do {owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context);live=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context);eligibility=try OverseasEligibilityStore.current(player:player,calendar:calendar,in:context);failure=nil}catch{failure=error.localizedDescription}}
+    private func load() {
+        do { season=try CareerSeasonStore.load(player:player,state:calendar,year:GameDate(player.gameDate).year,in:context).league;seasonError=nil }
+        catch {season=nil;seasonError="리그 기록 확인 실패 · 목표 화면을 다시 열어 주세요"}
+        do {owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context);live=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context);eligibility=try OverseasEligibilityStore.current(player:player,calendar:calendar,in:context);failure=nil}catch{failure=error.localizedDescription}}
     private func run(_ action:() throws -> Void) {do {try action();load()}catch{failure=error.localizedDescription}}
 }
 

@@ -103,6 +103,8 @@ struct ClubDirectoryView: View {
 struct CareerTargetClubPicker: View {
     let clubs: [CareerTargetClub]
     let reportDate: String
+    var season: AnnualLeague? = nil
+    var seasonError: String? = nil
     @Binding var selectedID: String
     @State private var path = "국내 프로 관찰"
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -123,20 +125,14 @@ struct CareerTargetClubPicker: View {
             ForEach(names, id: \.self) { name in
                 VStack(alignment: .leading, spacing: 12) {
                     ClubFileHeader(name: name, subtitle: "모집 역할 선택")
+                    ClubRecruitmentSummary(clubs: choices.filter { $0.name == name })
+                    Text(seasonError ?? ClubSeasonDisplay.summary(name: name, league: season))
+                        .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("clubSeason-" + name)
                     ForEach(choices.filter { $0.name == name }) { club in
                         Button { selectedID = club.id } label: {
-                            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))
-                            layout {
-                                HStack(alignment: .top, spacing: 10) {
-                                    Text(selectedID == club.id ? "◆" : "◇").accessibilityHidden(true)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(DomesticContractOffer.roleName(club.roleID)).bold()
-                                        Text(club.demand).foregroundStyle(GameTheme.boardMuted)
-                                    }
-                                }.frame(maxWidth: .infinity, alignment: .leading)
-                                Text(club.criterion.map { String(format: "기준 %.1f", $0) } ?? "기준 대기").monospacedDigit()
-                            }.font(.subheadline).fixedSize(horizontal: false, vertical: true).padding(12).frame(maxWidth: .infinity, minHeight: 44)
-                        }.buttonStyle(MatchPixelButtonStyle(primary: selectedID == club.id))
+                            ClubRoleChoice(club: club, selected: selectedID == club.id)
+                        }.buttonStyle(ClubRoleButtonStyle(selected: selectedID == club.id))
                             .accessibilityIdentifier("targetChoice-" + club.id).accessibilityAddTraits(selectedID == club.id ? .isSelected : [])
                     }
                 }.padding(12).background(GameTheme.boardPanel)
@@ -145,5 +141,83 @@ struct CareerTargetClubPicker: View {
         }.onAppear {
             if let selected = clubs.first(where: { $0.id == selectedID }) { path = selected.path }
         }
+    }
+}
+
+/// Reads the current career season only. Other leagues are not fabricated or simulated here.
+enum ClubSeasonDisplay {
+    static func summary(name: String, league: AnnualLeague?) -> String {
+        guard let identity = ClubIdentity.resolve(name: name), let league,
+              let row = league.displayStandings.first(where: { ClubIdentity.resolve(name: CareerTeamDirectory.name($0.id))?.id == identity.id }) else {
+            return "리그 순위 · 우승팀 미집계 — 이 커리어에 해당 리그 기록 없음"
+        }
+        let rank = row.rank.map { "\($0)위" } ?? "순위 대기"
+        let leader = league.isComplete ? "우승" : "현재 선두"
+        let names = league.displayStandings.filter { $0.rank == 1 }.map { CareerTeamDirectory.name($0.id) }
+        return "\(league.year)년 · \(CareerTeamDirectory.name(row.id)) · \(rank) · \(row.wins)승 \(row.losses)패 \(row.draws)무\n" +
+            (names.isEmpty ? "우승팀 미정 · 경기 기록 대기" : leader + " · " + names.joined(separator: " / ")) +
+            (league.isComplete ? " · 시즌 확정" : " · 진행 중, 우승 미확정")
+    }
+}
+
+struct ClubRecruitmentSummary: View {
+    let clubs: [CareerTargetClub]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "person.crop.rectangle.badge.plus").accessibilityHidden(true)
+                Text("모집 기회 · " + opportunities).font(.subheadline.bold())
+            }.foregroundStyle(GameTheme.growth)
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "scope").accessibilityHidden(true)
+                Text("준비할 점 · " + (clubs.flatMap(\.blockers).first ?? "역할 기준·공식 경기 표본 확인"))
+                    .font(.subheadline)
+            }.foregroundStyle(GameTheme.gold)
+        }.fixedSize(horizontal: false, vertical: true).padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.board)
+    }
+    private var opportunities: String {
+        let vacancies = clubs.filter { $0.demand == RecruitmentDemand.vacancy.label }.map { DomesticContractOffer.roleName($0.roleID) }
+        if !vacancies.isEmpty { return vacancies.joined(separator: "·") + " 공석" }
+        let depth = clubs.filter { $0.demand == RecruitmentDemand.depth.label }.map { DomesticContractOffer.roleName($0.roleID) }
+        return depth.isEmpty ? "현재 모집 없음" : depth.joined(separator: "·") + " 뎁스 보강"
+    }
+}
+
+private struct ClubRoleChoice: View {
+    let club: CareerTargetClub
+    let selected: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Rectangle().strokeBorder(selected ? GameTheme.gold : GameTheme.boardMuted, lineWidth: 2)
+                if selected { Image(systemName: "checkmark").font(.system(size: 12, weight: .heavy)) }
+            }.frame(width: 20, height: 20).accessibilityHidden(true)
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+            layout {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(DomesticContractOffer.roleName(club.roleID)).font(.headline)
+                    Text(club.demand).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 4) {
+                    Text("관찰 기준").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    Text(club.criterion.map { String(format: "%.1f", $0) } ?? "대기")
+                        .font(.headline.monospacedDigit())
+                }.fixedSize(horizontal: true, vertical: false)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ClubRoleButtonStyle: ButtonStyle {
+    let selected: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.padding(.horizontal, 16).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+            .foregroundStyle(GameTheme.boardInk)
+            .background(selected ? GameTheme.navy : GameTheme.board)
+            .overlay(Rectangle().strokeBorder(selected ? GameTheme.gold : GameTheme.boardLine, lineWidth: selected ? 2 : 1))
+            .contentShape(Rectangle()).opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
