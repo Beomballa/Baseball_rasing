@@ -504,8 +504,8 @@ private struct ScoutInterestCard: View {
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
             layout {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(entry.name + " · " + entry.level.label).font(.headline).accessibilityIdentifier("scoutInterest-\(entry.id)")
-                    Text(entry.roleLabel).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                    ClubFileHeader(name:entry.name,subtitle:entry.roleLabel)
+                    Text(entry.level.label).font(.headline).accessibilityIdentifier("scoutInterest-\(entry.id)")
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 ScoutStatusTag(text: "F " + ScoutDeskFormat.signed(entry.fit), color: entry.fit >= 0 ? GameTheme.growth : GameTheme.gold)
             }
@@ -515,7 +515,8 @@ private struct ScoutInterestCard: View {
                 }
             }.accessibilityHidden(true)
             Text("관찰 관심 → 집중 관찰 → 우선 관찰").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-            DisclosureGroup("관심 이유 · \(entry.reasons.count)개") {
+            if let first=entry.reasons.first {Text(first).font(.subheadline).foregroundStyle(GameTheme.boardInk)}
+            DisclosureGroup("관심 이유 전체 · \(entry.reasons.count)개") {
                 ForEach(entry.reasons, id: \.self) { Text($0).font(.subheadline).padding(.top, 8) }
             }.font(.subheadline).tint(GameTheme.gold)
         }.padding(14).background(ScoutDeskPalette.surface)
@@ -618,12 +619,11 @@ private struct ScoutClubComparisonCard: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(club.recruitment.name).font(.title3.bold())
-            Text(roleName + " · " + club.recruitment.demand.label).font(.subheadline).foregroundStyle(GameTheme.gold)
+            ClubFileHeader(name:club.recruitment.name,subtitle:roleName + " · " + club.recruitment.demand.label)
             Text(club.stage).font(.headline).foregroundStyle(GameTheme.boardInk)
             VStack(alignment: .leading, spacing: 12) {
-                comparisonRow("내 역할 기량 H", value: club.h, color: GameTheme.growth)
-                comparisonRow("구단 기준 C", value: club.c, color: GameTheme.gold)
+                comparisonRow("관찰일 내 역할 기량", value: club.h, color: GameTheme.growth)
+                comparisonRow("구단 관찰 기준", value: club.c, color: GameTheme.gold)
             }
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 10))
             layout {
