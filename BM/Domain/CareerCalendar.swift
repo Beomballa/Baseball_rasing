@@ -445,8 +445,10 @@ struct CareerLifecycleState:Codable,Equatable {
     var losses:[CareerTraitLoss]=[]
     var retirement:CareerRetirement?
     var development:PlayerDevelopment?
+    var preferredPitchCode:String?
     func validate(playerID:UUID,today:String) throws {
         guard version == 1,Set(aging.map(\.id)).count == aging.count,Set(losses.map(\.id)).count == losses.count else {throw CareerLifecycleError.invalid}
+        if let preferredPitchCode {guard PitchType(rawValue:preferredPitchCode) != nil else {throw CareerLifecycleError.invalid}}
         try development?.validate(playerID:playerID,today:today)
         if let adopted {guard try GameDate(adopted) <= GameDate(today) else {throw CareerLifecycleError.invalid}}
         for event in aging {

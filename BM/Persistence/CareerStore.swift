@@ -307,3 +307,25 @@ private struct StagedSave:Sendable {
         container=prepared.container;recoveryOnly=false;generation=UUID()
     }
 }
+
+/// A preferred pitch is a saved selection, never a change to owned pitches or a live round.
+@MainActor enum PitchSelectionStore {
+    static func resolve(player: CareerPlayer, available: Set<String>? = nil) throws -> String {
+        let owned = player.pitches.sorted { $0.order < $1.order }.map(\.code)
+        let choices = owned.filter { available?.contains($0) ?? true }
+        if let preferred = try player.lifecycle.preferredPitchCode, choices.contains(preferred) { return preferred }
+        return choices.first ?? ""
+    }
+    static func select(_ code: String, player: CareerPlayer, in context: ModelContext,
+                       save: CalendarProgression.Save = { try $0.save() }) throws {
+        try CareerLifecycleStore.requireActive(player)
+        guard player.role == .pitcher, PitchType(rawValue: code) != nil,
+              player.pitches.contains(where: { $0.code == code }) else { throw TrainingError.invalidInput }
+        var life = try player.lifecycle
+        guard life.preferredPitchCode != code else { return }
+        life.preferredPitchCode = code
+        try life.validate(playerID: player.id, today: player.gameDate)
+        do { player.lifecycleData = try JSONEncoder().encode(life); try save(context) }
+        catch { context.rollback(); throw error }
+    }
+}

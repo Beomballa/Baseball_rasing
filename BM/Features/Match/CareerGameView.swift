@@ -193,7 +193,16 @@ struct CareerGameView: View {
             let saved = try assessmentID.map {try GoalSpecialStore.displayRecord(player:player,calendar:calendar,id:$0,in:context)} ?? CareerMatchStore.start(player: player, state: calendar, in: context)
             record = saved
             try displaySnapshot.refresh(saved)
-            if pitchCode.isEmpty { pitchCode = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "" }
+            if pitchCode.isEmpty {
+                pitchCode = try PitchSelectionStore.resolve(player: player, available: Set(try saved.snapshot().mastery.keys))
+            }
+        } catch { self.error = error.localizedDescription }
+    }
+    private func selectPitch(_ next: String) {
+        guard !inputLocked, let match = displaySnapshot.match, match.mastery[next] != nil else { return }
+        do {
+            if assessmentID == nil { try PitchSelectionStore.select(next, player: player, in: context) }
+            pitchCode = next; pitchTarget = nil
         } catch { self.error = error.localizedDescription }
     }
     private func begin() {
@@ -402,7 +411,7 @@ struct CareerGameView: View {
         VStack(spacing: 0) {
             ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
                 let mastery = match.mastery[pitch.code] ?? 60
-                Button { pitchCode = pitch.code; pitchTarget = nil } label: {
+                Button { selectPitch(pitch.code) } label: {
                     MatchPitchChip(name: pitch.name, mastery: mastery, selected: pitchCode == pitch.code, code: pitch.code, hand: player.throwingHandRaw)
                         .frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)

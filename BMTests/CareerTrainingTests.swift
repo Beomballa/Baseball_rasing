@@ -9,6 +9,91 @@ import SwiftData
         player.gameDate = date; try context.save()
         return (player, try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }))
     }
+    func testV94PreferredPitchSurvivesDayAndDiskReopen() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("pitch-selection.store")
+        var id: UUID!, roster: [String] = []
+        try autoreleasepool {
+            let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+            let (p, state) = try setup(c, role: .pitcher, date: "2026-04-02")
+            id = p.id; roster = p.pitches.sorted { $0.order < $1.order }.map(\.code)
+            let fatigue = p.fatigue, revision = state.revision
+            try PitchSelectionStore.select("slider", player: p, in: c)
+            XCTAssertEqual(try PitchSelectionStore.resolve(player: p), "slider")
+            XCTAssertEqual(p.fatigue, fatigue); XCTAssertEqual(state.revision, revision)
+            XCTAssertFalse(state.hasAction(on: p.gameDate))
+            try CalendarProgression.rest(player: p, state: state, revision: state.revision, in: c)
+            try CalendarProgression.advanceDay(player: p, state: state, revision: state.revision, in: c)
+            XCTAssertEqual(p.gameDate, "2026-04-03")
+        }
+        try autoreleasepool {
+            let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+            let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == id })
+            XCTAssertEqual(try PitchSelectionStore.resolve(player: p), "slider")
+            XCTAssertEqual(p.pitches.sorted { $0.order < $1.order }.map(\.code), roster)
+            XCTAssertEqual(p.gameDate, "2026-04-03")
+        }
+    }
+    func testV94SelectionFailureAndLegacyFallbackPreserveState() throws {
+        let db = try CareerStore.makeContainer(inMemory: true), c = db.mainContext
+        let (p, state) = try setup(c, role: .pitcher, date: "2026-04-02")
+        let legacy = try JSONEncoder().encode(CareerLifecycleState())
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: legacy) as? [String: Any])
+        XCTAssertNil(raw["preferredPitchCode"])
+        p.lifecycleData = legacy; try c.save()
+        let first = p.pitches.sorted { $0.order < $1.order }.first!.code
+        XCTAssertEqual(try PitchSelectionStore.resolve(player: p), first)
+        let fatigue = p.fatigue, revision = state.revision
+        XCTAssertThrowsError(try PitchSelectionStore.select("slider", player: p, in: c, save: { _ in throw CocoaError(.fileWriteOutOfSpace) }))
+        XCTAssertEqual(p.lifecycleData, legacy); XCTAssertEqual(p.fatigue, fatigue); XCTAssertEqual(state.revision, revision)
+        XCTAssertEqual(try PitchSelectionStore.resolve(player: p), first)
+        try PitchSelectionStore.select("slider", player: p, in: c)
+        XCTAssertEqual(try PitchSelectionStore.resolve(player: p, available: [first]), first)
+        XCTAssertThrowsError(try PitchSelectionStore.select("not-a-pitch", player: p, in: c))
+        XCTAssertEqual(try PitchSelectionStore.resolve(player: p), "slider")
+    }
+    func testV94PracticeCopiesPreferenceWithoutWritingCareerSelection() throws {
+        let db = try CareerStore.makeContainer(inMemory: true), c = db.mainContext
+        var draft = PlayerDraft(); draft.name = "연습선수"; draft.schoolID = "hs-ref-001"; draft.role = .pitcher
+        let p = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: c)
+        let state = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id })
+        try PitchSelectionStore.select("slider", player: p, in: c)
+        let life = p.lifecycleData, revision = state.revision, fatigue = p.fatigue, date = p.gameDate
+        let practiceDB = try CareerStore.makeContainer(inMemory: true), memory = practiceDB.mainContext
+        let copy = try TrainingPractice.copy(p, from: c, into: memory)
+        XCTAssertNotEqual(copy.id, p.id)
+        XCTAssertEqual(try PitchSelectionStore.resolve(player: copy), "slider")
+        try PitchSelectionStore.select("four-seam", player: copy, in: memory)
+        XCTAssertEqual(try PitchSelectionStore.resolve(player: copy), "four-seam")
+        XCTAssertEqual(p.lifecycleData, life); XCTAssertEqual(state.revision, revision)
+        XCTAssertEqual(p.fatigue, fatigue); XCTAssertEqual(p.gameDate, date)
+    }
+    func testV94PreferredSelectionDoesNotRewriteRunningTrainingOrMatch() throws {
+        let db = try CareerStore.makeContainer(inMemory: true), c = db.mainContext
+        let (p, state) = try setup(c, role: .pitcher)
+        try PitchSelectionStore.select("slider", player: p, in: c)
+        let row = try CareerTrainingStore.start(player: p, state: state, pitchCode: try PitchSelectionStore.resolve(player: p), in: c)
+        let payload = row.payload, revision = row.revision
+        try PitchSelectionStore.select("four-seam", player: p, in: c)
+        XCTAssertEqual(row.payload, payload); XCTAssertEqual(row.revision, revision)
+        XCTAssertEqual(try row.snapshot().pitchCode, "slider")
+        let reopened = try CareerTrainingStore.start(player: p, state: state, pitchCode: "four-seam", in: c)
+        XCTAssertEqual(reopened.payload, payload)
+        for _ in 0..<5 { try attempt(p, state, row, c) }
+        let reward = row.payload, fatigue = p.fatigue
+        XCTAssertThrowsError(try attempt(p, state, row, c))
+        XCTAssertEqual(row.payload, reward); XCTAssertEqual(p.fatigue, fatigue)
+        let game = try CareerMatchStore.start(player: p, state: state, in: c)
+        let before = game.payload
+        try PitchSelectionStore.select("slider", player: p, in: c)
+        XCTAssertEqual(game.payload, before)
+        try CareerMatchStore.advance(player: p, state: state, record: game, revision: game.revision,
+            input: .pitch, pitchCode: "slider", control: ManualMatchInput(release: 0.68), in: c)
+        XCTAssertEqual(try game.snapshot().lastManual?.pitchCode, "slider")
+    }
+
     private func attempt(_ player: CareerPlayer, _ calendar: CareerCalendarState, _ record: CareerTrainingRecord, _ context: ModelContext) throws {
         let training = try record.snapshot()
         guard !training.completed else { throw TrainingError.finished }

@@ -31,7 +31,8 @@ struct MatchView: View {
                 guard !showingDelivery else { return }
                 showingDelivery = true; cue = "손에서 릴리스 → 포수 수신 · 동작 진행 중"
                 do {
-                    let code = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "four-seam"
+                    let selected = try PitchSelectionStore.resolve(player: player)
+                    let code = selected.isEmpty ? "four-seam" : selected
                     let velocity = player.role == .pitcher ? try CareerTrainingStore.value(player: player, code: nil, kind: .velocity, in: context) : 62.5
                     let delivery = MatchDelivery.pitch(code: code, velocity: velocity)
                     let started = scene.demonstrate(reduceMotion: reduceMotion, flightDuration: PitchFlightPresentation(delivery: delivery).flightDuration, pitchCode: code,
@@ -89,6 +90,9 @@ struct MatchView: View {
         copy.contact = original.contact; copy.power = original.power; copy.discipline = original.discipline
         copy.speed = original.speed; copy.defense = original.defense; copy.arm = original.arm
         copy.pitches = original.pitches.map { CareerPitchMastery(code: $0.code, name: $0.name, mastery: $0.mastery, order: $0.order) }
+        var practiceLife = CareerLifecycleState()
+        practiceLife.preferredPitchCode = try original.lifecycle.preferredPitchCode
+        copy.lifecycleData = try JSONEncoder().encode(practiceLife)
         let profile = try PlayerAbilities(player: copy, archetype: nil)
         profile.archetypeRaw = abilities.archetypeRaw; profile.productionPresetVersion = abilities.productionPresetVersion
         profile.initialValues = abilities.initialValues; profile.mental = abilities.mental

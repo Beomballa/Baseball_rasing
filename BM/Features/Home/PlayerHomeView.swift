@@ -534,9 +534,10 @@ struct PlayerHomeView: View {
     }
     private func trainingAbilities(_ calendar: CareerCalendarState, selectedKind: TrainingKind) -> some View {
         let activeTrainingKind = allowedTrainingKind(selectedKind)
+        let previewCode = (try? todayTraining?.snapshot())?.pitchCode ?? (try? PitchSelectionStore.resolve(player: player)) ?? ""
         return VStack(alignment: .leading, spacing: 16) {
             TrainingEquipmentShelf(player: player, values: HomeAbilitySummary(player: player, abilities: abilities).originals, selection: activeTrainingKind) { trainingKind = $0 }
-            TrainingScenePreview(player: player, kind: activeTrainingKind, pitchCode: player.pitches.sorted { $0.order < $1.order }.first?.code ?? "")
+            TrainingScenePreview(player: player, kind: activeTrainingKind, pitchCode: previewCode)
             ManagementPanel(activeTrainingKind.label + " 훈련", surface: .paper) {
                 Text(trainingMethod(activeTrainingKind)).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
                 TrainingCostStrip(fatigue: player.fatigue)

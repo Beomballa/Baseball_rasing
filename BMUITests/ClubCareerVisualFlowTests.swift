@@ -225,6 +225,50 @@ final class ClubCareerVisualFlowTests: XCTestCase {
         XCTAssertEqual(status(app), before)
     }
 
+    @MainActor func testV94TrainingPitchChoicePersistsToNextDay() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-v38-development-verification", "-v38-growth-mild", "-management-reduced-motion-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        app.buttons["roomProfile"].tap(); app.buttons["homeRole-pitcher"].tap()
+        if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
+        app.buttons["managementTab-game"].tap(); app.buttons["facility-calendar"].tap()
+        let entry = app.buttons["calendarGoTraining"]; reveal(entry, app); entry.tap()
+        let slider = app.buttons["trainingPitch-slider"]; reveal(slider, app); slider.tap(); XCTAssertTrue(slider.isSelected)
+        XCTAssertEqual(app.otherElements["trainingScenePreview"].value as? String, "슬라이더")
+        capture(app, "v94-slider-training-selected")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let rest = app.buttons["restToday"]; reveal(rest, app); rest.tap()
+        XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 8)); app.buttons["confirmRest"].tap()
+        XCTAssertTrue(app.buttons["restDone"].waitForExistence(timeout: 15)); app.buttons["restDone"].tap()
+        let next = app.buttons["advanceDay"]; reveal(next, app); next.tap()
+        let date = app.scrollViews["calendarDetailScroll"].staticTexts["calendarDate"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "4월 18일 (토)"), object: date)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+        reveal(entry, app); entry.tap(); reveal(slider, app); XCTAssertTrue(slider.isSelected)
+        XCTAssertEqual(app.otherElements["trainingScenePreview"].value as? String, "슬라이더")
+        capture(app, "v94-slider-next-day")
+    }
+    @MainActor func testV94GamePitchChoiceChangesAndSurvivesReopen() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-reduced-motion-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        app.buttons["roomProfile"].tap(); app.buttons["homeRole-pitcher"].tap()
+        if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
+        app.buttons["clubhouse-rest"].tap(); app.buttons["confirmRest"].tap()
+        XCTAssertTrue(app.buttons["restDone"].waitForExistence(timeout: 15)); app.buttons["restDone"].tap()
+        app.buttons["managementTab-game"].tap(); app.buttons["roomPrimary"].tap()
+        let open = app.buttons["openCareerGame"]; reveal(open, app); open.tap()
+        let plan = app.buttons["opponentTab-plan"]; XCTAssertTrue(plan.waitForExistence(timeout: 10)); plan.tap()
+        let confirm = app.buttons["confirmGamePlan"]; if !confirm.isHittable { reveal(confirm, app) }; confirm.tap()
+        let slider = app.buttons["gamePitchChoice-slider"]; XCTAssertTrue(slider.waitForExistence(timeout: 15)); slider.tap()
+        XCTAssertTrue(slider.isSelected); capture(app, "v94-game-slider-selected")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
+        app.buttons["roomPrimary"].tap(); reveal(open, app); open.tap()
+        XCTAssertTrue(slider.waitForExistence(timeout: 10)); XCTAssertTrue(slider.isSelected)
+        capture(app, "v94-game-slider-resumed")
+    }
+
     @MainActor func testV91SharedHeaderAcrossTabsAndRoles() {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()

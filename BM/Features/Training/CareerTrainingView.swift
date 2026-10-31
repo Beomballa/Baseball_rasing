@@ -102,8 +102,16 @@ struct CareerTrainingView: View {
                 training = try record?.snapshot()
             }
             angle = selectedKind.initialDirection
-            if code.isEmpty { code = player.pitches.sorted { $0.order < $1.order }.first?.code ?? "" }
+            if let fixed = training?.pitchCode { code = fixed }
+            else if code.isEmpty { code = try PitchSelectionStore.resolve(player: player) }
             loadPreparation()
+        } catch { errorMessage = error.localizedDescription }
+    }
+    private func selectPitch(_ next: String) {
+        guard training == nil else { return }
+        do {
+            if !practice { try PitchSelectionStore.select(next, player: player, in: context) }
+            code = next
         } catch { errorMessage = error.localizedDescription }
     }
     private var preparationKey: String { "\(category):\(kind.rawValue):\(code)" }
@@ -396,7 +404,7 @@ struct CareerTrainingView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: 8) {
                     ForEach(player.pitches.sorted { $0.order < $1.order }) { pitch in
-                        Button { code = pitch.code } label: {
+                        Button { selectPitch(pitch.code) } label: {
                             TrainingPitchTile(code: pitch.code, hand: player.throwingHandRaw, mastery: pitch.mastery, selected: code == pitch.code)
                         }.buttonStyle(.plain)
                             .accessibilityLabel(pitch.name + " 숙련도 " + pitch.mastery.formatted(.number.precision(.fractionLength(1))))
@@ -1296,6 +1304,7 @@ struct TrainingScenePreview: View {
             .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 2))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(place + ", " + player.name + "의 " + kind.label + " 훈련 준비")
+            .accessibilityValue(kind == .pitch ? (PitchType(rawValue: pitchCode)?.label ?? "구종 미선택") : "")
             .accessibilityIdentifier("trainingScenePreview")
     }
 }
