@@ -100,14 +100,15 @@ struct PlayerHomeView: View {
         case .game: gameSection = .schedule; roomDetail = .game(gameSection)
         }
     }
-    private var roomScheduleLines: [String] {
-        guard let calendar else { return ["일정 확인"] }
+    private var stadiumSchedule: (title: String, date: String, teams: [String]) {
+        guard let calendar else { return ("일정 확인", "", ["선수 일정 확인 필요"]) }
         let status = CalendarScheduleStatus(player: player, state: calendar)
-        guard let schedule = status.schedule else { return ["조회 오류", "다시 확인"] }
+        guard let schedule = status.schedule else { return ("일정 확인", "", ["조회 오류 · 다시 확인"]) }
         guard let fixture = schedule.today ?? schedule.upcoming.first(where: { $0.date.description > player.gameDate }) else {
-            return ["시즌 일정", "확인하기"]
+            return ("시즌 일정", "", ["전체 일정 확인"])
         }
-        return [schedule.today == nil ? "다음 경기" : "오늘 경기", ManagementDisplay.date(fixture.date.description)]
+        return (schedule.today == nil ? "다음 경기" : "오늘 경기", ManagementDisplay.date(fixture.date.description),
+                [CareerTeamDirectory.name(fixture.awayID, schools: schools), CareerTeamDirectory.name(fixture.homeID, schools: schools)])
     }
     private var stadiumEntryTitle: String {
         switch gameLobbyAction {
@@ -121,20 +122,30 @@ struct PlayerHomeView: View {
     private var roomRefreshKey: String {
         "\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)-\(roomReports.first(where: { $0.playerID == player.id })?.payload.hashValue ?? 0)"
     }
+    @ViewBuilder private var navigationHeader: some View {
+        ManagementSpatialHeader(player: player, affiliation: affiliationLabel, age: age,
+                                used: calendar?.hasAction(on: player.gameDate) == true,
+                                pending: todayTraining?.completed == false) { roomDetail = .profile }
+        if let clubSelectionFailure {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("기용 조회 실패 · " + clubSelectionFailure).font(.subheadline).accessibilityIdentifier("homeSelectionError")
+                Button("기용 다시 확인", action: refreshSelection).frame(minHeight: 44).accessibilityIdentifier("retryHomeSelection")
+            }.foregroundStyle(GameTheme.boardInk).padding(12).background(GameTheme.boardPanel)
+        }
+    }
     var body: some View {
-        ManagementSpatialRoom(asset: roomAsset, title: roomTitle, facilities: roomFacilities,
-                              selection: $selectedTab, choose: chooseFacility, home: { selectedTab = .home }) {
-            ManagementSpatialHeader(player: player, affiliation: affiliationLabel, age: age,
-                                    used: calendar?.hasAction(on: player.gameDate) == true,
-                                    pending: todayTraining?.completed == false) { roomDetail = .profile }
-            if let clubSelectionFailure {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("기용 조회 실패 · " + clubSelectionFailure).font(.subheadline).accessibilityIdentifier("homeSelectionError")
-                    Button("기용 다시 확인", action: refreshSelection).frame(minHeight: 44).accessibilityIdentifier("retryHomeSelection")
-                }.foregroundStyle(GameTheme.boardInk).padding(12).background(GameTheme.boardPanel)
+        Group {
+            if selectedTab == .game {
+                let schedule = stadiumSchedule
+                ManagementStadiumRoom(selection: $selectedTab, scheduleTitle: schedule.title, date: schedule.date,
+                                      teams: schedule.teams, entryTitle: stadiumEntryTitle, entryStatus: gameLobbyAction.title,
+                                      choose: chooseFacility) { navigationHeader }
+            } else {
+                ManagementSpatialRoom(asset: roomAsset, title: roomTitle, facilities: roomFacilities,
+                                      selection: $selectedTab, choose: chooseFacility, home: { selectedTab = .home }) { navigationHeader }
+                    .spatialAbilities(HomeAbilitySummary(player: player, abilities: abilities).originals)
             }
         }
-        .spatialAbilities(HomeAbilitySummary(player: player, abilities: abilities).originals)
         .task(id: "selection-\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)") {
             refreshSelection()
         }
@@ -297,7 +308,7 @@ struct PlayerHomeView: View {
         case .home: "ClubhouseRoomV59"
         case .player: "LockerRoomV59"
         case .training: player.role == .batter ? "BattingRoomV62" : "BullpenRoomV62"
-        case .game: "StadiumRoomV62"
+        case .game: "StadiumInteriorV83"
         case .career: "ScoutRoomV59"
         }
     }
@@ -340,18 +351,7 @@ struct PlayerHomeView: View {
                         x: pitching ? 0.940 : 0.931, y: pitching ? 0.630 : 0.714, width: pitching ? 0.115 : 0.13, kind: .roomNote),
                 .object("roomPrimary", todayTraining?.completed == false ? "훈련\n이어하기" : "훈련\n수첩", todayTraining?.completed == true ? "오늘 완료 · 결과 열기" : todayTraining == nil ? "능력·특성·포지션 훈련 선택" : "저장된 시도 이어하기", x: 0.49, y: 0.59, width: 0.21, height: 0.075, kind: .trainingBook),
                 .object("facility-practice", "자유 연습", "행동 · 피로 소모 없음 · 실제 성장 없음", x: pitching ? 0.168 : 0.18, y: pitching ? 0.735 : 0.73, width: 0.23)]
-        case .game:
-            let status = calendar.map { CalendarScheduleStatus(player: player, state: $0) }
-            let fixture = status?.schedule?.today
-            return [
-                .object("facility-calendar", "경기 일정", ManagementDisplay.date(player.gameDate), x: 0.13, y: 0.365, width: 0.18, height: 0.10, kind: .roomNote,
-                        preview: roomScheduleLines),
-                .object("facility-analysis", "상대 분석", "상대 투수 · 타선 · 계획", x: 0.88, y: 0.325, width: 0.18),
-                .object("roomPrimary", stadiumEntryTitle, gameLobbyAction.title,
-                        x: 0.50, y: 0.133, width: 0.26, recommended: true),
-                .object("facility-gameRecords", "경기 기록", "최근 5경기 · 시즌", x: 0.145, y: 0.585, width: 0.22, kind: .roomNote,
-                        preview: [fixture.map { "오늘 \($0.number)/30" } ?? "최근 5경기"]),
-                .object("facility-standings", "리그 순위", "연간 순위 · 결산", x: 0.84, y: 0.624, width: 0.17, kind: .roomChalk)]
+        case .game: return [] // The stadium uses its own physical scoreboard and structures.
         case .career:
             return [
                 .spatial("facility-observation", "관찰 보고서", roomObservationLines.joined(separator: " · "), preview: roomObservationLines, recommended: true),

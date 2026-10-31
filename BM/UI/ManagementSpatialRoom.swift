@@ -449,3 +449,110 @@ struct ManagementSceneActionStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.75 : 1)
     }
 }
+
+/// Stadium navigation is a read-only projection. The existing destinations own all commands.
+struct ManagementStadiumRoom<Header: View>: View {
+    @Binding var selection: ManagementTab
+    let scheduleTitle: String
+    let date: String
+    let teams: [String]
+    let entryTitle: String
+    let entryStatus: String
+    let choose: (String) -> Void
+    @ViewBuilder let header: Header
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                if typeSize.isAccessibilitySize {
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            header
+                            toolbar
+                            scoreboard.padding(.horizontal, 16)
+                            ForEach([("facility-analysis", "더그아웃 · 상대 분석"), ("facility-gameRecords", "기록석 · 경기 기록"), ("facility-standings", "외야 게시판 · 리그 순위")], id: \.0) { id, title in
+                                Button { choose(id) } label: {
+                                    HStack { Text(title); Spacer(); Text("›") }.frame(maxWidth: .infinity, minHeight: 44)
+                                }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier(id)
+                            }.padding(.horizontal, 16)
+                        }.padding(.bottom, 16)
+                    }.accessibilityIdentifier("stadiumFacilityList")
+                } else {
+                    header
+                    GeometryReader { stage in
+                        ScrollView(.vertical) {
+                            stadium(width: stage.size.width)
+                        }.accessibilityIdentifier("stadiumSceneScroll")
+                            .overlay(alignment: .top) { toolbar }
+                    }
+                }
+                ManagementTabBar(selection: $selection)
+            }.frame(width: geometry.size.width, height: geometry.size.height)
+        }.background(GameTheme.boardPanel.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar).preferredColorScheme(.dark)
+    }
+    private var toolbar: some View {
+        HStack {
+            Button { selection = .home } label: {
+                Text("‹ 홈").font(ManagementPixelFont.readable(.label)).padding(.horizontal, 10).frame(minHeight: 44)
+                    .background(GameTheme.boardPanel.opacity(0.92))
+            }.accessibilityIdentifier("roomBackHome")
+            Spacer()
+            ManagementSettingsButton { choose("clubhouse-settings") }
+        }.buttonStyle(.plain).foregroundStyle(GameTheme.boardInk)
+    }
+    private var scoreboard: some View {
+        VStack(spacing: 4) {
+            let headingLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
+            headingLayout {
+                Text(scheduleTitle).foregroundStyle(GameTheme.gold)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
+                Text(date).accessibilityIdentifier("stadiumScheduleDate")
+            }.frame(maxWidth: .infinity, alignment: .leading)
+                .font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(12))
+            let teamsLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
+            teamsLayout {
+                if teams.count == 2 {
+                    Text(teams[0]).frame(maxWidth: .infinity)
+                    Text("VS").foregroundStyle(GameTheme.gold)
+                    Text(teams[1]).frame(maxWidth: .infinity)
+                } else { Text(teams.first ?? "일정 확인").frame(maxWidth: .infinity) }
+            }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(14))
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .combine).accessibilityIdentifier("stadiumMatchup")
+            Rectangle().fill(GameTheme.boardLine).frame(height: 1).accessibilityHidden(true)
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))
+            layout {
+                Button { choose("facility-calendar") } label: { Text("일정 보기 ›").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                    .accessibilityIdentifier("facility-calendar")
+                Button { choose("roomPrimary") } label: {
+                    Text(entryTitle + " ›").foregroundStyle(GameTheme.gold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }.accessibilityIdentifier("roomPrimary").accessibilityHint(entryStatus)
+            }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(14))
+                .buttonStyle(ManagementPropButtonStyle())
+        }.foregroundStyle(GameTheme.boardInk).padding(.horizontal, 10).padding(.top, 9).padding(.bottom, 2)
+            .background(Color(hex: 0x102638))
+            .overlay { Rectangle().strokeBorder(Color(hex: 0x819aa9), lineWidth: 2).allowsHitTesting(false) }
+    }
+    private func stadium(width: CGFloat) -> some View {
+        let height = width * 1.5
+        return ZStack(alignment: .top) {
+            Image("StadiumInteriorV83").resizable().interpolation(.none)
+                .frame(width: width, height: height).accessibilityHidden(true)
+            scoreboard.frame(width: width * 0.80).offset(y: height * 0.073)
+            structure("facility-analysis", "상대 분석 ›", x: 0.184, y: 0.660, width: width * 0.29, size: 14, scene: .init(width: width, height: height))
+            structure("facility-gameRecords", "경기 기록 ›", x: 0.830, y: 0.696, width: width * 0.27, size: 14, scene: .init(width: width, height: height))
+            structure("facility-standings", "순위 ›", x: 0.876, y: 0.311, width: width * 0.18, size: 13, scene: .init(width: width, height: height))
+        }.frame(width: width, height: height).clipped()
+    }
+    private func structure(_ id: String, _ title: String, x: CGFloat, y: CGFloat, width: CGFloat, size: CGFloat, scene: CGSize) -> some View {
+        Button { choose(id) } label: {
+            Text(title).font(ManagementPixelFont.font(size)).multilineTextAlignment(.center)
+                .frame(width: width, height: 44).contentShape(Rectangle())
+        }.buttonStyle(ManagementPropButtonStyle()).foregroundStyle(GameTheme.boardInk)
+            .accessibilityLabel(id == "facility-standings" ? "리그 순위" : title.replacingOccurrences(of: " ›", with: ""))
+            .accessibilityHint("상세 열기").accessibilityIdentifier(id)
+            .position(x: scene.width * x, y: scene.height * y)
+    }
+}

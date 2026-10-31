@@ -171,6 +171,59 @@ final class ClubCareerVisualFlowTests: XCTestCase {
             app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
         }
     }
+    @MainActor func testV83StadiumStructuresAndScheduleBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        for pitcher in [false, true] {
+            if pitcher {
+                app.buttons["roomProfile"].tap(); app.buttons["homeRole-pitcher"].tap()
+                if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
+            }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-game"].tap()
+            XCTAssertTrue(app.scrollViews["stadiumSceneScroll"].exists)
+            XCTAssertFalse(app.staticTexts["stadiumScheduleDate"].label.isEmpty)
+            XCTAssertTrue(any("stadiumMatchup", app).label.contains("VS"))
+            let ids = ["facility-calendar", "roomPrimary", "facility-analysis", "facility-gameRecords", "facility-standings"]
+            for id in ids {
+                let control = app.buttons[id]
+                XCTAssertTrue(control.isHittable, id)
+                XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+                XCTAssertTrue(app.frame.contains(control.frame), id)
+            }
+            capture(app, "v83-" + role + "-stadium")
+            app.buttons["facility-calendar"].tap()
+            XCTAssertTrue(app.buttons["closeCalendar"].waitForExistence(timeout: 8)); app.buttons["closeCalendar"].tap()
+            app.buttons["roomPrimary"].tap()
+            XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8))
+            capture(app, "v83-" + role + "-preparation")
+            app.buttons["closeRoomDetail"].tap()
+            for (id, section) in [("facility-analysis", "analysis"), ("facility-gameRecords", "records"), ("facility-standings", "standings")] {
+                app.buttons[id].tap()
+                XCTAssertTrue(app.buttons["gameSection-" + section].waitForExistence(timeout: 8))
+                app.buttons["closeRoomDetail"].tap()
+            }
+            app.buttons["roomBackHome"].tap(); XCTAssertEqual(status(app), before)
+        }
+    }
+    @MainActor func testV83OffDayScoreboardOpensExistingCalendar() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-v38-development-verification", "-v38-result-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        let before = status(app)
+        app.buttons["managementTab-game"].tap()
+        XCTAssertTrue(app.staticTexts["다음 경기"].exists)
+        XCTAssertTrue(app.buttons["roomPrimary"].label.contains("다음 일정"))
+        capture(app, "v83-offday-stadium")
+        app.buttons["roomPrimary"].tap()
+        XCTAssertTrue(app.buttons["closeCalendar"].waitForExistence(timeout: 8))
+        app.buttons["closeCalendar"].tap(); app.buttons["roomBackHome"].tap()
+        XCTAssertEqual(status(app), before)
+    }
+
     @MainActor private func launch(large: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-college-pro-verification", "-career-objectives-verification", "-goal-special-verification"]
