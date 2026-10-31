@@ -225,6 +225,45 @@ final class ClubCareerVisualFlowTests: XCTestCase {
         XCTAssertEqual(status(app), before)
     }
 
+    @MainActor func testV89CalendarTrainingEntryAndResume() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        for pitcher in [false, true] {
+            if pitcher { app.buttons["roomProfile"].tap(); app.buttons["homeRole-pitcher"].tap(); if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() } }
+            let before = status(app)
+            app.buttons["managementTab-game"].tap(); app.buttons["facility-calendar"].tap()
+            app.buttons["calendarDay-2026-04-02"].tap()
+            let entry = app.buttons["calendarGoTraining"]; reveal(entry, app); XCTAssertTrue(entry.isEnabled)
+            capture(app, pitcher ? "v89-pitcher-calendar-training" : "v89-batter-calendar-training")
+            entry.tap(); XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
+            app.navigationBars.buttons.element(boundBy: 0).tap(); app.buttons["closeCalendar"].tap()
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
+            app.buttons["managementTab-game"].tap(); app.buttons["facility-calendar"].tap()
+            reveal(entry, app); entry.tap()
+            let start = app.buttons["startTraining"]; reveal(start, app); start.tap()
+            let progress = app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch
+            XCTAssertTrue(progress.waitForExistence(timeout: 10))
+            capture(app, pitcher ? "v89-pitcher-training" : "v89-batter-training")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            reveal(entry, app); XCTAssertTrue(entry.label.contains("훈련 이어하기")); entry.tap()
+            XCTAssertTrue(progress.waitForExistence(timeout: 8)); XCTAssertFalse(app.buttons["startTraining"].exists)
+            app.navigationBars.buttons.element(boundBy: 0).tap(); app.buttons["closeCalendar"].tap()
+            app.buttons["managementTab-home"].tap()
+        }
+    }
+    @MainActor func testV89CalendarTrainingLockedAfterRest() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-v38-development-verification", "-v38-growth-mild", "-management-reduced-motion-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        app.buttons["managementTab-game"].tap(); app.buttons["facility-calendar"].tap()
+        let rest = app.buttons["restToday"]; reveal(rest, app); rest.tap()
+        XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 8)); app.buttons["confirmRest"].tap()
+        XCTAssertTrue(app.buttons["restDone"].waitForExistence(timeout: 15)); app.buttons["restDone"].tap()
+        let entry = app.buttons["calendarGoTraining"]; reveal(entry, app); XCTAssertFalse(entry.isEnabled)
+        capture(app, "v89-rest-used")
+    }
+
     @MainActor func testV88CalendarSelectionDoesNotAdvanceAndShowsRoleDays() {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()

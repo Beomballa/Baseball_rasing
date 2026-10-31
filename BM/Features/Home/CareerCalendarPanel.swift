@@ -186,6 +186,17 @@ struct CareerCalendarPanel: View {
                 Text(status.errorMessage != nil ? "일정을 다시 확인한 뒤 진행하세요" : evaluationUnread ? "새 계약 평가를 확인한 뒤 진행하세요" : trainingPending ? "진행 중인 훈련을 먼저 마쳐 주세요" : !hasAction ? "훈련 또는 휴식을 선택한 뒤 하루를 마무리하세요" : gameCompleted ? "오늘 경기 저장 완료 · 다음 날로 진행할 수 있어요" : today != nil ? "오늘 경기를 먼저 마쳐 주세요" : "오늘 행동 완료 · 다음 날로 진행할 수 있어요")
                     .font(.subheadline).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("lobbyProgressStatus")
             }
+            if !progressionOnly {
+                NavigationLink {
+                    CareerTrainingDestination(player: player, calendar: state)
+                } label: {
+                    CalendarActionLabel(icon: "NavTrainingV1",
+                        title: trainingPending ? "훈련 이어하기" : trainedToday ? "오늘 훈련 결과" : "훈련 선택",
+                        detail: trainingPending ? "저장된 시도부터 계속" : trainedToday ? "저장된 결과 확인" : hasAction ? "오늘 행동 사용 완료 · 다음 날 선택 가능" : "실제 오늘 기준 · 시작할 때 행동 1회")
+                }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true))
+                    .disabled(advancing || schedule == nil || (hasAction && !trainingPending && !trainedToday))
+                    .accessibilityIdentifier("calendarGoTraining")
+            }
             layout {
                 if progressionOnly, !hasAction, !trainingPending, let onTraining {
                     Button("훈련장 가기", action: onTraining).buttonStyle(ManagementButtonStyle(variant: .secondary))
