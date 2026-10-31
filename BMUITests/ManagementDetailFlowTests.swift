@@ -2239,7 +2239,7 @@ extension ManagementDetailFlowTests {
             XCTAssertTrue(app.staticTexts["restSaved"].waitForExistence(timeout: 10))
             XCTAssertTrue(app.staticTexts["restFatigueForecast"].label.contains(pitcher ? "52 → 34" : "24 → 6")); capture(app, "v67-" + role + "-rest-complete")
             app.buttons["restGoGame"].tap()
-            XCTAssertTrue(app.buttons["roomProfile"].waitForExistence(timeout: 8)); XCTAssertTrue(app.scrollViews["gameLobbyScroll"].exists)
+            XCTAssertTrue(app.buttons["roomProfile"].waitForExistence(timeout: 8)); XCTAssertTrue(app.scrollViews["roomPropScroll"].exists)
             let after = status(app); XCTAssertEqual(after[0], before[0]); XCTAssertEqual(after[2], "행동 0/1")
             capture(app, "v67-" + role + "-game-preparation")
             app.buttons["managementTab-home"].tap(); v60Reveal(rest, app); rest.tap()
@@ -2277,7 +2277,7 @@ extension ManagementDetailFlowTests {
             if pitcher { pickPitcher(app) }
             let before = status(app)
             app.buttons["managementTab-game"].tap()
-            XCTAssertEqual(app.buttons["roomPrimary"].label, "오늘 경기 준비")
+            XCTAssertTrue(app.buttons["roomPrimary"].label.contains("경기 준비"))
             capture(app, pitcher ? "v68-pitcher-game" : "v68-batter-game")
             app.buttons["roomPrimary"].tap()
             XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); close(app)

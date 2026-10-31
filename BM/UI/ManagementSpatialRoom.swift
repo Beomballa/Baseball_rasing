@@ -32,7 +32,7 @@ struct ManagementFacility: Identifiable {
     var preview: [String] = []
 }
 
-enum ManagementPropKind { case sign, radar, notebook, document, day, calendar, roomSign, roomNote, roomChalk }
+enum ManagementPropKind { case sign, radar, notebook, document, day, calendar, roomSign, roomNote, roomChalk, trainingBook }
 
 struct ManagementPropPlacement {
     let x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat
@@ -157,7 +157,7 @@ struct ManagementFacilityStyle: ButtonStyle {
 }
 
 /// A full room with controls in safe areas. Short screens use a readable facility list.
-struct ManagementSpatialRoom<Header: View, Action: View>: View {
+struct ManagementSpatialRoom<Header: View>: View {
     let asset: String
     let title: String
     let facilities: [ManagementFacility]
@@ -165,7 +165,6 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
     let choose: (String) -> Void
     let home: () -> Void
     @ViewBuilder let header: Header
-    @ViewBuilder let action: Action
     @Environment(\.dynamicTypeSize) private var typeSize
     var propAbilities: [HomeAbilityValue] = []
     private var usesProps: Bool { asset.hasSuffix("V59") || asset.hasSuffix("V62") }
@@ -209,11 +208,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                             }
                         }
                     }
-                    VStack(spacing: 8) {
-                        if selection != .player { action.frame(minHeight: ManagementTheme.Control.primaryHeight).padding(.horizontal, ManagementTheme.Spatial.screenInset) }
-                        ManagementTabBar(selection: $selection)
-                    }.dynamicTypeSize(...DynamicTypeSize.accessibility1)
-                        .padding(.top, 8).background(ManagementTheme.Spatial.canvas.opacity(0.97))
+                    ManagementTabBar(selection: $selection)
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
         }
@@ -225,7 +220,7 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 if typeSize.isAccessibilitySize {
-                    ScrollView { VStack(spacing: 12) { header; roomToolbar; action.padding(.horizontal, 16); facilityList(columns: 1) } }
+                    ScrollView { VStack(spacing: 12) { header; roomToolbar; facilityList(columns: 1) } }
                         .accessibilityIdentifier("roomFacilityList")
                 } else {
                     header
@@ -239,7 +234,6 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                                 ScrollViewReader { proxy in
                                     ScrollView(.vertical) {
                                         propScene(width: width, height: height).id("propSceneTop")
-                                        Color.clear.frame(height: selection == .home ? 94 : 60).accessibilityHidden(true)
                                     }
                                         .onChange(of: selection) { _, _ in proxy.scrollTo("propSceneTop", anchor: .top) }
                                         .accessibilityIdentifier("roomPropScroll")
@@ -258,9 +252,6 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                             }.buttonStyle(.plain).foregroundStyle(ManagementTheme.Spatial.onCanvas)
 
                         }
-                        .overlay(alignment: .bottom) {
-                            action.padding(10)
-                        }
                         .clipped()
                     }
                 }
@@ -275,7 +266,18 @@ struct ManagementSpatialRoom<Header: View, Action: View>: View {
                 if let p = facility.prop {
                     Button { choose(facility.id) } label: {
                         ZStack {
-                            if [.roomSign, .roomNote, .roomChalk].contains(p.kind) {
+                            if p.kind == .trainingBook {
+                                ZStack {
+                                    Rectangle().fill(ManagementTheme.Spatial.wood)
+                                    HStack(spacing: 2) {
+                                        Rectangle().fill(GameTheme.gold).frame(width: 5)
+                                        Text(facility.title).font(ManagementPixelFont.font(13)).multilineTextAlignment(.center)
+                                            .foregroundStyle(GameTheme.navy).frame(maxWidth: .infinity, maxHeight: .infinity)
+                                            .background(GameTheme.boardInk)
+                                    }.padding(4)
+                                }.frame(width: width * p.width, height: height * p.height)
+                                    .rotationEffect(.degrees(-8))
+                            } else if [.roomSign, .roomNote, .roomChalk].contains(p.kind) {
                                 VStack(spacing: 4) {
                                     Text(facility.title).font(ManagementPixelFont.font(13)).lineLimit(1).minimumScaleFactor(0.75)
                                     if !facility.preview.isEmpty {

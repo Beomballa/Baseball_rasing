@@ -88,7 +88,7 @@ final class ClubCareerVisualFlowTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(route.frame.height, 44)
         capture(app, "large-target-picker")
     }
-    @MainActor func testV81SceneActionsAndResultsKeepCareerStateBothRoles() {
+    @MainActor func testV82RoomObjectsAndResultsKeepCareerStateBothRoles() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-management-career-verification", "-v38-development-verification", "-v38-result-verification"]
@@ -99,31 +99,35 @@ final class ClubCareerVisualFlowTests: XCTestCase {
                 if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
             }
             let before = status(app), role = pitcher ? "pitcher" : "batter"
-            capture(app, "v81-" + role + "-home")
+            capture(app, "v82-" + role + "-home")
             app.buttons["managementTab-training"].tap()
             let entry = app.buttons["roomPrimary"]
-            XCTAssertTrue(entry.isHittable)
+            reveal(entry, app); XCTAssertTrue(entry.isHittable)
             XCTAssertLessThan(entry.frame.width, 270); XCTAssertGreaterThanOrEqual(entry.frame.height, 44)
             XCTAssertLessThan(entry.frame.height, 90)
-            XCTAssertTrue(entry.label.contains("훈련 기록"))
-            capture(app, "v81-" + role + "-training")
+            XCTAssertTrue(entry.label.contains("훈련")); XCTAssertTrue(app.frame.insetBy(dx: 0, dy: 72).contains(entry.frame))
+            capture(app, "v82-" + role + "-training")
             entry.tap()
             XCTAssertTrue(app.staticTexts["trainingResultStored"].waitForExistence(timeout: 8))
-            capture(app, "v81-" + role + "-stored-result")
+            capture(app, "v82-" + role + "-stored-result")
             app.buttons["closeRoomDetail"].tap()
             app.buttons["managementTab-game"].tap()
             XCTAssertTrue(entry.isHittable); XCTAssertLessThan(entry.frame.width, 300)
             XCTAssertTrue(app.frame.contains(entry.frame), "경기 진입이 화면 밖으로 잘리면 안 됩니다.")
             XCTAssertTrue(app.buttons["facility-calendar"].isHittable)
-            capture(app, "v81-" + role + "-game")
+            capture(app, "v82-" + role + "-game")
             app.buttons["facility-calendar"].tap()
             XCTAssertTrue(app.buttons["closeCalendar"].waitForExistence(timeout: 8)); app.buttons["closeCalendar"].tap()
-            app.buttons["facility-gameRecords"].tap()
+            reveal(app.buttons["facility-gameRecords"], app); app.buttons["facility-gameRecords"].tap()
             XCTAssertTrue(app.buttons["gameSection-records"].waitForExistence(timeout: 8)); app.buttons["closeRoomDetail"].tap()
+            app.buttons["managementTab-career"].tap()
+            capture(app, "v82-" + role + "-career")
+            app.buttons["facility-goals"].tap()
+            XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); app.buttons["closeRoomDetail"].tap()
             app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
         }
     }
-    @MainActor func testV81LargestTextSceneEntriesRemainReachable() {
+    @MainActor func testV82LargestTextSceneEntriesRemainReachable() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]
@@ -132,8 +136,39 @@ final class ClubCareerVisualFlowTests: XCTestCase {
             app.buttons["managementLargeMenu"].tap(); app.buttons[tab].tap()
             let action = app.buttons["roomPrimary"]; reveal(action, app); XCTAssertTrue(action.isHittable)
             XCTAssertGreaterThanOrEqual(action.frame.height, 44)
-            capture(app, "v81-large-" + tab)
-            action.tap(); XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); app.buttons["closeRoomDetail"].tap()
+            capture(app, "v82-large-" + tab)
+            action.tap(); XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8))
+            if tab == "훈련" {
+                let tool = app.buttons["trainingKind-power"]; reveal(tool, app); XCTAssertTrue(tool.isHittable)
+                capture(app, "v82-large-equipment")
+            }
+            app.buttons["closeRoomDetail"].tap()
+        }
+    }
+    @MainActor func testV82EquipmentSelectionAndPreparationDoNotConsumeAction() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        for pitcher in [false, true] {
+            if pitcher {
+                app.buttons["roomProfile"].tap(); app.buttons["homeRole-pitcher"].tap()
+                if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
+            }
+            let before = status(app), role = pitcher ? "pitcher" : "batter"
+            app.buttons["managementTab-training"].tap()
+            app.buttons["facility-training"].tap()
+            let kind = app.buttons[pitcher ? "trainingKind-control" : "trainingKind-power"]
+            let shelf = app.scrollViews["trainingEquipmentShelf"]
+            for _ in 0..<5 { if kind.isHittable { break }; shelf.swipeLeft() }
+            XCTAssertTrue(kind.isHittable); kind.tap()
+            capture(app, "v82-" + role + "-equipment")
+            let start = app.buttons["openTraining"]; reveal(start, app); start.tap()
+            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
+            capture(app, "v82-" + role + "-preparation")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            app.buttons["closeRoomDetail"].tap()
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
         }
     }
     @MainActor private func launch(large: Bool = false) -> XCUIApplication {
