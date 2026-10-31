@@ -3,6 +3,27 @@ import UIKit
 @testable import BM
 
 final class ManagementFoundationTests: XCTestCase {
+    @MainActor func testV91PortraitPaletteAndCachePreserveSource() throws {
+        let source = try XCTUnwrap(UIImage(named: "PlayerPortraitV91")?.pngData())
+        let original = PlayerAppearance()
+        let portrait = try XCTUnwrap(ManagementPortraitRaster.image(original))
+        XCTAssertEqual(portrait.size.width, 128)
+        XCTAssertEqual(portrait.size.height, 160)
+        XCTAssertTrue(portrait === ManagementPortraitRaster.image(original))
+        let baseline = try XCTUnwrap(portrait.pngData())
+        for field in 0..<3 {
+            var candidate = original
+            if field == 0 { candidate.skin = 5 }
+            if field == 1 { candidate.hair = 4 }
+            if field == 2 { candidate.kit = 2 }
+            XCTAssertNotEqual(try XCTUnwrap(ManagementPortraitRaster.image(candidate)?.pngData()), baseline)
+        }
+        XCTAssertEqual(UIImage(named: "PlayerPortraitV91")?.pngData(), source)
+        XCTAssertEqual(original, PlayerAppearance())
+        var invalid = original; invalid.skin = 99
+        XCTAssertNil(ManagementPortraitRaster.image(invalid))
+    }
+
     func testV48TrainingInstructionsRespectRecordedVersionWithoutChangingInputs() {
         for kind in [TrainingKind.power, .velocity, .stuff] {
             XCTAssertEqual(kind.drillDescription, kind.drillDescription(version: 1))

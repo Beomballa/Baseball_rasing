@@ -225,6 +225,43 @@ final class ClubCareerVisualFlowTests: XCTestCase {
         XCTAssertEqual(status(app), before)
     }
 
+    @MainActor func testV91SharedHeaderAcrossTabsAndRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        for pitcher in [false, true] {
+            if pitcher { app.buttons["roomProfile"].tap(); app.buttons["homeRole-pitcher"].tap(); if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() } }
+            let before = status(app)
+            for tab in ["home", "player", "training", "game", "career"] {
+                app.buttons["managementTab-" + tab].tap()
+                XCTAssertEqual(status(app), before)
+                let profile = app.buttons["roomProfile"]
+                XCTAssertTrue(profile.isHittable)
+                XCTAssertGreaterThanOrEqual(profile.frame.height, 44)
+                XCTAssertTrue(app.frame.contains(profile.frame))
+                XCTAssertTrue(app.staticTexts["homeSchool"].exists)
+                XCTAssertTrue(app.staticTexts["homeAge"].exists)
+                capture(app, "v91-" + (pitcher ? "pitcher-" : "batter-") + tab)
+            }
+            app.buttons["roomProfile"].tap()
+            XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8))
+            app.buttons["closeRoomDetail"].tap()
+            app.buttons["managementTab-home"].tap()
+        }
+    }
+    @MainActor func testV91LargeHeaderProfileAndMenu() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        let profile = app.buttons["roomProfile"]; XCTAssertTrue(profile.isHittable)
+        capture(app, "v91-large-header")
+        profile.tap(); XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout: 8)); app.buttons["closeRoomDetail"].tap()
+        app.buttons["managementLargeMenu"].tap(); app.buttons["경기"].tap()
+        XCTAssertTrue(app.buttons["roomProfile"].exists)
+        let calendar = app.buttons["facility-calendar"]; reveal(calendar, app); XCTAssertTrue(calendar.isHittable)
+        capture(app, "v91-large-game")
+    }
+
     @MainActor func testV89CalendarTrainingEntryAndResume() {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]; app.launch()

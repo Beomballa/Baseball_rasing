@@ -361,38 +361,75 @@ struct ManagementSpatialHeader: View {
     let pending: Bool
     let profile: () -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 10) {
-                Button(action: profile) {
-                    PixelPlayer(appearance: player.appearance).frame(width: 40, height: 48)
-                }.accessibilityLabel("선수 선택 · 프로필").accessibilityIdentifier("roomProfile")
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(player.name)  #\(player.jerseyNumber)").font(.headline).accessibilityIdentifier("homePlayerName")
-                    HStack(spacing: 6) {
-                        if let school = SchoolCatalog.bundled.first(where: { $0.id == player.schoolID }) {
-                            SchoolCrest(school: school).frame(width: 24, height: 26)
-                        }
-                        Text(affiliation).font(.caption).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeSchool")
-                    }
-                    Text("\(age)세 · \(player.role.label) · \(player.roleDetail)").font(.caption).accessibilityIdentifier("homeAge")
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                if !typeSize.isAccessibilitySize {
-                    Text(ManagementDisplay.date(player.gameDate)).font(.subheadline.bold()).accessibilityIdentifier("calendarDate")
+    private var fatigueColor: Color { ManagementDisplay.fatigueColor(player.fatigue) }
+    private var date: some View {
+        Text(ManagementDisplay.date(player.gameDate)).font(ManagementPixelFont.readable(.label))
+            .multilineTextAlignment(typeSize.isAccessibilitySize ? .leading : .trailing)
+            .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("calendarDate")
+    }
+    private var identity: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("\(player.name)  #\(player.jerseyNumber)")
+                .font(ManagementPixelFont.readable(.sectionTitle))
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homePlayerName")
+            HStack(alignment: .center, spacing: 5) {
+                if let school = SchoolCatalog.bundled.first(where: { $0.id == player.schoolID }) {
+                    SchoolCrest(school: school).frame(width: 18, height: 20).accessibilityHidden(true)
                 }
+                Text(affiliation).font(.caption).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeSchool")
             }
-            if typeSize.isAccessibilitySize {
-                Text(ManagementDisplay.date(player.gameDate)).font(.body.bold()).accessibilityIdentifier("calendarDate")
+            Text("\(age)세 · \(player.role.label) · \(player.roleDetail)")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeAge")
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var fatigue: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("피로 \(player.fatigue)/100 · \(ManagementDisplay.fatigueLabel(player.fatigue))")
+                .font(.caption.bold()).foregroundStyle(fatigueColor).accessibilityIdentifier("homeFatigue")
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(GameTheme.boardLine.opacity(0.35))
+                    Rectangle().fill(fatigueColor).frame(width: geometry.size.width * CGFloat(min(100, max(0, player.fatigue))) / 100)
+                }
+            }.frame(width: typeSize.isAccessibilitySize ? 120 : 96, height: 5).accessibilityHidden(true)
+        }
+    }
+    private var action: some View {
+        HStack(spacing: 6) {
+            Rectangle().fill(used ? Color.clear : GameTheme.gold)
+                .frame(width: 7, height: 7).overlay(Rectangle().strokeBorder(GameTheme.gold, lineWidth: 1)).accessibilityHidden(true)
+            Text(pending ? "훈련 이어하기" : "행동 \(used ? 0 : 1)/1")
+                .font(ManagementPixelFont.readable(.helper)).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("calendarAction")
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Button(action: profile) {
+                    ManagementPlayerPortrait(appearance: player.appearance)
+                        .frame(width: 50, height: 64)
+                        .background(GameTheme.boardPanel)
+                        .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+                }.buttonStyle(.plain).accessibilityLabel("선수 선택 · 프로필").accessibilityIdentifier("roomProfile")
+                identity
+                if !typeSize.isAccessibilitySize { date.frame(width: 82) }
             }
-            let statusLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))
-            statusLayout {
-                Text("피로 \(player.fatigue)/100 · \(ManagementDisplay.fatigueLabel(player.fatigue))")
-                    .foregroundStyle(ManagementDisplay.fatigueColor(player.fatigue)).accessibilityIdentifier("homeFatigue")
+            if typeSize.isAccessibilitySize { date }
+            Rectangle().fill(GameTheme.boardLine.opacity(0.7)).frame(height: 1).accessibilityHidden(true)
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+            layout {
+                fatigue
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
-                Text(pending ? "훈련 이어하기" : "행동 \(used ? 0 : 1)/1").accessibilityIdentifier("calendarAction")
-            }.font(.caption.bold())
-        }.padding(.horizontal, 12).padding(.vertical, 8)
-            .foregroundStyle(ManagementTheme.Spatial.onCanvas).background(ManagementTheme.Spatial.canvas.opacity(0.94))
+                action
+            }
+        }.padding(.horizontal, 12).padding(.vertical, 9)
+            .foregroundStyle(ManagementTheme.Spatial.onCanvas)
+            .background(ManagementTheme.Spatial.canvas)
+            .overlay(alignment: .top) { Rectangle().fill(GameTheme.gold).frame(height: 1).allowsHitTesting(false).accessibilityHidden(true) }
+            .overlay(alignment: .bottom) { Rectangle().fill(GameTheme.boardLine).frame(height: 1).allowsHitTesting(false).accessibilityHidden(true) }
+            .accessibilityElement(children: .contain).accessibilityIdentifier("managementPlayerHUD")
     }
 }
 

@@ -42,6 +42,10 @@ EXACT_PATHS.update({'BM/Resources/Assets.xcassets/LockerV1.imageset/Contents.jso
 ART_HASHES.update({'BM/Resources/Assets.xcassets/LockerV1.imageset/bg-locker-v1.png': 'c108413ae9da738bbb65ffa980833db965f68927703649303b9f380f71d1b889', 'BM/Resources/Assets.xcassets/BattingRoomV1.imageset/bg-batting-room-v1.png': '0eb041bd665f475c6803861c20ba390751cb0243180202ca2ffc32bbc9477533', 'BM/Resources/Assets.xcassets/BullpenRoomV1.imageset/bg-bullpen-room-v1.png': '5600ff83371532b39af75c369f65a498a7081fc16431fa51466397489dfaeef9'})
 
 BLOCKED_PARTS = {"secrets", "credentials", ".ssh", ".aws", ".idea", ".vscode", "xcuserdata", "__pycache__", "generated"}
+# Reviewed V91 standalone, unlettered header portrait.
+EXACT_PATHS.add("BM/Resources/Assets.xcassets/PlayerPortraitV91.imageset/Contents.json")
+ART_HASHES["BM/Resources/Assets.xcassets/PlayerPortraitV91.imageset/player-portrait.png"] = "a4c55d90e068630181d0cfc6426ed4c6ef357ab90a0e6c92d9c64a1d14722fde"
+
 PATTERNS = [
     ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----")),
     ("github-token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")),
