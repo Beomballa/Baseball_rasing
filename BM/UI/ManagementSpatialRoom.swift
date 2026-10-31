@@ -506,9 +506,9 @@ struct ManagementStadiumRoom<Header: View>: View {
         VStack(spacing: typeSize.isAccessibilitySize ? 4 : 0) {
             let headingLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
             headingLayout {
-                Text(scheduleTitle).foregroundStyle(GameTheme.boardInk.opacity(0.85))
+                ledText(scheduleTitle, color: GameTheme.gold)
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
-                Text(date).accessibilityIdentifier("stadiumScheduleDate")
+                ledText(date, color: GameTheme.gold).accessibilityIdentifier("stadiumScheduleDate")
             }.frame(maxWidth: .infinity, alignment: .leading)
                 .font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(11))
                 .padding(.top, typeSize.isAccessibilitySize ? 0 : 8)
@@ -516,10 +516,10 @@ struct ManagementStadiumRoom<Header: View>: View {
             let teamsLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
             teamsLayout {
                 if teams.count == 2 {
-                    Text(teams[0]).frame(maxWidth: .infinity)
-                    Text("VS").font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(10)).foregroundStyle(GameTheme.boardInk.opacity(0.65))
-                    Text(teams[1]).frame(maxWidth: .infinity)
-                } else { Text(teams.first ?? "일정 확인").frame(maxWidth: .infinity) }
+                    ledText(teams[0]).frame(maxWidth: .infinity).padding(.vertical, 4).background(Color(hex: 0x291920))
+                    ledText("VS", color: GameTheme.gold).font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(10))
+                    ledText(teams[1]).frame(maxWidth: .infinity).padding(.vertical, 4).background(Color(hex: 0x102438))
+                } else { ledText(teams.first ?? "일정 확인").frame(maxWidth: .infinity) }
             }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(12))
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 .accessibilityElement(children: .combine).accessibilityIdentifier("stadiumMatchup")
@@ -527,18 +527,25 @@ struct ManagementStadiumRoom<Header: View>: View {
             Rectangle().fill(GameTheme.boardLine).frame(height: 1).accessibilityHidden(true)
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))
             layout {
-                Button { choose("facility-calendar") } label: { Text("일정 보기 ›").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                Button { choose("facility-calendar") } label: { ledText("일정 보기 ›").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("facility-calendar")
                 Button { choose("roomPrimary") } label: {
-                    Text(entryTitle + " ›").foregroundStyle(GameTheme.gold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    ledText(entryTitle + " ›", color: GameTheme.gold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                 }.accessibilityIdentifier("roomPrimary").accessibilityHint(entryStatus)
             }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(11))
                 .buttonStyle(ManagementPropButtonStyle())
-                .background(typeSize.isAccessibilitySize ? Color.clear : Color(hex: 0x0b1d2b))
+                .background(typeSize.isAccessibilitySize ? Color.clear : Color(hex: 0x070d12))
         }.foregroundStyle(GameTheme.boardInk).padding(.horizontal, 14)
             .padding(.vertical, typeSize.isAccessibilitySize ? 9 : 0)
-            .background(Color(hex: 0x102638))
-            .overlay { Rectangle().strokeBorder(Color(hex: 0x819aa9), lineWidth: 1).allowsHitTesting(false) }
+            .background {
+                Color(hex: 0x060b10)
+                StadiumLEDDots(pitch: 3, diameter: 0.7).fill(Color(hex: 0x729187).opacity(0.18))
+                    .accessibilityHidden(true).allowsHitTesting(false)
+            }
+            .overlay { Rectangle().strokeBorder(Color(hex: 0x65757b), lineWidth: 2).allowsHitTesting(false) }
+    }
+    private func ledText(_ value: String, color: Color = GameTheme.boardInk) -> some View {
+        Text(value).modifier(StadiumLEDLettering(color: color, textured: !typeSize.isAccessibilitySize))
     }
     private func stadium(width: CGFloat) -> some View {
         let height = width * 1.5
@@ -559,5 +566,39 @@ struct ManagementStadiumRoom<Header: View>: View {
             .accessibilityLabel(id == "facility-standings" ? "리그 순위" : title.replacingOccurrences(of: " ›", with: ""))
             .accessibilityHint("상세 열기").accessibilityIdentifier(id)
             .position(x: scene.width * x, y: scene.height * y)
+    }
+}
+
+/// Static LED cells; no timer, animation, or game-state work is attached to the panel.
+private struct StadiumLEDDots: Shape {
+    let pitch: CGFloat
+    let diameter: CGFloat
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for y in stride(from: rect.minY + pitch / 2, to: rect.maxY, by: pitch) {
+            for x in stride(from: rect.minX + pitch / 2, to: rect.maxX, by: pitch) {
+                path.addEllipse(in: CGRect(x: x - diameter / 2, y: y - diameter / 2, width: diameter, height: diameter))
+            }
+        }
+        return path
+    }
+}
+
+private struct StadiumLEDLettering: ViewModifier {
+    let color: Color
+    let textured: Bool
+    @Environment(\.colorSchemeContrast) private var contrast
+    func body(content: Content) -> some View {
+        if textured && contrast != .increased {
+            content.foregroundStyle(color)
+                .mask { StadiumLEDDots(pitch: 1, diameter: 0.9).fill(.white) }
+                .background {
+                    content.foregroundStyle(color.opacity(0.75))
+                        .accessibilityHidden(true).allowsHitTesting(false)
+                }
+                .shadow(color: color.opacity(0.6), radius: 1)
+        } else {
+            content.foregroundStyle(color)
+        }
     }
 }
