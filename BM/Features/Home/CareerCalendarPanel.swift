@@ -116,10 +116,14 @@ struct CareerCalendarPanel: View {
         let todayState=CalendarDayPresentation(role:player.role,fixture:today,saved:CalendarSavedMatch.read(savedGame),
             starter:selection.starter,selectionFailed:selection.failed,actionUsed:hasAction,trainingPending:trainingPending)
         return GamePanel(title: progressionOnly ? "다음 행동 · 일정" : "오늘 일정", onBoard: true) {
+            if !concise, let schedule {
+                CareerMonthBoard(player: player, state: state, schools: schools,
+                                 fixtures: schedule.annual, records: gameRecords)
+            }
             if let life=try? player.lifecycle,!life.traitRisk.isEmpty {
                 Text("! 특성 유지 주의 · 커리어의 변화 기록을 확인하세요").font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("calendarTraitWarning")
             }
-            if !concise, status.errorMessage == nil {
+            if !concise, status.errorMessage == nil, showHelp {
                 let guidance = EarlyPlayGuidance.make(trainingPending: trainingPending,
                     gamePending: gameRecords.contains { $0.playerID == player.id && !$0.completed },
                     actionUsed: hasAction, gameDue: today != nil, gameCompleted: gameCompleted)
@@ -157,7 +161,6 @@ struct CareerCalendarPanel: View {
                 if let today {
                     Text("\(today.number) / 30차전 · \(todayState.participation)")
                         .font(.headline).accessibilityIdentifier("todaySchedule")
-                    Text(detail(today)).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                     Text(todayState.summary).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
                         .fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("calendarTodayStatus")
                     Text(gameCompleted ? "경기 결과 저장 완료 · 다음 날 진행 가능" : "경기일 · 경기 완료 후 다음 날 진행 가능")
@@ -165,6 +168,7 @@ struct CareerCalendarPanel: View {
                 } else {
                     Text("팀 경기 없음 · 훈련 / 휴식일").font(.headline).accessibilityIdentifier("todaySchedule")
                 }
+                DisclosureGroup("다음 팀 경기 · 내 출전 차례") {
                 if let next = nextTeam, next.id != nextAppearance?.id {
                     Text("다음 팀 경기  \(detail(next))").font(.caption)
                 }
@@ -175,6 +179,7 @@ struct CareerCalendarPanel: View {
                     Text("올해 남은 기본 출전 차례가 없습니다.")
                         .font(.caption).foregroundStyle(GameTheme.boardMuted)
                 }
+                }.tint(GameTheme.gold)
             }                }
 
             if progressionOnly {
@@ -188,18 +193,23 @@ struct CareerCalendarPanel: View {
                         .accessibilityIdentifier("lobbyGoTraining")
                 }
                 if !progressionOnly || (!hasAction && !trainingPending) {
-                Button(hasAction ? (trainedToday ? "오늘 행동 완료" : "휴식 완료") : "오늘 휴식 −\(DailyRecovery.rest)") {
-                    showRest = true
+                Button { showRest = true } label: {
+                    CalendarActionLabel(icon: "NavHomeV1", title: hasAction ? (trainedToday ? "오늘 행동 완료" : "휴식 완료") : "오늘 휴식",
+                                        detail: hasAction ? "사용 완료" : "최대 −\(DailyRecovery.rest) · 오늘 행동 1회")
                 }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).disabled(hasAction || trainingPending || advancing || schedule == nil)
                     .accessibilityIdentifier("restToday")
                 }
-                Button("다음 날") { nextDay() }.buttonStyle(GameButtonStyle(onBoard: true))
+                Button { nextDay() } label: {
+                    CalendarActionLabel(icon: "NavGameV1", title: "다음 날", detail: "하루 마무리 · 수면 최대 −\(DailyRecovery.sleep)")
+                }.buttonStyle(GameButtonStyle(onBoard: true))
                     .disabled(evaluationUnread || trainingPending || !hasAction || (today != nil && !gameCompleted) || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
             }
             if advancing {
                 Button("묶음 진행 중지") { transition.requestCancel() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true))
             } else {
-                Button("다음 일정까지 · 회복 우선",action:advanceBatch)
+                Button(action: advanceBatch) {
+                    CalendarActionLabel(icon: "NavCareerV1", title: "다음 일정까지", detail: "회복 우선 · 매일 저장 · 최대 30일")
+                }
                     .buttonStyle(GameButtonStyle(secondary:true,onBoard:true)).disabled(trainingPending || today != nil || schedule == nil)
                     .accessibilityIdentifier("advanceOffDays")
             }
@@ -334,5 +344,118 @@ struct CalendarAnnualScheduleView:View {
             if fixture.date.description < player.gameDate {return "개인 경기 원장 없음 · 출전 성적 미생성"}
             return fixture.isAppearance(for:player.role) ? "기본 출전 차례 · 기용 평가 전":"비등판 차례 · 팀 경기"
         }
+    }
+}
+
+// Calendar selection is presentation-only; advancement remains owned by CalendarProgression.
+struct CareerMonthBoard: View {
+    let player: CareerPlayer
+    let state: CareerCalendarState
+    let schools: [School]
+    let fixtures: [SeasonFixture]
+    let records: [CareerMatchRecord]
+    @State private var month: String?
+    @State private var selected: String?
+    @State private var showAllDays = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var key: String { month ?? String(player.gameDate.prefix(7)) }
+    private var first: GameDate? { try? GameDate(key + "-01") }
+    private var days: [GameDate] {
+        guard let first else { return [] }
+        return (0..<31).map { first.adding(days: $0) }.filter { $0.description.hasPrefix(key) }
+    }
+    private var offset: Int { first.map { $0.monday.days(to: $0) } ?? 0 }
+    private var selectedDate: String { selected ?? player.gameDate }
+    private func fixture(_ date: String) -> SeasonFixture? { fixtures.first { $0.date.description == date } }
+    private func marker(_ date: String) -> String {
+        guard let fixture = fixture(date) else { return "" }
+        if let record = records.first(where: { $0.playerID == player.id && $0.fixtureID == fixture.id }) {
+            switch CalendarSavedMatch.read(record) {
+            case .completed: return "완료"
+            case .playing: return "진행"
+            case .invalid: return "확인"
+            case .none: break
+            }
+        }
+        return fixture.isAppearance(for: player.role) ? (player.role == .pitcher ? "등판" : "출전") : "팀"
+    }
+    private func move(_ step: Int) {
+        guard let first else { return }
+        let date = step < 0 ? first.adding(days: -1) : first.adding(days: days.count)
+        guard date.year == first.year else { return }
+        month = String(date.description.prefix(7)); selected = month! + "-01"
+    }
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button { move(-1) } label: { Text("‹").frame(minWidth: 44, minHeight: 44) }
+                    .accessibilityLabel("이전 달").disabled(key.hasSuffix("-01"))
+                Spacer(minLength: 0)
+                Text(key.replacingOccurrences(of: "-", with: " / ")).font(ManagementPixelFont.readable(.label))
+                    .accessibilityIdentifier("calendarMonth")
+                Spacer(minLength: 0)
+                Button { move(1) } label: { Text("›").frame(minWidth: 44, minHeight: 44) }
+                    .accessibilityLabel("다음 달").disabled(key.hasSuffix("-12"))
+            }.foregroundStyle(ScoutDossierInk.paper).background(GameTheme.boardPanel)
+            if typeSize.isAccessibilitySize {
+                ForEach(days.filter { showAllDays || !marker($0.description).isEmpty || $0.description == player.gameDate || $0.description == selectedDate }, id: \.self) { day in dayButton(day) }
+                Button(showAllDays ? "경기일·오늘만 보기" : "비경기일 포함 모든 날짜 보기") { showAllDays.toggle() }
+                    .font(.body.bold()).frame(minHeight: 44).accessibilityIdentifier("calendarAllDays")
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 4) {
+                    ForEach(["월", "화", "수", "목", "금", "토", "일"], id: \.self) {
+                        Text($0).font(.caption.bold()).frame(maxWidth: .infinity).accessibilityHidden(true)
+                    }
+                    ForEach(0..<offset, id: \.self) { _ in Color.clear.frame(height: 1).accessibilityHidden(true) }
+                    ForEach(days, id: \.self) { day in dayButton(day) }
+                }
+            }
+            Text(player.role == .pitcher ? "등판: 기본 선발 차례 · 팀: 비등판 차례" : "출전: 기본 출전 차례 · 완료: 저장된 경기")
+                .font(.caption).fixedSize(horizontal: false, vertical: true)
+            Text("실제 기용은 경기 준비에서 확인").font(.caption.bold())
+            VStack(alignment: .leading, spacing: 8) {
+                Text(ManagementDisplay.date(selectedDate)).font(.headline).accessibilityIdentifier("calendarSelectedDate")
+                if let match = fixture(selectedDate) {
+                    let team = (try? state.teamID(for: player, on: match.date)) ?? player.schoolID
+                    Text(CareerTeamDirectory.name(match.opponent(of: team), schools: schools) + " · " + (match.homeID == team ? "홈" : "원정"))
+                        .font(.subheadline.bold())
+                    Text("\(match.number)차전 · " + marker(selectedDate)).font(.subheadline)
+                } else { Text("팀 경기 없음 · 훈련 / 휴식 일정").font(.subheadline) }
+                if selectedDate != player.gameDate { Text("조회 중 · 실제 오늘은 " + ManagementDisplay.date(player.gameDate)).font(.caption) }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                .background(ScoutDossierInk.rule.opacity(0.18))
+        }.padding(10).foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
+            .overlay(ManagementStepFrame().strokeBorder(ScoutDossierInk.rule, lineWidth: 2))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("careerMonthBoard")
+            .onChange(of: player.gameDate) { _, date in month = nil; selected = date }
+    }
+    private func dayButton(_ day: GameDate) -> some View {
+        let date = day.description, mark = marker(date), today = date == player.gameDate
+        return Button { selected = date } label: {
+            VStack(spacing: 3) {
+                Text(String(Int(date.suffix(2)) ?? 0)).font(.system(.subheadline, design: .monospaced).bold())
+                Text(today ? "오늘" : mark.isEmpty ? "·" : mark).font(.caption2.bold())
+                if today && !mark.isEmpty { Text(mark).font(.caption2.bold()) }
+            }.frame(maxWidth: .infinity, minHeight: 52)
+                .foregroundStyle(date == selectedDate ? ScoutDossierInk.paper : ScoutDossierInk.ink)
+                .background(date == selectedDate ? GameTheme.boardPanel : mark.isEmpty ? Color.clear : ScoutDossierInk.rule.opacity(0.22))
+                .overlay(Rectangle().strokeBorder(today ? ScoutDossierInk.green : ScoutDossierInk.rule.opacity(0.4), lineWidth: today ? 2 : 1))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel(ManagementDisplay.date(date) + (today ? " 오늘 " : " ") + (mark.isEmpty ? "팀 경기 없음" : mark + " · 실제 기용 별도"))
+            .accessibilityAddTraits(date == selectedDate ? .isSelected : [])
+            .accessibilityIdentifier("calendarDay-" + date)
+    }
+}
+
+private struct CalendarActionLabel: View {
+    let icon: String
+    let title: String
+    let detail: String
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(icon).resizable().interpolation(.none).scaledToFit().frame(width: 28, height: 28).accessibilityHidden(true)
+            Text(title).font(ManagementPixelFont.readable(.label))
+            Text(detail).font(.caption).fixedSize(horizontal: false, vertical: true)
+        }.multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.vertical, 6)
     }
 }

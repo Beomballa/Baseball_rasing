@@ -129,6 +129,7 @@ struct SavedScoutingObservationView: View {
                     }
                     Text("현재 능력과 다른 시점의 자료입니다. 관심 구단은 실제 계약 제의와 구분합니다.").managementFont(.helper)
                 }.accessibilityIdentifier("scoutDecisionSummary")
+                if let fit = value.contractFit { clubBoard(fit) }
                 ScoutingInterestList(value: value)
                 roleBoard
                 frozenSample
@@ -140,7 +141,6 @@ struct SavedScoutingObservationView: View {
                 }
                 if let fit = value.contractFit {
                     comparisonBoard(fit)
-                    clubBoard(fit)
                 } else {
                     ScoutNote(title: "이전 버전 파일", message: "이 보고서는 확정 당시 구단/비교 성적을 기록하지 않았습니다. 원문을 유지하며 다음 관찰부터 새 자료를 확인합니다.", messageIdentifier: "scoutLegacyFit")
                 }
@@ -255,12 +255,21 @@ struct SavedScoutingObservationView: View {
             }
         }
     }
+    private func featuredClubs(_ fit: ScoutingContractFit) -> [ScoutingClubFit] {
+        let ordered = fit.clubs.filter { $0.recruitment.demand != .none } + fit.clubs.filter { $0.recruitment.demand == .none }
+        var names = Set<String>()
+        return Array(ordered.filter { names.insert($0.recruitment.name).inserted }.prefix(3))
+    }
     private func clubBoard(_ fit: ScoutingContractFit) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let featured = featuredClubs(fit)
+        return VStack(alignment: .leading, spacing: 16) {
             ScoutDeskHeading(title: "구단의 기준과 나의 기량", subtitle: "기량 차이와 부족 조건 · 정식 제의는 계약 메뉴")
-            HomeDetailButton(title: "모집 역할·기준·적합도 \(fit.clubs.count)건", expanded: $showClubs, identifier: "scoutClubDetails")
+            ForEach(featured) { club in
+                ScoutClubComparisonCard(club: club, roleName: value.grades.first { $0.id == club.recruitment.roleID }?.label ?? club.recruitment.roleID)
+            }
+            HomeDetailButton(title: "전체 모집 역할·기준·적합도 \(fit.clubs.count)건", expanded: $showClubs, identifier: "scoutClubDetails")
             if showClubs {
-                ForEach(fit.clubs) { club in
+                ForEach(fit.clubs.filter { club in !featured.contains(where: { $0.id == club.id }) }) { club in
                     ScoutClubComparisonCard(club: club, roleName: value.grades.first { $0.id == club.recruitment.roleID }?.label ?? club.recruitment.roleID)
                 }
             }
@@ -618,37 +627,55 @@ private struct ScoutClubComparisonCard: View {
     let roleName: String
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ClubFileHeader(name:club.recruitment.name,subtitle:roleName + " · " + club.recruitment.demand.label)
-            Text(club.stage).font(.headline).foregroundStyle(GameTheme.boardInk)
-            VStack(alignment: .leading, spacing: 12) {
-                comparisonRow("관찰일 내 역할 기량", value: club.h, color: GameTheme.growth)
-                comparisonRow("구단 관찰 기준", value: club.c, color: GameTheme.gold)
-            }
-            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 10))
+        ScoutDossier(title: "모집 선수 · " + roleName, code: "CLUB SCOUTING FILE", stamp: club.recruitment.demand.label, isPreview: false) {
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))
             layout {
-                ScoutValueTile(title: "성적 보정 P", value: ScoutDeskFormat.signed(club.p))
-                ScoutValueTile(title: "기량 차 F", value: club.f.map(ScoutDeskFormat.signed) ?? "평가 대기")
+                ClubBadge(name: club.recruitment.name, size: 64)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(club.recruitment.name).font(.title3.bold())
+                    Text(club.stage).font(.subheadline.bold()).foregroundStyle(ScoutDossierInk.green)
+                }
+            }
+            comparisonRow("관찰일 내 역할 기량", value: club.h, color: ScoutDossierInk.green)
+            comparisonRow("구단 관찰 기준", value: club.c, color: ScoutDossierInk.ink)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("성적 보정 P").font(.caption)
+                    Text(ScoutDeskFormat.signed(club.p)).font(.headline.monospacedDigit())
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("기량 차 F").font(.caption)
+                    Text(club.f.map(ScoutDeskFormat.signed) ?? "평가 대기").font(.headline.monospacedDigit())
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(10).background(ScoutDossierInk.rule.opacity(0.15))
+            if let first = club.blockers.first {
+                Text("먼저 보완할 조건").font(.subheadline.bold())
+                Text(first).font(.subheadline).fixedSize(horizontal: false, vertical: true)
             }
             Text("H \(ScoutDeskFormat.number(club.h)) / C \(ScoutDeskFormat.number(club.c)) / P \(ScoutDeskFormat.number(club.p)) / F \(ScoutDeskFormat.number(club.f))")
-                .font(.subheadline.monospacedDigit()).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("scoutClub-\(club.id)")
-            if !club.blockers.isEmpty {
-                DisclosureGroup("보완할 조건 \(club.blockers.count)개") {
-                    ForEach(club.blockers, id: \.self) { Text($0).font(.subheadline).padding(.top, 8) }
-                }.font(.subheadline).tint(GameTheme.gold)
-            }
-            if club.c == nil { Text("경쟁자 자료 대기 · 공석으로 가정하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.gold) }
-        }.padding(16).background(ScoutDeskPalette.surface)
-            .overlay(ManagementStepFrame().stroke(GameTheme.boardLine, lineWidth: 1))
+                .font(.caption.monospacedDigit()).accessibilityIdentifier("scoutClub-\(club.id)")
+            DisclosureGroup("추가 조건") {
+                ForEach(Array(club.blockers.dropFirst()), id: \.self) { Text($0).font(.subheadline) }
+            }.tint(ScoutDossierInk.ink)
+            if club.c == nil { Text("경쟁자 자료 대기 · 공석으로 가정하지 않습니다.").font(.subheadline) }
+            Text("관찰 당시 고정 자료 · 계약 제의 아님").font(.caption.bold()).foregroundStyle(ScoutDossierInk.muted)
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("scoutClubFile-" + club.id)
     }
     private func comparisonRow(_ label: String, value: Double?, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(label).font(.subheadline)
                 Spacer(minLength: 4)
                 Text(ScoutDeskFormat.number(value)).font(.headline.monospacedDigit()).foregroundStyle(color)
             }
-            ScoutSegmentMeter(value: value, maximum: 100, color: color)
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(ScoutDossierInk.rule.opacity(0.3))
+                    if let value, value.isFinite {
+                        Rectangle().fill(color).frame(width: g.size.width * min(1, max(0, value / 100)))
+                    }
+                }
+            }.frame(height: 8).accessibilityHidden(true)
         }
     }
 }

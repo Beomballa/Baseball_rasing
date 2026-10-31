@@ -200,7 +200,7 @@ struct PlayerHomeView: View {
             if let calendar {
                 NavigationStack {
                     ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }.accessibilityIdentifier("calendarDetailScroll")
-                        .background(GameTheme.board).navigationTitle("일정 · 날짜 관리")
+                        .background(GameTheme.board).navigationTitle("일정 · 날짜 관리").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ManagementToolbarAction(title: "닫기", identifier: "closeCalendar") { showCalendar = false } }
                 }.preferredColorScheme(.dark)
             }
@@ -622,7 +622,7 @@ struct PlayerHomeView: View {
                         Text("\(fixture.number)/30차전 · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools))").managementFont(.label)
                         playActions(calendar, training: false)
                     } else { Text("오늘은 비경기일입니다.").managementFont(.body) }
-                    NavigationLink { ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }.background(GameTheme.board).navigationTitle("일정 · 날짜 관리") } label: { Text("연간 일정 · 날짜 진행") }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
+                    NavigationLink { ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }.background(GameTheme.board).navigationTitle("일정 · 날짜 관리").navigationBarTitleDisplayMode(.inline) } label: { Text("연간 일정 · 날짜 진행") }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
                     ForEach(Array((status.schedule?.upcoming ?? []).prefix(3)), id: \.id) { fixture in
                         Text("\(fixture.date.description) · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools)) · \(fixture.isAppearance(for: player.role) ? "기본 출전 차례 · 기용 별도" : "순번 휴식 · 팀 경기")").managementFont(.helper)
                     }
