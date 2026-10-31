@@ -184,6 +184,7 @@ final class ClubCareerVisualFlowTests: XCTestCase {
             let before = status(app), role = pitcher ? "pitcher" : "batter"
             app.buttons["managementTab-game"].tap()
             XCTAssertTrue(app.scrollViews["stadiumSceneScroll"].exists)
+            XCTAssertFalse(app.buttons["roomBackHome"].exists)
             XCTAssertFalse(app.staticTexts["stadiumScheduleDate"].label.isEmpty)
             XCTAssertTrue(any("stadiumMatchup", app).label.contains("VS"))
             let ids = ["facility-calendar", "roomPrimary", "facility-analysis", "facility-gameRecords", "facility-standings"]
@@ -205,7 +206,7 @@ final class ClubCareerVisualFlowTests: XCTestCase {
                 XCTAssertTrue(app.buttons["gameSection-" + section].waitForExistence(timeout: 8))
                 app.buttons["closeRoomDetail"].tap()
             }
-            app.buttons["roomBackHome"].tap(); XCTAssertEqual(status(app), before)
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(status(app), before)
         }
     }
     @MainActor func testV83OffDayScoreboardOpensExistingCalendar() {
@@ -215,12 +216,12 @@ final class ClubCareerVisualFlowTests: XCTestCase {
         app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
         let before = status(app)
         app.buttons["managementTab-game"].tap()
-        XCTAssertTrue(app.staticTexts["다음 경기"].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "다음 경기 ·")).firstMatch.exists)
         XCTAssertTrue(app.buttons["roomPrimary"].label.contains("다음 일정"))
         capture(app, "v83-offday-stadium")
         app.buttons["roomPrimary"].tap()
         XCTAssertTrue(app.buttons["closeCalendar"].waitForExistence(timeout: 8))
-        app.buttons["closeCalendar"].tap(); app.buttons["roomBackHome"].tap()
+        app.buttons["closeCalendar"].tap(); app.buttons["managementTab-home"].tap()
         XCTAssertEqual(status(app), before)
     }
 

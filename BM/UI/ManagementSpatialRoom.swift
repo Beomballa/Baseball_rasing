@@ -456,6 +456,8 @@ struct ManagementStadiumRoom<Header: View>: View {
     let scheduleTitle: String
     let date: String
     let teams: [String]
+    let fixtureNumber: Int?
+    let schools: [School]
     let entryTitle: String
     let entryStatus: String
     let choose: (String) -> Void
@@ -471,7 +473,7 @@ struct ManagementStadiumRoom<Header: View>: View {
                             header
                             toolbar
                             scoreboard.padding(.horizontal, 16)
-                            ForEach([("facility-analysis", "더그아웃 · 상대 분석"), ("facility-gameRecords", "기록석 · 경기 기록"), ("facility-standings", "외야 게시판 · 리그 순위")], id: \.0) { id, title in
+                            ForEach([("facility-analysis", "더그아웃 · 상대 분석"), ("facility-gameRecords", "기록석 · 경기 기록")], id: \.0) { id, title in
                                 Button { choose(id) } label: {
                                     HStack { Text(title); Spacer(); Text("›") }.frame(maxWidth: .infinity, minHeight: 44)
                                 }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier(id)
@@ -494,10 +496,6 @@ struct ManagementStadiumRoom<Header: View>: View {
     }
     private var toolbar: some View {
         HStack {
-            Button { selection = .home } label: {
-                Text("‹ 홈").font(ManagementPixelFont.readable(.label)).padding(.horizontal, 10).frame(minHeight: 44)
-                    .background(GameTheme.boardPanel.opacity(0.92))
-            }.accessibilityIdentifier("roomBackHome")
             Spacer()
             ManagementSettingsButton { choose("clubhouse-settings") }
         }.buttonStyle(.plain).foregroundStyle(GameTheme.boardInk)
@@ -506,7 +504,7 @@ struct ManagementStadiumRoom<Header: View>: View {
         VStack(spacing: typeSize.isAccessibilitySize ? 4 : 0) {
             let headingLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
             headingLayout {
-                ledText(scheduleTitle, color: GameTheme.gold)
+                ledText(fixtureNumber.map { scheduleTitle + " · " + String($0) + "차전" } ?? scheduleTitle, color: GameTheme.gold)
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
                 ledText(date, color: GameTheme.gold).accessibilityIdentifier("stadiumScheduleDate")
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -516,9 +514,9 @@ struct ManagementStadiumRoom<Header: View>: View {
             let teamsLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
             teamsLayout {
                 if teams.count == 2 {
-                    ledText(teams[0]).frame(maxWidth: .infinity).padding(.vertical, 4).background(Color(hex: 0x291920))
+                    teamCell(teams[0], designation: "원정", tint: Color(hex: 0x291920))
                     ledText("VS", color: GameTheme.gold).font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(10))
-                    ledText(teams[1]).frame(maxWidth: .infinity).padding(.vertical, 4).background(Color(hex: 0x102438))
+                    teamCell(teams[1], designation: "홈", tint: Color(hex: 0x102438))
                 } else { ledText(teams.first ?? "일정 확인").frame(maxWidth: .infinity) }
             }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(12))
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
@@ -527,8 +525,10 @@ struct ManagementStadiumRoom<Header: View>: View {
             Rectangle().fill(GameTheme.boardLine).frame(height: 1).accessibilityHidden(true)
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))
             layout {
-                Button { choose("facility-calendar") } label: { ledText("일정 보기 ›").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                Button { choose("facility-calendar") } label: { ledText("일정 ›").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("facility-calendar")
+                Button { choose("facility-standings") } label: { ledText("순위 ›").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                    .accessibilityIdentifier("facility-standings").accessibilityLabel("리그 순위")
                 Button { choose("roomPrimary") } label: {
                     ledText(entryTitle + " ›", color: GameTheme.gold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                 }.accessibilityIdentifier("roomPrimary").accessibilityHint(entryStatus)
@@ -542,7 +542,39 @@ struct ManagementStadiumRoom<Header: View>: View {
                 StadiumLEDDots(pitch: 3, diameter: 0.7).fill(Color(hex: 0x729187).opacity(0.18))
                     .accessibilityHidden(true).allowsHitTesting(false)
             }
-            .overlay { Rectangle().strokeBorder(Color(hex: 0x65757b), lineWidth: 2).allowsHitTesting(false) }
+            .overlay {
+                ZStack {
+                    Rectangle().strokeBorder(Color(hex: 0x65757b), lineWidth: 2)
+                    VStack {
+                        rivets
+                        Spacer(minLength: 0)
+                        rivets
+                    }.padding(4)
+                }.accessibilityHidden(true).allowsHitTesting(false)
+            }
+    }
+    private var rivets: some View {
+        HStack {
+            Rectangle().fill(Color(hex: 0xa5a898)).frame(width: 2, height: 2)
+            Spacer(minLength: 0)
+            Rectangle().fill(Color(hex: 0xa5a898)).frame(width: 2, height: 2)
+        }
+    }
+    private func teamCell(_ name: String, designation: String, tint: Color) -> some View {
+        VStack(spacing: 3) {
+            Text(designation).font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(9))
+                .foregroundStyle(GameTheme.boardInk.opacity(0.75))
+            HStack(spacing: 4) {
+                if !typeSize.isAccessibilitySize {
+                    if let school = schools.first(where: { $0.name == name }) {
+                        SchoolCrest(school: school).frame(width: 18, height: 18).accessibilityHidden(true)
+                    } else if let club = ClubIdentity.resolve(name: name) {
+                        Image(club.asset).resizable().interpolation(.none).scaledToFit().frame(width: 18, height: 18).accessibilityHidden(true)
+                    }
+                }
+                ledText(name)
+            }
+        }.frame(maxWidth: .infinity).padding(.vertical, 4).padding(.horizontal, 3).background(tint)
     }
     private func ledText(_ value: String, color: Color = GameTheme.boardInk) -> some View {
         Text(value).modifier(StadiumLEDLettering(color: color, textured: !typeSize.isAccessibilitySize))
@@ -550,12 +582,11 @@ struct ManagementStadiumRoom<Header: View>: View {
     private func stadium(width: CGFloat) -> some View {
         let height = width * 1.5
         return ZStack(alignment: .top) {
-            Image("StadiumInteriorV83").resizable().interpolation(.none)
+            Image("StadiumInteriorV86").resizable().interpolation(.none)
                 .frame(width: width, height: height).accessibilityHidden(true)
             scoreboard.frame(width: width * 0.80).offset(y: height * 0.073)
             structure("facility-analysis", "상대 분석 ›", x: 0.184, y: 0.660, width: width * 0.29, size: 14, scene: .init(width: width, height: height))
             structure("facility-gameRecords", "경기 기록 ›", x: 0.830, y: 0.696, width: width * 0.27, size: 14, scene: .init(width: width, height: height))
-            structure("facility-standings", "순위 ›", x: 0.876, y: 0.311, width: width * 0.18, size: 13, scene: .init(width: width, height: height))
         }.frame(width: width, height: height).clipped()
     }
     private func structure(_ id: String, _ title: String, x: CGFloat, y: CGFloat, width: CGFloat, size: CGFloat, scene: CGSize) -> some View {

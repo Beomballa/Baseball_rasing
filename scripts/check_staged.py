@@ -29,6 +29,8 @@ EXACT_PATHS.update({'BM/Resources/Assets.xcassets/BullpenRoomV62.imageset/Conten
 ART_HASHES.update({'BM/Resources/Assets.xcassets/BattingRoomV62.imageset/room.png': 'f1b8c2c71036db244b7f88608dd5f15c683a24370e3a97617bc615c19ccfbca6', 'BM/Resources/Assets.xcassets/BullpenRoomV62.imageset/room.png': 'e49490d20636bc456bd7ad8e4557fb307c444e98a4cac7b4e4e140e942d8f1e3', 'BM/Resources/Assets.xcassets/StadiumRoomV62.imageset/room.png': '2b50995cf1ea5e3fe264ac9073a9ef5f24fe40e71f3d4152b87bf9a783ae9270'})
 
 # V83 original generated stadium interior, reviewed with native overlays.
+EXACT_PATHS.add('BM/Resources/Assets.xcassets/StadiumInteriorV86.imageset/Contents.json')
+ART_HASHES['BM/Resources/Assets.xcassets/StadiumInteriorV86.imageset/stadium.png'] = '800699a27cdb9a649e8a5905b149347fd9b5c05847790178b42bd798869309c9'
 EXACT_PATHS.add('BM/Resources/Assets.xcassets/StadiumInteriorV83.imageset/Contents.json')
 ART_HASHES['BM/Resources/Assets.xcassets/StadiumInteriorV83.imageset/stadium.png'] = '0cb0a6c580a7e18aeea1dcd50440d90babdcc217c9d191ddb1b92191b8f0ab49'
 

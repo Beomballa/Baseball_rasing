@@ -100,15 +100,15 @@ struct PlayerHomeView: View {
         case .game: gameSection = .schedule; roomDetail = .game(gameSection)
         }
     }
-    private var stadiumSchedule: (title: String, date: String, teams: [String]) {
-        guard let calendar else { return ("일정 확인", "", ["선수 일정 확인 필요"]) }
+    private var stadiumSchedule: (title: String, date: String, teams: [String], number: Int?) {
+        guard let calendar else { return ("일정 확인", "", ["선수 일정 확인 필요"], nil) }
         let status = CalendarScheduleStatus(player: player, state: calendar)
-        guard let schedule = status.schedule else { return ("일정 확인", "", ["조회 오류 · 다시 확인"]) }
+        guard let schedule = status.schedule else { return ("일정 확인", "", ["조회 오류 · 다시 확인"], nil) }
         guard let fixture = schedule.today ?? schedule.upcoming.first(where: { $0.date.description > player.gameDate }) else {
-            return ("시즌 일정", "", ["전체 일정 확인"])
+            return ("시즌 일정", "", ["전체 일정 확인"], nil)
         }
         return (schedule.today == nil ? "다음 경기" : "오늘 경기", ManagementDisplay.date(fixture.date.description),
-                [CareerTeamDirectory.name(fixture.awayID, schools: schools), CareerTeamDirectory.name(fixture.homeID, schools: schools)])
+                [CareerTeamDirectory.name(fixture.awayID, schools: schools), CareerTeamDirectory.name(fixture.homeID, schools: schools)], fixture.number)
     }
     private var stadiumEntryTitle: String {
         switch gameLobbyAction {
@@ -138,7 +138,7 @@ struct PlayerHomeView: View {
             if selectedTab == .game {
                 let schedule = stadiumSchedule
                 ManagementStadiumRoom(selection: $selectedTab, scheduleTitle: schedule.title, date: schedule.date,
-                                      teams: schedule.teams, entryTitle: stadiumEntryTitle, entryStatus: gameLobbyAction.title,
+                                      teams: schedule.teams, fixtureNumber: schedule.number, schools: schools, entryTitle: stadiumEntryTitle, entryStatus: gameLobbyAction.title,
                                       choose: chooseFacility) { navigationHeader }
             } else {
                 ManagementSpatialRoom(asset: roomAsset, title: roomTitle, facilities: roomFacilities,
