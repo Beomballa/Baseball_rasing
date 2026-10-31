@@ -503,24 +503,27 @@ struct ManagementStadiumRoom<Header: View>: View {
         }.buttonStyle(.plain).foregroundStyle(GameTheme.boardInk)
     }
     private var scoreboard: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: typeSize.isAccessibilitySize ? 4 : 0) {
             let headingLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
             headingLayout {
-                Text(scheduleTitle).foregroundStyle(GameTheme.gold)
+                Text(scheduleTitle).foregroundStyle(GameTheme.boardInk.opacity(0.85))
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
                 Text(date).accessibilityIdentifier("stadiumScheduleDate")
             }.frame(maxWidth: .infinity, alignment: .leading)
-                .font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(12))
+                .font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(11))
+                .padding(.top, typeSize.isAccessibilitySize ? 0 : 8)
+                .padding(.bottom, typeSize.isAccessibilitySize ? 0 : 6)
             let teamsLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
             teamsLayout {
                 if teams.count == 2 {
                     Text(teams[0]).frame(maxWidth: .infinity)
-                    Text("VS").foregroundStyle(GameTheme.gold)
+                    Text("VS").font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.helper) : ManagementPixelFont.font(10)).foregroundStyle(GameTheme.boardInk.opacity(0.65))
                     Text(teams[1]).frame(maxWidth: .infinity)
                 } else { Text(teams.first ?? "일정 확인").frame(maxWidth: .infinity) }
-            }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(14))
+            }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(12))
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 .accessibilityElement(children: .combine).accessibilityIdentifier("stadiumMatchup")
+                .padding(.bottom, typeSize.isAccessibilitySize ? 0 : 6)
             Rectangle().fill(GameTheme.boardLine).frame(height: 1).accessibilityHidden(true)
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))
             layout {
@@ -529,11 +532,13 @@ struct ManagementStadiumRoom<Header: View>: View {
                 Button { choose("roomPrimary") } label: {
                     Text(entryTitle + " ›").foregroundStyle(GameTheme.gold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                 }.accessibilityIdentifier("roomPrimary").accessibilityHint(entryStatus)
-            }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(14))
+            }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(11))
                 .buttonStyle(ManagementPropButtonStyle())
-        }.foregroundStyle(GameTheme.boardInk).padding(.horizontal, 10).padding(.top, 9).padding(.bottom, 2)
+                .background(typeSize.isAccessibilitySize ? Color.clear : Color(hex: 0x0b1d2b))
+        }.foregroundStyle(GameTheme.boardInk).padding(.horizontal, 14)
+            .padding(.vertical, typeSize.isAccessibilitySize ? 9 : 0)
             .background(Color(hex: 0x102638))
-            .overlay { Rectangle().strokeBorder(Color(hex: 0x819aa9), lineWidth: 2).allowsHitTesting(false) }
+            .overlay { Rectangle().strokeBorder(Color(hex: 0x819aa9), lineWidth: 1).allowsHitTesting(false) }
     }
     private func stadium(width: CGFloat) -> some View {
         let height = width * 1.5
