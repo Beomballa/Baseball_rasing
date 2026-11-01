@@ -2,6 +2,75 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV98AppearanceSelectionsSchoolChangeAndCreationBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate(); app.launchArguments = ["-management-career-verification", "-management-empty-verification"]; app.launch()
+            XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 20))
+            if pitcher { reveal(app.buttons["role-pitcher"], app); app.buttons["role-pitcher"].tap() }
+            let name = app.textFields["playerName"]; name.tap(); name.typeText(pitcher ? "LookPitch" : "LookBat")
+            app.buttons["입력 완료"].tap()
+            reveal(app.buttons["schoolPicker"], app); app.buttons["schoolPicker"].tap()
+            let school = app.buttons["hs-ref-001"]; reveal(school, app); school.tap()
+            app.buttons["creationSection-appearance"].tap()
+            XCTAssertTrue(app.buttons["hairStyle-0"].waitForExistence(timeout: 10))
+            capture(app, pitcher ? "v98-pitcher-hair" : "v98-batter-hair")
+            let hair = app.buttons["hairStyle-4"]; revealAppearance(hair, app); hair.tap(); XCTAssertTrue(hair.isSelected)
+            let face = app.buttons["appearanceTab-face"]; revealAppearance(face, app); face.tap()
+            let eye = app.buttons["eyeShape-2"]; revealAppearance(eye, app); eye.tap(); XCTAssertTrue(eye.isSelected)
+            let brow = app.buttons["browShape-3"]; revealAppearance(brow, app); brow.tap(); XCTAssertTrue(brow.isSelected)
+            capture(app, pitcher ? "v98-pitcher-face" : "v98-batter-face")
+            let expressions = app.buttons["appearanceTab-expression"]; revealAppearance(expressions, app); expressions.tap()
+            let expression = app.buttons["expression-4"]; revealAppearance(expression, app); expression.tap()
+            capture(app, pitcher ? "v98-pitcher-expression" : "v98-batter-expression")
+            let colors = app.buttons["appearanceTab-colors"]; revealAppearance(colors, app); colors.tap()
+            let skin = app.buttons["appearanceColor-skin-2"]; revealAppearance(skin, app); skin.tap()
+            let color = app.buttons["appearanceColor-hair-4"]; revealAppearance(color, app); color.tap()
+            let kit = app.descendants(matching: .any).matching(identifier: "appearanceSchoolKit").firstMatch
+            revealAppearance(kit, app); XCTAssertTrue(kit.label.contains("서울북악고"))
+            capture(app, pitcher ? "v98-pitcher-colors" : "v98-batter-colors")
+            app.buttons["creationSection-information"].tap(); reveal(app.buttons["schoolPicker"], app); app.buttons["schoolPicker"].tap()
+            let other = app.buttons["hs-ref-002"]; reveal(other, app); other.tap()
+            app.buttons["creationSection-appearance"].tap(); app.buttons["appearanceTab-colors"].tap()
+            revealAppearance(kit, app); XCTAssertTrue(kit.label.contains("한강청운고"))
+            XCTAssertTrue(app.buttons["appearanceColor-skin-2"].isSelected)
+            capture(app, pitcher ? "v98-pitcher-school-changed" : "v98-batter-school-changed")
+            app.buttons["이 모습으로 계속"].tap()
+            let create = app.buttons["createPlayer"]; reveal(create, app); create.tap()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 20))
+            XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains(pitcher ? "LookPitch" : "LookBat"))
+            capture(app, pitcher ? "v98-pitcher-created-home" : "v98-batter-created-home")
+        }
+    }
+    @MainActor func testV98AppearanceLargeTextSmallScreenActions() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-empty-verification",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]; app.launch()
+        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 20))
+        app.buttons["creationSection-appearance"].tap()
+        let cap = app.buttons["appearanceCap"]; XCTAssertTrue(cap.waitForExistence(timeout: 10)); revealAppearance(cap, app); cap.tap()
+        XCTAssertEqual(cap.value as? String, "벗음")
+        let next = app.buttons["이 모습으로 계속"]
+        XCTAssertTrue(next.isHittable); XCTAssertGreaterThanOrEqual(next.frame.height, 44)
+        let colors = app.buttons["appearanceTab-colors"]; revealAppearance(colors, app); colors.tap()
+        let skin = app.buttons["appearanceColor-skin-5"]; revealAppearance(skin, app); skin.tap(); XCTAssertTrue(skin.isSelected)
+        capture(app, "v98-large-colors")
+        next.tap(); XCTAssertTrue(app.staticTexts["creationReadiness"].waitForExistence(timeout: 10))
+    }
+    @MainActor private func revealAppearance(_ element: XCUIElement, _ app: XCUIApplication) {
+        for _ in 0..<12 {
+            let top = app.buttons["creationSection-appearance"].frame.maxY + 8
+            let bottom = app.buttons["이 모습으로 계속"].frame.minY - 8
+            if element.exists && element.isHittable && element.frame.minY > top && element.frame.maxY < bottom { return }
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let upper = origin.withOffset(CGVector(dx: app.frame.midX, dy: top + 24))
+            let lower = origin.withOffset(CGVector(dx: app.frame.midX, dy: bottom - 24))
+            if element.exists && element.frame.midY < top { upper.press(forDuration: 0.05, thenDragTo: lower) }
+            else { lower.press(forDuration: 0.05, thenDragTo: upper) }
+        }
+        XCTFail("외형 선택 항목을 고정 조작부 밖으로 스크롤하지 못했습니다: " + element.identifier)
+    }
     @MainActor func testV50RegionalSchoolEmblemsCreationAndHomeBothRoles() {
         continueAfterFailure = false
         let app = XCUIApplication()

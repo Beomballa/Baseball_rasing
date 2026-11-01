@@ -5,6 +5,57 @@ import UIKit
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV98CreationLookDiskReopenAndLegacyPreservation() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("look.store")
+        var id: UUID!
+        try autoreleasepool {
+            let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+            var value = draft(.batter)
+            value.appearance.hairStyle = 7; value.appearance.expression = 5
+            value.appearance.eyeShape = 2; value.appearance.browShape = 3
+            value.appearance.creationVersion = 1; value.appearance.schoolKitID = value.schoolID
+            let player = try CareerStore.create(value, schools: SchoolCatalog.load(), in: c)
+            id = player.id; XCTAssertEqual(player.appearance, value.appearance)
+            XCTAssertEqual(player.gameDate, "2026-04-01")
+        }
+        try autoreleasepool {
+            let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+            let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == id })
+            XCTAssertEqual(p.appearance.hairStyle, 7); XCTAssertEqual(p.appearance.expression, 5)
+            XCTAssertEqual(p.appearance.eyeIndex, 2); XCTAssertEqual(p.appearance.browIndex, 3)
+            XCTAssertEqual(p.appearance.schoolKitID, "hs-ref-001")
+            let original = p.lifecycleData
+            _ = CreationAvatarRaster.image(p.appearance, number: p.jerseyNumber, mode: .full)
+            XCTAssertEqual(p.lifecycleData, original); XCTAssertFalse(c.hasChanges)
+        }
+        let old = PlayerAppearance(skin: 4, hair: 2, kit: 3, hairStyle: 2, expression: 1)
+        let decoded = try JSONDecoder().decode(PlayerAppearance.self,
+            from: Data("{\"skin\":4,\"hair\":2,\"kit\":3,\"hairStyle\":2,\"expression\":1}".utf8))
+        XCTAssertEqual(old, decoded); XCTAssertNil(decoded.creationVersion)
+    }
+    func testV98SchoolKitsAndIndependentRasterSelections() throws {
+        let schools = try SchoolCatalog.load()
+        XCTAssertEqual(SchoolCreationKit.all.count, 50)
+        XCTAssertEqual(Set(SchoolCreationKit.all.map(\.id)), Set(schools.map(\.id)))
+        var a = PlayerAppearance(); a.creationVersion = 1; a.schoolKitID = "hs-ref-001"
+        let base = try XCTUnwrap(CreationAvatarRaster.image(a, cap: false)?.pngData())
+        for change in [0, 1, 2, 3] {
+            var b = a
+            if change == 0 { b.hairStyle = 6 }
+            if change == 1 { b.eyeShape = 3 }
+            if change == 2 { b.browShape = 3 }
+            if change == 3 { b.expression = 3 }
+            XCTAssertNotEqual(base, try XCTUnwrap(CreationAvatarRaster.image(b, cap: false)?.pngData()))
+        }
+        let uniform = try XCTUnwrap(CreationAvatarRaster.image(a, cap: true, mode: .full)?.pngData())
+        a.schoolKitID = "hs-ref-002"
+        XCTAssertNotEqual(uniform, try XCTUnwrap(CreationAvatarRaster.image(a, cap: true, mode: .full)?.pngData()))
+        XCTAssertNotEqual(uniform, try XCTUnwrap(CreationAvatarRaster.image(a, role: .pitcher, cap: true, mode: .full)?.pngData()))
+        a.eyeShape = 9; XCTAssertFalse(a.isValid)
+    }
     func testV62EdgeObjectsKeep44PointTargetsInsideRoom() {
         for width in [320.0, 375, 390, 430] {
             let size = CGSize(width: width, height: width * 1660 / 948)

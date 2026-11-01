@@ -22,12 +22,17 @@ struct PlayerCreationView: View {
     private enum CreationSection: String, CaseIterable {
         case information, abilities, appearance, review
         var title: String {
-            switch self { case .information: "1 정보"; case .abilities: "2 능력·구종"; case .appearance: "3 외형"; case .review: "4 확인" }
+            switch self { case .information: "정보"; case .abilities: "능력"; case .appearance: "외형"; case .review: "확인" }
         }
     }
 
     var body: some View {
         ScrollViewReader { proxy in
+        Group {
+        if section == .appearance {
+            CreationAppearanceEditor(draft: $draft, school: selectedSchool,
+                previous: { section = .abilities }, next: { section = .review })
+        } else {
         ScrollView {
             VStack(spacing: ManagementTheme.Space.screen) {
                 HStack(alignment: .center, spacing: 12) {
@@ -148,42 +153,8 @@ struct PlayerCreationView: View {
                     }
                 }.id(CreationSection.abilities.rawValue)
                 if draft.role == .pitcher { pitchSelection }
-                GamePanel(title: draft.role == .pitcher ? "05  도트 외형" : "04  도트 외형", onBoard: true) {
-                    if let number = Int(draft.jerseyNumber), (0...99).contains(number) {
-                        DetailGamePortrait(role: draft.role, appearance: draft.appearance,
-                                           number: number, hand: draft.throwingHand.rawValue)
-                            .frame(height: 150).frame(maxWidth: .infinity).accessibilityHidden(true)
-                    } else {
-                        PixelPlayer(appearance: draft.appearance).frame(width: 48, height: 64).accessibilityHidden(true)
-                        Text("등번호를 입력하면 경기 전신 도트를 확인할 수 있습니다.").managementFont(.helper)
-                    }
-                    Text("내 선수 미리보기 · " + (draft.role == .pitcher ? draft.throwingHand.label : draft.position.label))
-                        .managementFont(.label).accessibilityIdentifier("creationMotionPreview")
-                    Text("선택한 도트 외형·색상은 내 선수의 경기·연습에 적용됩니다. 학교 공식 유니폼이나 상대 팀 색상을 뜻하지 않습니다.")
-                        .managementFont(.helper)
-                    palette("피부", selection: $draft.appearance.skin, colors: PlayerAppearance.skinColors)
-                    palette("머리색", selection: $draft.appearance.hair, colors: PlayerAppearance.hairColors)
-                    palette("유니폼", selection: $draft.appearance.kit, colors: PlayerAppearance.kitColors)
-                    Text("머리 모양").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    LazyVGrid(columns: choiceColumns, spacing: 8) {
-                        ForEach(Array(["짧은 머리", "옆가르마", "곱슬머리"].enumerated()), id: \.offset) { index, label in
-                            choice(label, selected: draft.appearance.hairStyle == index, id: "hairStyle-\(index)") { draft.appearance.hairStyle = index }
-                        }
-                    }
-                    Text("표정").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    LazyVGrid(columns: choiceColumns, spacing: 8) {
-                        ForEach(Array(["기본", "집중", "미소"].enumerated()), id: \.offset) { index, label in
-                            choice(label, selected: draft.appearance.expression == index, id: "expression-\(index)") { draft.appearance.expression = index }
-                        }
-                    }
-                    HStack(spacing: 12) {
-                        PixelPlayer(appearance: draft.appearance).frame(width: 48, height: 64).accessibilityHidden(true)
-                        Text("피부 \(draft.appearance.skin + 1) · 머리색 \(draft.appearance.hair + 1) · 유니폼 \(draft.appearance.kit + 1)")
-                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                            .accessibilityIdentifier("appearanceSummary")
-                    }
-
-                }.id(CreationSection.appearance.rawValue)
+                Button("도트 외형 꾸미기") { focusedField = nil; section = .appearance }
+                    .buttonStyle(GameButtonStyle(onBoard: true)).id(CreationSection.appearance.rawValue)
 
                 registrationReview.id(CreationSection.review.rawValue)
                 if let errorMessage {
@@ -198,6 +169,12 @@ struct PlayerCreationView: View {
             }.padding(16)
         }
         .scrollDismissesKeyboard(.interactively)
+        .task(id: section) {
+            await Task.yield()
+            proxy.scrollTo(section.rawValue, anchor: .top)
+        }
+        }
+        }
         .safeAreaInset(edge: .top, spacing: 0) { creationNavigation(proxy) }
         }
         .background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
@@ -205,8 +182,11 @@ struct PlayerCreationView: View {
         .toolbarBackground(GameTheme.boardPanel, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .navigationTitle("선수 생성").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("선수 만들기").navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("선수 만들기").font(ManagementPixelFont.readable(.screenTitle))
+            }
             if focusedField != nil {
                 ManagementToolbarAction(title: "입력 완료", placement: .topBarTrailing) { focusedField = nil }
             }
@@ -226,7 +206,11 @@ struct PlayerCreationView: View {
         .onDisappear { registrationTask?.cancel(); registrationTask = nil }
         .onChange(of: draft.name) { _, _ in errorMessage = nil }
         .onChange(of: draft.jerseyNumber) { _, _ in errorMessage = nil }
-        .onChange(of: draft.schoolID) { _, _ in errorMessage = nil }
+        .onChange(of: draft.schoolID) { _, id in
+            errorMessage = nil
+            draft.appearance.schoolKitID = SchoolCreationKit.find(id)?.id
+        }
+        .onAppear { draft.appearance.creationVersion = 1 }
     }
 
     private func creationNavigation(_ proxy: ScrollViewProxy) -> some View {
@@ -234,11 +218,10 @@ struct PlayerCreationView: View {
             ForEach(CreationSection.allCases, id: \.rawValue) { target in
                 Button {
                     focusedField = nil; section = target
-                    withAnimation(reduced ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo(target.rawValue, anchor: .top) }
                 } label: {
                     Text(target.title).font(ManagementPixelFont.readable(.label)).fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, minHeight: 44)
-                }.buttonStyle(GameButtonStyle(secondary: section != target, onBoard: true))
+                }.buttonStyle(CreationStepButton(selected: section == target))
                     .accessibilityAddTraits(section == target ? .isSelected : [])
                     .accessibilityIdentifier("creationSection-" + target.rawValue)
             }
@@ -539,5 +522,15 @@ private struct CreationRegistrationOverlay: View {
                 }
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("creationRegistered")
+    }
+}
+
+private struct CreationStepButton: ButtonStyle {
+    let selected: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.foregroundStyle(selected ? GameTheme.navy : GameTheme.boardInk)
+            .background(selected ? GameTheme.gold : GameTheme.boardPanel)
+            .overlay(ManagementStepFrame().strokeBorder(selected ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
+            .opacity(configuration.isPressed ? 0.75 : 1)
     }
 }

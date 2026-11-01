@@ -160,7 +160,12 @@ enum CareerSchemaV15: VersionedSchema {
         var isRetired: Bool { (try? lifecycle.retirement) != nil }
         var role: PlayerRole { PlayerRole(rawValue: roleRaw) ?? .batter }
         var appearance: PlayerAppearance {
-            PlayerAppearance(skin: skin, hair: hair, kit: kit, hairStyle: hairStyle, expression: expression)
+            var value = PlayerAppearance(skin: skin, hair: hair, kit: kit, hairStyle: hairStyle, expression: expression)
+            if let look = try? lifecycle.creationLook {
+                value.eyeShape = look.eye; value.browShape = look.brow
+                value.schoolKitID = look.schoolKitID; value.creationVersion = look.version
+            }
+            return value
         }
         var roleDetail: String {
             role == .batter ? (FieldPosition(rawValue: positionRaw)?.label ?? positionRaw)

@@ -92,6 +92,7 @@ struct MatchView: View {
         copy.pitches = original.pitches.map { CareerPitchMastery(code: $0.code, name: $0.name, mastery: $0.mastery, order: $0.order) }
         var practiceLife = CareerLifecycleState()
         practiceLife.preferredPitchCode = try original.lifecycle.preferredPitchCode
+        practiceLife.creationLook = try original.lifecycle.creationLook
         copy.lifecycleData = try JSONEncoder().encode(practiceLife)
         let profile = try PlayerAbilities(player: copy, archetype: nil)
         profile.archetypeRaw = abilities.archetypeRaw; profile.productionPresetVersion = abilities.productionPresetVersion

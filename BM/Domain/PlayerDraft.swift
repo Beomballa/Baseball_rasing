@@ -35,12 +35,38 @@ struct PlayerAppearance: Equatable, Codable {
     var kit = 0
     var hairStyle = 0
     var expression = 0
+    var eyeShape: Int?
+    var browShape: Int?
+    var schoolKitID: String?
+    var creationVersion: Int?
+    static let hairNames = ["스포츠컷", "옆가르마", "곱슬머리", "크루컷", "내린 머리", "가르마", "뻗은 머리", "웨이브"]
+    static let expressionNames = ["담담함", "집중", "옅은 미소", "환한 미소", "자신만만", "승부욕"]
+    static let eyeNames = ["기본", "둥근 눈", "집중", "편안한 눈"]
+    static let browNames = ["일자", "굵은", "가는", "올라간"]
+    var eyeIndex: Int { eyeShape ?? 0 }
+    var browIndex: Int { browShape ?? 0 }
     static let skinColors = [0xefbe91, 0xc88d62, 0x895739, 0xf7d5b2, 0xb5764c, 0x65432f]
     static let hairColors = [0x242b35, 0x68432e, 0xa9743f, 0x3e303a, 0xc6a368, 0x8f949c]
     static let kitColors = [0x214e72, 0x226e55, 0x80464b, 0x654d86, 0x9c6234, 0x43525f]
     var isValid: Bool {
         (0..<6).contains(skin) && (0..<6).contains(hair) && (0..<6).contains(kit)
-        && (0..<3).contains(hairStyle) && (0..<3).contains(expression)
+        && Self.hairNames.indices.contains(hairStyle) && Self.expressionNames.indices.contains(expression)
+        && Self.eyeNames.indices.contains(eyeIndex) && Self.browNames.indices.contains(browIndex)
+        && (creationVersion == nil || creationVersion == 1)
+        && (schoolKitID == nil || schoolKitID!.count <= 32)
+    }
+}
+
+/// Optional JSON extension; legacy appearance columns and their index meanings stay intact.
+struct PlayerCreationLook: Codable, Equatable {
+    var version = 1
+    var eye: Int
+    var brow: Int
+    var schoolKitID: String?
+    var isValid: Bool {
+        version == 1 && PlayerAppearance.eyeNames.indices.contains(eye)
+        && PlayerAppearance.browNames.indices.contains(brow)
+        && (schoolKitID == nil || schoolKitID!.count <= 32)
     }
 }
 

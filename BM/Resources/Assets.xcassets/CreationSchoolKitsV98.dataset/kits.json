@@ -1,0 +1,1002 @@
+[
+  {
+    "id": "hs-ref-001",
+    "wordmark": "서울북악",
+    "primary": "#953e3f",
+    "accent": "#e8b45f",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#953e3f",
+      "pants": "#f4f0df",
+      "capCrown": "#953e3f",
+      "capBrim": "#152638",
+      "trim": "#e8b45f",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-001-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#953e3f"
+    }
+  },
+  {
+    "id": "hs-ref-002",
+    "wordmark": "한강청운",
+    "primary": "#245e7f",
+    "accent": "#7ab9be",
+    "home": {
+      "pattern": "retro-vest",
+      "body": "#f4f0df",
+      "sleeves": "#245e7f",
+      "pants": "#f4f0df",
+      "capCrown": "#245e7f",
+      "capBrim": "#102638",
+      "trim": "#7ab9be",
+      "patternLabel": "레트로 베스트",
+      "designID": "hs-ref-002-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#245e7f"
+    }
+  },
+  {
+    "id": "hs-ref-003",
+    "wordmark": "동대문혜성",
+    "primary": "#364f85",
+    "accent": "#e5bb61",
+    "home": {
+      "pattern": "chest-band",
+      "body": "#f4f0df",
+      "sleeves": "#364f85",
+      "pants": "#f4f0df",
+      "capCrown": "#364f85",
+      "capBrim": "#172239",
+      "trim": "#e5bb61",
+      "patternLabel": "체스트 밴드",
+      "designID": "hs-ref-003-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#364f85"
+    }
+  },
+  {
+    "id": "hs-ref-004",
+    "wordmark": "성동은솔",
+    "primary": "#377455",
+    "accent": "#c4a467",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#377455",
+      "pants": "#f4f0df",
+      "capCrown": "#377455",
+      "capBrim": "#172d29",
+      "trim": "#c4a467",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-004-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#377455"
+    }
+  },
+  {
+    "id": "hs-ref-005",
+    "wordmark": "잠실가람",
+    "primary": "#843b42",
+    "accent": "#e29a40",
+    "home": {
+      "pattern": "pinstripe",
+      "body": "#f4f0df",
+      "sleeves": "#843b42",
+      "pants": "#f4f0df",
+      "capCrown": "#843b42",
+      "capBrim": "#252c3b",
+      "trim": "#e29a40",
+      "patternLabel": "핀스트라이프",
+      "designID": "hs-ref-005-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#843b42"
+    }
+  },
+  {
+    "id": "hs-ref-006",
+    "wordmark": "강동명휘",
+    "primary": "#58497c",
+    "accent": "#e3aa49",
+    "home": {
+      "pattern": "pinstripe",
+      "body": "#f4f0df",
+      "sleeves": "#58497c",
+      "pants": "#f4f0df",
+      "capCrown": "#58497c",
+      "capBrim": "#20263a",
+      "trim": "#e3aa49",
+      "patternLabel": "핀스트라이프",
+      "designID": "hs-ref-006-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#58497c"
+    }
+  },
+  {
+    "id": "hs-ref-007",
+    "wordmark": "서초명륜",
+    "primary": "#386659",
+    "accent": "#c29e52",
+    "home": {
+      "pattern": "classic-piping",
+      "body": "#f4f0df",
+      "sleeves": "#386659",
+      "pants": "#f4f0df",
+      "capCrown": "#386659",
+      "capBrim": "#182e36",
+      "trim": "#c29e52",
+      "patternLabel": "클래식 파이핑",
+      "designID": "hs-ref-007-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#386659"
+    }
+  },
+  {
+    "id": "hs-ref-008",
+    "wordmark": "마포월성",
+    "primary": "#2f5270",
+    "accent": "#a6b9c1",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#2f5270",
+      "pants": "#f4f0df",
+      "capCrown": "#2f5270",
+      "capBrim": "#172236",
+      "trim": "#a6b9c1",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-008-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#2f5270"
+    }
+  },
+  {
+    "id": "hs-ref-009",
+    "wordmark": "송파백린",
+    "primary": "#883f42",
+    "accent": "#e8b45f",
+    "home": {
+      "pattern": "retro-vest",
+      "body": "#f4f0df",
+      "sleeves": "#883f42",
+      "pants": "#f4f0df",
+      "capCrown": "#883f42",
+      "capBrim": "#152638",
+      "trim": "#e8b45f",
+      "patternLabel": "레트로 베스트",
+      "designID": "hs-ref-009-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#883f42"
+    }
+  },
+  {
+    "id": "hs-ref-010",
+    "wordmark": "강북서광",
+    "primary": "#245e7f",
+    "accent": "#7ab9be",
+    "home": {
+      "pattern": "chest-band",
+      "body": "#f4f0df",
+      "sleeves": "#245e7f",
+      "pants": "#f4f0df",
+      "capCrown": "#245e7f",
+      "capBrim": "#102638",
+      "trim": "#7ab9be",
+      "patternLabel": "체스트 밴드",
+      "designID": "hs-ref-010-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#245e7f"
+    }
+  },
+  {
+    "id": "hs-ref-011",
+    "wordmark": "용산해오름",
+    "primary": "#364f85",
+    "accent": "#e5bb61",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#364f85",
+      "pants": "#f4f0df",
+      "capCrown": "#364f85",
+      "capBrim": "#172239",
+      "trim": "#e5bb61",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-011-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#364f85"
+    }
+  },
+  {
+    "id": "hs-ref-012",
+    "wordmark": "은평청솔",
+    "primary": "#377455",
+    "accent": "#c4a467",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#377455",
+      "pants": "#f4f0df",
+      "capCrown": "#377455",
+      "capBrim": "#172d29",
+      "trim": "#c4a467",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-012-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#377455"
+    }
+  },
+  {
+    "id": "hs-ref-013",
+    "wordmark": "강남태성",
+    "primary": "#843b42",
+    "accent": "#e29a40",
+    "home": {
+      "pattern": "pinstripe",
+      "body": "#f4f0df",
+      "sleeves": "#843b42",
+      "pants": "#f4f0df",
+      "capCrown": "#843b42",
+      "capBrim": "#252c3b",
+      "trim": "#e29a40",
+      "patternLabel": "핀스트라이프",
+      "designID": "hs-ref-013-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#843b42"
+    }
+  },
+  {
+    "id": "hs-ref-014",
+    "wordmark": "고양서린",
+    "primary": "#58497c",
+    "accent": "#e3aa49",
+    "home": {
+      "pattern": "classic-piping",
+      "body": "#f4f0df",
+      "sleeves": "#58497c",
+      "pants": "#f4f0df",
+      "capCrown": "#58497c",
+      "capBrim": "#20263a",
+      "trim": "#e3aa49",
+      "patternLabel": "클래식 파이핑",
+      "designID": "hs-ref-014-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#58497c"
+    }
+  },
+  {
+    "id": "hs-ref-015",
+    "wordmark": "수원화린",
+    "primary": "#386659",
+    "accent": "#c29e52",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#386659",
+      "pants": "#f4f0df",
+      "capCrown": "#386659",
+      "capBrim": "#182e36",
+      "trim": "#c29e52",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-015-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#386659"
+    }
+  },
+  {
+    "id": "hs-ref-017",
+    "wordmark": "화성비연",
+    "primary": "#2f5270",
+    "accent": "#a6b9c1",
+    "home": {
+      "pattern": "chest-band",
+      "body": "#f4f0df",
+      "sleeves": "#2f5270",
+      "pants": "#f4f0df",
+      "capCrown": "#2f5270",
+      "capBrim": "#172236",
+      "trim": "#a6b9c1",
+      "patternLabel": "체스트 밴드",
+      "designID": "hs-ref-017-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#2f5270"
+    }
+  },
+  {
+    "id": "hs-ref-018",
+    "wordmark": "시흥연성원",
+    "primary": "#883f42",
+    "accent": "#e8b45f",
+    "home": {
+      "pattern": "chest-band",
+      "body": "#f4f0df",
+      "sleeves": "#883f42",
+      "pants": "#f4f0df",
+      "capCrown": "#883f42",
+      "capBrim": "#152638",
+      "trim": "#e8b45f",
+      "patternLabel": "체스트 밴드",
+      "designID": "hs-ref-018-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#883f42"
+    }
+  },
+  {
+    "id": "hs-ref-019",
+    "wordmark": "안산해송",
+    "primary": "#245e7f",
+    "accent": "#7ab9be",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#245e7f",
+      "pants": "#f4f0df",
+      "capCrown": "#245e7f",
+      "capBrim": "#102638",
+      "trim": "#7ab9be",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-019-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#245e7f"
+    }
+  },
+  {
+    "id": "hs-ref-020",
+    "wordmark": "안양만휘",
+    "primary": "#364f85",
+    "accent": "#e5bb61",
+    "home": {
+      "pattern": "pinstripe",
+      "body": "#f4f0df",
+      "sleeves": "#364f85",
+      "pants": "#f4f0df",
+      "capCrown": "#364f85",
+      "capBrim": "#172239",
+      "trim": "#e5bb61",
+      "patternLabel": "핀스트라이프",
+      "designID": "hs-ref-020-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#364f85"
+    }
+  },
+  {
+    "id": "hs-ref-021",
+    "wordmark": "의정부천봉",
+    "primary": "#377455",
+    "accent": "#c4a467",
+    "home": {
+      "pattern": "classic-piping",
+      "body": "#f4f0df",
+      "sleeves": "#377455",
+      "pants": "#f4f0df",
+      "capCrown": "#377455",
+      "capBrim": "#172d29",
+      "trim": "#c4a467",
+      "patternLabel": "클래식 파이핑",
+      "designID": "hs-ref-021-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#377455"
+    }
+  },
+  {
+    "id": "hs-ref-022",
+    "wordmark": "성남문현",
+    "primary": "#843b42",
+    "accent": "#e29a40",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#843b42",
+      "pants": "#f4f0df",
+      "capCrown": "#843b42",
+      "capBrim": "#252c3b",
+      "trim": "#e29a40",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-022-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#843b42"
+    }
+  },
+  {
+    "id": "hs-ref-023",
+    "wordmark": "남양주정산",
+    "primary": "#58497c",
+    "accent": "#e3aa49",
+    "home": {
+      "pattern": "retro-vest",
+      "body": "#f4f0df",
+      "sleeves": "#58497c",
+      "pants": "#f4f0df",
+      "capCrown": "#58497c",
+      "capBrim": "#20263a",
+      "trim": "#e3aa49",
+      "patternLabel": "레트로 베스트",
+      "designID": "hs-ref-023-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#58497c"
+    }
+  },
+  {
+    "id": "hs-ref-024",
+    "wordmark": "평택항명",
+    "primary": "#1b665e",
+    "accent": "#c29e52",
+    "home": {
+      "pattern": "retro-vest",
+      "body": "#f4f0df",
+      "sleeves": "#1b665e",
+      "pants": "#f4f0df",
+      "capCrown": "#1b665e",
+      "capBrim": "#182e36",
+      "trim": "#c29e52",
+      "patternLabel": "레트로 베스트",
+      "designID": "hs-ref-024-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#1b665e"
+    }
+  },
+  {
+    "id": "hs-ref-025",
+    "wordmark": "부천도원",
+    "primary": "#694d72",
+    "accent": "#a6b9c1",
+    "home": {
+      "pattern": "chest-band",
+      "body": "#f4f0df",
+      "sleeves": "#694d72",
+      "pants": "#f4f0df",
+      "capCrown": "#694d72",
+      "capBrim": "#172236",
+      "trim": "#a6b9c1",
+      "patternLabel": "체스트 밴드",
+      "designID": "hs-ref-025-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#694d72"
+    }
+  },
+  {
+    "id": "hs-ref-026",
+    "wordmark": "인천제물진",
+    "primary": "#953e3f",
+    "accent": "#e8b45f",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#953e3f",
+      "pants": "#f4f0df",
+      "capCrown": "#953e3f",
+      "capBrim": "#152638",
+      "trim": "#e8b45f",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-026-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#953e3f"
+    }
+  },
+  {
+    "id": "hs-ref-027",
+    "wordmark": "인천송림원",
+    "primary": "#245e7f",
+    "accent": "#7ab9be",
+    "home": {
+      "pattern": "pinstripe",
+      "body": "#f4f0df",
+      "sleeves": "#245e7f",
+      "pants": "#f4f0df",
+      "capCrown": "#245e7f",
+      "capBrim": "#102638",
+      "trim": "#7ab9be",
+      "patternLabel": "핀스트라이프",
+      "designID": "hs-ref-027-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#245e7f"
+    }
+  },
+  {
+    "id": "hs-ref-028",
+    "wordmark": "강화고려빛",
+    "primary": "#364f85",
+    "accent": "#e5bb61",
+    "home": {
+      "pattern": "classic-piping",
+      "body": "#f4f0df",
+      "sleeves": "#364f85",
+      "pants": "#f4f0df",
+      "capCrown": "#364f85",
+      "capBrim": "#172239",
+      "trim": "#e5bb61",
+      "patternLabel": "클래식 파이핑",
+      "designID": "hs-ref-028-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#364f85"
+    }
+  },
+  {
+    "id": "hs-ref-029",
+    "wordmark": "강릉경포온",
+    "primary": "#377455",
+    "accent": "#c4a467",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#377455",
+      "pants": "#f4f0df",
+      "capCrown": "#377455",
+      "capBrim": "#172d29",
+      "trim": "#c4a467",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-029-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#377455"
+    }
+  },
+  {
+    "id": "hs-ref-030",
+    "wordmark": "춘천의암솔",
+    "primary": "#843b42",
+    "accent": "#e29a40",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#843b42",
+      "pants": "#f4f0df",
+      "capCrown": "#843b42",
+      "capBrim": "#252c3b",
+      "trim": "#e29a40",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-030-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#843b42"
+    }
+  },
+  {
+    "id": "hs-ref-031",
+    "wordmark": "대전한빛원",
+    "primary": "#315e78",
+    "accent": "#e3aa49",
+    "home": {
+      "pattern": "retro-vest",
+      "body": "#f4f0df",
+      "sleeves": "#315e78",
+      "pants": "#f4f0df",
+      "capCrown": "#315e78",
+      "capBrim": "#20263a",
+      "trim": "#e3aa49",
+      "patternLabel": "레트로 베스트",
+      "designID": "hs-ref-031-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#315e78"
+    }
+  },
+  {
+    "id": "hs-ref-032",
+    "wordmark": "청주직운",
+    "primary": "#1b665e",
+    "accent": "#c29e52",
+    "home": {
+      "pattern": "chest-band",
+      "body": "#f4f0df",
+      "sleeves": "#1b665e",
+      "pants": "#f4f0df",
+      "capCrown": "#1b665e",
+      "capBrim": "#182e36",
+      "trim": "#c29e52",
+      "patternLabel": "체스트 밴드",
+      "designID": "hs-ref-032-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#1b665e"
+    }
+  },
+  {
+    "id": "hs-ref-033",
+    "wordmark": "천안청룡원",
+    "primary": "#2f5270",
+    "accent": "#a6b9c1",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#2f5270",
+      "pants": "#f4f0df",
+      "capCrown": "#2f5270",
+      "capBrim": "#172236",
+      "trim": "#a6b9c1",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-033-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#2f5270"
+    }
+  },
+  {
+    "id": "hs-ref-034",
+    "wordmark": "공주금휘",
+    "primary": "#883f42",
+    "accent": "#e8b45f",
+    "home": {
+      "pattern": "pinstripe",
+      "body": "#f4f0df",
+      "sleeves": "#883f42",
+      "pants": "#f4f0df",
+      "capCrown": "#883f42",
+      "capBrim": "#152638",
+      "trim": "#e8b45f",
+      "patternLabel": "핀스트라이프",
+      "designID": "hs-ref-034-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#883f42"
+    }
+  },
+  {
+    "id": "hs-ref-035",
+    "wordmark": "아산온샘",
+    "primary": "#245e7f",
+    "accent": "#7ab9be",
+    "home": {
+      "pattern": "classic-piping",
+      "body": "#f4f0df",
+      "sleeves": "#245e7f",
+      "pants": "#f4f0df",
+      "capCrown": "#245e7f",
+      "capBrim": "#102638",
+      "trim": "#7ab9be",
+      "patternLabel": "클래식 파이핑",
+      "designID": "hs-ref-035-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#245e7f"
+    }
+  },
+  {
+    "id": "hs-ref-036",
+    "wordmark": "광주무등원",
+    "primary": "#386659",
+    "accent": "#e5bb61",
+    "home": {
+      "pattern": "classic-piping",
+      "body": "#f4f0df",
+      "sleeves": "#386659",
+      "pants": "#f4f0df",
+      "capCrown": "#386659",
+      "capBrim": "#172239",
+      "trim": "#e5bb61",
+      "patternLabel": "클래식 파이핑",
+      "designID": "hs-ref-036-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#386659"
+    }
+  },
+  {
+    "id": "hs-ref-037",
+    "wordmark": "전주한옥림",
+    "primary": "#377455",
+    "accent": "#c4a467",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#377455",
+      "pants": "#f4f0df",
+      "capCrown": "#377455",
+      "capBrim": "#172d29",
+      "trim": "#c4a467",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-037-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#377455"
+    }
+  },
+  {
+    "id": "hs-ref-038",
+    "wordmark": "군산금해",
+    "primary": "#843b42",
+    "accent": "#e29a40",
+    "home": {
+      "pattern": "retro-vest",
+      "body": "#f4f0df",
+      "sleeves": "#843b42",
+      "pants": "#f4f0df",
+      "capCrown": "#843b42",
+      "capBrim": "#252c3b",
+      "trim": "#e29a40",
+      "patternLabel": "레트로 베스트",
+      "designID": "hs-ref-038-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#843b42"
+    }
+  },
+  {
+    "id": "hs-ref-039",
+    "wordmark": "순천만솔",
+    "primary": "#58497c",
+    "accent": "#e3aa49",
+    "home": {
+      "pattern": "chest-band",
+      "body": "#f4f0df",
+      "sleeves": "#58497c",
+      "pants": "#f4f0df",
+      "capCrown": "#58497c",
+      "capBrim": "#20263a",
+      "trim": "#e3aa49",
+      "patternLabel": "체스트 밴드",
+      "designID": "hs-ref-039-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#58497c"
+    }
+  },
+  {
+    "id": "hs-ref-040",
+    "wordmark": "목포유달원",
+    "primary": "#1b665e",
+    "accent": "#c29e52",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#1b665e",
+      "pants": "#f4f0df",
+      "capCrown": "#1b665e",
+      "capBrim": "#182e36",
+      "trim": "#c29e52",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-040-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#1b665e"
+    }
+  },
+  {
+    "id": "hs-ref-042",
+    "wordmark": "대구팔공원",
+    "primary": "#2f5270",
+    "accent": "#a6b9c1",
+    "home": {
+      "pattern": "pinstripe",
+      "body": "#f4f0df",
+      "sleeves": "#2f5270",
+      "pants": "#f4f0df",
+      "capCrown": "#2f5270",
+      "capBrim": "#172236",
+      "trim": "#a6b9c1",
+      "patternLabel": "핀스트라이프",
+      "designID": "hs-ref-042-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#2f5270"
+    }
+  },
+  {
+    "id": "hs-ref-043",
+    "wordmark": "부산동래온",
+    "primary": "#953e3f",
+    "accent": "#e8b45f",
+    "home": {
+      "pattern": "classic-piping",
+      "body": "#f4f0df",
+      "sleeves": "#953e3f",
+      "pants": "#f4f0df",
+      "capCrown": "#953e3f",
+      "capBrim": "#152638",
+      "trim": "#e8b45f",
+      "patternLabel": "클래식 파이핑",
+      "designID": "hs-ref-043-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#953e3f"
+    }
+  },
+  {
+    "id": "hs-ref-044",
+    "wordmark": "경주서라빛",
+    "primary": "#245e7f",
+    "accent": "#7ab9be",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#245e7f",
+      "pants": "#f4f0df",
+      "capCrown": "#245e7f",
+      "capBrim": "#102638",
+      "trim": "#7ab9be",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-044-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#245e7f"
+    }
+  },
+  {
+    "id": "hs-ref-045",
+    "wordmark": "포항해룡원",
+    "primary": "#364f85",
+    "accent": "#e5bb61",
+    "home": {
+      "pattern": "retro-vest",
+      "body": "#f4f0df",
+      "sleeves": "#364f85",
+      "pants": "#f4f0df",
+      "capCrown": "#364f85",
+      "capBrim": "#172239",
+      "trim": "#e5bb61",
+      "patternLabel": "레트로 베스트",
+      "designID": "hs-ref-045-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#364f85"
+    }
+  },
+  {
+    "id": "hs-ref-046",
+    "wordmark": "김해가야온",
+    "primary": "#377455",
+    "accent": "#c4a467",
+    "home": {
+      "pattern": "chest-band",
+      "body": "#f4f0df",
+      "sleeves": "#377455",
+      "pants": "#f4f0df",
+      "capCrown": "#377455",
+      "capBrim": "#172d29",
+      "trim": "#c4a467",
+      "patternLabel": "체스트 밴드",
+      "designID": "hs-ref-046-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#377455"
+    }
+  },
+  {
+    "id": "hs-ref-047",
+    "wordmark": "울산태화림",
+    "primary": "#843b42",
+    "accent": "#e29a40",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#843b42",
+      "pants": "#f4f0df",
+      "capCrown": "#843b42",
+      "capBrim": "#252c3b",
+      "trim": "#e29a40",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-047-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#843b42"
+    }
+  },
+  {
+    "id": "hs-ref-048",
+    "wordmark": "창원진해솔",
+    "primary": "#58497c",
+    "accent": "#e3aa49",
+    "home": {
+      "pattern": "raglan",
+      "body": "#f4f0df",
+      "sleeves": "#58497c",
+      "pants": "#f4f0df",
+      "capCrown": "#58497c",
+      "capBrim": "#20263a",
+      "trim": "#e3aa49",
+      "patternLabel": "래글런",
+      "designID": "hs-ref-048-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#58497c"
+    }
+  },
+  {
+    "id": "hs-ref-049",
+    "wordmark": "마산합포원",
+    "primary": "#1b665e",
+    "accent": "#c29e52",
+    "home": {
+      "pattern": "pinstripe",
+      "body": "#f4f0df",
+      "sleeves": "#1b665e",
+      "pants": "#f4f0df",
+      "capCrown": "#1b665e",
+      "capBrim": "#182e36",
+      "trim": "#c29e52",
+      "patternLabel": "핀스트라이프",
+      "designID": "hs-ref-049-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#1b665e"
+    }
+  },
+  {
+    "id": "hs-ref-050",
+    "wordmark": "제주한라온",
+    "primary": "#694d72",
+    "accent": "#a6b9c1",
+    "home": {
+      "pattern": "classic-piping",
+      "body": "#f4f0df",
+      "sleeves": "#694d72",
+      "pants": "#f4f0df",
+      "capCrown": "#694d72",
+      "capBrim": "#172236",
+      "trim": "#a6b9c1",
+      "patternLabel": "클래식 파이핑",
+      "designID": "hs-ref-050-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#694d72"
+    }
+  },
+  {
+    "id": "hs-ref-051",
+    "wordmark": "진주남강원",
+    "primary": "#883f42",
+    "accent": "#e8b45f",
+    "home": {
+      "pattern": "shoulder-yoke",
+      "body": "#f4f0df",
+      "sleeves": "#883f42",
+      "pants": "#f4f0df",
+      "capCrown": "#883f42",
+      "capBrim": "#152638",
+      "trim": "#e8b45f",
+      "patternLabel": "숄더 요크",
+      "designID": "hs-ref-051-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#883f42"
+    }
+  },
+  {
+    "id": "hs-ref-052",
+    "wordmark": "여수오동빛",
+    "primary": "#245e7f",
+    "accent": "#7ab9be",
+    "home": {
+      "pattern": "retro-vest",
+      "body": "#f4f0df",
+      "sleeves": "#245e7f",
+      "pants": "#f4f0df",
+      "capCrown": "#245e7f",
+      "capBrim": "#102638",
+      "trim": "#7ab9be",
+      "patternLabel": "레트로 베스트",
+      "designID": "hs-ref-052-home",
+      "chestMark": "기존 팀 교표/로고",
+      "capMark": "기존 팀 교표/로고",
+      "numberColor": "#245e7f"
+    }
+  }
+]

@@ -1,5 +1,9 @@
 // !$*UTF8*$!
 { archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
+A09800000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BM/Features/Creation/CreationAvatarRaster.swift; sourceTree = SOURCE_ROOT; };
+A09800000000000000000004 = {isa = PBXBuildFile; fileRef = A09800000000000000000002; };
+A09800000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BM/Features/Creation/CreationAppearanceEditor.swift; sourceTree = SOURCE_ROOT; };
+A09800000000000000000003 = {isa = PBXBuildFile; fileRef = A09800000000000000000001; };
 3DBFEA47001613F94D58504A /* BM/UI/ClubIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BM/UI/ClubIdentity.swift; sourceTree = SOURCE_ROOT; };
 DA25B2982F80FD24768161DB /* BM/UI/ClubIdentityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BM/UI/ClubIdentityViews.swift; sourceTree = SOURCE_ROOT; };
 6AFAD316D01B966EA8A08932 /* BMTests/ClubIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BMTests/ClubIdentityTests.swift; sourceTree = SOURCE_ROOT; };
@@ -187,6 +191,8 @@ A236143DB7CCA3E1AB8A2093 = { isa = PBXBuildFile; fileRef = E8FA59705775B4CBF0099
 				C62700000000000000000001,
 				C62600000000000000000001,84F0882513B0CA85A5C841E4,08155080A6D36FDDFBC2792D,371208613C2BAE4B9672301B); name = Products; sourceTree = "<group>"; };
 048CCCA92A89CD25971E5AC3 = { isa = PBXGroup; children = (
+A09800000000000000000002,
+A09800000000000000000001,
 				3DBFEA47001613F94D58504A,
 				DA25B2982F80FD24768161DB,
 269C30775C2B6B829D5BE894,13FFE192593825FBA2A624B4,E1F81EBFA83E24ACC9E817BD,77509078732B5FE4CE1D1D42,ADD9F7947F32AFD6C71F2249,5E3D12D2AAE71C0742AAB408,6E847DEE348EC386D73ADDFF,80EBC97DBAC19946C66090E4,C6827F9C47F9C4B3DF497A43,
@@ -203,6 +209,8 @@ FCEAA05E0BAD632345B2BCCB = { isa = PBXGroup; children = (
 1922B098E983995960BE56B0 = { isa = XCConfigurationList; buildConfigurations = (
 				51274F59626DE4FAAD7F88C8 /* QA */,73EBF6644258C120893E685D,0B0C687DF8B6B8DC790B519C); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 0F5B41D395FAC9D81A0EB166 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+A09800000000000000000004,
+A09800000000000000000003,
 				0DD5B71886B61E94AED56124,
 				9E8CDF369DA865FF09C537EC,
 

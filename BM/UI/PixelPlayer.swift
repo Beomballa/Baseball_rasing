@@ -85,10 +85,11 @@ struct ManagementPlayerPortrait: View {
     private var key: String { "\(appearance.skin):\(appearance.hair):\(appearance.kit)" }
     var body: some View {
         Group {
-            if let image { Image(uiImage: image).resizable().interpolation(.none).scaledToFill().clipped() }
+            if appearance.creationVersion == 1 { CreationAvatarImage(appearance: appearance, cap: true, mode: .portrait) }
+            else if let image { Image(uiImage: image).resizable().interpolation(.none).scaledToFill().clipped() }
             else { PixelPlayer(appearance: appearance) }
         }.accessibilityHidden(true)
-            .task(id: key) { image = ManagementPortraitRaster.image(appearance) }
+            .task(id: key) { if appearance.creationVersion != 1 { image = ManagementPortraitRaster.image(appearance) } }
     }
 }
 
