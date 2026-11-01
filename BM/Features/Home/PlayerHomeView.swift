@@ -536,9 +536,10 @@ struct PlayerHomeView: View {
         let activeTrainingKind = allowedTrainingKind(selectedKind)
         let previewCode = (try? todayTraining?.snapshot())?.pitchCode ?? (try? PitchSelectionStore.resolve(player: player)) ?? ""
         return VStack(alignment: .leading, spacing: 16) {
+            if player.role == .pitcher { PitchStudyContinuationCard(player: player, calendar: calendar) }
             TrainingEquipmentShelf(player: player, values: HomeAbilitySummary(player: player, abilities: abilities).originals, selection: activeTrainingKind) { trainingKind = $0 }
             TrainingScenePreview(player: player, kind: activeTrainingKind, pitchCode: previewCode)
-            ManagementPanel(activeTrainingKind.label + " 훈련", surface: .paper) {
+            TrainingInstructionCard(kind: activeTrainingKind, drillVersion: trainingCardVersion(activeTrainingKind)) {
                 Text(trainingMethod(activeTrainingKind)).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
                 TrainingCostStrip(fatigue: player.fatigue)
                 if let current = HomeAbilitySummary(player: player, abilities: abilities).originals.first(where: { $0.id.lowercased() == "home" + activeTrainingKind.rawValue.lowercased() }) {
@@ -575,6 +576,10 @@ struct PlayerHomeView: View {
                 }.tint(GameTheme.navy).accessibilityIdentifier("trainingPreparationDetails")
             }
         }
+    }
+    private func trainingCardVersion(_ kind: TrainingKind) -> Int? {
+        if let session = try? todayTraining?.snapshot(), session.selectedKind == kind { return session.drillVersion }
+        return 1
     }
     private func trainingMethod(_ activeTrainingKind: TrainingKind) -> String {
         if let saved = todayTraining, let session = try? saved.snapshot(), session.selectedKind == activeTrainingKind {
@@ -642,9 +647,7 @@ struct PlayerHomeView: View {
         }
     }
     @ViewBuilder private func careerContent(_ section: ManagementCareerSection) -> some View {
-        ManagementFileHeader(eyebrow: section == .observation ? "SCOUT FILE" : section == .goals ? "DEVELOPMENT NOTE" : "CONTRACT DESK",
-                             title: section == .observation ? "관찰한 근거와 변화" : section == .goals ? "목표 구단으로 가는 과제" : "제의와 현재 소속",
-                             note: section == .observation ? "보고서는 확정 당시 자료 · 오늘 상태와 구분" : section == .goals ? "실제 완료한 훈련·경기로 진척 · 계약 보장 아님" : "관심 → 제의 → 수락 → 발효를 구분합니다")
+        CareerDeskHeader(section: section)
         ManagementSectionTabs(options: ManagementCareerSection.allCases, selection: Binding(get: { section }, set: { careerSection = $0; roomDetail = .career($0) }), title: { $0.title }, identifier: "careerSection", horizontal: true)
         if let calendar {
             switch section {
@@ -654,16 +657,19 @@ struct PlayerHomeView: View {
                     .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openObservationReview")
             case .goals:
                 NavigationLink { CareerObjectivesView(player: player, calendar: calendar) } label: { CareerObjectivesHomeLabel(player: player, calendar: calendar) }
-                    .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("openCareerObjectives")
-                NavigationLink { GoalSpecialActivitiesView(player: player, calendar: calendar) } label: { Text("목표 구단 · 특별 훈련 / 평가전") }
-                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openGoalSpecial")
-                NavigationLink { ClubSeasonGoalsScreen(player: player, calendar: calendar) } label: { ClubSeasonHomeLabel(player: player, calendar: calendar) }
-                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openClubSeasonGoals")
-                NavigationLink { ClubRoleScreen(player: player, calendar: calendar) } label: { Text("구단 역할 · 출전 / 승격 준비") }
-                    .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openClubRole")
+                    .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openCareerObjectives")
+                NavigationLink { GoalSpecialActivitiesView(player: player, calendar: calendar) } label: { CareerDeskRoute(icon: "NavTrainingV1", title: "목표 구단 · 특별 훈련 / 평가전", detail: "부족 조건에 맞는 훈련과 실전 점검") }
+                    .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openGoalSpecial")
+                NavigationLink { ClubSeasonGoalsScreen(player: player, calendar: calendar) } label: { HStack(spacing: 14) {
+                        Image("NavGameV1").resizable().interpolation(.none).frame(width: 40, height: 40).accessibilityHidden(true)
+                        ClubSeasonHomeLabel(player: player, calendar: calendar)
+                        Text("›").font(.title2).accessibilityHidden(true)
+                    } }.buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openClubSeasonGoals")
+                NavigationLink { ClubRoleScreen(player: player, calendar: calendar) } label: { CareerDeskRoute(icon: "NavGameV1", title: "구단 역할 · 출전 / 승격 준비", detail: "현재 역할과 다음 기용 조건 확인") }
+                    .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openClubRole")
             case .contracts:
-                NavigationLink { ContractMarketView(player: player, calendar: calendar) } label: { Text("계약 시장 · 잔류 / 외부 비교") }
-                    .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("openContractMarket")
+                NavigationLink { ContractMarketView(player: player, calendar: calendar) } label: { CareerDeskRoute(icon: "NavCareerV1", title: "계약 시장 · 잔류 / 외부 비교", detail: "유효 제의 · 역할 · 발효일을 비교") }
+                    .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openContractMarket")
                 ContractEvaluationHomePanel(player: player, calendar: calendar).id(player.id)
                 CareerContractStatusPanel(player: player, calendar: calendar).id(player.id)
                 CareerPathHomePanel(player: player, calendar: calendar).id(player.id)
@@ -1108,8 +1114,7 @@ struct ContractEvaluationHomePanel: View {
     private var own: [CareerContractEvaluation] { evaluations.filter {$0.playerID == player.id}.sorted {$0.key > $1.key} }
     var body: some View {
         GamePanel(title:"계약 평가 · 연간 창",onBoard:true) {
-            Text(verbatim:"4월 1~14일 진로 · 7월 1~14일 무소속 · 11월 1~14일 프로")
-                .font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("contractWindows")
+            ContractWindowCalendar().accessibilityIdentifier("contractWindows")
             if let failure {
                 Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractEvaluationError")
                 Button("다시 확인") {self.failure = nil}.buttonStyle(MatchPixelButtonStyle())
@@ -2056,10 +2061,8 @@ struct ContractMarketView:View {
                     GamePanel(title:"CONTRACT MARKET · 계약 시장",onBoard:true,contentSpacing:12) {
                         Text("기준일 "+ManagementDisplay.date(player.gameDate)).font(.footnote.monospacedDigit())
                         Text("검토 가능 \(entries.filter {$0.status == "검토 가능"}.count + domestic.filter {$0.status == "검토 가능"}.count)건 · 잔류 / 외부 조건 비교").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketSummary")
-                        HStack(spacing:16) {
-                            Text("잔류 \(entries.filter {$0.retention && $0.status == "검토 가능"}.count + domestic.filter {$0.renewal != nil && $0.status == "검토 가능"}.count)건")
-                            Text("외부 \(entries.filter {!$0.retention && $0.status == "검토 가능"}.count + domestic.filter {$0.renewal == nil && $0.status == "검토 가능"}.count)건")
-                        }.font(.headline.monospacedDigit())
+                        CareerMarketCounts(retention: entries.filter {$0.retention && $0.status == "검토 가능"}.count + domestic.filter {$0.renewal != nil && $0.status == "검토 가능"}.count,
+                                           external: entries.filter {!$0.retention && $0.status == "검토 가능"}.count + domestic.filter {$0.renewal == nil && $0.status == "검토 가능"}.count)
                         Text("역할·배치 → 발효일·기간 → 경제 지수 순으로 비교 · 출전 보장 없음").font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketComparisonPriority")
                         if hasPending {ContractNextStep(title:"수락된 변경 발효 대기",timing:"예약된 발효일은 계약·소속에서 확인",action:"다른 제의를 다시 수락하지 않고 현재 소속과 예약 원문을 확인하세요.",identifier:"marketPendingTransition")}
                         DisclosureGroup("경제 지수 · 수락 시 유의사항") {
@@ -2391,13 +2394,16 @@ struct CareerObjectivesHomeLabel:View {
     @Environment(\.modelContext) private var context
     @State private var lastActivity:String?
     var body:some View {
-        VStack(alignment:.leading,spacing:6) {
-            Text("커리어 목표 · 준비 현황").font(.headline)
+        VStack(alignment:.leading,spacing:12) {
+            CareerDeskRoute(icon: "NavPlayerV1", title: "커리어 목표 · 준비 현황", detail: "구단 → 모집 역할 → 내 다음 행동")
             switch Result(catching:{try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)}) {
             case .failure:Text("목표 자료 확인 필요").font(.caption)
             case .success(let owner):
                 if let target=owner.developmentTarget,let report=owner.overseasReports?.first(where:{$0.id == target.reportID}),let club=CareerTargetClub.catalog(report).first(where:{$0.id == target.clubID}) {
-                    Text(club.name+" · "+DomesticContractOffer.roleName(club.roleID)).font(.caption).accessibilityIdentifier("homeCareerTarget")
+                    HStack(spacing: 12) {
+                        ClubBadge(name: club.name, size: 48)
+                        Text(club.name+" · "+DomesticContractOffer.roleName(club.roleID)).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeCareerTarget")
+                    }
                     Text(owner.activeProject(on:player.gameDate) == nil ? "관찰 과제 · 결과/새 프로젝트 확인":"28일 프로젝트 진행 중").font(.caption)
                 } else {Text("목표 구단·역할을 선택하세요").font(.caption)}
             }

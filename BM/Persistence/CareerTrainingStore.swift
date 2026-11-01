@@ -250,6 +250,16 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
         if try archived(player: player, in: context).contains(where: { $0.code == code }) { return 100 }
         return try completedStudies(player: player, in: context).last(where: { $0.pitchCode == code })?.after ?? 0
     }
+    /// The last completed study is a suggestion only. Starting still validates the live roster and daily locks.
+    static func continuation(player: CareerPlayer, in context: ModelContext) throws -> CareerTraining? {
+        guard player.role == .pitcher, let last = try completedStudies(player: player, in: context).last,
+              let study = last.pitchStudy, last.after > 0, last.after < 100,
+              !player.pitches.contains(where: { $0.code == study.code }) else { return nil }
+        if let replacing = study.replacing {
+            guard player.pitches.contains(where: { $0.code == replacing }) else { return nil }
+        } else if player.pitches.count >= 5 { return nil }
+        return last
+    }
     static func preparation(player: CareerPlayer, code: String, replacing: String?, in context: ModelContext) throws -> PitchStudy {
         guard player.role == .pitcher, PitchType(rawValue: code) != nil,
               !player.pitches.contains(where: { $0.code == code }),

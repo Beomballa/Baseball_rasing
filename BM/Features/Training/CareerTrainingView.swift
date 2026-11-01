@@ -84,7 +84,7 @@ struct CareerTrainingView: View {
         }
     }
     private var locationTarget: TrainingTarget? { displayTraining.flatMap { $0.completed ? nil : $0.targets[$0.scores.count] } }
-    private var title: String { training?.title ?? (studying ? "구종 습득 훈련" : selectedKind.label + " 훈련") }
+    private var title: String { training?.title ?? (studying ? (initialPitchStudyCode.flatMap { PitchType(rawValue: $0)?.label } ?? "구종") + " 습득 훈련" : selectedKind.label + " 훈련") }
     private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? PitchType(rawValue: training?.pitchCode ?? code)?.label ?? "구종") : selectedKind.label }
     private func load() {
         do {
@@ -1123,6 +1123,7 @@ struct PitchRepertoireView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                PitchStudyContinuationCard(player: player, calendar: calendar)
                 ManagementPanel("등록 구종 · \(ordered.count) / 5") {
                     Text("등록 3~5종 · 경기에 사용할 구종과 숙련도").managementFont(.helper)
                         .accessibilityIdentifier("pitchLibraryCount")
@@ -1329,5 +1330,57 @@ struct TrainingPitchTile: View {
         }.padding(8).foregroundStyle(GameTheme.boardInk).background(GameTheme.boardPanel)
             .overlay(ManagementStepFrame().strokeBorder(selected ? GameTheme.gold : GameTheme.boardLine, lineWidth: selected ? 2 : 1))
             .contentShape(Rectangle())
+    }
+}
+
+/// Read-only shortcut from the last completed learning session, not the active pitch preference.
+struct PitchStudyContinuationCard: View {
+    let player: CareerPlayer
+    let calendar: CareerCalendarState
+    @Environment(\.modelContext) private var context
+    @State private var previous: CareerTraining?
+    @State private var locked = false
+    @State private var pending = false
+    @State private var failure: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let failure {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(failure).font(.subheadline)
+                    Button("최근 습득 훈련 다시 확인", action: load).buttonStyle(MatchPixelButtonStyle())
+                }
+            } else if let previous, let study = previous.pitchStudy, !pending {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 14) {
+                        MatchGrip(code: study.code, hand: player.throwingHandRaw).frame(width: 64, height: 72).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("이어서 배우는 구종").font(.caption.bold()).foregroundStyle(GameTheme.gold)
+                            Text(PitchType(rawValue: study.code)?.label ?? study.code).font(ManagementPixelFont.readable(.sectionTitle))
+                            Text("습득 진척 \(previous.after, specifier: "%.1f") / 100").font(.subheadline.monospacedDigit())
+                                .accessibilityIdentifier("pitchStudyContinueProgress")
+                        }
+                    }
+                    ProgressView(value: previous.after, total: 100).tint(GameTheme.gold).accessibilityLabel("구종 습득 진척")
+                    Text("목표 100 → 숙련도 20 등록 · " + (study.replacing.flatMap { old in player.pitches.first { $0.code == old }?.name }.map { $0 + " 자리 교체" } ?? "빈 슬롯에 추가"))
+                        .font(.subheadline).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+                    NavigationLink {
+                        CareerTrainingView(player: player, calendar: calendar, initialKind: .pitch, initialPitchStudyCode: study.code, replacingPitchCode: study.replacing)
+                    } label: { Text((PitchType(rawValue: study.code)?.label ?? study.code) + " 이어서 학습").multilineTextAlignment(.center).padding(8) }
+                        .buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(locked).accessibilityIdentifier("pitchStudyContinue")
+                    if locked { Text("오늘 행동 완료 · 다음 훈련일에 이어서 진행하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted) }
+                }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.board)
+                    .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("pitchStudyContinuation")
+            }
+        }.foregroundStyle(GameTheme.boardInk).task(id: "\(player.id)-\(player.gameDate)-\(calendar.revision)") { load() }
+    }
+    private func load() {
+        do {
+            previous = try PitchStudyStore.continuation(player: player, in: context)
+            let record = try CareerTrainingStore.record(player: player, in: context)
+            pending = record?.completed == false
+            locked = calendar.hasAction(on: player.gameDate) || record != nil
+            failure = nil
+        } catch { previous = nil; failure = "최근 습득 훈련 확인 실패 · " + error.localizedDescription }
     }
 }

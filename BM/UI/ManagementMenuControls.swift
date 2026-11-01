@@ -107,17 +107,20 @@ enum ManagementCareerSection: CaseIterable { case observation, goals, contracts
 /// A forecast only; starting/finishing still belongs to the existing training command.
 struct TrainingCostStrip: View {
     let fatigue: Int
+    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { labels }
-            VStack(alignment: .leading, spacing: 8) { labels }
-        }.managementFont(.label).accessibilityElement(children: .combine)
-            .accessibilityIdentifier("trainingCostStrip")
+        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))) {
+            stamp("시도", value: "5회")
+            stamp("오늘 행동", value: "1회")
+            stamp("완료 피로", value: "\(fatigue) → \(min(100, fatigue + TrainingRules.fatigueCost))")
+        }.accessibilityElement(children: .combine).accessibilityIdentifier("trainingCostStrip")
     }
-    @ViewBuilder private var labels: some View {
-        Text("5회")
-        Text("행동 1회")
-        Text("완료 피로 \(fatigue) → \(min(100, fatigue + TrainingRules.fatigueCost))")
+    private func stamp(_ title: String, value: String) -> some View {
+        VStack(spacing: 6) {
+            Text(title).font(.caption).foregroundStyle(GameTheme.muted)
+            Text(value).font(.subheadline.monospacedDigit().bold()).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }.padding(10).frame(maxWidth: .infinity, minHeight: 62).background(GameTheme.navy.opacity(0.06))
+            .overlay(Rectangle().strokeBorder(GameTheme.muted, lineWidth: 1))
     }
 }
 
@@ -251,5 +254,146 @@ private struct TrainingEquipmentStyle: ButtonStyle {
             }
             .transaction { $0.animation = nil }
             .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+/// A coach's practice card; content remains backed by the existing training commands.
+struct TrainingInstructionCard<Content: View>: View {
+    let kind: TrainingKind
+    var drillVersion: Int? = 1
+    @ViewBuilder var content: Content
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var steps: [String] {
+        if drillVersion != 1 {
+            switch kind {
+            case .power: return ["힘 조절", "발사각 조절", "5회 결과"]
+            case .velocity: return ["동작 확인", "힘 조절", "5회 결과"]
+            case .stuff: return ["회전 강도", "방향 조절", "5회 결과"]
+            default: break
+            }
+        }
+        return switch kind {
+        case .contact: ["타격점 조준", "공 보고 터치", "5회 결과"]
+        case .power: ["티 위의 공", "MAX에서 떼기", "5회 결과"]
+        case .discipline: ["공의 코스", "볼·스트라이크", "5회 결과"]
+        case .pitch: ["그립 선택", "릴리스 입력", "5회 포구"]
+        case .speed: ["준비 자세", "좌우 교대", "5회 결과"]
+        case .defense: ["낙하지점 확인", "선수 위치 조작", "5회 포구"]
+        case .arm: ["베이스 선택", "방향·강도", "5회 송구"]
+        case .velocity: ["준비", "회전·릴리스", "3박자 × 5회"]
+        case .control: ["목표 코스", "조준·투구", "5회 포구"]
+        case .stuff: ["궤적 확인", "손으로 따라가기", "5회 결과"]
+        case .stamina: ["호흡 준비", "페이스 유지", "5회 결과"]
+        case .mental: ["상황 확인", "집중 조작", "5회 결과"]
+        }
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                TrainingEquipmentIcon(kind: kind).frame(width: 42, height: 42).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("COACH / PRACTICE CARD").font(.caption2.monospaced()).foregroundStyle(GameTheme.boardMuted)
+                    Text(kind.label + " 훈련").font(ManagementPixelFont.readable(.sectionTitle)).foregroundStyle(GameTheme.paper)
+                }
+                Spacer(minLength: 0)
+            }.padding(16).background(GameTheme.board)
+            VStack(alignment: .leading, spacing: 16) {
+                let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+                layout {
+                    ForEach(steps.indices, id: \.self) { index in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(String(format: "%02d", index + 1)).font(.caption.monospaced().bold()).foregroundStyle(GameTheme.green)
+                            Text(steps[index]).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }.accessibilityElement(children: .combine)
+                Rectangle().fill(GameTheme.muted).frame(height: 1).accessibilityHidden(true)
+                content
+            }.padding(16).foregroundStyle(GameTheme.navy).tint(GameTheme.navy)
+                .environment(\.colorScheme, .light).background(ManagementTheme.Palette.paper)
+        }.overlay(ManagementStepFrame().strokeBorder(GameTheme.muted, lineWidth: 2))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("trainingInstructionCard")
+    }
+}
+
+struct CareerDeskHeader: View {
+    let section: ManagementCareerSection
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(section == .goals ? "NavPlayerV1" : "NavCareerV1").resizable().interpolation(.none).frame(width: 40, height: 40).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(section == .observation ? "SCOUT / ARCHIVE" : section == .goals ? "PLAYER / ROADMAP" : "CLUB / CONTRACT")
+                    .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                Text(section == .observation ? "스카우트 관찰 파일" : section == .goals ? "나의 다음 무대" : "제의와 현재 소속")
+                    .font(ManagementPixelFont.readable(.sectionTitle)).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+            }
+            Spacer(minLength: 0)
+        }.padding(.vertical, 8).foregroundStyle(GameTheme.boardInk)
+            .accessibilityIdentifier("managementFileHeader")
+    }
+}
+
+struct CareerDeskRoute: View {
+    let icon: String
+    let title: String
+    let detail: String
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(icon).resizable().interpolation(.none).frame(width: 40, height: 40).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 7) {
+                Text(title).font(ManagementPixelFont.readable(.label)).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(.subheadline).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Text("›").font(.title2).foregroundStyle(GameTheme.gold).accessibilityHidden(true)
+        }
+    }
+}
+
+struct CareerDeskRouteStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.multilineTextAlignment(.leading).foregroundStyle(GameTheme.boardInk)
+            .padding(16).frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .background(configuration.isPressed ? GameTheme.board : GameTheme.boardPanel, in: ManagementStepFrame())
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+    }
+}
+
+struct CareerMarketCounts: View {
+    let retention: Int
+    let external: Int
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 10)) : AnyLayout(HStackLayout(spacing: 10))) {
+            tile("잔류 제의", count: retention)
+            tile("외부 제의", count: external)
+        }
+    }
+    private func tile(_ name: String, count: Int) -> some View {
+        VStack(spacing: 8) {
+            Text(name).font(.subheadline.bold())
+            Text("\(count)건").font(ManagementPixelFont.readable(.sectionTitle)).monospacedDigit().foregroundStyle(GameTheme.gold)
+        }.frame(maxWidth: .infinity, minHeight: 72).padding(12).background(GameTheme.board)
+            .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            .accessibilityElement(children: .combine)
+    }
+}
+
+struct ContractWindowCalendar: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))) {
+            month("4월", role: "진로")
+            month("7월", role: "무소속")
+            month("11월", role: "프로")
+        }
+    }
+    private func month(_ month: String, role: String) -> some View {
+        VStack(spacing: 0) {
+            Text(month).font(ManagementPixelFont.readable(.label)).frame(maxWidth: .infinity).padding(7).background(GameTheme.gold).foregroundStyle(GameTheme.navy)
+            VStack(spacing: 5) {
+                Text("1~14일").font(.subheadline.monospacedDigit().bold())
+                Text(role).font(.caption)
+            }.padding(10).frame(maxWidth: .infinity).background(GameTheme.board)
+        }.overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1)).accessibilityElement(children: .combine)
     }
 }

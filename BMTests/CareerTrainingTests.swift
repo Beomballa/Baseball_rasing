@@ -3,6 +3,61 @@ import SwiftData
 @testable import BM
 
 @MainActor final class CareerTrainingTests: XCTestCase {
+    func testV99StudyContinuationSurvivesDayAndDiskReopenWithoutWrites() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("study.store")
+        var id: UUID!, progress = 0.0
+        try autoreleasepool {
+            let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+            let (p, state) = try setup(c, role: .pitcher, date: "2026-04-02"); id = p.id
+            let row = try PitchStudyStore.start(player: p, state: state, code: "sweeper", in: c)
+            for _ in 0..<2 { try attempt(p, state, row, c) }
+            XCTAssertNil(try PitchStudyStore.continuation(player: p, in: c))
+            let resumed = try PitchStudyStore.start(player: p, state: state, code: "sweeper", in: c)
+            XCTAssertEqual(resumed.key, row.key); XCTAssertEqual(try resumed.snapshot().scores.count, 2)
+            for _ in 0..<3 { try attempt(p, state, row, c) }
+            progress = try row.snapshot().after
+            let revision = state.revision, fatigue = p.fatigue, bytes = row.payload
+            for _ in 0..<3 { XCTAssertEqual(try PitchStudyStore.continuation(player: p, in: c)?.pitchCode, "sweeper") }
+            XCTAssertFalse(c.hasChanges); XCTAssertEqual(row.payload, bytes)
+            XCTAssertEqual(state.revision, revision); XCTAssertEqual(p.fatigue, fatigue)
+            XCTAssertEqual(try PitchStudyStore.start(player: p, state: state, code: "sweeper", in: c).key, row.key)
+            XCTAssertThrowsError(try attempt(p, state, row, c))
+            XCTAssertEqual(p.fatigue, fatigue)
+            try CalendarProgression.advanceDay(player: p, state: state, revision: state.revision, in: c)
+        }
+        try autoreleasepool {
+            let db = try CareerStore.makeContainer(url: url), c = db.mainContext
+            let p = try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == id })
+            let state = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == id })
+            let suggestion = try XCTUnwrap(PitchStudyStore.continuation(player: p, in: c))
+            XCTAssertEqual(suggestion.pitchStudy?.code, "sweeper"); XCTAssertEqual(suggestion.after, progress)
+            XCTAssertFalse(c.hasChanges)
+            let row = try PitchStudyStore.start(player: p, state: state, code: suggestion.pitchStudy!.code, replacing: suggestion.pitchStudy!.replacing, in: c)
+            XCTAssertEqual(try row.snapshot().before, progress)
+            XCTAssertEqual(try row.snapshot().scores.count, 0)
+            XCTAssertFalse(p.pitches.contains { $0.code == "sweeper" })
+        }
+    }
+    func testV99StudyContinuationRejectsObsoleteSlotAndCompletedAcquisition() throws {
+        let db = try CareerStore.makeContainer(inMemory: true), c = db.mainContext
+        let (p, _) = try setup(c, role: .pitcher, date: "2026-04-02")
+        var history = CareerTraining(playerID: p.id, date: "2026-03-31", role: "pitcher", pitchCode: "sweeper", before: 0, fatigue: p.fatigue, age: 16, calendarRevision: 0)
+        history.pitchStudy = try PitchStudyStore.preparation(player: p, code: "sweeper", replacing: "slider", in: c)
+        history.scores = [100,100,100,100,100]
+        let row = try CareerTrainingRecord(history); row.completed = true; c.insert(row); try c.save()
+        XCTAssertEqual(try PitchStudyStore.continuation(player: p, in: c)?.pitchStudy?.replacing, "slider")
+        let old = try XCTUnwrap(p.pitches.first { $0.code == "slider" })
+        p.pitches.removeAll { $0.code == "slider" }; c.delete(old); try c.save()
+        XCTAssertNil(try PitchStudyStore.continuation(player: p, in: c))
+        var finished = CareerTraining(playerID: p.id, date: history.date, role: "pitcher", pitchCode: "sweeper", before: 99, fatigue: p.fatigue, age: 16, calendarRevision: 0)
+        finished.pitchStudy = history.pitchStudy; finished.scores = [100,100,100,100,100]
+        row.payload = try JSONEncoder().encode(finished); try c.save()
+        XCTAssertEqual(try row.snapshot().after, 100)
+        XCTAssertNil(try PitchStudyStore.continuation(player: p, in: c))
+    }
     private func setup(_ context: ModelContext, role: PlayerRole = .batter, date: String = "2026-04-01") throws -> (CareerPlayer, CareerCalendarState) {
         var draft = PlayerDraft(); draft.name = "훈련선수"; draft.schoolID = "hs-ref-001"; draft.role = role
         let player = try LegacyPlayerFixture.create(draft, schools: SchoolCatalog.load(), in: context)

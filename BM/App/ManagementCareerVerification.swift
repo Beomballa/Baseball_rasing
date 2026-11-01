@@ -35,6 +35,13 @@ struct ManagementCareerVerification: View {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"
                     let player = try CareerStore.create(draft, schools: catalog, in: memory.mainContext)
+                    if args.contains("-v99-pitch-study-progress"), role == .pitcher {
+                        let context = memory.mainContext
+                        var history = CareerTraining(playerID: player.id, date: "2026-03-31", role: "pitcher", pitchCode: "sweeper", before: 30, fatigue: player.fatigue, age: 16, calendarRevision: 0)
+                        history.pitchStudy = try PitchStudyStore.preparation(player: player, code: "sweeper", replacing: nil, in: context)
+                        history.scores = [100,100,100,100,100]
+                        let row = try CareerTrainingRecord(history); row.completed = true; context.insert(row); try context.save()
+                    }
                     if args.contains("-v72-acquisition-boundary") {
                         let context = memory.mainContext
                         player.name = role == .batter ? "QA습득경계B" : "QA습득경계P"

@@ -33,8 +33,7 @@ struct ScoutingObservationHomePanel: View {
                 Button("보고서 저장 다시 확인", action: refresh).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutArchiveRetry")
             } else if let row = own.first, let value = try? row.snapshot() {
                 ScoutPeriodRibbon(value: value, count: own.count)
-                CareerManagementNote(title:"관찰과 현재 · 서로 다른 시점",
-                    detail:"관찰 "+ManagementDisplay.date(value.observedDate)+" · 성적 집계 "+ManagementDisplay.date(value.sampleStart)+"~"+ManagementDisplay.date(value.observedDate)+" · 오늘 "+ManagementDisplay.date(player.gameDate)+". 최근365일 범위의 완료 개인 경기이며 새28일 경기만의 합계가 아닙니다.",identifier:"scoutObservationClock")
+                ScoutObservationDates(value: value, today: player.gameDate)
                 ScoutingInterestList(value: value, compact: true)
                 NavigationLink { SavedScoutingObservationView(value: value, schoolID: player.schoolID, legacySchoolName: player.schoolName) } label: {
                     HStack { Text("확정 보고서 펼치기"); Spacer(); Text("›") }
@@ -174,15 +173,17 @@ struct SavedScoutingObservationView: View {
                 Text("FILE \(value.period + 1)").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
             }.padding(14).background(ScoutDeskPalette.surface)
             ScoutDossier(title: "\(value.period + 1)차 관찰 보고서", code: "OBSERVATION / FIXED RECORD", stamp: "관찰 확정", isPreview: false) {
-                HStack(alignment: .top, spacing: 18) {
+                (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .center, spacing: 14)) : AnyLayout(HStackLayout(alignment: .center, spacing: 14))) {
                     DetailGamePortrait(role: value.role, appearance: value.appearance, number: value.number, hand: value.hand).frame(width: 76, height: 100).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("\(value.name) #\(value.number)").font(.title3.bold())
+                        Text("\(value.name) #\(value.number)").font(ManagementPixelFont.readable(.sectionTitle)).fixedSize(horizontal: false, vertical: true)
                         Text("\(value.age)세 · \(value.role.label) · " + (value.role == .batter ? FieldPosition(rawValue: value.position)?.label ?? value.position : value.hand == "left" ? "좌투" : "우투")).font(.subheadline)
                         Text(value.age <= 18 ? SchoolCatalog.displayName(id: schoolID, fallback: value.school) : "등록 학교 · \(value.school == legacySchoolName ? SchoolCatalog.displayName(id: schoolID, fallback: value.school) : value.school)").font(.subheadline)
                     }
                 }
-                Text("관찰일 \(ManagementDisplay.date(value.observedDate))").font(.subheadline.bold()).accessibilityIdentifier("scoutFrozenDate")
+                Text("관찰일 \(ManagementDisplay.date(value.observedDate))").font(.subheadline.bold())
+                    .frame(maxWidth: .infinity, minHeight: 44).multilineTextAlignment(.center)
+                    .padding(8).background(ScoutDossierInk.rule.opacity(0.22)).accessibilityIdentifier("scoutFrozenDate")
                 Text("주기 \(ManagementDisplay.date(value.periodStart)) ~ \((try? GameDate(value.nextDate).adding(days: -1).description).map(ManagementDisplay.date) ?? "—")").font(.subheadline.monospaced())
                 Text("성적 집계 "+ManagementDisplay.date(value.sampleStart)+" ~ "+ManagementDisplay.date(value.observedDate)+" · 완료 개인 경기").font(.subheadline).foregroundStyle(ScoutDossierInk.muted).accessibilityIdentifier("scoutFrozenSampleCutoff")
                 Text("위 주기 종료일은 관찰 주기의 경계이며 성적 집계 마감일과 다릅니다. 현재 값과 구분해 보관한 당시 자료입니다.").font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
@@ -692,5 +693,36 @@ private struct ScoutNote: View {
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             .background(ScoutDeskPalette.surface)
             .overlay(Rectangle().strokeBorder(GameTheme.boardLine.opacity(0.7), lineWidth: 1))
+    }
+}
+
+private struct ScoutObservationDates: View {
+    let value: ScoutingObservation
+    let today: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("관찰과 현재 · 서로 다른 시점").font(ManagementPixelFont.readable(.label)).foregroundStyle(GameTheme.gold)
+            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 10))) {
+                date("확정 관찰", date: value.observedDate, icon: "NavCareerV1")
+                date("지금 내 선수", date: today, icon: "NavPlayerV1")
+            }
+            HStack(alignment: .top, spacing: 10) {
+                Text("집계").font(.caption.bold()).padding(6).background(GameTheme.boardPanel)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(ManagementDisplay.date(value.sampleStart) + " ~ " + ManagementDisplay.date(value.observedDate)).font(.subheadline.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
+                    Text("최근365일 범위의 완료 개인 경기 · 새28일 합계와 구분").font(.caption).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.padding(14).background(ScoutDeskPalette.ink).overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            .accessibilityElement(children: .combine).accessibilityIdentifier("scoutObservationClock")
+    }
+    private func date(_ title: String, date: String, icon: String) -> some View {
+        VStack(spacing: 8) {
+            Image(icon).resizable().interpolation(.none).frame(width: 28, height: 28).accessibilityHidden(true)
+            Text(title).font(.caption.bold()).foregroundStyle(GameTheme.boardMuted)
+            Text(ManagementDisplay.date(date)).font(.subheadline.monospacedDigit().bold()).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, minHeight: 84).padding(10).background(ScoutDeskPalette.surface)
+            .accessibilityElement(children: .combine)
     }
 }

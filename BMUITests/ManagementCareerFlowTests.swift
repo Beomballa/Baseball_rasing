@@ -2,6 +2,76 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV99TrainingAndCareerDocumentsBothRoles() {
+        continueAfterFailure = false
+        let app = launch()
+        for pitcher in [false, true] {
+            if pitcher { switchToPitcher(app) }
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+            let method = app.descendants(matching: .any).matching(identifier: "trainingHubMethod").firstMatch; reveal(method, app)
+            XCTAssertTrue(method.exists); capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-training")
+            let prepare = app.buttons["openTraining"]; reveal(prepare, app); XCTAssertTrue(prepare.isHittable)
+            capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-training-card")
+            closeDetail(app)
+            app.buttons["managementTab-career"].tap(); app.buttons["facility-observation"].tap()
+            let clock = app.descendants(matching: .any).matching(identifier: "scoutObservationClock").firstMatch
+            reveal(clock, app); XCTAssertTrue(clock.exists); capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-scout")
+            let report = app.buttons["openSavedScoutingReport"]; reveal(report, app); report.tap()
+            XCTAssertTrue(app.staticTexts["scoutFrozenDate"].waitForExistence(timeout: 5))
+            capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-frozen")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            let goals = app.buttons["careerSection-goals"]; reveal(goals, app); goals.tap()
+            XCTAssertTrue(app.buttons["openCareerObjectives"].waitForExistence(timeout: 5)); capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-goals")
+            let contracts = app.buttons["careerSection-contracts"]; reveal(contracts, app); contracts.tap()
+            XCTAssertTrue(app.buttons["openContractMarket"].waitForExistence(timeout: 5)); capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-contracts")
+            closeDetail(app)
+        }
+    }
+    @MainActor func testV99StudyContinuationAndLargeDocuments() { v99StudyFlow(large: true) }
+    @MainActor func testV99StudyContinuationRegularDocuments() { v99StudyFlow(large: false) }
+    @MainActor private func v99StudyFlow(large: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-v99-pitch-study-progress"]
+        if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"] }
+        let prefix = large ? "v99-large" : "v99-regular"
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        app.buttons["roomProfile"].tap(); XCTAssertTrue(app.buttons["homeRole-pitcher"].waitForExistence(timeout: 5))
+        app.buttons["homeRole-pitcher"].tap()
+        if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
+        v99Menu("home", title: "홈", app: app)
+        let before = labels(app)
+        v99Menu("training", title: "훈련", app: app); v99RevealFacility(app.buttons["facility-training"], app); app.buttons["facility-training"].tap()
+        let resume = app.buttons["pitchStudyContinue"]; reveal(resume, app)
+        if !resume.exists { capture(app, "v99-study-missing"); print(app.debugDescription) }
+        XCTAssertTrue(resume.waitForExistence(timeout: 5)); XCTAssertTrue(resume.isEnabled)
+        XCTAssertGreaterThanOrEqual(resume.frame.height, 44); capture(app, prefix + "-study-continuation")
+        resume.tap(); XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.navigationBars["스위퍼 습득 훈련"].exists)
+        capture(app, prefix + "-study-preparation")
+        app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
+        v99Menu("home", title: "홈", app: app); XCTAssertEqual(labels(app), before)
+        v99Menu("career", title: "커리어", app: app); v99RevealFacility(app.buttons["facility-observation"], app); app.buttons["facility-observation"].tap()
+        let clock = app.descendants(matching: .any).matching(identifier: "scoutObservationClock").firstMatch
+        reveal(clock, app); XCTAssertTrue(clock.label.contains("365")); capture(app, prefix + "-scout-dates")
+        let contracts = app.buttons["careerSection-contracts"]; reveal(contracts, app); contracts.tap()
+        let windows = app.descendants(matching: .any).matching(identifier: "contractWindows").firstMatch
+        reveal(windows, app); XCTAssertTrue(windows.exists); capture(app, prefix + "-contract-windows")
+        if !large {
+            let market = app.buttons["openContractMarket"]; reveal(market, app); market.tap()
+            XCTAssertTrue(app.staticTexts["marketSummary"].waitForExistence(timeout: 8))
+            capture(app, "v99-contract-market")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+        closeDetail(app); v99Menu("home", title: "홈", app: app); XCTAssertEqual(labels(app), before)
+    }
+    @MainActor private func v99RevealFacility(_ element: XCUIElement, _ app: XCUIApplication) {
+        XCTAssertTrue(element.waitForExistence(timeout: 5))
+        if !element.isHittable { reveal(element, app) }
+    }
+    @MainActor private func v99Menu(_ id: String, title: String, app: XCUIApplication) {
+        if app.buttons["managementTab-" + id].exists { app.buttons["managementTab-" + id].tap() }
+        else { app.buttons["managementLargeMenu"].tap(); app.buttons[title].tap() }
+    }
     @MainActor func testV98AppearanceSelectionsSchoolChangeAndCreationBothRoles() {
         continueAfterFailure = false
         let app = XCUIApplication()

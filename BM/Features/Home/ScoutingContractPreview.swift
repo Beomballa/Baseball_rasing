@@ -352,7 +352,8 @@ struct ScoutDossier<Content: View>: View {
                 Text(stamp).font(.caption.monospaced().bold()).foregroundStyle(ScoutDossierInk.green)
                     .padding(.horizontal,8).padding(.vertical,4).overlay(Rectangle().strokeBorder(ScoutDossierInk.green,lineWidth:2))
             }
-            Text(title).font(.headline.monospaced()).foregroundStyle(ScoutDossierInk.ink)
+            Text(title).font(ManagementPixelFont.readable(.sectionTitle)).foregroundStyle(ScoutDossierInk.ink)
+                .frame(maxWidth: .infinity, minHeight: 36).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             Rectangle().fill(ScoutDossierInk.ink).frame(height: 2).accessibilityHidden(true)
             content
             HStack {
@@ -739,9 +740,24 @@ struct ContractPendingRegistration:View {
     var body:some View {
         switch Result(catching:{try ContractRegistrationPresentation(owner:owner,on:date)}) {
         case .success(let state):
-            ContractNextStep(title:"현재 · "+state.current,timing:"예약 · "+state.reserved,action:"발효 · "+state.effective,identifier:"contractRegistrationTimeline")
+            VStack(spacing: 12) {
+                registrationLane("현재", value: state.current, icon: "NavHomeV1")
+                registrationLane("예약", value: state.reserved, icon: "NavCareerV1")
+                registrationLane("발효", value: state.effective, icon: "NavGameV1")
+            }.padding(12).background(GameTheme.navy, in: ManagementStepFrame())
+                .accessibilityElement(children: .combine).accessibilityIdentifier("contractRegistrationTimeline")
         case .failure(let error):Text(error.localizedDescription).font(.subheadline).accessibilityIdentifier("contractTimelineError")
         }
+    }
+    private func registrationLane(_ title: String, value: String, icon: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(spacing: 6) {
+                Image(icon).resizable().interpolation(.none).frame(width: 24, height: 24).accessibilityHidden(true)
+                Text(title).font(.caption.bold()).foregroundStyle(GameTheme.gold)
+            }.frame(width: 40)
+            Text(value).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }.padding(10).background(GameTheme.boardPanel)
     }
 }
 
