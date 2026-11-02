@@ -77,7 +77,7 @@ struct CreationAvatarImage: View {
         if mode == .head { cache.setObject(head, forKey: key); return head }
         guard let raw = UIImage(named: role == .pitcher || mode == .portrait ? "CreationPitcherBodyV98" : "CreationBodyV98")?.cgImage,
               let body = recolor(raw, appearance: a, body: true) else { return nil }
-        let kit = SchoolCreationKit.find(a.schoolKitID)
+        let kit = SchoolCreationKit.find(a.uniformTeamID ?? a.schoolKitID)
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         let size = mode == .full ? CGSize(width: 256, height: 384) : CGSize(width: 256, height: 280)
         let image = UIGraphicsImageRenderer(size: size, format: format).image { renderer in
@@ -91,13 +91,14 @@ struct CreationAvatarImage: View {
                 headRect = CGRect(x: 0, y: 0, width: 256, height: 241)
             }
             body.draw(in: bodyRect)
-            if let school = (try? SchoolCatalog.load())?.first(where: { $0.id == a.schoolKitID }) {
-                crest(school, rect: CGRect(x: bodyRect.minX + bodyRect.width * 0.38, y: bodyRect.minY + bodyRect.height * 0.33,
+            if let style = a.uniformStyle {
+                crest(style, rect: CGRect(x: bodyRect.minX + bodyRect.width * 0.38, y: bodyRect.minY + bodyRect.height * 0.33,
                     width: bodyRect.width * 0.07, height: bodyRect.width * 0.07), in: c)
             }
-            let title = kit?.wordmark ?? ""
+            let club = ClubIdentity.all.first { $0.id == a.uniformStyle?.id.components(separatedBy: ":").first }
+            let title = kit?.wordmark ?? club?.name.components(separatedBy: " ").last ?? ""
             let font = UIFont(name: "NeoDunggeunmo", size: bodyRect.width * 0.042) ?? .boldSystemFont(ofSize: bodyRect.width * 0.042)
-            let ink = UIColor(Color(hex: 0x14283f))
+            let ink = UIColor(Color(hex: a.uniformStyle?.ink ?? 0x14283f))
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
             let text = title as NSString, measured = text.size(withAttributes: attrs)
             text.draw(at: CGPoint(x: bodyRect.midX - measured.width / 2, y: bodyRect.minY + bodyRect.height * 0.39), withAttributes: attrs)
@@ -134,8 +135,8 @@ struct CreationAvatarImage: View {
             if cap, let raw = UIImage(named: "CreationCapV98")?.cgImage,
                let capImage = recolor(raw, appearance: a, body: false, isCap: true) {
                 capImage.draw(in: CGRect(x: 0, y: -38, width: 263, height: 175))
-                if let school = (try? SchoolCatalog.load())?.first(where: { $0.id == a.schoolKitID }) {
-                    crest(school, rect: CGRect(x: 126, y: 8, width: 29, height: 29), in: renderer.cgContext)
+                if let style = a.uniformStyle {
+                    crest(style, rect: CGRect(x: 126, y: 8, width: 29, height: 29), in: renderer.cgContext)
                 }
             }
         }
@@ -150,9 +151,9 @@ struct CreationAvatarImage: View {
             c.interpolationQuality = .none; c.draw(source, in: CGRect(x: 0, y: 0, width: w, height: h)); return true
         }
         guard ok else { return nil }
-        let kit = SchoolCreationKit.find(a.schoolKitID)
-        let style = GameUniformStyles.find(a.schoolKitID)
-        let primary = kit.map { SchoolCreationKit.color($0.primary) } ?? PlayerAppearance.kitColors[a.kit]
+        let kit = SchoolCreationKit.find(a.uniformTeamID ?? a.schoolKitID)
+        let style = a.uniformStyle
+        let primary = style?.sleeves ?? kit.map { SchoolCreationKit.color($0.primary) } ?? PlayerAppearance.kitColors[a.kit]
         for p in 0..<(w*h) {
             let i = p*4, alpha = Int(bytes[i+3]); if alpha < 24 { continue }
             let r = Int(bytes[i]), g = Int(bytes[i+1]), b = Int(bytes[i+2])
@@ -168,8 +169,10 @@ struct CreationAvatarImage: View {
                     || (y > 0.43 && y < 0.57 && x < 0.43) || (y > 0.25 && y < 0.44 && x > 0.69)
                 if skinRegion && r > 185 && r > g*12/10 && g > b*11/10 { tint = PlayerAppearance.skinColors[a.skin]; shade = Double(r)/245 }
                 else if y < 0.48 && b > 55 && b > r*13/10 && b > g*11/10 { tint = primary; shade = Double(b)/110 }
-                else if let kit, r > 145 && g > 145 && b > 135 && abs(r-g) < 45 && y > 0.26 && y < 0.48 {
-                    tint = style?.shirt(x:x,y:(y-0.26)/0.22) ?? SchoolCreationKit.color(kit.home.body); shade = Double(r)/245
+                else if let style, r > 145 && g > 145 && b > 135 && abs(r-g) < 45 && y > 0.26 && y < 0.48 {
+                    tint = style.shirt(x:x,y:(y-0.26)/0.22); shade = Double(r)/245
+                } else if let style, r > 145 && g > 145 && b > 135 && abs(r-g) < 45 && y >= 0.48 && y < 0.81 {
+                    tint = style.pants; shade = Double(r)/245
                 }
             }
             if let tint {
@@ -184,14 +187,14 @@ struct CreationAvatarImage: View {
         }
         return cg.map { UIImage(cgImage: $0) }
     }
-    private static func crest(_ school: School, rect: CGRect, in c: CGContext) {
-        guard let emblem = school.emblem, emblem.isValid else { return }
-        for (y, row) in emblem.pixels.enumerated() {
-            for (x, code) in row.utf8.enumerated() where code != 48 {
-                c.setFillColor(UIColor(Color(hex: emblem.palette[Int(code-48)])).cgColor)
-                c.fill(CGRect(x: rect.minX + CGFloat(x)*rect.width/32, y: rect.minY + CGFloat(y)*rect.height/32,
-                    width: rect.width/32, height: rect.height/32))
-            }
-        }
+    private static func crest(_ style: GameUniformStyle, rect: CGRect, in c: CGContext) {
+        guard style.mark.count == 16*16*4 else { return }
+        for y in 0..<16 { for x in 0..<16 {
+            let i=(y*16+x)*4
+            guard style.mark[i+3]>160 else { continue }
+            let color=(Int(style.mark[i])<<16)|(Int(style.mark[i+1])<<8)|Int(style.mark[i+2])
+            c.setFillColor(UIColor(Color(hex:color)).cgColor)
+            c.fill(CGRect(x:rect.minX+CGFloat(x)*rect.width/16,y:rect.minY+CGFloat(y)*rect.height/16,width:rect.width/16,height:rect.height/16))
+        }}
     }
 }

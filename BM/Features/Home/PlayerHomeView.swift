@@ -123,7 +123,8 @@ struct PlayerHomeView: View {
         "\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)-\(roomReports.first(where: { $0.playerID == player.id })?.payload.hashValue ?? 0)"
     }
     @ViewBuilder private var navigationHeader: some View {
-        ManagementSpatialHeader(player: player, affiliation: affiliationLabel, age: age,
+        ManagementSpatialHeader(player: player, affiliation: affiliationLabel,
+                                uniformTeamID: try? calendar?.teamID(for: player, on: GameDate(player.gameDate)), age: age,
                                 used: calendar?.hasAction(on: player.gameDate) == true,
                                 pending: todayTraining?.completed == false) { roomDetail = .profile }
         if let clubSelectionFailure {

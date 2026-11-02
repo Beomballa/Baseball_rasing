@@ -6,19 +6,25 @@ struct GameUniformStyle: Sendable {
     let pattern: String
     let body, sleeves, cap, brim, trim, ink: Int
     let mark: [UInt8]
+    var pants: Int = 0xf4f0df
 
     func shirt(x: Double, y: Double) -> Int {
         switch pattern {
-        case "pinstripe": return Int(floor(x * 10)) % 3 == 0 ? sleeves : body
-        case "chest-band": return (0.25...0.42).contains(y) ? sleeves : body
-        case "shoulder-yoke": return y < 0.22 ? sleeves : body
+        case "pinstripe": return abs((x * 7).rounded() - x * 7) < 0.07 ? sleeves : body
+        case "chest-band": return (0.27...0.43).contains(y) ? sleeves : (0.24...0.46).contains(y) ? trim : body
+        case "shoulder-yoke": return y < 0.19 ? sleeves : y < 0.23 ? trim : body
         case "raglan": return abs(x - 0.5) > 0.32 - max(0, 0.3-y) ? sleeves : body
-        case "retro-vest": return abs(x - 0.5) > 0.34 ? sleeves : body
+        case "retro-vest": return abs(x - 0.5) > 0.36 ? sleeves : abs(x - 0.5) > 0.33 ? trim : body
         default: return abs(x - 0.5) < 0.025 || y < 0.055 ? trim : body
         }
     }
 
-    func drawMark(at center: CGPoint, unit: Int, mirrored: Bool = false,
+    static func outline(for ink: Int) -> Int {
+        let light = ((ink >> 16)&255)*299 + ((ink >> 8)&255)*587 + (ink&255)*114
+        return light > 150_000 ? 0x14283f : 0xf5eed9
+    }
+
+    func drawMark(at center: CGPoint, unit: Int, mirrored: Bool = false, eligible: [Bool]? = nil,
                   bytes: inout [UInt8], width: Int, height: Int) {
         guard mark.count == 16*16*4 else { return }
         for row in 0..<16 { for col in 0..<16 {
@@ -29,7 +35,7 @@ struct GameUniformStyle: Sendable {
                 let y=Int(center.y)+row*unit-8*unit+dy
                 guard (0..<width).contains(x), (0..<height).contains(y) else { continue }
                 let target=(y*width+x)*4
-                guard bytes[target+3] > 200 else { continue }
+                guard bytes[target+3] > 200, eligible.map({ $0[y*width+x] }) != false else { continue }
                 for c in 0..<3 { bytes[target+c]=UInt8(Int(mark[source+c])*Int(bytes[target+3])/255) }
             }}
         }}
@@ -42,7 +48,7 @@ struct GameUniformStyle: Sendable {
         let home: Kit
         let away: Kit
         let crest: Crest?
-        struct Kit: Decodable { let pattern, body, sleeves, capCrown, capBrim, trim, numberColor: String }
+        struct Kit: Decodable { let pattern, body, sleeves, capCrown, capBrim, trim, numberColor, pants: String }
         struct Crest: Decodable { let palette: [Int]; let pixels: [String] }
     }
     private static let all: [String: GameUniformStyle] = {
@@ -71,7 +77,7 @@ struct GameUniformStyle: Sendable {
             return (key,GameUniformStyle(id:key,pattern:h.pattern,body:SchoolCreationKit.color(h.body),
                 sleeves:SchoolCreationKit.color(h.sleeves),cap:SchoolCreationKit.color(h.capCrown),
                 brim:SchoolCreationKit.color(h.capBrim),trim:SchoolCreationKit.color(h.trim),
-                ink:SchoolCreationKit.color(h.numberColor),mark:pixels))
+                ink:SchoolCreationKit.color(h.numberColor),mark:pixels,pants:SchoolCreationKit.color(h.pants)))
             }
         })
     }()

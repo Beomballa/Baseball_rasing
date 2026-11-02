@@ -2,6 +2,28 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV106CoreDescriptionsAndRecordCoverage() throws {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v100-league-names"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30))
+        for pitcher in [false,true] {
+            if pitcher {switchToPitcher(app)}
+            let before=labels(app)
+            try app.performAccessibilityAudit(for:[.sufficientElementDescription,.trait])
+            app.buttons["managementTab-game"].tap();app.buttons["facility-standings"].tap()
+            let open=app.buttons["openLeaguePlayers"];reveal(open,app);open.tap()
+            let names=app.staticTexts.matching(NSPredicate(format:"identifier BEGINSWITH %@","npcName-"))
+            XCTAssertTrue(names.firstMatch.waitForExistence(timeout:8))
+            try app.performAccessibilityAudit(for:[.sufficientElementDescription,.trait])
+            let decisions=app.staticTexts.matching(NSPredicate(format:"identifier BEGINSWITH %@","pitcherDecisions-"))
+            let first=decisions.firstMatch;reveal(first,app)
+            XCTAssertTrue(first.exists);XCTAssertTrue(first.label.contains("채점") || first.label.contains("미집계"))
+            capture(app,"v106-"+(pitcher ? "pitcher":"batter")+"-decision-coverage")
+            app.navigationBars.buttons.element(boundBy:0).tap();closeDetail(app)
+            app.buttons["managementTab-home"].tap();XCTAssertEqual(labels(app),before)
+        }
+    }
     @MainActor func testV103ExtractedSelectionRetryCoachAndCancelBothRoles() {
         continueAfterFailure = false
         let app = XCUIApplication()

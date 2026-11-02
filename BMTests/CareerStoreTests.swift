@@ -5,6 +5,84 @@ import UIKit
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV106UniformPoseNumbersAndTeamPortraits() throws {
+        var a=PlayerAppearance();a.creationVersion=1;a.schoolKitID="hs-ref-001"
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        let original=try encoder.encode(a)
+        let format=UIGraphicsImageRendererFormat();format.scale=1
+        func attach(_ image:UIImage,_ name:String) {
+            let item=XCTAttachment(image:image);item.name=name;item.lifetime = .keepAlways;add(item)
+        }
+        for role in PlayerRole.allCases {
+            let poses=try (0..<6).map { f in try XCTUnwrap(PlayerMotionArt.image(role:role,frame:f,appearance:a,number:27,hand:"right")) }
+            attach(UIGraphicsImageRenderer(size:CGSize(width:1536,height:1024),format:format).image { _ in
+                for f in 0..<6 {poses[f].draw(in:CGRect(x:f%3*512,y:f/3*512,width:512,height:512))}
+            },"V106-\(role.rawValue)-six-poses")
+            for hand in ["left","right"] {for f in 0..<6 {
+                let one=try XCTUnwrap(PlayerMotionArt.image(role:role,frame:f,appearance:a,number:1,hand:hand)?.cgImage)
+                let ninetyNine=try XCTUnwrap(PlayerMotionArt.image(role:role,frame:f,appearance:a,number:99,hand:hand)?.cgImage)
+                func pixels(_ image:CGImage)->[UInt8] {
+                    var bytes=[UInt8](repeating:0,count:512*512*4)
+                    bytes.withUnsafeMutableBytes { p in
+                        let c=CGContext(data:p.baseAddress,width:512,height:512,bitsPerComponent:8,bytesPerRow:2048,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue)
+                        c?.draw(image,in:CGRect(x:0,y:0,width:512,height:512))
+                    };return bytes
+                }
+                let first=pixels(one),second=pixels(ninetyNine),clip=PlayerMotionArt.pose(role:role,frame:f).numberClip
+                var changes=0
+                for y in 0..<512 {for x in 0..<512 {
+                    let p=(y*512+x)*4
+                    if first[p..<p+4] != second[p..<p+4] {
+                        changes += 1
+                        XCTAssertTrue(clip.contains(CGPoint(x:x,y:y)),"Number leaked outside visible back: \(role) frame \(f)")
+                    }
+                }}
+                XCTAssertGreaterThan(changes,40)
+            }}
+        }
+        let teams=["hs-ref-001","kbo-0","kbo-1","npb-0","npb-2","mlb-0","mlb-3"]
+        var signatures=Set<Data>()
+        let portraits=try teams.map { id in try XCTUnwrap(CreationAvatarRaster.image(a.wearing(teamID:id),number:27,cap:true,mode:.full)) }
+        for image in portraits {signatures.insert(try XCTUnwrap(image.pngData()))}
+        XCTAssertEqual(signatures.count,teams.count)
+        attach(UIGraphicsImageRenderer(size:CGSize(width:1792,height:384),format:format).image { _ in
+            for (i,p) in portraits.enumerated() {p.draw(in:CGRect(x:i*256,y:0,width:256,height:384))}
+        },"V106-school-pro-portraits")
+        for name in ["opponent-pitcher-v52","opponent-batter-v52","catcher-parts"] {
+            let columns=name == "opponent-pitcher-v52" ? 4:name == "catcher-parts" ? 2:3
+            let style=try XCTUnwrap(GameUniformStyles.find("kbo-0"))
+            let pictures=try (0..<columns*2).map { try XCTUnwrap(OpponentMotionArt.image(name,frame:$0,columns:columns,rows:2,kit:style.sleeves,style:style)) }
+            attach(UIGraphicsImageRenderer(size:CGSize(width:columns*384,height:768),format:format).image { _ in
+                for (i,p) in pictures.enumerated() {p.draw(in:CGRect(x:i%columns*384,y:i/columns*384,width:384,height:384))}
+            },"V106-"+name)
+        }
+        let clubLooks=try ClubIdentity.all.map { club in
+            try XCTUnwrap(CreationAvatarRaster.image(a.wearing(teamID:club.id),number:27,cap:true,mode:.full))
+        }
+        attach(UIGraphicsImageRenderer(size:CGSize(width:2560,height:1152),format:format).image { _ in
+            for (i,p) in clubLooks.enumerated() {p.draw(in:CGRect(x:i%10*256,y:i/10*384,width:256,height:384))}
+        },"V106-thirty-club-kits")
+        let style=try XCTUnwrap(GameUniformStyles.find("kbo-0"))
+        var fields=[UIImage]()
+        for direction in ["n","ne","nw"] {
+            let sheet=try XCTUnwrap(FieldRasterArt.manifest?.kinds["fielder"]?[direction])
+            for action in ["ready","gather","release"] {
+                let f=try XCTUnwrap(sheet.frames.first {$0.action == action})
+                let sample=FieldRasterArt.Sample(frame:f,weight:1,unit:1,mirrored:false,rearFacing:direction == "n")
+                fields.append(try XCTUnwrap(FieldRasterArt.image(sample,kit:style.sleeves,skin:0xeac29c,hair:0x3f2b23,number:27,back:true,style:style)))
+            }
+        }
+        attach(UIGraphicsImageRenderer(size:CGSize(width:1152,height:1152),format:format).image { _ in
+            for (i,p) in fields.enumerated() {p.draw(in:CGRect(x:i%3*384,y:i/3*384,width:384,height:384))}
+        },"V106-inplay-fielders")
+        for id in teams {for away in [false,true] {
+            let style=try XCTUnwrap(GameUniformStyles.find(id,away:away))
+            XCTAssertEqual(style.mark.count,1024)
+            XCTAssertFalse(style.mark.allSatisfy {$0 == 0})
+        }}
+        XCTAssertEqual(try encoder.encode(a),original)
+    }
+
     func testV105FaceReadabilityAndRenderContextRemainReadOnly() throws {
         var a = PlayerAppearance(); a.creationVersion = 1; a.schoolKitID = "hs-ref-001"
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys

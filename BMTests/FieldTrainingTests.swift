@@ -2362,7 +2362,7 @@ import SpriteKit
                     }
                 }
                 if let request=requests.values.first {
-                    let sample=FieldRasterArt.Sample(frame:request.frame,weight:1,unit:1,mirrored:request.mirrored)
+                    let sample=FieldRasterArt.Sample(frame:request.frame,weight:1,unit:1,mirrored:request.mirrored,rearFacing:request.back)
                     let original=FieldRasterArt.image(sample,kit:request.kit,skin:request.skin,hair:request.hair,number:request.number,back:request.back)
                     XCTAssertEqual(prepared.images[request.key]?.pngData(),original?.pngData())
                 }

@@ -82,7 +82,7 @@ struct PixelPlayer: View {
 struct ManagementPlayerPortrait: View {
     let appearance: PlayerAppearance
     @State private var image: UIImage?
-    private var key: String { "\(appearance.skin):\(appearance.hair):\(appearance.kit)" }
+    private var key: String { "\(appearance.skin):\(appearance.hair):\(appearance.kit):\(appearance.uniformStyle?.id ?? "legacy")" }
     var body: some View {
         Group {
             if appearance.creationVersion == 1 { CreationAvatarImage(appearance: appearance, cap: true, mode: .portrait) }
@@ -99,7 +99,7 @@ struct ManagementPlayerPortrait: View {
     }()
     static func image(_ appearance: PlayerAppearance) -> UIImage? {
         guard appearance.isValid else { return nil }
-        let key = "\(appearance.skin):\(appearance.hair):\(appearance.kit)" as NSString
+        let key = "\(appearance.skin):\(appearance.hair):\(appearance.kit):\(appearance.uniformStyle?.id ?? "legacy")" as NSString
         if let image = cache.object(forKey: key) { return image }
         guard let source = UIImage(named: "PlayerPortraitV91")?.cgImage else { return nil }
         let width = 128, height = 160
@@ -143,7 +143,7 @@ struct ManagementPlayerPortrait: View {
             } else if y < 0.45 && r > 25 && r < 110 && Double(r) > Double(g) * 1.2 && g > b {
                 tint = PlayerAppearance.hairColors[appearance.hair]; shade = Double(r) / 82
             } else if b > 45 && Double(b) > Double(r) * 1.3 && Double(b) > Double(g) * 1.15 {
-                tint = PlayerAppearance.kitColors[appearance.kit]; shade = Double(b) / 115
+                tint = y < 0.45 ? appearance.uniformStyle?.cap ?? appearance.uniformColor : appearance.uniformStyle?.sleeves ?? appearance.uniformColor; shade = Double(b) / 115
             }
             if let tint {
                 for channel in 0..<3 {

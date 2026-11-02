@@ -47,7 +47,7 @@ enum MatchArt {
     }
     struct Sheet: Decodable {let referenceHeight: Double;let frames: [Frame]}
     struct Manifest: Decodable {let kinds: [String:[String:Sheet]]}
-    struct Sample {let frame:Frame;let weight:Double;let unit:Double;let mirrored:Bool}
+    struct Sample {let frame:Frame;let weight:Double;let unit:Double;let mirrored:Bool;var rearFacing=false}
     static let directions=["n","ne","e","se","s","sw","w","nw"]
     static let manifest: Manifest? = {
         guard let url=Bundle.main.url(forResource:"field-runtime-v1",withExtension:"json",subdirectory:"MatchArt"),
@@ -117,7 +117,7 @@ enum MatchArt {
                 let width=sheet.frames.filter {$0.referenceHeight == height}.map {$0.rect[2]}.max() ?? frame.rect[2]
                 authoredUnit=min(24/height,26/width)
             } else {authoredUnit=unit}
-            return Sample(frame:frame,weight:weight,unit:authoredUnit,mirrored:left != frame.sourceLeft)
+            return Sample(frame:frame,weight:weight,unit:authoredUnit,mirrored:left != frame.sourceLeft,rearFacing:direction == 0)
         }
     }
     static func contact(_ motion:FieldSpriteMotion,kind:String,left:Bool,hand:Bool) -> CGPoint? {
@@ -163,7 +163,7 @@ enum MatchArt {
         let style:GameUniformStyle?
         init(sample:Sample,kit:Int,skin:Int,hair:Int,number:Int,back:Bool,style:GameUniformStyle?=nil) {
             frame=sample.frame;self.style=style;self.kit=kit;self.skin=skin;self.hair=hair
-            self.number=back ? number:0;self.back=back;mirrored=back && sample.mirrored
+            self.number=back && sample.rearFacing ? number:0;self.back=back && sample.rearFacing;mirrored=self.back && sample.mirrored
         }
         var key:String {"\(frame.file):\(frame.rect):\(kit):\(skin):\(hair):\(number):\(back):\(mirrored):\(style?.id ?? "legacy")"}
     }
@@ -201,6 +201,7 @@ enum MatchArt {
         }
         guard ok else {return nil}
         var bounds=[(Int,Int)](repeating:(0,0),count:h)
+        var backCloth=[Bool](repeating:false,count:w*h),sumX=0.0,sumY=0.0,clothCount=0.0
         for row in f.clipRows where row.count==3 && row[0]<h {bounds[row[0]]=(row[1],row[1]+row[2])}
         for y in 0..<h {for x in 0..<w {
             let i=(y*w+x)*4,a=Int(bytes[i+3])
@@ -210,20 +211,29 @@ enum MatchArt {
             var color:Int?,shade=1.0
             if b>40 && b>r*1.35 && b>g*1.08 {
                 let nx=Double(x)/Double(w),ny=Double(y)/Double(h)
+                if (0.30...0.68).contains(nx) && (0.30...0.65).contains(ny) {
+                    backCloth[y*w+x]=true;sumX+=Double(x);sumY+=Double(y);clothCount+=1
+                }
                 if let style=request.style {
-                    color=ny < 0.23 ? (ny > 0.18 ? style.brim:style.cap) : ny < 0.65 ? style.shirt(x:nx,y:(ny-0.32)/0.33) : kit
+                    color=ny < 0.30 ? (ny > 0.26 ? style.brim:style.cap) : ny < 0.56 ? style.shirt(x:nx,y:(ny-0.32)/0.24) : style.sleeves
                 } else {color=kit}
                 shade=max(0.3,min(1.5,b/155))
+            }
+            else if let style=request.style, min(r,g,b)>110, max(r,g,b)-min(r,g,b)<65,
+                    Double(y)/Double(h)>0.56, Double(y)/Double(h)<0.81 {
+                color=style.pants;shade=max(0.35,min(1.1,(r+g+b)/735))
             }
             // Keep the glove's brown leather independent from skin recoloring.
             else if (f.file.hasPrefix("runner-") || abs(Double(x)-f.glove[0])>Double(w)*0.16 || abs(Double(y)-f.glove[1])>Double(h)*0.18) && r>185 && r>g*1.13 && g>b*1.12 && g>95 {color=skin;shade=max(0.45,min(1.2,r/240))}
             else if Double(y)>Double(h)*0.19 && Double(y)<Double(h)*0.36 && Double(x)>Double(w)*0.23 && Double(x)<Double(w)*0.77 && r<65 && abs(r-g)<22 && abs(g-b)<22 {color=hair;shade=max(0.5,(r+g+b)/100)}
             if let color {for (offset,shift) in [(0,16),(1,8),(2,0)] {bytes[i+offset]=UInt8(min(255,Double((color>>shift)&255)*shade)*Double(a)/255)}}
         }}
-        request.style?.drawMark(at:CGPoint(x:Double(w)*0.35,y:Double(h)*0.40),unit:1,mirrored:request.mirrored,bytes:&bytes,width:w,height:h)
-        if back {
-            PlayerMotionArt.drawNumber(number,at:CGPoint(x:f.numberCenter?[0] ?? Double(w)*0.5,y:f.numberCenter?[1] ?? Double(h)*0.49),angle:0,
-                mirrored:request.mirrored,unit:max(2,w/60),ink:request.style?.ink ?? 0xf4f0db,bytes:&bytes,width:w,height:h)
+        if !back {request.style?.drawMark(at:CGPoint(x:Double(w)*0.35,y:Double(h)*0.40),unit:1,mirrored:request.mirrored,bytes:&bytes,width:w,height:h)}
+        if back, clothCount > 0 {
+            let center=CGPoint(x:f.numberCenter?[0] ?? sumX/clothCount,y:f.numberCenter?[1] ?? sumY/clothCount)
+            let ink=request.style?.ink ?? 0xf4f0db
+            PlayerMotionArt.drawNumber(number,at:center,angle:0,mirrored:request.mirrored,unit:max(2,w/70),
+                ink:ink,outline:GameUniformStyle.outline(for:ink),eligible:backCloth,bytes:&bytes,width:w,height:h)
         }
         guard let provider=CGDataProvider(data:Data(bytes) as CFData),let cg=CGImage(width:w,height:h,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:format),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else {return nil}
         return UIImage(cgImage:cg)
@@ -2285,30 +2295,74 @@ extension InplayReplay {
 
 @MainActor enum OpponentMotionArt {
     private static let cache = NSCache<NSString,NSArray>()
-    static func textures(_ name:String,columns:Int,rows:Int,ownKit:Int,opponent:Bool = true, teamColor:Int? = nil) -> [SKTexture] {
-        let kit=teamColor ?? (opponent ? FieldReplayPresentation.opponentKit(ownKit):ownKit),key="\(name):\(kit)" as NSString
+    // Front-camera garment regions; glove, face and catcher armour remain separate layers.
+    static func torso(_ name: String, frame: Int) -> CGRect {
+        let rects: [[Double]]
+        if name == "opponent-pitcher-v52" {
+            rects = [[0.32,0.42,0.35,0.20],[0.37,0.40,0.30,0.20],[0.40,0.40,0.30,0.23],[0.40,0.42,0.30,0.22],
+                     [0.43,0.45,0.30,0.18],[0.46,0.48,0.26,0.14],[0.42,0.43,0.27,0.17],[0.37,0.40,0.30,0.20]]
+        } else if name == "opponent-batter-v52" {
+            rects = [[0.34,0.39,0.19,0.18],[0.32,0.41,0.20,0.18],[0.15,0.43,0.23,0.17],[0.42,0.33,0.26,0.19],[0.25,0.38,0.21,0.17],[0.15,0.37,0.24,0.17]]
+        } else {
+            rects = [[0.22,0.46,0.57,0.27],[0.19,0.48,0.58,0.27],[0,0,0,0],[0,0,0,0]]
+        }
+        let r=rects[min(frame,rects.count-1)]
+        return CGRect(x:r[0],y:r[1],width:r[2],height:r[3])
+    }
+    static func image(_ name:String, frame:Int, columns:Int, rows:Int, kit:Int, style:GameUniformStyle?) -> UIImage? {
+        guard let source=MatchArt.cell(name,column:frame%columns,row:frame/columns,columns:columns,rows:rows)?.cgImage else {return nil}
+        let w=source.width,h=source.height,format=CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue
+        var data=[UInt8](repeating:0,count:w*h*4),fabric=[Bool](repeating:false,count:w*h)
+        let decoded=data.withUnsafeMutableBytes { buffer -> Bool in
+            guard let c=CGContext(data:buffer.baseAddress,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:format) else {return false}
+            c.draw(source,in:CGRect(x:0,y:0,width:w,height:h));return true
+        }
+        guard decoded else {return nil}
+        let shirt=torso(name,frame:frame), catcher=name == "catcher-parts"
+        for y in 0..<h {for x in 0..<w {
+            let index=(y*w+x)*4,a=Int(data[index+3]);guard a>16 else {continue}
+            let r=Double(data[index])*255/Double(a),g=Double(data[index+1])*255/Double(a),b=Double(data[index+2])*255/Double(a)
+            let p=CGPoint(x:Double(x)/Double(w),y:Double(y)/Double(h))
+            let blue=b>36 && b>r*1.35 && b>g*1.1
+            let white=min(r,g,b)>110 && max(r,g,b)-min(r,g,b)<65
+            var color:Int?,shade=1.0
+            if blue {
+                fabric[y*w+x]=true
+                if let style {
+                    if catcher { color=style.sleeves }
+                    else if p.y < shirt.minY {color=p.y > shirt.minY-0.09 ? style.brim:style.cap}
+                    else if shirt.contains(p) { color=style.shirt(x:(p.x-shirt.minX)/shirt.width,y:(p.y-shirt.minY)/shirt.height) }
+                    else {color=style.sleeves}
+                } else {color=kit}
+                shade=max(0.25,min(1.45,b/135))
+            } else if let style, white {
+                if catcher && frame < 2 && shirt.contains(p) {
+                    color=style.shirt(x:(p.x-shirt.minX)/shirt.width,y:(p.y-shirt.minY)/shirt.height)
+                } else if !catcher && p.y > shirt.maxY+0.035 && p.y < 0.81 { color=style.pants }
+                shade=max(0.35,min(1.1,(r+g+b)/735))
+            }
+            if let color {for c in 0..<3 {data[index+c]=UInt8(min(255,Int(Double((color >> ((2-c)*8))&255)*shade))*a/255)}}
+        }}
+        if let style, !catcher {
+            // Only paint onto original cloth pixels, never across the glove or exposed skin.
+            let chest=CGPoint(x:(shirt.midX+0.055)*Double(w),y:(shirt.minY+0.07)*Double(h))
+            style.drawMark(at:chest,unit:1,eligible:fabric,bytes:&data,width:w,height:h)
+            let capCenters: [[Double]] = name == "opponent-pitcher-v52"
+                ? [[0.49,0.19],[0.51,0.17],[0.56,0.22],[0.59,0.20],[0.64,0.26],[0.68,0.36],[0.66,0.33],[0.52,0.15]]
+                : [[0.58,0.25],[0.51,0.26],[0.38,0.28],[0.60,0.20],[0.51,0.27],[0.40,0.27]]
+            let cap=capCenters[frame]
+            style.drawMark(at:CGPoint(x:cap[0]*Double(w),y:cap[1]*Double(h)),unit:1,eligible:fabric,bytes:&data,width:w,height:h)
+        }
+        guard let provider=CGDataProvider(data:Data(data) as CFData),let image=CGImage(width:w,height:h,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:format),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else {return nil}
+        return UIImage(cgImage:image)
+    }
+    static func textures(_ name:String,columns:Int,rows:Int,ownKit:Int,opponent:Bool = true,teamColor:Int? = nil,style:GameUniformStyle? = nil) -> [SKTexture] {
+        let kit=teamColor ?? (opponent ? FieldReplayPresentation.opponentKit(ownKit):ownKit)
+        let key="\(name):\(kit):\(style?.id ?? "legacy")" as NSString
         if let result=cache.object(forKey:key) as? [SKTexture] {return result}
         let result=(0..<(columns*rows)).compactMap { frame -> SKTexture? in
-            guard let source=MatchArt.cell(name,column:frame%columns,row:frame/columns,columns:columns,rows:rows)?.cgImage else {return nil}
-            let w=source.width,h=source.height,format=CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue
-            var data=[UInt8](repeating:0,count:w*h*4)
-            let image:CGImage?=data.withUnsafeMutableBytes {buffer in
-                guard let context=CGContext(data:buffer.baseAddress,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:format),let p=buffer.baseAddress?.assumingMemoryBound(to:UInt8.self) else {return nil}
-                context.draw(source,in:CGRect(x:0,y:0,width:w,height:h))
-                for index in stride(from:0,to:w*h*4,by:4) {
-                    let a=Int(p[index+3]);guard a>16 else {continue}
-                    let r=Double(p[index])*255/Double(a),g=Double(p[index+1])*255/Double(a),b=Double(p[index+2])*255/Double(a)
-                    guard b>36,b>r*1.35,b>g*1.1 else {continue}
-                    let shade=max(0.25,min(1.6,b/135))
-                    for channel in 0..<3 {
-                        let component=(kit >> ((2-channel)*8)) & 255
-                        p[index+channel]=UInt8(min(255,Int(Double(component)*shade))*a/255)
-                    }
-                }
-                return context.makeImage()
-            }
-            guard let image else {return nil}
-            let texture=SKTexture(cgImage:image);texture.filteringMode = .nearest;return texture
+            guard let image=image(name,frame:frame,columns:columns,rows:rows,kit:kit,style:style) else {return nil}
+            let texture=SKTexture(image:image);texture.filteringMode = .nearest;return texture
         }
         cache.totalCostLimit=24*1024*1024
         cache.setObject(result as NSArray,forKey:key,cost:result.count*512*512*4)

@@ -356,6 +356,7 @@ struct ManagementSpatialRoom<Header: View>: View {
 struct ManagementSpatialHeader: View {
     let player: CareerPlayer
     let affiliation: String
+    var uniformTeamID: String? = nil
     let age: Int
     let used: Bool
     let pending: Bool
@@ -408,7 +409,7 @@ struct ManagementSpatialHeader: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
                 Button(action: profile) {
-                    ManagementPlayerPortrait(appearance: player.appearance)
+                    ManagementPlayerPortrait(appearance: player.appearance.wearing(teamID: uniformTeamID ?? player.schoolID))
                         .frame(width: 50, height: 64)
                         .background(GameTheme.boardPanel)
                         .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))

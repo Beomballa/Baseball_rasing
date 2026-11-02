@@ -15,6 +15,9 @@ import UIKit
         let number: CGPoint
         var angle: Double = 0
         var erase: CGRect = .zero
+        var numberUnit = 5
+        var numberClip: CGRect = .zero
+        var pants: CGRect = .zero
     }
     private static func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> CGRect { CGRect(x: x, y: y, width: w, height: h) }
     private static func polygon(_ pairs: [(Double, Double)]) -> [CGPoint] { pairs.map { CGPoint(x: $0.0, y: $0.1) } }
@@ -27,7 +30,15 @@ import UIKit
                         [rect(133,190,113,61),rect(200,282,105,78)], [rect(180,171,150,70),rect(173,258,75,51),rect(329,270,35,38)]]
             let centers = [CGPoint(x:303,y:266),CGPoint(x:291,y:251),CGPoint(x:301,y:286),CGPoint(x:299,y:245),CGPoint(x:264,y:244),CGPoint(x:288,y:252)]
             let erase = [rect(264,237,76,57),rect(253,222,77,59),rect(262,255,76,60),rect(264,216,76,58),rect(220,208,87,66),rect(252,223,76,58)]
-            return Pose(shirt: [], hair: hair[frame], skin: skin[frame], number: centers[frame], angle: frame == 4 ? -0.5 : 0, erase: erase[frame])
+            let shirts = [polygon([(260,229),(327,229),(339,252),(339,300),(246,301),(251,258)]),
+                          polygon([(258,215),(319,215),(332,238),(326,291),(240,279),(246,241)]),
+                          polygon([(260,246),(326,247),(335,268),(334,324),(252,322),(251,277)]),
+                          polygon([(259,212),(324,212),(343,238),(337,278),(253,287),(253,246)]),
+                          polygon([(218,239),(245,218),(273,209),(307,231),(323,250),(273,280),(244,270)]),
+                          polygon([(257,220),(316,220),(337,240),(335,284),(254,286),(252,249)])]
+            return Pose(shirt: shirts[frame], hair: hair[frame], skin: skin[frame], number: centers[frame],
+                        angle: frame == 4 ? -0.5 : 0, erase: erase[frame], numberUnit: 6, numberClip: erase[frame],
+                        pants: [rect(205,309,156,82),rect(174,286,155,108),rect(182,329,212,91),rect(219,280,135,106),rect(269,250,135,83),rect(208,288,157,95)][frame])
         }
         let shirts = [polygon([(198,180),(230,178),(270,201),(278,264),(251,291),(154,279),(164,237),(179,200)]),
                       polygon([(163,196),(203,187),(258,204),(262,270),(238,303),(153,298),(164,258)]),
@@ -39,8 +50,12 @@ import UIKit
         let skin = [[rect(258,160,68,47),rect(264,188,85,60)], [rect(210,174,79,44),rect(85,164,78,65)],
                     [rect(171,181,110,46),rect(248,231,81,59)], [rect(252,142,90,49),rect(180,90,65,51)],
                     [rect(210,175,97,53),rect(231,225,114,52)], [rect(203,176,100,53),rect(230,223,111,55)]]
-        let centers = [CGPoint(x:202,y:240),CGPoint(x:232,y:266),CGPoint(x:162,y:262),CGPoint(x:273,y:226),CGPoint(x:165,y:240),CGPoint(x:163,y:242)]
-        return Pose(shirt: shirts[frame], hair: hair[frame], skin: skin[frame], number: centers[frame])
+        // The near arm covers much of the shirt. Use the visible back below it, not the shoulder.
+        let centers = [CGPoint(x:188,y:252),CGPoint(x:204,y:280),CGPoint(x:161,y:278),CGPoint(x:277,y:226),CGPoint(x:146,y:248),CGPoint(x:143,y:250)]
+        let clips = [rect(168,233,42,39),rect(180,265,48,28),rect(137,256,49,43),rect(236,200,79,54),rect(130,232,33,31),rect(127,234,33,31)]
+        let units = [4,4,4,6,3,3]
+        return Pose(shirt: shirts[frame], hair: hair[frame], skin: skin[frame], number: centers[frame], numberUnit: units[frame], numberClip: clips[frame],
+                    pants: [rect(149,291,113,133),rect(167,306,139,126),rect(119,315,143,112),rect(191,267,117,126),rect(127,280,149,130),rect(125,281,149,130)][frame])
     }
     static func textures(role: PlayerRole, appearance: PlayerAppearance, number: Int, hand: String) -> [SKTexture] {
         let key = ([role.rawValue, hand, appearance.uniformStyle?.id ?? "legacy"] + [appearance.skin,appearance.hair,appearance.uniformColor,appearance.hairStyle,appearance.expression,number].map(String.init)).joined(separator: ":") as NSString
@@ -52,7 +67,7 @@ import UIKit
         if result.count == 6 { cache.setObject(result as NSArray, forKey: key, cost: 6 * 512 * 512 * 4) }
         return result
     }
-    // Semantic recoloring uses 512px cells; V75 keeps the existing palette regions and jersey anchors.
+    // V75 garment masks and visible back anchors are measured in each 512px pose cell.
     static func image(role: PlayerRole, frame: Int, appearance: PlayerAppearance, number: Int, hand: String) -> UIImage? {
         guard (0..<6).contains(frame), appearance.isValid, (0...99).contains(number),
               let original = MatchArt.cell(sourceName(role: role), column: frame % 3, row: frame / 3, columns: 3, rows: 2)?.cgImage, original.width == 512, original.height == 512 else { return nil }
@@ -92,16 +107,20 @@ import UIKit
             let r = Int(bytes[index]) * 255 / alpha, g = Int(bytes[index + 1]) * 255 / alpha, b = Int(bytes[index + 2]) * 255 / alpha
             let point = CGPoint(x: x, y: y), high = max(r,g,b), low = min(r,g,b)
             var color: (Int,Int,Int)?
-            let nx=(Double(x)-pose.number.x+65)/130, ny=(Double(y)-pose.number.y+55)/110
-            let torso = role == .batter ? shirt.contains(point) : (0...1).contains(nx) && (0...1).contains(ny)
+            let bounds = shirt.boundingBox
+            let nx=(Double(x)-bounds.minX)/bounds.width, ny=(Double(y)-bounds.minY)/bounds.height
+            let torso = shirt.contains(point)
             let jersey = style?.shirt(x:nx,y:ny) ?? kit
-            let fabric = torso ? jersey : Double(y) < pose.hair.maxY ? (Double(y) > pose.hair.minY-8 ? style?.brim : style?.cap) ?? kit : style?.sleeves ?? kit
-            if role == .pitcher && pose.erase.contains(point) && high > 100 && high - low < 105 {
+            let onCap = Double(y) < pose.hair.minY+8 && Double(x) > pose.hair.minX-38 && Double(x) < pose.hair.maxX+24
+            let fabric = torso ? jersey : onCap ? (Double(y) > pose.hair.minY-8 ? style?.brim : style?.cap) ?? kit : style?.sleeves ?? kit
+            if role == .pitcher && pose.erase.contains(point) && torso && high > 24 {
                 color = rgb(jersey, shirtShade[y])
             } else if b > 36 && Double(b) > Double(r) * 1.35 && Double(b) > Double(g) * 1.1 {
                 color = rgb(fabric, max(0.25,min(1.6,Double(b) / 135)))
             } else if role == .batter && low > 90 && high - low < 70 && shirt.contains(point) {
                 color = rgb(jersey, max(0.35,Double(r + g + b) / 720))
+            } else if let style, pose.pants.contains(point), low > 105, high-low < 70 {
+                color = rgb(style.pants,max(0.35,min(1.1,Double(r+g+b)/735)))
             } else if pose.hair.contains(point) && high > 22 && high - low < 34 {
                 let shaved = appearance.hairStyle == 1 && Double(x) < pose.hair.minX + pose.hair.width * 0.25
                 color = rgb(shaved ? skin : hair, max(0.35,min(1.15,Double(high) / 52)))
@@ -120,16 +139,21 @@ import UIKit
                 bytes[index] = UInt8(color.0 * alpha / 255); bytes[index + 1] = UInt8(color.1 * alpha / 255); bytes[index + 2] = UInt8(color.2 * alpha / 255)
             }
         } }
-        if let style {
-            style.drawMark(at:CGPoint(x:pose.number.x-40,y:pose.number.y-31),unit:1,
-                mirrored:role == .pitcher && hand == "left",bytes:&bytes,width:width,height:height)
+        if let style, role == .batter {
+            let helmet = [CGPoint(x:280,y:133),CGPoint(x:256,y:143),CGPoint(x:220,y:151),CGPoint(x:301,y:106),CGPoint(x:259,y:145),CGPoint(x:254,y:146)]
+            style.drawMark(at:helmet[frame],unit:1,bytes:&bytes,width:width,height:height)
         }
-        drawNumber(number, at: pose.number, angle: pose.angle, mirrored: role == .pitcher && hand == "left", unit: role == .pitcher ? 7 : 5, ink: style?.ink ?? 0xf4f0db, bytes: &bytes, width: width, height: height)
+        // Separate the digits from patterned fabric with a contrasting one-pixel stitch border.
+        let ink = style?.ink ?? 0xf4f0db
+        let outline = GameUniformStyle.outline(for: ink)
+        drawNumber(number, at: pose.number, angle: pose.angle, mirrored: role == .pitcher && hand == "left",
+                   unit: pose.numberUnit, ink: ink, outline: outline, clip: pose.numberClip,
+                   bytes: &bytes, width: width, height: height)
         guard let provider = CGDataProvider(data: Data(bytes) as CFData), let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4, space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: format), provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
         return UIImage(cgImage: image)
     }
     nonisolated static let digits = ["111101101101111", "010110010010111", "111001111100111", "111001111001111", "101101111001001", "111100111001111", "111100111101111", "111001001001001", "111101111101111", "111101111001111"]
-    nonisolated static func drawNumber(_ number: Int, at center: CGPoint, angle: Double, mirrored: Bool, unit: Int, ink: Int = 0xf4f0db, bytes: inout [UInt8], width: Int, height: Int) {
+    nonisolated static func drawNumber(_ number: Int, at center: CGPoint, angle: Double, mirrored: Bool, unit: Int, ink: Int = 0xf4f0db, outline: Int? = nil, clip: CGRect? = nil, eligible: [Bool]? = nil, bytes: inout [UInt8], width: Int, height: Int) {
         let masks = String(number).compactMap { $0.wholeNumberValue }.map { Array(digits[$0]) }
         let columns = masks.count * 4 - 1, textWidth = Double(columns * unit), textHeight = Double(5 * unit)
         let cosine = cos(angle), sine = sin(angle)
@@ -138,12 +162,19 @@ import UIKit
                 let dx = Double(x) - center.x, dy = Double(y) - center.y
                 let localX = (dx * cosine + dy * sine) * (mirrored ? -1 : 1) + textWidth / 2
                 let localY = dy * cosine - dx * sine + textHeight / 2
-                guard localX >= 0, localX < textWidth, localY >= 0, localY < textHeight else { continue }
-                let col = Int(localX) / unit, row = Int(localY) / unit
-                guard col % 4 < 3, masks[col / 4][row * 3 + col % 4] == "1" else { continue }
+                guard clip?.contains(CGPoint(x:x,y:y)) != false, eligible.map({ $0[y*width+x] }) != false else { continue }
+                func filled(_ px: Double, _ py: Double) -> Bool {
+                    guard px >= 0, px < textWidth, py >= 0, py < textHeight else { return false }
+                    let col = Int(px)/unit, row = Int(py)/unit
+                    return col % 4 < 3 && masks[col/4][row*3+col%4] == "1"
+                }
+                let inside = filled(localX,localY)
+                let edge = outline != nil && [(-1.0,0.0),(1,0),(0,-1),(0,1)].contains { filled(localX+$0.0,localY+$0.1) }
+                guard inside || edge else { continue }
+                let color = inside ? ink : outline ?? ink
                 let i = (y * width + x) * 4
                 guard bytes[i + 3] > 128 else { continue }
-                let a = Int(bytes[i + 3]); bytes[i] = UInt8(((ink>>16)&255)*a/255); bytes[i+1] = UInt8(((ink>>8)&255)*a/255); bytes[i+2] = UInt8((ink&255)*a/255)
+                let a = Int(bytes[i + 3]); bytes[i] = UInt8(((color>>16)&255)*a/255); bytes[i+1] = UInt8(((color>>8)&255)*a/255); bytes[i+2] = UInt8((color&255)*a/255)
             }
         }
     }
