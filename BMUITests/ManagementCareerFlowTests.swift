@@ -375,13 +375,16 @@ final class ManagementCareerFlowTests: XCTestCase {
             capture(app, pitcher ? "pitcher-home" : "batter-home")
             let cases = [("player", "facility-abilities", "homeAbilityRadar"),
                          ("training", "facility-training", "trainingHubMethod"),
-                         ("game", "facility-game", "hubCalendar"),
+                         ("game", "facility-analysis", "hubOpponentAnalysis"),
                          ("career", "facility-goals", "openCareerObjectives")]
             for (tab, facility, detail) in cases {
                 app.buttons["managementTab-" + tab].tap()
                 XCTAssertTrue(app.buttons[facility].isHittable, facility)
-                XCTAssertTrue(app.buttons["roomPrimary"].isHittable)
-                XCTAssertTrue(app.frame.contains(app.buttons["roomPrimary"].frame))
+                // The training notebook remains an in-scene action; other rooms use their own facilities.
+                if tab == "training" {
+                    XCTAssertTrue(app.buttons["roomPrimary"].isHittable)
+                    XCTAssertTrue(app.frame.contains(app.buttons["roomPrimary"].frame))
+                }
                 capture(app, (pitcher ? "pitcher-" : "batter-") + tab)
                 app.buttons[facility].tap()
                 let element = app.descendants(matching: .any).matching(identifier: detail).firstMatch
