@@ -1212,7 +1212,7 @@ enum InplayFieldProjection {
     }
     func requests(duration:Double,reduced:Bool,actorsAt:(Double)->[Actor]) async -> [String:FieldRasterArt.Request]? {
         var result:[String:FieldRasterArt.Request]=[:],seen=Set<Selection>()
-        let ownKit=appearance.uniformColor,opponent=FieldReplayPresentation.opponentKit(ownKit)
+        let ownKit=appearance.uniformColor,opponent=appearance.opponentUniformColor
         // Both field canvases use 2:3; perspective direction is independent of pixel resolution.
         let size=CGSize(width:400,height:600)
         let steps=Int(ceil(duration*120))
@@ -1230,7 +1230,7 @@ enum InplayFieldProjection {
                         guard seen.insert(selection).inserted else {continue}
                         let r=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:opponent,
                             skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
-                            hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,back:back,style:actor.teamOwn ? appearance.uniformStyle:nil)
+                            hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,back:back,style:actor.teamOwn ? appearance.uniformStyle:appearance.opponentUniformStyle)
                         result[r.key]=r
                     }
                 }
@@ -1402,14 +1402,14 @@ struct DetailedFieldReplayBoard:View {
                         let b=point(DetailedFieldRules.bases[target]),w=max(7,size.width*0.025)
                         context.stroke(Path(ellipseIn:CGRect(x:b.x-w,y:b.y-w/2,width:w*2,height:w)),with:.color(GameTheme.gold.opacity(0.8)),lineWidth:1)
                     }
-                    let ownKit=appearance.uniformColor,opponent=FieldReplayPresentation.opponentKit(ownKit)
+                    let ownKit=appearance.uniformColor,opponent=appearance.opponentUniformColor
                     let defenseOwn=ownTeamFielding ?? !play.ownBatter
                     let actors=sprites.actors(play,time:time,reduced:reduced,finished:finished)
                     for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
                         let raster=FieldRasterArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),kind:actor.kind,
                             kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
                             hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,
-                            left:actor.own && throwingHand == "left",selected:actor.own,out:actor.out,style:actor.teamOwn ? appearance.uniformStyle:nil,prepared:prepared)
+                            left:actor.own && throwingHand == "left",selected:actor.own,out:actor.out,style:actor.teamOwn ? appearance.uniformStyle:appearance.opponentUniformStyle,prepared:prepared)
                         if !raster {FieldActorArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),
                             kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
                             hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,
@@ -1783,13 +1783,13 @@ struct HomeRunReplayBoard:View {
                             context.clip(to:Path(CGRect(origin:.zero,size:size)));context.translateBy(x:offset.x,y:offset.y)
                         }
                         if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
-                        let ownKit=appearance.uniformColor,opponent=FieldReplayPresentation.opponentKit(ownKit)
+                        let ownKit=appearance.uniformColor,opponent=appearance.opponentUniformColor
                         let actors=sprites.actors(event,time:time,reduced:reduced)
                         for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
                             let (p,motion,own,teamOwn,number,kind)=(actor.point,actor.motion,actor.own,actor.teamOwn,actor.number,actor.kind)
                             _=FieldRasterArt.draw(in:context,at:InplayFieldProjection.point(p,size:size),scale:InplayFieldProjection.actorScale(p,size:size),motion:InplayFieldProjection.motion(motion,at:p,size:size),kind:kind,
                                 kit:teamOwn ? ownKit:opponent,skin:own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
-                                hair:own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:number,left:own && throwingHand == "left",selected:own,out:false,style:teamOwn ? appearance.uniformStyle:nil,prepared:prepared)
+                                hair:own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:number,left:own && throwingHand == "left",selected:own,out:false,style:teamOwn ? appearance.uniformStyle:appearance.opponentUniformStyle,prepared:prepared)
                         }
                         let scoreboard=CGRect(x:size.width*0.38,y:size.height*0.14,width:size.width*0.24,height:size.height*0.04)
                         context.fill(Path(scoreboard),with:.color(GameTheme.navy))
@@ -2175,7 +2175,7 @@ struct InplayStartupReadiness {
             node.shadow.setScale(scale);node.selection.setScale(scale);node.selection.isHidden = !actor.own
             let left=actor.own && sprites.throwingHand == "left"
             if let sample=FieldRasterArt.samples(motion,kind:actor.kind,left:left).first {
-                let request=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:FieldReplayPresentation.opponentKit(ownKit),skin:actor.own ? PlayerAppearance.skinColors[sprites.appearance.skin]:0xefbe91,hair:actor.own ? PlayerAppearance.hairColors[sprites.appearance.hair]:0x263b48,number:actor.number,back:motion.facing.back && actor.kind != "catcher",style:actor.teamOwn ? sprites.appearance.uniformStyle:nil)
+                let request=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:sprites.appearance.opponentUniformColor,skin:actor.own ? PlayerAppearance.skinColors[sprites.appearance.skin]:0xefbe91,hair:actor.own ? PlayerAppearance.hairColors[sprites.appearance.hair]:0x263b48,number:actor.number,back:motion.facing.back && actor.kind != "catcher",style:actor.teamOwn ? sprites.appearance.uniformStyle:sprites.appearance.opponentUniformStyle)
                 if node.textureKey != request.key {
                     if textures[request.key] == nil,let image=FieldRasterArt.image(sample,kit:request.kit,skin:request.skin,hair:request.hair,number:request.number,back:request.back,style:request.style) {let texture=SKTexture(image:image);texture.filteringMode = .nearest;textures[request.key]=texture;fallbackTextures+=1}
                     node.body.texture=textures[request.key];node.textureKey=request.key;textureChanges+=1
@@ -2285,8 +2285,8 @@ extension InplayReplay {
 
 @MainActor enum OpponentMotionArt {
     private static let cache = NSCache<NSString,NSArray>()
-    static func textures(_ name:String,columns:Int,rows:Int,ownKit:Int,opponent:Bool = true) -> [SKTexture] {
-        let kit=opponent ? FieldReplayPresentation.opponentKit(ownKit):ownKit,key="\(name):\(kit)" as NSString
+    static func textures(_ name:String,columns:Int,rows:Int,ownKit:Int,opponent:Bool = true, teamColor:Int? = nil) -> [SKTexture] {
+        let kit=teamColor ?? (opponent ? FieldReplayPresentation.opponentKit(ownKit):ownKit),key="\(name):\(kit)" as NSString
         if let result=cache.object(forKey:key) as? [SKTexture] {return result}
         let result=(0..<(columns*rows)).compactMap { frame -> SKTexture? in
             guard let source=MatchArt.cell(name,column:frame%columns,row:frame/columns,columns:columns,rows:rows)?.cgImage else {return nil}

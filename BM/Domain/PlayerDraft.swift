@@ -42,6 +42,7 @@ struct PlayerAppearance: Equatable, Codable {
     // Render context only: never changes a saved creation look or a frozen game payload.
     var uniformTeamID: String? = nil
     var uniformAway = false
+    var opponentUniformTeamID: String? = nil
     private enum CodingKeys: String, CodingKey {
         case skin, hair, kit, hairStyle, expression, eyeShape, browShape, schoolKitID, creationVersion
     }

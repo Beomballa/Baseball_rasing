@@ -83,5 +83,7 @@ struct GameUniformStyle: Sendable {
 }
 
 extension PlayerAppearance {
+    @MainActor var opponentUniformStyle: GameUniformStyle? { GameUniformStyles.find(opponentUniformTeamID, away: !uniformAway) }
+    @MainActor var opponentUniformColor: Int { GameUniformPalette.color(teamID: opponentUniformTeamID) ?? FieldReplayPresentation.opponentKit(uniformColor) }
     @MainActor var uniformStyle: GameUniformStyle? { GameUniformStyles.find(uniformTeamID ?? schoolKitID, away:uniformAway) }
 }

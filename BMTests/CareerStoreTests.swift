@@ -5,6 +5,41 @@ import UIKit
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV105FaceReadabilityAndRenderContextRemainReadOnly() throws {
+        var a = PlayerAppearance(); a.creationVersion = 1; a.schoolKitID = "hs-ref-001"
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let before = try encoder.encode(a)
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let sheet = UIGraphicsImageRenderer(size: CGSize(width: 1024, height: 964), format: format).image { _ in
+            for hair in 0..<8 {
+                a.hairStyle = hair
+                for cap in [false, true] {
+                    let row = hair / 4 * 2 + (cap ? 1 : 0)
+                    CreationAvatarRaster.image(a, cap: cap)?.draw(in: CGRect(x: hair % 4 * 256, y: row * 241, width: 256, height: 241))
+                }
+            }
+        }
+        let attachment = XCTAttachment(image: sheet); attachment.name = "V105-eight-hair-cap-face-grid"
+        attachment.lifetime = .keepAlways; add(attachment)
+        a.hairStyle = 0
+        a.opponentUniformTeamID = "kbo-1"
+        XCTAssertEqual(try encoder.encode(a), before)
+        XCTAssertNotNil(a.opponentUniformStyle)
+        XCTAssertEqual(a.opponentUniformStyle?.id, GameUniformStyles.find("kbo-1", away: true)?.id)
+        let other = a.wearing(teamID: "kbo-0", away: true)
+        XCTAssertEqual(other.opponentUniformStyle?.id, GameUniformStyles.find("kbo-1")?.id)
+        XCTAssertEqual(try encoder.encode(other), before)
+        for eye in 0..<4 {
+            a.eyeShape = eye
+            let bare = try XCTUnwrap(CreationAvatarRaster.image(a, cap: false)?.cgImage)
+            let capped = try XCTUnwrap(CreationAvatarRaster.image(a, cap: true)?.cgImage)
+            let eyeRegion = CGRect(x: 105, y: 130, width: 100, height: 28)
+            let bareEyes = try XCTUnwrap(bare.cropping(to: eyeRegion))
+            let cappedEyes = try XCTUnwrap(capped.cropping(to: eyeRegion))
+            XCTAssertEqual(UIImage(cgImage: bareEyes).pngData(), UIImage(cgImage: cappedEyes).pngData(), "Cap must not paint over the selected eyes")
+        }
+    }
+
     func testV98CreationLookDiskReopenAndLegacyPreservation() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

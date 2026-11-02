@@ -66,7 +66,7 @@ struct CreationAvatarImage: View {
     private static let hairCells = [0, 3, 7, 1, 2, 4, 5, 6]
     static func key(_ a: PlayerAppearance, role: PlayerRole, number: Int, cap: Bool, mode: CreationAvatarMode) -> String {
         [mode.rawValue, role.rawValue, String(number), String(cap), String(a.skin), String(a.hair),
-         String(a.kit), String(a.hairStyle), String(a.expression), String(a.eyeIndex), String(a.browIndex), a.schoolKitID ?? "legacy"].joined(separator: ":")
+         String(a.kit), String(a.hairStyle), String(a.expression), String(a.eyeIndex), String(a.browIndex), a.schoolKitID ?? "legacy", a.uniformTeamID ?? "", String(a.uniformAway)].joined(separator: ":")
     }
     static func image(_ a: PlayerAppearance, role: PlayerRole = .batter, number: Int = 10,
                       cap: Bool = false, mode: CreationAvatarMode = .head) -> UIImage? {
@@ -126,16 +126,16 @@ struct CreationAvatarImage: View {
                 UIImage(cgImage: image).draw(in: destination)
             }
             feature(row: 0, col: a.eyeIndex, inner: CGRect(x: 50, y: 130, width: 200, height: 95),
-                destination: CGRect(x: 97, y: 113, width: 118, height: 43))
+                destination: CGRect(x: 91, y: 112, width: 112, height: 43))
             feature(row: 1, col: a.browIndex, inner: CGRect(x: 40, y: 115, width: 220, height: 90),
-                destination: CGRect(x: 92, y: 96, width: 125, height: 34))
+                destination: CGRect(x: 87, y: 96, width: 119, height: 34))
             feature(row: 2, col: a.expression, inner: CGRect(x: 78, y: 108, width: 145, height: 95),
-                destination: a.expression < 2 ? CGRect(x: 151, y: 182, width: 38, height: 16) : CGRect(x: 141, y: 174, width: 56, height: 34))
+                destination: a.expression < 2 ? CGRect(x: 137, y: 170, width: 38, height: 16) : CGRect(x: 131, y: 162, width: 52, height: 32))
             if cap, let raw = UIImage(named: "CreationCapV98")?.cgImage,
                let capImage = recolor(raw, appearance: a, body: false, isCap: true) {
-                capImage.draw(in: CGRect(x: 0, y: -18, width: 263, height: 175))
+                capImage.draw(in: CGRect(x: 0, y: -38, width: 263, height: 175))
                 if let school = (try? SchoolCatalog.load())?.first(where: { $0.id == a.schoolKitID }) {
-                    crest(school, rect: CGRect(x: 126, y: 28, width: 29, height: 29), in: renderer.cgContext)
+                    crest(school, rect: CGRect(x: 126, y: 8, width: 29, height: 29), in: renderer.cgContext)
                 }
             }
         }

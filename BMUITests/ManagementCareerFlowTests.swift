@@ -263,24 +263,25 @@ final class ManagementCareerFlowTests: XCTestCase {
         XCTAssertEqual(cap.value as? String, "벗음")
         let next = app.buttons["이 모습으로 계속"]
         XCTAssertTrue(next.isHittable); XCTAssertGreaterThanOrEqual(next.frame.height, 44)
-        let colors = app.buttons["appearanceTab-colors"]; revealAppearance(colors, app); colors.tap()
+        let colors = app.buttons["appearanceTab-colors"]
+        revealAppearance(colors, app); colors.tap()
+        XCTAssertTrue(colors.isSelected)
         let skin = app.buttons["appearanceColor-skin-5"]; revealAppearance(skin, app); skin.tap(); XCTAssertTrue(skin.isSelected)
         capture(app, "v98-large-colors")
         next.tap(); XCTAssertTrue(app.staticTexts["creationReadiness"].waitForExistence(timeout: 10))
     }
     @MainActor private func revealAppearance(_ element: XCUIElement, _ app: XCUIApplication) {
+        let scroll = app.scrollViews["appearanceEditorScroll"]
         for _ in 0..<12 {
-            let top = app.buttons["creationSection-appearance"].frame.maxY + 8
-            let bottom = app.buttons["이 모습으로 계속"].frame.minY - 8
-            if element.exists && element.isHittable && element.frame.minY > top && element.frame.maxY < bottom { return }
-            let origin = app.coordinate(withNormalizedOffset: .zero)
-            let upper = origin.withOffset(CGVector(dx: app.frame.midX, dy: top + 24))
-            let lower = origin.withOffset(CGVector(dx: app.frame.midX, dy: bottom - 24))
-            if element.exists && element.frame.midY < top { upper.press(forDuration: 0.05, thenDragTo: lower) }
-            else { lower.press(forDuration: 0.05, thenDragTo: upper) }
+            let top = scroll.frame.minY + 8
+            let bottom = min(scroll.frame.maxY, app.buttons["이 모습으로 계속"].frame.minY) - 8
+            if element.exists && element.isHittable && element.frame.midY > top && element.frame.midY < bottom { return }
+            if element.exists && element.frame.midY < top { scroll.swipeDown(velocity: .slow) }
+            else { scroll.swipeUp(velocity: .slow) }
         }
-        XCTFail("외형 선택 항목을 고정 조작부 밖으로 스크롤하지 못했습니다: " + element.identifier)
+        XCTFail("외형 선택 항목을 조작 가능한 스크롤 영역으로 이동하지 못했습니다")
     }
+
     @MainActor func testV50RegionalSchoolEmblemsCreationAndHomeBothRoles() {
         continueAfterFailure = false
         let app = XCUIApplication()

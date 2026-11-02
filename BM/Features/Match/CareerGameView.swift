@@ -187,7 +187,9 @@ struct CareerGameView: View {
         let match = displaySnapshot.match
         let fixedTeam = match.flatMap { $0.isHome ? $0.playerRecords?.home.teamID : $0.playerRecords?.away.teamID }
         let historicalTeam = record.flatMap { try? calendar.teamID(for: player, on: GameDate($0.gameDate)) }
-        return player.appearance.wearing(teamID: fixedTeam ?? historicalTeam ?? player.schoolID, away: match?.isHome == false)
+        var appearance = player.appearance.wearing(teamID: fixedTeam ?? historicalTeam ?? player.schoolID, away: match?.isHome == false)
+        appearance.opponentUniformTeamID = match.flatMap { $0.isHome ? $0.playerRecords?.away.teamID : $0.playerRecords?.home.teamID } ?? record?.opponentID
+        return appearance
     }
     private func configureScene() {
         scene.configure(hand: player.throwingHandRaw, kit: player.kit, role: player.role, appearance: renderAppearance,

@@ -190,6 +190,7 @@ private struct CreationPaperChoice: ButtonStyle {
     var filled = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.foregroundStyle(GameTheme.navy)
+            .contentShape(Rectangle())
             .background(selected && (filled || configuration.isPressed) ? GameTheme.gold : GameTheme.boardInk)
             .overlay(ManagementStepFrame().strokeBorder(selected ? GameTheme.gold : GameTheme.muted, lineWidth: selected ? 3 : 1))
             .opacity(configuration.isPressed ? 0.75 : 1)

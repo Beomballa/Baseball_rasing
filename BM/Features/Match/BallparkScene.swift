@@ -196,10 +196,10 @@ import SwiftUI
         field.xScale = role == .pitcher && hand == "left" ? -1 : 1
         addChild(field)
         let style = appearance ?? PlayerAppearance(kit: kit)
-        if role == .batter {addBackgroundFielders(ownKit:style.uniformColor)}
-        pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-pitcher-v52",columns:4,rows:2,ownKit:style.uniformColor)
-        batterFrames = role == .batter ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-batter-v52",columns:3,rows:2,ownKit:style.uniformColor)
-        catcherFrames = OpponentMotionArt.textures("catcher-parts",columns:2,rows:2,ownKit:style.uniformColor,opponent:false)
+        if role == .batter {addBackgroundFielders(appearance:style)}
+        pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-pitcher-v52",columns:4,rows:2,ownKit:style.uniformColor,teamColor:style.opponentUniformColor)
+        batterFrames = role == .batter ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-batter-v52",columns:3,rows:2,ownKit:style.uniformColor,teamColor:style.opponentUniformColor)
+        catcherFrames = OpponentMotionArt.textures("catcher-parts",columns:2,rows:2,ownKit:style.uniformColor,opponent:false,teamColor:role == .pitcher ? style.uniformColor:style.opponentUniformColor)
         mittFrames = Array(catcherFrames.suffix(2))
         guard pitcherFrames.count == (role == .pitcher ? 6 : 8), batterFrames.count == 6, catcherFrames.count == 4 else { ready = false; return }
         pitcher.name = "animatedPitcher";pitcher.zPosition = 4;pitcher.xScale = hand == "left" ? -1 : 1;addChild(pitcher);pitcherPose(0)
@@ -243,10 +243,10 @@ import SwiftUI
         let next = StadiumSceneDress(stadium: value, size: size, camera: role == .pitcher ? .pitcher : .batter)
         next.zPosition = 1; addChild(next); dress = next
     }
-    private func addBackgroundFielders(ownKit:Int) {
+    private func addBackgroundFielders(appearance:PlayerAppearance) {
         let motion=FieldSpriteMotion(facing:.south,stage:.ready)
         guard let sample=FieldRasterArt.samples(motion,kind:"fielder",left:false).first,
-              let image=FieldRasterArt.image(sample,kit:FieldReplayPresentation.opponentKit(ownKit),skin:0xefbe91,hair:0x263b48,number:0,back:false) else {return}
+              let image=FieldRasterArt.image(sample,kit:appearance.opponentUniformColor,skin:0xefbe91,hair:0x263b48,number:0,back:false,style:appearance.opponentUniformStyle) else {return}
         let texture=SKTexture(image:image);texture.filteringMode = .nearest
         for (index,placement) in [(0.105,0.295,0.075),(0.637,0.245,0.045),(0.925,0.295,0.075)].enumerated() {
             let height=size.width*placement.2,frame=sample.frame
