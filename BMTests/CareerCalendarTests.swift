@@ -4301,7 +4301,7 @@ extension CareerCalendarTests {
         try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
         let url=dir.appendingPathComponent("opponent.store");var id:UUID!,bytes:Data!,saved:CareerMatch!
         do {
-            let (store,p,s,packet)=try acceptance(.batter,legacyURL:url),c=store.mainContext;id=p.id
+            let (store,p,s,packet)=try acceptance(.batter,legacyURL:url,legacyVersion:15),c=store.mainContext;id=p.id
             try ContractRegistrationStore.decide(player:p,calendar:s,offerID:packet.offers[0].id,accept:true,date:p.gameDate,revision:s.revision,in:c)
             try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
             let row=try CareerMatchStore.startPrepared(player:p,state:s,choice:.contact,date:p.gameDate,revision:s.revision,in:c)
@@ -4313,7 +4313,7 @@ extension CareerCalendarTests {
         XCTAssertEqual(row.payload,bytes);XCTAssertEqual(try row.snapshot(),saved)
         XCTAssertEqual(try row.snapshot().delivery(),saved.delivery())
         // Existing pre-feature games are not rewritten when a player resumes them.
-        var legacy=saved!;legacy.npcAttack=nil;legacy.playerRecords=nil
+        var legacy=saved!;legacy.npcAttack=nil;legacy.playerRecords=nil;legacy.pitchLog=nil;legacy.npcReadiness=nil
         let prep=try XCTUnwrap(legacy.preparation)
         legacy.preparation=MatchPreparation(version:1,fixtureID:prep.fixtureID,choice:prep.choice,analysis:MatchOppositionAnalysis.make(roster:try XCTUnwrap(legacy.npcFielders),isHome:legacy.isHome))
         row.payload=try JSONEncoder().encode(legacy);try c.save();let raw=row.payload
@@ -4575,6 +4575,7 @@ extension CareerCalendarTests {
             }
             let totals=try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",in:c)
             XCTAssertEqual(totals.fixtureIDs.count,3);XCTAssertEqual(totals.uncollectedGames,0)
+            XCTAssertEqual(totals.teamGames.count, 6); XCTAssertTrue(totals.teamGames.values.allSatisfy { $0 == 1 })
             XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID:p.id,year:2026,competition:"highschool",records:[own],automatic:rows+rows),totals)
             for _ in 0..<2 {
                 XCTAssertEqual(try AnnualLeagueStore.load(player:p,state:s,year:2026,in:c),league)

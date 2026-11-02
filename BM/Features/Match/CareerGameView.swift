@@ -521,10 +521,25 @@ struct CareerGameView: View {
             }.background(GameTheme.navy.ignoresSafeArea()).accessibilityIdentifier("homeRunStage")
         }
     }
+    private func liveOpponentID(_ match: CareerMatch) -> String? {
+        if player.role == .batter { return match.ownAtBat ? match.opponentPitcher?.id : nil }
+        guard !match.offense, match.ownPitcherActive, let batter = match.npcBatter else { return nil }
+        return batter.position == "P" ? (match.opponentPitcher?.id ?? batter.id) : batter.id
+    }
+    private func liveOpponentName(_ match: CareerMatch) -> String {
+        player.role == .batter || match.npcBatter?.position == "P" ? match.opponentPitcher?.displayName ?? "상대 투수" : match.npcBatter?.displayName ?? "상대 타자"
+    }
     private func arena(_ match: CareerMatch, field: CGSize) -> some View {
         VStack(spacing: 0) {
             ZStack {
                 MatchArenaSurface(scene:scene,covered:fieldCoversArena && preparesFieldMotion)
+                if let opponentID = liveOpponentID(match) {
+                    OpponentStarCallout(id: opponentID, name: liveOpponentName(match), honors: match.preparation?.season?.honors?.filter { $0.playerID == opponentID } ?? [])
+                        .frame(maxWidth: min(200, field.width * 0.55), alignment: .trailing)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(.top, field.height * 0.20).padding(.trailing, 8)
+                        .opacity(clock.running || fieldCoversArena ? 0 : 1)
+                }
 
             }
                 .frame(width: field.width, height: field.height)
@@ -928,7 +943,7 @@ private struct MatchNPCFieldersPanel:View {
                             let speed=own ? match.fieldStats?.speed ?? npc.speed:npc.speed
                             let defense=own ? match.fieldStats?.defense ?? npc.defense:npc.defense
                             let arm=own ? match.fieldStats?.arm ?? npc.arm:npc.arm
-                            Text("\(npc.position) \(own ? "내 선수":"가상 선수") · 스피드 \(speed,specifier:"%.1f") / 수비 \(defense,specifier:"%.1f") / 송구 \(arm,specifier:"%.1f")")
+                            Text("\(own ? "내 선수" : npc.displayName) · \(npc.position) · 스피드 \(speed,specifier:"%.1f") / 수비 \(defense,specifier:"%.1f") / 송구 \(arm,specifier:"%.1f")")
                                 .font(.caption.monospaced()).accessibilityIdentifier("gameNPC-"+(home ? "home-":"away-")+npc.position)
                         }
                     }
@@ -1259,11 +1274,12 @@ struct MatchOpponentCenter:View {
             }
         }.padding(.horizontal,8).padding(.bottom,8)
     }
-    private func identity(title:String,eyebrow:String,detail:String) -> some View {
+    private func identity(title:String,eyebrow:String,detail:String,playerID:String?=nil) -> some View {
         HStack(alignment:.center,spacing:12) {
             VStack(alignment:.leading,spacing:10) {
                 Text(eyebrow).font(.caption2.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                Text(title).font(.title2.bold()).accessibilityIdentifier("opponentIdentity")
+                Text(title).font(.title2.bold()).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("opponentIdentity")
+                ForEach(season?.honors?.filter { $0.playerID == playerID } ?? []) { LeagueHonorBadge(honor: $0) }
                 Text(detail).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 Text(teamName).font(.caption).foregroundStyle(GameTheme.boardMuted)
             }.frame(maxWidth:.infinity,alignment:.leading)
@@ -1273,7 +1289,7 @@ struct MatchOpponentCenter:View {
             }.accessibilityElement(children:.ignore).accessibilityLabel("상대 선수 공용 도트 이미지").accessibilityIdentifier("opponentPortrait")
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading).background(Color(hex:0x203e52))
     }
-    private var batterID: String? { batter.map { $0.position == "P" ? (team?.starter.id ?? $0.id) : $0.id } }
+    private var batterID: String? { batter.map { $0.position == "P" ? (pitcher?.id ?? $0.id) : $0.id } }
     private func seasonValues(_ id: String?, _ labels: [String]) -> [String] {
         labels.map { season?.player(id ?? "")?.value($0) ?? "미집계" }
     }
@@ -1304,7 +1320,7 @@ struct MatchOpponentCenter:View {
         if let pitcher {
             let shares=pitcher.selectionShares
             VStack(spacing:0) {
-                identity(title:pitcher.id == team?.starter.id ? "선발 투수":"현재 구원 투수",eyebrow:pitcher.id == team?.starter.id ? "STARTER · PITCHING":"RELIEF · PITCHING",detail:String(format:"포심 %.0f km/h · 제구 %.1f",pitcher.fastball,pitcher.control))
+                identity(title:pitcher.displayName,eyebrow:pitcher.id == team?.starter.id ? "STARTER · 선발 투수":"RELIEF · 구원 투수",detail:String(format:"포심 %.0f km/h · 제구 %.1f",pitcher.fastball,pitcher.control),playerID:pitcher.id)
                 statisticStrip(["ERA","ER","WHIP","K/9"], id: pitcher.id)
             }.overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
             GamePanel(title:"무엇을 던지는 투수인가",onBoard:true,contentSpacing:14) {
@@ -1384,19 +1400,20 @@ struct MatchOpponentCenter:View {
                 }.foregroundStyle(ink)
                 LazyVStack(spacing:10) {
                     ForEach(Array(team.ordered.enumerated()),id:\.element.id) {index,player in
-                        let seasonID=player.position == "P" ? team.starter.id:player.id
+                        let seasonID=player.position == "P" ? pitcher?.id ?? team.starter.id:player.id
                         let seasonRow=season?.player(seasonID)
                         let values=seasonValues(seasonID,["AVG","OPS"])
                         Button {selected=index;tab = .batter} label: {
-                            OpponentLineupTile(order:index+1,position:player.position,positionLabel:positionName(player.position),
+                            OpponentLineupTile(order:index+1,name:player.position == "P" ? pitcher?.displayName ?? player.displayName : player.displayName,honors:season?.honors?.filter { $0.playerID == seasonID } ?? [],position:player.position,positionLabel:positionName(player.position),
                                                contact:player.contact,power:player.power,discipline:player.discipline,
                                                onBase:player.onBase,slugging:player.slugging,selected:index == selected,
                                                seasonMode:showSeason,average:values[0],ops:values[1],
                                                sample:seasonRow.map {"\($0.battingGames)경기 · \($0.batting.plateAppearances)타석"} ?? "표본 미집계")
                         }.buttonStyle(OpponentLineupTileStyle(selected:index == selected))
                             .accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton)
-                            .accessibilityLabel("\(index+1)번 \(player.position) · "+(showSeason ? "타율 \(values[0]) · OPS \(values[1]) · "+(seasonRow.map {"\($0.battingGames)경기 \($0.batting.plateAppearances)타석"} ?? "표본 미집계") : "컨택 \(n(player.contact)) · 파워 \(n(player.power)) · 선구안 \(n(player.discipline)) · 출루 성향 \(n(player.onBase)) · 장타 성향 \(n(player.slugging))"))
+                            .accessibilityLabel("\(index+1)번 \(player.position == "P" ? pitcher?.displayName ?? player.displayName : player.displayName) · \(player.position) · "+(showSeason ? "타율 \(values[0]) · OPS \(values[1]) · "+(seasonRow.map {"\($0.battingGames)경기 \($0.batting.plateAppearances)타석"} ?? "표본 미집계") : "컨택 \(n(player.contact)) · 파워 \(n(player.power)) · 선구안 \(n(player.discipline)) · 출루 성향 \(n(player.onBase)) · 장타 성향 \(n(player.slugging))"))
                             .accessibilityHint("타자 상세 열기")
+                            .accessibilityValue((season?.honors?.filter { $0.playerID == seasonID } ?? []).map { $0.label + " " + $0.number }.joined(separator: ", "))
                             .accessibilityIdentifier("opponentBatter-\(index+1)")
                     }
                 }
@@ -1408,7 +1425,7 @@ struct MatchOpponentCenter:View {
     @ViewBuilder private var batterPage:some View {
         if let batter {
             VStack(spacing:0) {
-                identity(title:"\(selected+1)번 타자",eyebrow:"KEY BATTER · "+batter.position,detail:positionName(batter.position))
+                identity(title:"\(selected+1)번 " + (batter.position == "P" ? pitcher?.displayName ?? batter.displayName : batter.displayName),eyebrow:"타자 · "+batter.position,detail:positionName(batter.position),playerID:batterID)
                 statisticStrip(["AVG","OBP","SLG","OPS","HR","WAR"], id: batterID)
             }.overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
             GamePanel(title:"선수의 강점",onBoard:true,contentSpacing:14) {
@@ -1447,9 +1464,9 @@ struct MatchOpponentCenter:View {
                 Text(teamName).frame(maxWidth:.infinity)
             }.font(.headline).padding(16).background(GameTheme.boardPanel)
             if ownRole == "batter",let pitcher {
-                identity(title:pitcher.id == team?.starter.id ? "상대 선발":"현재 구원",eyebrow:"PITCHING MATCHUP",detail:String(format:"포심 %.0f km/h · 제구 %.1f",pitcher.fastball,pitcher.control))
+                identity(title:pitcher.displayName,eyebrow:pitcher.id == team?.starter.id ? "상대 선발 투수":"상대 구원 투수",detail:String(format:"포심 %.0f km/h · 제구 %.1f",pitcher.fastball,pitcher.control),playerID:pitcher.id)
             } else if let team,let threat=team.ordered.max(by:{$0.onBase+$0.slugging<$1.onBase+$1.slugging}),let index=team.ordered.firstIndex(of:threat) {
-                identity(title:"\(index+1)번 타자 · "+threat.position,eyebrow:"BATTING MATCHUP",detail:"출루 \(n(threat.onBase)) · 장타 \(n(threat.slugging))")
+                identity(title:threat.displayName,eyebrow:"\(index+1)번 타자 · "+threat.position,detail:"출루 \(n(threat.onBase)) · 장타 \(n(threat.slugging))",playerID:threat.position == "P" ? team.starter.id : threat.id)
             }
             GamePanel(title:"능력 맞대결",onBoard:true,contentSpacing:14) {
                 Text("내 선수 / 상대 · 같은 0~100 능력 비교, 승률 아님").font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -1532,6 +1549,8 @@ private struct OpponentLineupTileStyle:ButtonStyle {
 
 private struct OpponentLineupTile:View {
     let order:Int
+    let name:String
+    let honors:[LeagueHonor]
     let position:String
     let positionLabel:String
     let contact:Double
@@ -1551,11 +1570,15 @@ private struct OpponentLineupTile:View {
             identity
             VStack(alignment:.leading,spacing:6) {
                 HStack(alignment:.firstTextBaseline,spacing:8) {
-                    Text(positionLabel).font(.subheadline.bold())
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(name).font(.headline).fixedSize(horizontal: false, vertical: true)
+                        Text(positionLabel).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    }
                     Spacer(minLength:0)
                     if selected {Text("선택").font(.caption.bold()).foregroundStyle(GameTheme.gold)}
                     Text("›").font(.headline).foregroundStyle(GameTheme.boardMuted)
                 }
+                ForEach(honors) { LeagueHonorBadge(honor: $0) }
                 if seasonMode {
                     let statsLayout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:10)):AnyLayout(HStackLayout(spacing:16))
                     statsLayout {
@@ -1734,5 +1757,31 @@ struct OpponentPitchHistoryPanel:View {
             } else {Text("코스 좌표 미집계 · 좌표가 저장된 투구부터 분포 표시").font(.subheadline)}
             Text("존 밖 좌표 \(history.zone[9])구 · 자동 투구의 좌표 미생성 \(history.total-history.located)구는 코스 분포에서 제외").font(.caption).fixedSize(horizontal:false,vertical:true)
         }.padding(10).background(GameTheme.board).accessibilityElement(children:.contain).accessibilityIdentifier("opponentActualPitchHistory")
+    }
+}
+
+/// Presentation only: announced once per opposing player's entry, never a gameplay pause or reward.
+private struct OpponentStarCallout: View {
+    let id: String
+    let name: String
+    let honors: [LeagueHonor]
+    @State private var visible = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if visible, let honor = honors.first {
+                HStack(spacing: 8) {
+                    LeagueTrophyPixel().frame(width: 22, height: 24)
+                    Text(name).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                }
+                Text(honor.label + " · " + honor.number).font(.caption.bold())
+            }
+        }.padding(visible && !honors.isEmpty ? 10 : 0).foregroundStyle(GameTheme.gold).background(GameTheme.navy)
+            .overlay { if visible && !honors.isEmpty { ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2) } }
+            .allowsHitTesting(false).accessibilityElement(children: .combine)
+            .accessibilityHidden(!visible || honors.isEmpty).accessibilityIdentifier("opponentStarCallout")
+            .task(id: id) {
+                visible = !honors.isEmpty
+                do { try await Task.sleep(for: .seconds(4)); visible = false } catch {}
+            }
     }
 }

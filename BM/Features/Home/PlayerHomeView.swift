@@ -3181,7 +3181,7 @@ struct ClubSelectionScreen: View {
                 let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:14)):AnyLayout(HStackLayout(alignment:.top,spacing:12))
                 layout {
                     candidate(review.own,title:player.name,isOwn:true)
-                    candidate(review.rival,title:"같은 자리 가상 선수",isOwn:false)
+                    candidate(review.rival,title:NPCIdentity.name(review.rival.id),isOwn:false)
                 }
                 if let evidence=review.rivalEvidence {NPCSelectionEvidencePanel(evidence:evidence,role:player.role)}
                 if let values=review.rivalAbilities {

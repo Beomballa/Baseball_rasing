@@ -33,6 +33,9 @@ struct AnnualLeagueHomePanel: View {
                     Button("순위 다시 확인", action: reload).buttonStyle(MatchPixelButtonStyle())
                 }
             } else { ProgressView("리그 순위 불러오는 중").tint(GameTheme.gold) }
+            NavigationLink { LeaguePlayersScreen(player: player, state: state) } label: {
+                HStack(spacing: 12) { LeagueTrophyPixel().frame(width: 24, height: 28); Text("팀 선수 명단 · 리그 타이틀"); Spacer(); Text("›") }
+            }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openLeaguePlayers")
             NavigationLink { AnnualLeagueScreen(player: player, state: state, schools: schools) } label: {
                 HStack(spacing: 10) {
                     LeaguePixelFlag().frame(width: 20, height: 22)
@@ -359,5 +362,120 @@ private struct LeagueMatchTicket: View {
                 Text(String(result.homeScore)).foregroundStyle(GameTheme.gold)
             } else { Text("VS").foregroundStyle(GameTheme.boardMuted) }
         }.font(.title2.monospaced().bold()).fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+struct LeagueHonorBadge: View {
+    let honor: LeagueHonor
+    var body: some View {
+        HStack(spacing: 6) {
+            LeagueTrophyPixel().frame(width: 16, height: 18)
+            Text(honor.label + " · " + honor.number).font(.caption.bold()).fixedSize(horizontal: false, vertical: true)
+        }.padding(8).foregroundStyle(GameTheme.gold).background(GameTheme.navy)
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 1))
+            .accessibilityElement(children: .combine)
+    }
+}
+struct LeagueTrophyPixel: View {
+    var body: some View {
+        Canvas { context, size in
+            let pixels = [".######.","###..###","#.#..#.#",".######.","..####..","...##...","...##...","..####..",".######."]
+            let unit = min(size.width / 8, size.height / 9)
+            for (y, line) in pixels.enumerated() { for (x, cell) in line.enumerated() where cell == "#" {
+                context.fill(Path(CGRect(x: Double(x) * unit, y: Double(y) * unit, width: unit, height: unit)), with: .color(GameTheme.gold))
+            } }
+        }.accessibilityHidden(true)
+    }
+}
+
+struct LeaguePlayersScreen: View {
+    let player: CareerPlayer
+    let state: CareerCalendarState
+    var year: Int? = nil
+    @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var teams: [MatchNPCAttackTeam] = []
+    @State private var selected = ""
+    @State private var ledger: SeasonPlayerLedger?
+    @State private var honors: [LeagueHonor] = []
+    @State private var failure: String?
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let failure {
+                    Text(failure); Button("선수 명단 다시 확인", action: load).buttonStyle(MatchPixelButtonStyle())
+                } else {
+                    Text("리그 선수 · 타이틀").font(ManagementPixelFont.readable(.screenTitle))
+                    Text("가상 선수 고정 명단 · 경기 원장 성적만 집계").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    if honors.isEmpty { Text("현재 확정할 선두 자료 없음 · 표본/리그 기록을 확인하세요.").font(.subheadline).accessibilityIdentifier("leagueHonorsPending") }
+                    ForEach(honors) { honor in
+                        HStack(spacing: 10) {
+                            LeagueTrophyPixel().frame(width: 26, height: 30)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(honor.playerID == player.id.uuidString ? player.name : NPCIdentity.name(honor.playerID)).font(.headline)
+                                Text(CareerTeamDirectory.name(honor.teamID)).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                                LeagueHonorBadge(honor: honor)
+                            }
+                        }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.boardPanel)
+                    }
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 8) { ForEach(teams, id: \.teamID) { team in
+                            Button(CareerTeamDirectory.name(team.teamID)) { selected = team.teamID }
+                                .buttonStyle(MatchPixelButtonStyle(selected: selected == team.teamID))
+                                .accessibilityIdentifier("rosterTeam-" + team.teamID)
+                        } }
+                    }
+                    if let team = teams.first(where: { $0.teamID == selected }) {
+                        ForEach(team.ordered) { batter in
+                            row(id: batter.position == "P" ? team.starter.id : batter.id, name: batter.displayName, position: batter.position == "P" ? "선발 투수" : batter.position, teamID: team.teamID)
+                        }
+                        row(id: team.relief.id, name: team.relief.displayName, position: "구원 투수", teamID: team.teamID)
+                        if ledger?.players.contains(where: { $0.teamID == team.teamID && $0.id == player.id.uuidString }) == true {
+                            row(id: player.id.uuidString, name: player.name, position: "내 선수 · 시즌 원장", teamID: team.teamID)
+                        }
+                    }
+                    DisclosureGroup("선두·최종 타이틀 기준") {
+                        Text("게임의 30경기 단축 시즌 기준입니다. 타율은 팀 경기×3.1(올림)과 최소15타석, ERA는 팀 경기×3아웃과 최소9아웃을 모두 충족해야 합니다. 홈런/탈삼진은 양수 기록을 비교하며 동률은 공동 선두입니다. 리그6팀 기록이 확인되고 누락 경기가 없을 때만 표시합니다. 팀당30경기 완료 뒤에만 최종1위로 표시합니다. 개인 승패 원장이 없는 다승왕은 아직 표시하지 않습니다.")
+                            .font(.subheadline).padding(.top, 8)
+                    }.tint(GameTheme.gold)
+                }
+            }.padding(16)
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("리그 선수 명단").navigationBarTitleDisplayMode(.inline)
+            .task(id: "\(player.id)-\(player.gameDate)-\(state.revision)-\(year ?? 0)") { load() }
+    }
+    private func row(id: String, name: String, position: String, teamID: String) -> some View {
+        let record = ledger?.players.first { $0.teamID == teamID && $0.id == id }
+        return VStack(alignment: .leading, spacing: 8) {
+            let layout = typeSize >= .xxxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 10))
+            layout {
+                Text(name).font(ManagementPixelFont.readable(.label)).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("npcName-" + id)
+                Text(position).font(.caption).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(honors.filter { $0.playerID == id && $0.teamID == teamID }) { LeagueHonorBadge(honor: $0) }
+            if id.hasSuffix("/starter") || id.hasSuffix("/relief") || id == player.id.uuidString && player.role == .pitcher {
+                Text("ERA " + (record?.pitching.era.map { String(format: "%.2f", $0) } ?? "미집계") + " · K " + (record.map { String($0.pitching.strikeouts) } ?? "미집계") + " · IP " + (record?.pitching.innings ?? "미집계"))
+                    .font(.subheadline.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("AVG " + (record?.batting.average.map { String(format: "%.3f", $0) } ?? "미집계") + " · HR " + (record.map { String($0.batting.homeRuns) } ?? "미집계"))
+                    .font(.subheadline.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
+            }
+        }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.boardPanel)
+    }
+    private func load() {
+        do {
+            let year = try year ?? GameDate(player.gameDate).year
+            let plan = try state.competition(for: player, year: year)
+            let level = plan.membership?.level ?? "highschool"
+            let ids = Set(plan.fixtures.flatMap { [$0.homeID, $0.awayID] }).sorted()
+            teams = ids.compactMap { id in
+                guard let other = ids.first(where: { $0 != id }) else { return nil }
+                return MatchNPCAttack.makeComplete(roster: MatchNPCFielders.make(year: year, competition: level, homeID: id, awayID: other)).home
+            }
+            if !ids.contains(selected) { selected = plan.teamID }
+            let value = try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: year, competition: level, through: GameDate(player.gameDate), in: context)
+            let today = try GameDate(player.gameDate)
+            let required = Set(plan.fixtures.filter { $0.date < today }.map(\.id))
+            ledger = value; honors = LeagueHonorRules.leaders(value, requiredFixtureIDs: required); failure = nil
+        } catch { failure = error.localizedDescription }
     }
 }

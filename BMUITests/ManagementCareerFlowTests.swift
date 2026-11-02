@@ -2,6 +2,57 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV100SmallLargeTextRosterAndLeaders() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-v100-league-names", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]
+        app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        for pitcher in [false, true] {
+            if pitcher {
+                app.buttons["roomProfile"].tap(); XCTAssertTrue(app.buttons["homeRole-pitcher"].waitForExistence(timeout: 5))
+                app.buttons["homeRole-pitcher"].tap(); if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
+            }
+            let before = labels(app)
+            app.buttons["managementLargeMenu"].tap(); app.buttons["경기"].tap(); app.buttons["facility-standings"].tap()
+            let list = app.buttons["openLeaguePlayers"]; reveal(list, app); list.tap()
+            let name = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "npcName-")).firstMatch
+            XCTAssertTrue(name.waitForExistence(timeout: 10)); reveal(name, app)
+            XCTAssertTrue(name.isHittable); XCTAssertLessThanOrEqual(name.frame.maxX, app.frame.maxX)
+            capture(app, pitcher ? "v100-large-pitcher-roster" : "v100-large-batter-roster")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
+            app.buttons["managementLargeMenu"].tap(); app.buttons["홈"].tap(); XCTAssertEqual(labels(app), before)
+        }
+    }
+    @MainActor func testV100NamedRostersAndHonorsBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-v100-league-names"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        for pitcher in [false, true] {
+            if pitcher { switchToPitcher(app) }
+            let before = labels(app)
+            app.buttons["managementTab-game"].tap(); app.buttons["facility-standings"].tap()
+            let list = app.buttons["openLeaguePlayers"]; reveal(list, app); list.tap()
+            let names = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "npcName-"))
+            XCTAssertTrue(names.firstMatch.waitForExistence(timeout: 8))
+            XCTAssertFalse(names.firstMatch.label.contains("미기록"))
+            capture(app, pitcher ? "v100-pitcher-league-players" : "v100-batter-league-players")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
+            app.buttons["facility-analysis"].tap(); reveal(app.buttons["hubOpponentAnalysis"], app); app.buttons["hubOpponentAnalysis"].tap()
+            XCTAssertTrue(app.buttons["opponentTab-lineup"].waitForExistence(timeout: 8))
+            let heading = app.staticTexts["opponentIdentity"]; XCTAssertTrue(heading.exists)
+            XCTAssertFalse(["선발 투수", "현재 구원 투수"].contains(heading.label)); capture(app, pitcher ? "v100-pitcher-opponent" : "v100-batter-opponent")
+            app.buttons["opponentTab-lineup"].tap()
+            let first = app.buttons["opponentBatter-1"]; XCTAssertTrue(first.waitForExistence(timeout: 5)); XCTAssertFalse(first.label.hasPrefix("1번 CF ·"))
+            capture(app, pitcher ? "v100-pitcher-lineup" : "v100-batter-lineup")
+            app.buttons["opponentTab-plan"].tap()
+            let plan = app.buttons[pitcher ? "planChoice-control" : "planChoice-contact"]
+            reveal(plan, app); plan.tap(); app.buttons["confirmGamePlan"].tap()
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "careerMatchField").firstMatch.waitForExistence(timeout: 12))
+            capture(app, pitcher ? "v100-pitcher-game" : "v100-batter-game")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(labels(app), before)
+        }
+    }
     @MainActor func testV99TrainingAndCareerDocumentsBothRoles() {
         continueAfterFailure = false
         let app = launch()

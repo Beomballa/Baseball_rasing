@@ -432,6 +432,7 @@ struct SeasonPlayerLedger:Equatable {
     let fixtureIDs:[String]
     let uncollectedGames:Int
     let players:[SeasonPlayerRecord]
+    var teamGames: [String: Int] = [:]
 }
 extension CareerMatchStore {
     // Completed match payloads are the ledger. No independent total is incremented on read or result reopening.
@@ -442,8 +443,11 @@ extension CareerMatchStore {
     static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,records:[CareerMatchRecord],automatic:[CareerLeagueGameRecord]=[]) throws -> SeasonPlayerLedger {
         guard (1...9999).contains(year),["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(competition) else {throw MatchError.invalidRecord}
         var seen=[String:Data](),fixtures=[String](),missing=0,totals=[String:SeasonPlayerRecord]()
+        var teamGames: [String: Int] = [:]
         func add(_ ledger:MatchPlayerRecords) {
             fixtures.append(ledger.fixtureID)
+            teamGames[ledger.home.teamID, default: 0] += 1
+            teamGames[ledger.away.teamID, default: 0] += 1
             for team in [ledger.home,ledger.away] {
                 for line in team.batting {
                     let key=team.teamID+"/"+line.id
@@ -477,13 +481,15 @@ extension CareerMatchStore {
             let date=try GameDate(row.gameDate)
             guard date.year == year,through.map({date <= $0}) ?? true else {continue}
             let match=try row.snapshot()
-            guard row.competition == competition,let ledger=match.playerRecords else {continue}
+            guard row.competition == competition else {continue}
             let key=CareerMatchRecord.key(playerID,row.fixtureID)
             if let previous=seen[key] {guard previous == row.payload else {throw MatchError.invalidRecord};continue}
-            seen[key]=row.payload;add(ledger)
+            seen[key]=row.payload
+            guard let ledger=match.playerRecords else {missing += 1;continue}
+            add(ledger)
         }
         return SeasonPlayerLedger(careerID:playerID,year:year,competition:competition,fixtureIDs:fixtures.sorted(),uncollectedGames:missing,
-            players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID})
+            players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID}, teamGames: teamGames)
     }
 }
 
@@ -499,6 +505,9 @@ extension CareerMatchStore {
         }
         var snapshot = MatchOpponentSeason(version: 1, year: fixture.date.year, competition: attack.competition, teamID: analysis.teamID,
             through: cutoff.description, uncollectedGames: ledger.uncollectedGames, players: rows)
+        let plan = try state.competition(for: player, year: fixture.date.year)
+        let required = Set(plan.fixtures.filter { $0.date <= cutoff }.map(\.id))
+        snapshot.honors = LeagueHonorRules.leaders(ledger, requiredFixtureIDs: required).filter { $0.teamID == analysis.teamID }
         snapshot.pitchHistory=try opponentPitchHistory(playerID:player.id,year:fixture.date.year,competition:attack.competition,teamID:analysis.teamID,through:cutoff,in:context)
         try snapshot.validate(analysis: analysis, date: fixture.date)
         return snapshot

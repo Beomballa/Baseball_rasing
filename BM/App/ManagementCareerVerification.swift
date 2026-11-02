@@ -35,6 +35,31 @@ struct ManagementCareerVerification: View {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"
                     let player = try CareerStore.create(draft, schools: catalog, in: memory.mainContext)
+                    if args.contains("-v100-league-names") {
+                        let c = memory.mainContext
+                        let state = try c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }!
+                        let fixtures = try state.fixtures(for: player, year: 2026)
+                        for fixture in fixtures.prefix(6) {
+                            player.gameDate = fixture.date.description; state.actionDate = nil; try c.save()
+                            try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: c)
+                            let row = try CareerMatchStore.start(player: player, state: state, in: c)
+                            try CareerMatchStore.advance(player: player, state: state, record: row, revision: row.revision, input: .automatic, in: c)
+                            try AutomaticLeagueStore.completeDay(player: player, state: state, date: fixture.date, in: c); try c.save()
+                        }
+                        let leaders = LeagueHonorRules.leaders(try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: 2026, competition: "highschool", in: c))
+                        let teams = Set(leaders.filter { role == .pitcher || $0.playerID.hasSuffix("/starter") }.map(\.teamID))
+                        let target = fixtures.dropFirst(6).first { $0.isAppearance(for: role) && teams.contains($0.opponent(of: player.schoolID)) }
+                            ?? fixtures.dropFirst(6).first { $0.isAppearance(for: role) }!
+                        for fixture in fixtures.dropFirst(6) where fixture.date < target.date {
+                            player.gameDate = fixture.date.description; state.actionDate = nil; try c.save()
+                            try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: c)
+                            let row = try CareerMatchStore.start(player: player, state: state, in: c)
+                            try CareerMatchStore.advance(player: player, state: state, record: row, revision: row.revision, input: .automatic, in: c)
+                            try AutomaticLeagueStore.completeDay(player: player, state: state, date: fixture.date, in: c); try c.save()
+                        }
+                        player.gameDate = target.date.description; state.actionDate = nil; try c.save()
+                        try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: c)
+                    }
                     if args.contains("-v99-pitch-study-progress"), role == .pitcher {
                         let context = memory.mainContext
                         var history = CareerTraining(playerID: player.id, date: "2026-03-31", role: "pitcher", pitchCode: "sweeper", before: 30, fatigue: player.fatigue, age: 16, calendarRevision: 0)

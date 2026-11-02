@@ -4,6 +4,66 @@ import SwiftUI
 @testable import BM
 
 @MainActor final class CareerMatchTests: XCTestCase {
+    func testV100HonorSnapshotValidatesAndLegacyJSONStaysUnchanged() throws {
+        let field = MatchNPCFielders.make(year: 2026, competition: "highschool", homeID: "a", awayID: "b")
+        let attack = MatchNPCAttack.makeComplete(roster: field)
+        let analysis = MatchOppositionAnalysis.make(roster: field, isHome: true, attack: attack)
+        let id = attack.away.ordered[0].id
+        let row = MatchOpponentSeasonPlayer(id: id, battingGames: 5, pitchingGames: 0, earnedRunGames: 0, unscoredPitchingGames: 0,
+            batting: MatchBattingCounts(plateAppearances: 20, atBats: 20, singles: 8), pitching: MatchPitchingCounts())
+        var snapshot = MatchOpponentSeason(version: 1, year: 2026, competition: "highschool", teamID: "b", through: "2026-04-14", uncollectedGames: 0, players: [row])
+        snapshot.honors = [LeagueHonor(playerID: id, teamID: "b", kind: .average, value: 0.4, tied: false, final: false)]
+        try snapshot.validate(analysis: analysis, date: GameDate("2026-04-15"))
+        let bytes = try JSONEncoder().encode(snapshot)
+        XCTAssertEqual(try JSONDecoder().decode(MatchOpponentSeason.self, from: bytes), snapshot)
+        var old = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any]); old.removeValue(forKey: "honors")
+        let legacy = try JSONDecoder().decode(MatchOpponentSeason.self, from: JSONSerialization.data(withJSONObject: old))
+        XCTAssertNil(legacy.honors); try legacy.validate(analysis: analysis, date: GameDate("2026-04-15"))
+        snapshot.honors = [LeagueHonor(playerID: id, teamID: "b", kind: .average, value: 0.9, tied: false, final: false)]
+        XCTAssertThrowsError(try snapshot.validate(analysis: analysis, date: GameDate("2026-04-15")))
+    }
+    func testV100NamesAreStableUniqueAndLegacyProfilesKeepRatings() throws {
+        for level in ["highschool", "npb-first-team", "mlb-first-team"] {
+            for index in 1...50 {
+                let team = "school-\(index)"
+                let a = MatchNPCAttack.makeComplete(roster: MatchNPCFielders.make(year: 2026, competition: level, homeID: team, awayID: "other")).home
+                let b = MatchNPCAttack.makeComplete(roster: MatchNPCFielders.make(year: 2027, competition: level, homeID: team, awayID: "other")).home
+                XCTAssertEqual(a.batters.map(\.displayName), b.batters.map(\.displayName))
+                XCTAssertEqual(Set(a.batters.map(\.displayName) + [a.relief.displayName]).count, 10)
+                XCTAssertEqual(a.batters[0].displayName, a.starter.displayName)
+                var legacy = a; legacy.batters = a.batters.map { var b = $0; b.name = nil; return b }
+                legacy.starter.name = nil; legacy.relief.name = nil
+                let decoded = try JSONDecoder().decode(MatchNPCAttackTeam.self, from: JSONEncoder().encode(legacy))
+                try decoded.validate(complete: true)
+                XCTAssertNil(decoded.starter.name); XCTAssertEqual(decoded.starter.displayName, a.starter.displayName)
+                XCTAssertEqual(decoded.starter.velocity, a.starter.velocity)
+            }
+        }
+    }
+    func testV100HonorsUseQualifiedRecordsTiesCoverageAndSeasonCompletion() {
+        var a = SeasonPlayerRecord(teamID: "a", id: "a1")
+        a.batting = MatchBattingCounts(plateAppearances: 20, atBats: 20, singles: 6, homeRuns: 2)
+        a.pitching = MatchPitchingCounts(pitches: 80, battersFaced: 20, outs: 15, strikeouts: 8, runsAllowed: 1, earnedRuns: 1)
+        var b = a; b = SeasonPlayerRecord(teamID: "b", id: "b1", batting: a.batting, pitching: a.pitching)
+        var low = SeasonPlayerRecord(teamID: "c", id: "tiny")
+        low.batting = MatchBattingCounts(plateAppearances: 1, atBats: 1, singles: 1)
+        low.pitching = MatchPitchingCounts(outs: 1, earnedRuns: 0)
+        var ledger = SeasonPlayerLedger(careerID: UUID(), year: 2026, competition: "highschool", fixtureIDs: [], uncollectedGames: 0, players: [a,b,low], teamGames: Dictionary(uniqueKeysWithValues: ["a","b","c","d","e","f"].map { ($0, 5) }))
+        let leaders = LeagueHonorRules.leaders(ledger)
+        XCTAssertEqual(leaders.count, 8); XCTAssertTrue(leaders.allSatisfy(\.tied)); XCTAssertFalse(leaders.contains { $0.playerID == "tiny" })
+        XCTAssertTrue(LeagueHonorRules.leaders(ledger, requiredFixtureIDs: ["legacy-score-only-fixture"]).isEmpty)
+        XCTAssertEqual(LeagueHonorRules.leaders(ledger, requiredFixtureIDs: []), leaders)
+        XCTAssertFalse(leaders.contains( where: \.final))
+        var legacy = ledger; legacy = SeasonPlayerLedger(careerID: ledger.careerID, year: 2026, competition: ledger.competition, fixtureIDs: [], uncollectedGames: 1, players: ledger.players, teamGames: ledger.teamGames)
+        XCTAssertTrue(LeagueHonorRules.leaders(legacy).isEmpty)
+        ledger.teamGames["f"] = nil; XCTAssertTrue(LeagueHonorRules.leaders(ledger).isEmpty)
+        ledger.teamGames = Dictionary(uniqueKeysWithValues: ["a","b","c","d","e","f"].map { ($0, 30) })
+        let final = LeagueHonorRules.leaders(ledger)
+        XCTAssertTrue(final.allSatisfy(\.final)); XCTAssertFalse(final.contains { $0.kind == .average || $0.kind == .era })
+        var unknown = a; unknown.pitching.earnedRuns = nil; unknown.unscoredPitchingGames = 1
+        let noERA = SeasonPlayerLedger(careerID: ledger.careerID, year: 2026, competition: ledger.competition, fixtureIDs: [], uncollectedGames: 0, players: [unknown], teamGames: Dictionary(uniqueKeysWithValues: ["a","b","c","d","e","f"].map { ($0, 5) }))
+        XCTAssertFalse(LeagueHonorRules.leaders(noERA).contains { $0.kind == .era })
+    }
     func testV27InningScoresDiskResumeRollbackAndCompletedResultApplyOnce() throws {
         enum Failure: Error { case injected }
         for role in PlayerRole.allCases {

@@ -933,12 +933,14 @@ struct MatchNPCPitcher:Codable,Equatable {
     var velocity:Double
     var control:Double
     let pitches:[String]
+    var name: String? = nil
     var profile:MatchNPCPitchingProfile? = nil
     func speed(_ code:String) -> Double {MatchAbilityStats(mental:profile?.mental ?? 60,velocity:velocity,control:control,stuff:profile?.stuff,stamina:profile?.stamina,fatigue:0).speedValue(code:code)}
     var zoneChance:Double {0.5+control*0.0025}
     var hitAdjustment:Double {-(control-60)*0.001-(velocity-60)*0.0007}
     var fastball:Double {speed("four-seam")}
     func validate() throws {
+        guard name.map({ !$0.isEmpty && $0.count <= 40 }) ?? true else { throw MatchError.invalidRecord }
         try profile?.validate(pitches:pitches)
         guard [velocity,control].allSatisfy({$0.isFinite && (0...100).contains($0)}),
               (3...4).contains(pitches.count),pitches.first == "four-seam",Set(pitches).count == pitches.count,
@@ -951,6 +953,7 @@ struct MatchNPCBatter:Codable,Equatable,Identifiable {
     var contact:Double
     var power:Double
     var discipline:Double
+    var name: String? = nil
     var profile:MatchNPCFieldProfile? = nil
     var onBase:Double {0.45*contact+0.55*discipline}
     var slugging:Double {0.2*contact+0.8*power}
@@ -975,7 +978,10 @@ struct MatchNPCAttackTeam:Codable,Equatable {
         let populated=batters.filter {$0.profile != nil}.count
         guard (populated == 0 && starter.profile == nil && relief.profile == nil) || (populated == 9 && starter.profile != nil && relief.profile != nil),
               complete.map({$0 == (populated == 9)}) ?? true else {throw MatchError.invalidRecord}
-        for batter in batters {try batter.profile?.validate()}
+        for batter in batters {
+            guard batter.name.map({ !$0.isEmpty && $0.count <= 40 }) ?? true else { throw MatchError.invalidRecord }
+            try batter.profile?.validate()
+        }
         let prefix="npc-v1/\(competition)/\(year)/\(teamID)"
         guard (1...9999).contains(year),!teamID.isEmpty,
               ["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(competition),
@@ -1003,10 +1009,10 @@ struct MatchNPCAttack:Codable,Equatable {
                 let id=prefix+"/P/"+role
                 let extras=["slider","changeup","fork"].sorted {MatchNPCFielders.hash(id+"/"+$0)<MatchNPCFielders.hash(id+"/"+$1)}
                 let count=2+Int(MatchNPCFielders.hash(id+"/repertoire")%2)
-                return MatchNPCPitcher(id:id,velocity:rating(id,"velocity",role == "starter" ? -4:0),control:rating(id,"control",0),pitches:["four-seam"]+Array(extras.prefix(count)))
+                return MatchNPCPitcher(id:id,velocity:rating(id,"velocity",role == "starter" ? -4:0),control:rating(id,"control",0),pitches:["four-seam"]+Array(extras.prefix(count)),name:NPCIdentity.name(id))
             }
             let batters=field.players.enumerated().map {i,p in
-                MatchNPCBatter(id:p.id,position:p.position,contact:rating(p.id,"contact",contactOffsets[i]),power:rating(p.id,"power",powerOffsets[i]),discipline:rating(p.id,"discipline",i == 0 ? -12:0))
+                MatchNPCBatter(id:p.id,position:p.position,contact:rating(p.id,"contact",contactOffsets[i]),power:rating(p.id,"power",powerOffsets[i]),discipline:rating(p.id,"discipline",i == 0 ? -12:0),name:NPCIdentity.name(p.id))
             }
             return MatchNPCAttackTeam(teamID:field.teamID,year:roster.year,competition:roster.competition,starter:pitcher("starter"),relief:pitcher("relief"),batters:batters)
         }
