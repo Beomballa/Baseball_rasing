@@ -1,4 +1,4 @@
-> **V107 보완:** 새 외형의 보이는 헤어8종과 모션 캐시를 구분하고, 훈련 결과에 접근성 초점을 연결했습니다. 관련 단위·저장·렌더8 / 작은 화면·최대 글자 UI2 / Git보안9 및 공개 소스 비서명 Release가 통과했습니다. 실기기 청취·전체VoiceOver·공개 정보/권리 확정·TestFlight 서버/배포 서명은 별도입니다. [구현·검증 이력](docs/implementation-history.md)
+> **V108 확인:** 공개 후보와 QA 앱의 코드·리소스372개를 대조하고 iPhone QA를 기존 저장 삭제 없이 업데이트했습니다. 실기기 UI3개·Git보안9개·비서명 Release 통과. 주 저장·WAL·기존 설정 값은 보존됐으며 QA 타격 안내 키 추가/실행 중 SHM 차이를 구분해 기록했습니다. 직접 소리·손맛·전체VoiceOver·최소OS·TestFlight는 별도입니다. [구현·검증 이력](docs/implementation-history.md)
 
 <div align="center">
 

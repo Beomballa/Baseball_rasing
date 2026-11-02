@@ -53,10 +53,11 @@ struct PlayerCreationView: View {
                     .accessibilityElement(children: .combine).accessibilityIdentifier("creationPreview")
 
                 GamePanel(title: "01  선수 정보", onBoard: true) {
-                    Text("선수 이름 · 1~12자").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    Text("선수 이름 · 가상 이름 1~12자").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     TextField("선수 이름", text: $draft.name, prompt: Text("선수 이름").foregroundStyle(GameTheme.boardMuted))
-                        .textContentType(.name).focused($focusedField, equals: .name)
+                        .focused($focusedField, equals: .name)
                         .accessibilityLabel("선수 이름").accessibilityIdentifier("playerName")
+                        .accessibilityHint("실명 대신 가상 이름이나 별명을 사용할 수 있습니다.")
                         .padding(12).background(GameTheme.board)
                         .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
                     HStack {

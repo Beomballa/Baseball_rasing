@@ -41,10 +41,26 @@ final class ManagementDetailFlowTests: XCTestCase {
     @MainActor func testV56MatchTerminationResumeAndCompletedResultBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication()
+        func openTodayGame(completed: Bool = false) {
+            let gameTab = app.buttons["managementTab-game"]
+            XCTAssertTrue(gameTab.waitForExistence(timeout: 8)); gameTab.tap()
+            let facility = app.buttons[completed ? "facility-gameRecords" : "roomPrimary"]
+            XCTAssertTrue(facility.waitForExistence(timeout: 8)); facility.tap()
+            if completed {
+                let schedule = app.buttons["gameSection-schedule"]
+                XCTAssertTrue(schedule.waitForExistence(timeout: 8)); schedule.tap()
+            }
+            let entry = app.buttons["openCareerGame"]
+            reveal(entry, app); XCTAssertTrue(entry.waitForExistence(timeout: 8)); entry.tap()
+        }
         for pitcher in [false,true] {
             app.terminate();app.launchArguments=["-management-career-verification","-v56-disk-session",UUID().uuidString];app.launch()
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
-            app.buttons["clubhouse-rest"].tap();app.buttons["confirmRest"].tap();app.buttons["restDone"].tap();app.buttons["homeTodayGame"].tap()
+            app.buttons["clubhouse-rest"].tap();app.buttons["confirmRest"].tap()
+            XCTAssertTrue(app.staticTexts["restSaved"].waitForExistence(timeout:10))
+            let restDone=app.buttons["restDone"]
+            XCTAssertTrue(restDone.waitForExistence(timeout:5))
+            restDone.tap();openTodayGame()
             XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout:8));app.buttons["opponentTab-plan"].tap()
             reveal(app.buttons["confirmGamePlan"],app);app.buttons["confirmGamePlan"].tap()
             XCTAssertTrue(app.buttons["gameAutomatic"].waitForExistence(timeout:12))
@@ -54,13 +70,13 @@ final class ManagementDetailFlowTests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"enabled == true"),object:automatic)],timeout:35),.completed)
             let board=app.descendants(matching:.any).matching(identifier:"careerGameScore").firstMatch.label
             app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
-            app.buttons["homeTodayGame"].tap();XCTAssertTrue(automatic.waitForExistence(timeout:12))
+            openTodayGame();XCTAssertTrue(automatic.waitForExistence(timeout:12))
             XCTAssertEqual(app.descendants(matching:.any).matching(identifier:"careerGameScore").firstMatch.label,board)
             capture(app,pitcher ? "v56-pitcher-match-resumed":"v56-batter-match-resumed")
             automatic.tap();app.buttons["진행하고 결과 저장"].tap();XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:30))
             capture(app,pitcher ? "v56-pitcher-match-stored":"v56-batter-match-stored")
             app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
-            let completed=status(app);app.buttons["homeTodayGame"].tap();XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:12))
+            let completed=status(app);openTodayGame(completed: true);XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout:12))
             app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
             XCTAssertEqual(status(app),completed)
         }
