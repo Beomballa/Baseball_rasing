@@ -539,7 +539,7 @@ struct MatchResultSummary {
         return Pose(shirt: shirts[frame], hair: hair[frame], skin: skin[frame], number: centers[frame])
     }
     static func textures(role: PlayerRole, appearance: PlayerAppearance, number: Int, hand: String) -> [SKTexture] {
-        let key = ([role.rawValue, hand] + [appearance.skin,appearance.hair,appearance.kit,appearance.hairStyle,appearance.expression,number].map(String.init)).joined(separator: ":") as NSString
+        let key = ([role.rawValue, hand] + [appearance.skin,appearance.hair,appearance.uniformColor,appearance.hairStyle,appearance.expression,number].map(String.init)).joined(separator: ":") as NSString
         if let cached = cache.object(forKey: key) as? [SKTexture] { return cached }
         let result = (0..<6).compactMap { frame -> SKTexture? in
             guard let image = image(role: role, frame: frame, appearance: appearance, number: number, hand: hand) else { return nil }
@@ -563,7 +563,7 @@ struct MatchResultSummary {
         guard decoded else { return nil }
         let pose = pose(role: role, frame: frame)
         let shirt = CGMutablePath(); if let first = pose.shirt.first { shirt.move(to: first); pose.shirt.dropFirst().forEach { shirt.addLine(to: $0) }; shirt.closeSubpath() }
-        let kit = PlayerAppearance.kitColors[appearance.kit], skin = PlayerAppearance.skinColors[appearance.skin], hair = PlayerAppearance.hairColors[appearance.hair]
+        let kit = appearance.uniformColor, skin = PlayerAppearance.skinColors[appearance.skin], hair = PlayerAppearance.hairColors[appearance.hair]
         func rgb(_ hex: Int, _ shade: Double) -> (Int,Int,Int) {
             (min(255,Int(Double((hex >> 16) & 255) * shade)), min(255,Int(Double((hex >> 8) & 255) * shade)), min(255,Int(Double(hex & 255) * shade)))
         }
@@ -1341,7 +1341,7 @@ enum InplayFieldProjection {
     }
     func requests(duration:Double,reduced:Bool,actorsAt:(Double)->[Actor]) async -> [String:FieldRasterArt.Request]? {
         var result:[String:FieldRasterArt.Request]=[:],seen=Set<Selection>()
-        let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
+        let ownKit=appearance.uniformColor,opponent=FieldReplayPresentation.opponentKit(ownKit)
         // Both field canvases use 2:3; perspective direction is independent of pixel resolution.
         let size=CGSize(width:400,height:600)
         let steps=Int(ceil(duration*120))
@@ -1531,7 +1531,7 @@ struct DetailedFieldReplayBoard:View {
                         let b=point(DetailedFieldRules.bases[target]),w=max(7,size.width*0.025)
                         context.stroke(Path(ellipseIn:CGRect(x:b.x-w,y:b.y-w/2,width:w*2,height:w)),with:.color(GameTheme.gold.opacity(0.8)),lineWidth:1)
                     }
-                    let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
+                    let ownKit=appearance.uniformColor,opponent=FieldReplayPresentation.opponentKit(ownKit)
                     let defenseOwn=ownTeamFielding ?? !play.ownBatter
                     let actors=sprites.actors(play,time:time,reduced:reduced,finished:finished)
                     for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
@@ -1912,7 +1912,7 @@ struct HomeRunReplayBoard:View {
                             context.clip(to:Path(CGRect(origin:.zero,size:size)));context.translateBy(x:offset.x,y:offset.y)
                         }
                         if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
-                        let ownKit=PlayerAppearance.kitColors[appearance.kit],opponent=FieldReplayPresentation.opponentKit(ownKit)
+                        let ownKit=appearance.uniformColor,opponent=FieldReplayPresentation.opponentKit(ownKit)
                         let actors=sprites.actors(event,time:time,reduced:reduced)
                         for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
                             let (p,motion,own,teamOwn,number,kind)=(actor.point,actor.motion,actor.own,actor.teamOwn,actor.number,actor.kind)
@@ -2295,7 +2295,7 @@ struct InplayStartupReadiness {
         }
     }
     private func updateActors(_ samples:[FieldReplaySprites.Actor]) {
-        let ownKit=PlayerAppearance.kitColors[sprites.appearance.kit]
+        let ownKit=sprites.appearance.uniformColor
         for (index,node) in actors.enumerated() {node.root.isHidden = index >= samples.count}
         for (index,actor) in samples.enumerated() {
             let node=actors[index],scale=InplayFieldProjection.actorScale(actor.point,size:size)

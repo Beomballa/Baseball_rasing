@@ -600,6 +600,14 @@ struct SaveProtectionView: View {
                         Toggle("훈련 햅틱", isOn: $haptics).accessibilityIdentifier("settingHaptics")
                         Text("화면 읽기와 동작 줄이기는 iPhone의 손쉬운 사용 설정을 따릅니다. 배경음·효과음은 아직 제공하지 않습니다.").managementFont(.body)
                     }
+                    ManagementPanel("이용 안내·고객지원") {
+                        Text("개인정보·기기 저장, 구매·환불과 글꼴 라이선스를 확인할 수 있습니다. 문의 창구와 정식 정책은 준비 중입니다.").managementFont(.body)
+                        NavigationLink { SupportInformationView() } label: {
+                            Text(SupportInformation.title)
+                        }
+                        .buttonStyle(ManagementButtonStyle(variant: .secondary))
+                        .accessibilityIdentifier("openSupportInformation")
+                    }
                     ManagementPanel("저장 내보내기") {
                         if protection?.recoveryOnly == true {
                             Text("현재 저장 열기 실패 · 선수 수 확인 필요").managementFont(.label).accessibilityIdentifier("saveCareerCountsUnavailable")

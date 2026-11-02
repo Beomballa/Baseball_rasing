@@ -479,3 +479,7 @@
 !/BM/Resources/Assets.xcassets/CreationPitcherBodyV98.imageset/image.png
 !/BM/Resources/Assets.xcassets/CreationSchoolKitsV98.dataset/Contents.json
 !/BM/Resources/Assets.xcassets/CreationSchoolKitsV98.dataset/kits.json
+
+# V102 reviewed school/club presentation colors
+!/BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/colors.json

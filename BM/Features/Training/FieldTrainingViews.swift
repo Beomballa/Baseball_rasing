@@ -154,9 +154,9 @@ struct LocationDrillReplay: Equatable {
     }
     private func setFieldActor(_ node: SKSpriteNode, motion: FieldSpriteMotion, number: Int) {
         guard let sample = FieldRasterArt.samples(motion, kind: "fielder", left: hand == "left").first else { return }
-        let key = FieldRasterArt.Request(sample: sample, kit: PlayerAppearance.kitColors[appearance.kit], skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: number, back: motion.facing.back).key + String(sample.mirrored)
+        let key = FieldRasterArt.Request(sample: sample, kit: appearance.uniformColor, skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: number, back: motion.facing.back).key + String(sample.mirrored)
         if node === actor, key == actorKey { return }; if node === receiver, key == receiverKey { return }
-        guard let image = FieldRasterArt.image(sample, kit: PlayerAppearance.kitColors[appearance.kit], skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: number, back: motion.facing.back) else { return }
+        guard let image = FieldRasterArt.image(sample, kit: appearance.uniformColor, skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: number, back: motion.facing.back) else { return }
         let texture = SKTexture(image: image); texture.filteringMode = .nearest; node.texture = texture
         node.size = CGSize(width: sample.frame.rect[2] * sample.unit * 1.7, height: sample.frame.rect[3] * sample.unit * 1.7)
         node.anchorPoint = CGPoint(x: sample.frame.pivot[0] / sample.frame.rect[2], y: 1 - sample.frame.pivot[1] / sample.frame.rect[3])
@@ -748,13 +748,13 @@ struct TrainingMissionBanner: View {
     private let contact = CGPoint(x: 180, y: 102)
     override init(size: CGSize) { super.init(size: size); scaleMode = .aspectFit }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    func configure(player source: CareerPlayer) {
+    func configure(player source: CareerPlayer, appearance: PlayerAppearance? = nil) {
         cancel(); removeAllChildren(); backgroundColor = UIColor(Color(hex: 0x285446))
         let field = SKSpriteNode(texture: TrainingEnvironmentArt.texture(.field), size: TrainingStageLayout.size)
         field.position = CGPoint(x: 160, y: 110); addChild(field)
         tee.texture = TrainingEnvironmentArt.tee; tee.size = CGSize(width: 30, height: 78)
         tee.anchorPoint = CGPoint(x: 0.5,y: 1); tee.position = CGPoint(x: contact.x, y: contact.y-4); tee.zPosition = 2; addChild(tee)
-        frames = PlayerMotionArt.textures(role: .batter, appearance: source.appearance, number: source.jerseyNumber, hand: source.throwingHandRaw)
+        frames = PlayerMotionArt.textures(role: .batter, appearance: appearance ?? source.appearance, number: source.jerseyNumber, hand: source.throwingHandRaw)
         player.anchorPoint = CGPoint(x: 0.5, y: 0.05); player.size = CGSize(width: 190, height: 190); player.position = CGPoint(x: 105, y: 16)
         player.texture = frames.first; player.zPosition = 3; addChild(player)
         ball.size = CGSize(width: 9, height: 9); ball.position = contact; ball.zPosition = 4; addChild(ball)
@@ -856,7 +856,7 @@ enum TrainingFieldMotion {
     }
     static func actor(in context:GraphicsContext,at p:CGPoint,appearance:PlayerAppearance,number:Int,hand:String,motion:FieldSpriteMotion,runner:Bool=false,coach:Bool=false) {
         FieldRasterArt.draw(in:context,at:p,scale:1.45,motion:motion,kind:runner ? "runner":"fielder",
-            kit:coach ? 0x97664a:PlayerAppearance.kitColors[appearance.kit],skin:PlayerAppearance.skinColors[appearance.skin],
+            kit:coach ? 0x97664a:appearance.uniformColor,skin:PlayerAppearance.skinColors[appearance.skin],
             hair:PlayerAppearance.hairColors[appearance.hair],number:number,left:hand == "left",selected:!coach,out:false)
     }
     static func contact(_ motion:FieldSpriteMotion,origin:CGPoint,hand:Bool,left:Bool) -> CGPoint {

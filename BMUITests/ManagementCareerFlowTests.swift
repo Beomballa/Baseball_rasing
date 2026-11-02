@@ -2,6 +2,60 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV102FreePracticePreparationBothRolesDoesNotChangeCareer() {
+        continueAfterFailure = false
+        let app = launch()
+        for pitcher in [false, true] {
+            if pitcher { switchToPitcher(app) }
+            let before = labels(app)
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-practice"].tap()
+            let open = app.buttons["openTrainingPractice"]; reveal(open, app); open.tap()
+            XCTAssertTrue(app.staticTexts["practiceIsolation"].waitForExistence(timeout: 8))
+            app.buttons["practiceGeneralTraining"].tap()
+            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
+            capture(app, "v102-practice-" + (pitcher ? "pitcher" : "batter"))
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            closeDetail(app)
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(labels(app), before)
+        }
+    }
+    @MainActor func testV102PreparationAndFirstCareerActionBothRoles() {
+        continueAfterFailure = false
+        let app = launch()
+        for pitcher in [false, true] {
+            if pitcher { switchToPitcher(app) }
+            let prefix = "v102-" + (pitcher ? "pitcher" : "batter")
+            let before = labels(app)
+            app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+            let prepare = app.buttons["openTraining"]
+            XCTAssertTrue(prepare.waitForExistence(timeout: 8)); XCTAssertTrue(prepare.isHittable)
+            XCTAssertLessThanOrEqual(prepare.frame.maxY, app.frame.maxY)
+            capture(app, prefix + "-training-first")
+            expand("trainingEquipmentChoices", app)
+            let power = app.buttons[pitcher ? "trainingKind-pitch" : "trainingKind-power"]
+            reveal(power, app); power.tap()
+            reveal(prepare, app); prepare.tap()
+            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
+            capture(app, prefix + "-preparation")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
+            app.buttons["managementTab-career"].tap(); app.buttons["facility-goals"].tap()
+            XCTAssertTrue(app.staticTexts["careerFirstStep"].waitForExistence(timeout: 8))
+            XCTAssertFalse(app.buttons["openGoalSpecial"].exists)
+            capture(app, prefix + "-first-goal")
+            expand("careerOtherRoutes", app)
+            XCTAssertTrue(app.buttons["openGoalSpecial"].waitForExistence(timeout: 3))
+            let observation = app.buttons["careerSection-observation"]; reveal(observation, app); observation.tap()
+            XCTAssertTrue(app.staticTexts["scoutInterestCount"].waitForExistence(timeout: 8))
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "scoutObservationClock").firstMatch.exists)
+            capture(app, prefix + "-observation-first")
+            let report = app.buttons["openSavedScoutingReport"]; reveal(report, app); report.tap()
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "scoutDecisionSummary").firstMatch.waitForExistence(timeout: 8))
+            capture(app, prefix + "-frozen-first")
+            app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(labels(app), before)
+        }
+    }
     @MainActor func testV100SmallLargeTextRosterAndLeaders() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -59,12 +113,14 @@ final class ManagementCareerFlowTests: XCTestCase {
         for pitcher in [false, true] {
             if pitcher { switchToPitcher(app) }
             app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
+            expand("trainingMethodDetails", app)
             let method = app.descendants(matching: .any).matching(identifier: "trainingHubMethod").firstMatch; reveal(method, app)
             XCTAssertTrue(method.exists); capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-training")
             let prepare = app.buttons["openTraining"]; reveal(prepare, app); XCTAssertTrue(prepare.isHittable)
             capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-training-card")
             closeDetail(app)
             app.buttons["managementTab-career"].tap(); app.buttons["facility-observation"].tap()
+            expand("scoutDateDetails", app)
             let clock = app.descendants(matching: .any).matching(identifier: "scoutObservationClock").firstMatch
             reveal(clock, app); XCTAssertTrue(clock.exists); capture(app, "v99-" + (pitcher ? "pitcher" : "batter") + "-scout")
             let report = app.buttons["openSavedScoutingReport"]; reveal(report, app); report.tap()
@@ -102,6 +158,7 @@ final class ManagementCareerFlowTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
         v99Menu("home", title: "홈", app: app); XCTAssertEqual(labels(app), before)
         v99Menu("career", title: "커리어", app: app); v99RevealFacility(app.buttons["facility-observation"], app); app.buttons["facility-observation"].tap()
+        expand("scoutDateDetails", app)
         let clock = app.descendants(matching: .any).matching(identifier: "scoutObservationClock").firstMatch
         reveal(clock, app); XCTAssertTrue(clock.label.contains("365")); capture(app, prefix + "-scout-dates")
         let contracts = app.buttons["careerSection-contracts"]; reveal(contracts, app); contracts.tap()
@@ -521,6 +578,12 @@ final class ManagementCareerFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["managementTab-home"].waitForExistence(timeout: 6))
     }
 
+    @MainActor private func expand(_ id: String, _ app: XCUIApplication) {
+        let group = app.descendants(matching: .any).matching(identifier: id).firstMatch
+        reveal(group, app)
+        let button = group.elementType == .button ? group : group.buttons.firstMatch
+        XCTAssertTrue(button.exists); reveal(button, app); button.tap()
+    }
     @MainActor private func launch(large: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification"]
         if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }

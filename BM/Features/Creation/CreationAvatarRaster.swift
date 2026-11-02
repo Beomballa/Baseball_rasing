@@ -21,6 +21,26 @@ import UIKit
     static func color(_ hex: String) -> Int { Int(hex.dropFirst(), radix: 16) ?? 0x214e72 }
 }
 
+// Shared V93 team palette. Pattern and logo artwork remain independent of the match renderer.
+@MainActor enum GameUniformPalette {
+    private struct Entry: Decodable { let id: String; let primary: String }
+    private static let colors: [String: Int] = {
+        guard let data = NSDataAsset(name: "GameUniformColorsV102")?.data,
+              let entries = try? JSONDecoder().decode([Entry].self, from: data) else { return [:] }
+        return Dictionary(uniqueKeysWithValues: entries.map { ($0.id, SchoolCreationKit.color($0.primary)) })
+    }()
+    static func color(teamID: String?) -> Int? {
+        guard let teamID else { return nil }
+        let catalogID = ClubIdentity.resolve(name: CareerTeamDirectory.name(teamID))?.id ?? teamID
+        return colors[catalogID]
+    }
+}
+extension PlayerAppearance {
+    @MainActor var uniformColor: Int {
+        GameUniformPalette.color(teamID: uniformTeamID ?? schoolKitID) ?? Self.kitColors[kit]
+    }
+}
+
 enum CreationAvatarMode: String { case head, portrait, full }
 
 struct CreationAvatarImage: View {

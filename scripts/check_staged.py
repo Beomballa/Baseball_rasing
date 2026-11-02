@@ -151,6 +151,10 @@ ART_HASHES.update({'BM/Resources/Assets.xcassets/Club-kbo-0.imageset/Club-kbo-0.
  'BM/Resources/Assets.xcassets/Club-npb-8.imageset/Club-npb-8.png': '99182060ef956e67fa94401567526fac135fdb387a92b2dbb66c73d4c7f6aedb',
  'BM/Resources/Assets.xcassets/Club-npb-9.imageset/Club-npb-9.png': 'c30e2552ee844c75098765f7419994bcaee77ccc5bda65e7686567fbc82e1fdd'})
 
+# V102 contains only catalog IDs and reviewed hex colors, no roster/save data.
+EXACT_PATHS.update({"BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/Contents.json",
+                    "BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/colors.json"})
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):

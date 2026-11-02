@@ -398,6 +398,7 @@ struct LeaguePlayersScreen: View {
     @State private var selected = ""
     @State private var ledger: SeasonPlayerLedger?
     @State private var honors: [LeagueHonor] = []
+    @State private var honorsPending: String?
     @State private var failure: String?
     var body: some View {
         ScrollView {
@@ -407,7 +408,7 @@ struct LeaguePlayersScreen: View {
                 } else {
                     Text("리그 선수 · 타이틀").font(ManagementPixelFont.readable(.screenTitle))
                     Text("가상 선수 고정 명단 · 경기 원장 성적만 집계").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-                    if honors.isEmpty { Text("현재 확정할 선두 자료 없음 · 표본/리그 기록을 확인하세요.").font(.subheadline).accessibilityIdentifier("leagueHonorsPending") }
+                    if honors.isEmpty { Text(honorsPending ?? "선두 자료 확인 중").font(.subheadline).accessibilityIdentifier("leagueHonorsPending") }
                     ForEach(honors) { honor in
                         HStack(spacing: 10) {
                             LeagueTrophyPixel().frame(width: 26, height: 30)
@@ -475,7 +476,8 @@ struct LeaguePlayersScreen: View {
             let value = try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: year, competition: level, through: GameDate(player.gameDate), in: context)
             let today = try GameDate(player.gameDate)
             let required = Set(plan.fixtures.filter { $0.date < today }.map(\.id))
-            ledger = value; honors = LeagueHonorRules.leaders(value, requiredFixtureIDs: required); failure = nil
+            ledger = value; honors = LeagueHonorRules.leaders(value, requiredFixtureIDs: required)
+            honorsPending = LeagueHonorRules.pendingReason(value, requiredFixtureIDs: required); failure = nil
         } catch { failure = error.localizedDescription }
     }
 }

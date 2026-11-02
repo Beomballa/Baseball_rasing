@@ -118,6 +118,7 @@ struct TrainingPracticeView: View {
     @State private var container: ModelContainer?
     @State private var players: [CareerPlayer] = []
     @State private var calendars: [CareerCalendarState] = []
+    @State private var uniformTeams: [UUID: String] = [:]
     @State private var role = PlayerRole.batter
     @State private var error: String?
     var body: some View {
@@ -151,7 +152,7 @@ struct TrainingPracticeView: View {
                                 }
                             }.tint(GameTheme.gold)
                             NavigationLink {
-                                CareerTrainingView(player: player, calendar: calendar, practice: true).modelContainer(container)
+                                CareerTrainingView(player: player, calendar: calendar, practice: true, uniformTeamID: uniformTeams[player.id]).modelContainer(container)
                             } label: { Text(role == .batter ? "타격·주루·수비 훈련" : "구종·투구·주루·수비 훈련") }
                                 .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("practiceGeneralTraining")
                             GamePanel(title: "특성 전용 훈련", onBoard: true) {
@@ -192,6 +193,11 @@ struct TrainingPracticeView: View {
             let copies = try originals.map { try TrainingPractice.copy($0, from: sourceContext, into: memory.mainContext) }
             let states = try memory.mainContext.fetch(FetchDescriptor<CareerCalendarState>())
             let abilities = try memory.mainContext.fetch(FetchDescriptor<PlayerAbilities>())
+            let sourceCalendars = try sourceContext.fetch(FetchDescriptor<CareerCalendarState>())
+            uniformTeams = try Dictionary(uniqueKeysWithValues: zip(originals, copies).map { original, copy in
+                let state = sourceCalendars.first { $0.playerID == original.id }
+                return (copy.id, try state?.teamID(for: original, on: GameDate(original.gameDate)) ?? original.schoolID)
+            })
             players = copies; calendars = states; profiles = abilities
             role = copies.first(where: { $0.role == initialRole })?.role ?? copies.first?.role ?? initialRole
             container = memory; error = nil

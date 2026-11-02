@@ -50,13 +50,17 @@ import SwiftUI
         low.pitching = MatchPitchingCounts(outs: 1, earnedRuns: 0)
         var ledger = SeasonPlayerLedger(careerID: UUID(), year: 2026, competition: "highschool", fixtureIDs: [], uncollectedGames: 0, players: [a,b,low], teamGames: Dictionary(uniqueKeysWithValues: ["a","b","c","d","e","f"].map { ($0, 5) }))
         let leaders = LeagueHonorRules.leaders(ledger)
+        XCTAssertNil(LeagueHonorRules.pendingReason(ledger, requiredFixtureIDs: []))
+        XCTAssertTrue(LeagueHonorRules.pendingReason(ledger, requiredFixtureIDs: ["missing"])?.contains("1경기") == true)
         XCTAssertEqual(leaders.count, 8); XCTAssertTrue(leaders.allSatisfy(\.tied)); XCTAssertFalse(leaders.contains { $0.playerID == "tiny" })
         XCTAssertTrue(LeagueHonorRules.leaders(ledger, requiredFixtureIDs: ["legacy-score-only-fixture"]).isEmpty)
         XCTAssertEqual(LeagueHonorRules.leaders(ledger, requiredFixtureIDs: []), leaders)
         XCTAssertFalse(leaders.contains( where: \.final))
         var legacy = ledger; legacy = SeasonPlayerLedger(careerID: ledger.careerID, year: 2026, competition: ledger.competition, fixtureIDs: [], uncollectedGames: 1, players: ledger.players, teamGames: ledger.teamGames)
         XCTAssertTrue(LeagueHonorRules.leaders(legacy).isEmpty)
+        XCTAssertTrue(LeagueHonorRules.pendingReason(legacy, requiredFixtureIDs: [])?.contains("미수집 1경기") == true)
         ledger.teamGames["f"] = nil; XCTAssertTrue(LeagueHonorRules.leaders(ledger).isEmpty)
+        XCTAssertTrue(LeagueHonorRules.pendingReason(ledger, requiredFixtureIDs: [])?.contains("5/6팀") == true)
         ledger.teamGames = Dictionary(uniqueKeysWithValues: ["a","b","c","d","e","f"].map { ($0, 30) })
         let final = LeagueHonorRules.leaders(ledger)
         XCTAssertTrue(final.allSatisfy(\.final)); XCTAssertFalse(final.contains { $0.kind == .average || $0.kind == .era })
@@ -899,6 +903,51 @@ extension CareerMatchTests {
             XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerMatchRecord>()),1)
             try CalendarProgression.advanceDay(player:player,state:state,revision:state.revision,in:context)
             XCTAssertEqual(player.gameDate,"2026-04-02")
+        }
+    }
+}
+
+
+extension CareerMatchTests {
+    @MainActor func testV102UniformPalettePreservesAppearancePayloadAndMotionCache() throws {
+        let original = PlayerAppearance(skin: 2, hair: 1, kit: 4, hairStyle: 2, expression: 1, schoolKitID: "hs-ref-001", creationVersion: 1)
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let payload = try encoder.encode(original)
+        let school = original.wearing(teamID: "hs-ref-001")
+        let club = original.wearing(teamID: "dev-harbors")
+        XCTAssertEqual(school.uniformColor, 0x953e3f)
+        XCTAssertEqual(club.uniformColor, 0x358c85)
+        XCTAssertEqual(club.uniformColor, original.wearing(teamID: "pro-harbors").uniformColor)
+        for id in CareerTeamDirectory.japaneseFirstIDs + CareerTeamDirectory.americanFirstIDs + CareerTeamDirectory.americanDevelopmentIDs {
+            XCTAssertNotNil(GameUniformPalette.color(teamID: id), id)
+        }
+        for school in try SchoolCatalog.load() { XCTAssertNotNil(GameUniformPalette.color(teamID: school.id), school.id) }
+        XCTAssertEqual(original.wearing(teamID: "college-0").uniformColor, PlayerAppearance.kitColors[4])
+        XCTAssertEqual(try encoder.encode(school), payload)
+        XCTAssertEqual(try encoder.encode(club), payload)
+        XCTAssertEqual(try JSONDecoder().decode(PlayerAppearance.self, from: payload), original)
+        XCTAssertNil(try JSONDecoder().decode(PlayerAppearance.self, from: payload).uniformTeamID)
+        for role in PlayerRole.allCases {
+            for hand in ["left", "right"] {
+                let a = PlayerMotionArt.textures(role: role, appearance: school, number: 27, hand: hand)
+                let b = PlayerMotionArt.textures(role: role, appearance: club, number: 27, hand: hand)
+                XCTAssertEqual(a.count, 6); XCTAssertEqual(b.count, 6)
+                XCTAssertFalse(a[0] === b[0], "Different teams must not share cached colors")
+                XCTAssertTrue(a[0] === PlayerMotionArt.textures(role: role, appearance: school, number: 27, hand: hand)[0])
+                for frame in 0..<6 {
+                    let schoolImage = try XCTUnwrap(PlayerMotionArt.image(role: role, frame: frame, appearance: school, number: 27, hand: hand))
+                    let clubImage = try XCTUnwrap(PlayerMotionArt.image(role: role, frame: frame, appearance: club, number: 27, hand: hand))
+                    XCTAssertNotEqual(schoolImage.pngData(), clubImage.pngData())
+                    XCTAssertNotEqual(clubImage.pngData(), PlayerMotionArt.image(role: role, frame: frame, appearance: club, number: 81, hand: hand)?.pngData())
+                    if frame == 0 && hand == "right" {
+                        for (label, image) in [("school", schoolImage), ("club", clubImage)] {
+                            let attachment = XCTAttachment(image: image)
+                            attachment.name = "V102-uniform-" + role.rawValue + "-" + label + "-27"
+                            attachment.lifetime = .keepAlways; add(attachment)
+                        }
+                    }
+                }
+            }
         }
     }
 }

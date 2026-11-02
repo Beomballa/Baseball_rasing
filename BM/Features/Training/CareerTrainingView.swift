@@ -19,6 +19,7 @@ struct CareerTrainingView: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
     var practice = false
+    var uniformTeamID: String? = nil
     var initialKind: TrainingKind? = nil
     var initialPitchStudyCode: String? = nil
     var replacingPitchCode: String? = nil
@@ -68,6 +69,10 @@ struct CareerTrainingView: View {
     @State private var retryInput: TrainingInput?
     @State private var retryRevision: Int?
 
+    private var renderAppearance: PlayerAppearance {
+        let team = try? calendar.teamID(for: player, on: GameDate(record?.gameDate ?? player.gameDate))
+        return player.appearance.wearing(teamID: uniformTeamID ?? team ?? player.schoolID)
+    }
     private var displayTraining: CareerTraining? { replay ?? training }
     private var replayLabel: String { feedbackVisible ? "결과 확인 중…" : "동작 진행 중…" }
     private var inputLocked: Bool { retryInput != nil || replay != nil }
@@ -150,7 +155,7 @@ struct CareerTrainingView: View {
         }
         if selectedKind == .discipline {
             judging = true; deliveryArrived = false
-            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
+            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: renderAppearance, jerseyNumber: player.jerseyNumber)
             scene.usePracticeSetting()
             scene.demonstrate(reduceMotion: reduced, flightDuration: 0.9, x: training.targets[training.scores.count].x,
                               y: training.targets[training.scores.count].y, pitchCode: "four-seam",
@@ -158,7 +163,7 @@ struct CareerTrainingView: View {
                               inputTimeline: MatchInputTimeline(windup: MatchDelivery.windup, duration: 0.9))
             return
         }
-        scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
+        scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: renderAppearance, jerseyNumber: player.jerseyNumber)
             scene.usePracticeSetting()
         let timeline = MatchInputTimeline(windup: selectedKind == .pitch ? 0 : MatchDelivery.windup, duration: 1.6)
         if selectedKind == .pitch { scene.preparePitch(phase: 0, reduced: reduced) }
@@ -312,7 +317,7 @@ struct CareerTrainingView: View {
                                 }
                                 if training == nil {
                                     if !studying { selection }
-                                    TrainingScenePreview(player: player, kind: selectedKind, pitchCode: code)
+                                    TrainingScenePreview(player: player, kind: selectedKind, pitchCode: code, appearanceOverride: renderAppearance)
                                     preparationBoard
                                 }
                                 if dynamicTypeSize.isAccessibilitySize {
@@ -340,7 +345,7 @@ struct CareerTrainingView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(GameTheme.boardPanel, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         .onAppear {
-            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: player.appearance, jerseyNumber: player.jerseyNumber)
+            scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: renderAppearance, jerseyNumber: player.jerseyNumber)
             scene.usePracticeSetting()
             load(); if dynamicTypeSize.isAccessibilitySize { buttonInput = true }
         }
@@ -611,12 +616,12 @@ struct CareerTrainingView: View {
         }.frame(width: height, height: height * (selectedKind == .power ? 220 : 340) / 320).clipped().overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
             .accessibilityElement(children: .contain).accessibilityIdentifier("skillPracticeField")
             .onAppear {
-                if selectedKind == .power { tireScene.configure(player: player) }
-                else { locationScene.configure(kind: .control, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw); locationScene.prepareDrill(phase: 0) }
+                if selectedKind == .power { tireScene.configure(player: player, appearance: renderAppearance) }
+                else { locationScene.configure(kind: .control, appearance: renderAppearance, number: player.jerseyNumber, hand: player.throwingHandRaw); locationScene.prepareDrill(phase: 0) }
             }
             .onChange(of: selectedKind) { _, _ in
-                if selectedKind == .power { tireScene.configure(player: player) }
-                else { locationScene.configure(kind: .control, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw); locationScene.prepareDrill(phase: 0) }
+                if selectedKind == .power { tireScene.configure(player: player, appearance: renderAppearance) }
+                else { locationScene.configure(kind: .control, appearance: renderAppearance, number: player.jerseyNumber, hand: player.throwingHandRaw); locationScene.prepareDrill(phase: 0) }
             }
     }
     @ViewBuilder private var errorControls: some View {
@@ -649,16 +654,16 @@ struct CareerTrainingView: View {
         let training = displayTraining
         ZStack {
             if selectedKind == .mental {
-                MentalPracticeBoard(appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw, round: training?.scores.count ?? 0, reviewing: replay != nil)
+                MentalPracticeBoard(appearance: renderAppearance, number: player.jerseyNumber, hand: player.throwingHandRaw, round: training?.scores.count ?? 0, reviewing: replay != nil)
             } else if selectedKind.isRaw {
-                RawTrainingBoard(kind: selectedKind, training: training, steps: TrainingRules.steps(footfalls), motion: progress, moving: replay != nil || clock.running, force: force, angle: angle, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw, x: $x, y: $y, locked: inputLocked)
+                RawTrainingBoard(kind: selectedKind, training: training, steps: TrainingRules.steps(footfalls), motion: progress, moving: replay != nil || clock.running, force: force, angle: angle, appearance: renderAppearance, number: player.jerseyNumber, hand: player.throwingHandRaw, x: $x, y: $y, locked: inputLocked)
             } else if selectedKind.isField {
                 FieldTrainingBoard(kind: selectedKind, target: training.flatMap { $0.completed ? nil : $0.targets[$0.scores.count] },
                                    base: training.map { $0.completed ? 1 : TrainingRules.throwBase($0.scores.count) } ?? 1,
-                                   angle: throwAngle, force: throwForce, steps: TrainingRules.steps(footfalls), appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw, x: $x, y: $y, locked: inputLocked || training == nil, motion: progress, moving: replay != nil || clock.running)
+                                   angle: throwAngle, force: throwForce, steps: TrainingRules.steps(footfalls), appearance: renderAppearance, number: player.jerseyNumber, hand: player.throwingHandRaw, x: $x, y: $y, locked: inputLocked || training == nil, motion: progress, moving: replay != nil || clock.running)
             } else if selectedKind == .power {
                 PowerPracticeBoard(force: force, angle: angle, round: training?.scores.count ?? 0,
-                                   motion: progress, playing: replay != nil, appearance: player.appearance)
+                                   motion: progress, playing: replay != nil, appearance: renderAppearance)
             } else { SpriteView(scene: scene).allowsHitTesting(false) }
             if selectedKind == .contact, let training, !training.completed {
                 let target = training.targets[training.scores.count]
@@ -838,7 +843,7 @@ struct CareerTrainingView: View {
 
     private func result(_ value: CareerTraining) -> some View {
         VStack(spacing: 16) {
-            TrainingResultHeading(player: player, name: pitchName, kind: value.selectedKind, average: value.average, practice: practice)
+            TrainingResultHeading(player: player, name: pitchName, kind: value.selectedKind, average: value.average, practice: practice, appearance: renderAppearance)
             if !practice {Text("완료 결과 보관 · 재열기/연출은 성장·피로를 다시 적용하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("trainingResultStored")}
             ManagementPanel("5회 훈련 성적표") {
                 scores(value, expanded: true)
@@ -980,6 +985,7 @@ private struct TrainingResultHeading: View {
     let kind: TrainingKind
     let average: Double
     let practice: Bool
+    var appearance: PlayerAppearance? = nil
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -991,7 +997,7 @@ private struct TrainingResultHeading: View {
                 Text(player.name + " · #\(player.jerseyNumber)").font(.caption).foregroundStyle(GameTheme.boardMuted)
             }.frame(maxWidth: .infinity, alignment: .leading)
             if !typeSize.isAccessibilitySize {
-                TrainingResultPortrait(player: player, kind: kind).frame(width: 82, height: 108)
+                TrainingResultPortrait(player: player, kind: kind, appearanceOverride: appearance).frame(width: 82, height: 108)
             }
         }.padding(16).background(GameTheme.boardPanel)
             .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
@@ -1223,6 +1229,8 @@ struct PitchRepertoireView: View {
 struct TrainingResultPortrait: View {
     let player: CareerPlayer
     let kind: TrainingKind
+    var appearanceOverride: PlayerAppearance? = nil
+    private var appearance: PlayerAppearance { appearanceOverride ?? player.appearance }
     var body: some View {
         Group {
             if kind.isField || kind == .stamina || kind == .mental {
@@ -1232,15 +1240,15 @@ struct TrainingResultPortrait: View {
                         progress: 0.5, gait: 1.2, chestCatch: kind == .defense)
                     FieldRasterArt.draw(in: context, at: CGPoint(x: size.width * 0.5, y: size.height * 0.86),
                         scale: size.height / 32, motion: motion, kind: [.speed, .stamina].contains(kind) ? "runner" : "fielder",
-                        kit: PlayerAppearance.kitColors[player.appearance.kit], skin: PlayerAppearance.skinColors[player.appearance.skin],
-                        hair: PlayerAppearance.hairColors[player.appearance.hair], number: player.jerseyNumber,
+                        kit: appearance.uniformColor, skin: PlayerAppearance.skinColors[appearance.skin],
+                        hair: PlayerAppearance.hairColors[appearance.hair], number: player.jerseyNumber,
                         left: player.throwingHandRaw == "left", selected: false, out: false)
                 }
                 .accessibilityLabel(player.name + "의 " + kind.label + " 훈련 도트")
                 .accessibilityAddTraits(.isImage)
             } else {
                 DetailGamePortrait(role: [.pitch, .velocity, .control, .stuff].contains(kind) ? .pitcher : .batter,
-                    appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw,
+                    appearance: appearance, number: player.jerseyNumber, hand: player.throwingHandRaw,
                     label: player.name + "의 " + kind.label + " 훈련 도트")
             }
         }.accessibilityIdentifier("trainingResultArt-" + kind.rawValue)
@@ -1252,6 +1260,8 @@ struct TrainingScenePreview: View {
     let player: CareerPlayer
     let kind: TrainingKind
     var pitchCode: String = ""
+    var appearanceOverride: PlayerAppearance? = nil
+    private var appearance: PlayerAppearance { appearanceOverride ?? player.appearance }
     private var room: TrainingEnvironmentArt.Room {
         switch kind {
         case .pitch, .control, .velocity, .stuff: .bullpen
@@ -1274,9 +1284,9 @@ struct TrainingScenePreview: View {
         if [.speed, .stamina, .defense, .arm, .mental].contains(kind) {
             let motion = FieldSpriteMotion(facing: .southWest, stage: .ready)
             guard let sample = FieldRasterArt.samples(motion, kind: "fielder", left: player.throwingHandRaw == "left").first else { return nil }
-            return FieldRasterArt.image(sample, kit: PlayerAppearance.kitColors[player.appearance.kit], skin: PlayerAppearance.skinColors[player.appearance.skin], hair: PlayerAppearance.hairColors[player.appearance.hair], number: player.jerseyNumber, back: false)
+            return FieldRasterArt.image(sample, kit: appearance.uniformColor, skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: player.jerseyNumber, back: false)
         }
-        return PlayerMotionArt.image(role: pitcher ? .pitcher : .batter, frame: 0, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw)
+        return PlayerMotionArt.image(role: pitcher ? .pitcher : .batter, frame: 0, appearance: appearance, number: player.jerseyNumber, hand: player.throwingHandRaw)
     }
     var body: some View {
         GeometryReader { g in

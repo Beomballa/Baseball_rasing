@@ -32,12 +32,14 @@ struct ScoutingObservationHomePanel: View {
                 Text(error).font(.body).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutArchiveError")
                 Button("보고서 저장 다시 확인", action: refresh).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutArchiveRetry")
             } else if let row = own.first, let value = try? row.snapshot() {
-                ScoutPeriodRibbon(value: value, count: own.count)
-                ScoutObservationDates(value: value, today: player.gameDate)
                 ScoutingInterestList(value: value, compact: true)
                 NavigationLink { SavedScoutingObservationView(value: value, schoolID: player.schoolID, legacySchoolName: player.schoolName) } label: {
                     HStack { Text("확정 보고서 펼치기"); Spacer(); Text("›") }
                 }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("openSavedScoutingReport")
+                DisclosureGroup("관찰 날짜 · 집계 범위 · 보고서 이력") {
+                    ScoutPeriodRibbon(value: value, count: own.count)
+                    ScoutObservationDates(value: value, today: player.gameDate)
+                }.tint(GameTheme.gold).accessibilityElement(children: .contain).accessibilityIdentifier("scoutDateDetails")
                 if archive && own.count > 1 {
                     HomeDetailButton(title: "지난 보고서 \(own.count - 1)건", expanded: $showHistory, identifier: "scoutHistoryDetails")
                     if showHistory {
@@ -57,9 +59,11 @@ struct ScoutingObservationHomePanel: View {
                 NavigationLink { ScoutingReportView(player: player, calendar: calendar) } label: { Text("현재 능력 · 출전 자료 보기") }
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openScoutingReport")
             }
+            DisclosureGroup("보고서 보관과 제의 안내") {
             Text("주기 보고서가 없으면 최초 자료 저장을 확인합니다. 같은 주기는 보존하며 실패 시 위 버튼으로 재시도합니다. 재열기 자체가 매번 저장하는 것은 아닙니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("scoutRefreshPolicy")
             Text("관심 구단과 실제 제의는 별개입니다. 자격·심사·제의는 계약 메뉴에서 확인하세요.")
                 .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            }.tint(GameTheme.gold)
         }.padding(16).background(ScoutDeskPalette.surface)
             .overlay(ManagementStepFrame().stroke(GameTheme.boardLine, lineWidth: 2))
             .task(id: "\(player.id)-\(player.gameDate)") { refresh() }
@@ -118,7 +122,8 @@ struct SavedScoutingObservationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                frozenIdentity
+                Text("관찰 확정 · " + ManagementDisplay.date(value.observedDate))
+                    .managementFont(.label).accessibilityIdentifier("scoutFrozenDate")
                 ManagementPanel("이번 관찰 · 먼저 확인") {
                     Text("확정 자료 · " + ManagementDisplay.date(value.observedDate)).managementFont(.label)
                     if let condition = value.evaluationPending.first {
@@ -128,6 +133,8 @@ struct SavedScoutingObservationView: View {
                     }
                     Text("현재 능력과 다른 시점의 자료입니다. 관심 구단은 실제 계약 제의와 구분합니다.").managementFont(.helper)
                 }.accessibilityIdentifier("scoutDecisionSummary")
+                DisclosureGroup("선수 정보 · 관찰 원문과 집계 범위") { frozenIdentity }
+                    .tint(GameTheme.gold).accessibilityElement(children: .contain).accessibilityIdentifier("scoutFrozenIdentityDetails")
                 if let fit = value.contractFit { clubBoard(fit) }
                 ScoutingInterestList(value: value)
                 roleBoard
@@ -183,7 +190,7 @@ struct SavedScoutingObservationView: View {
                 }
                 Text("관찰일 \(ManagementDisplay.date(value.observedDate))").font(.subheadline.bold())
                     .frame(maxWidth: .infinity, minHeight: 44).multilineTextAlignment(.center)
-                    .padding(8).background(ScoutDossierInk.rule.opacity(0.22)).accessibilityIdentifier("scoutFrozenDate")
+                    .padding(8).background(ScoutDossierInk.rule.opacity(0.22)).accessibilityIdentifier("scoutFrozenIdentityDate")
                 Text("주기 \(ManagementDisplay.date(value.periodStart)) ~ \((try? GameDate(value.nextDate).adding(days: -1).description).map(ManagementDisplay.date) ?? "—")").font(.subheadline.monospaced())
                 Text("성적 집계 "+ManagementDisplay.date(value.sampleStart)+" ~ "+ManagementDisplay.date(value.observedDate)+" · 완료 개인 경기").font(.subheadline).foregroundStyle(ScoutDossierInk.muted).accessibilityIdentifier("scoutFrozenSampleCutoff")
                 Text("위 주기 종료일은 관찰 주기의 경계이며 성적 집계 마감일과 다릅니다. 현재 값과 구분해 보관한 당시 자료입니다.").font(.subheadline).foregroundStyle(ScoutDossierInk.muted)

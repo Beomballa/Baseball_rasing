@@ -140,6 +140,19 @@ struct LeagueHonor: Codable, Equatable, Identifiable {
 }
 
 enum LeagueHonorRules {
+    /// Display-only explanation of the same coverage gate used by leaders().
+    static func pendingReason(_ ledger: SeasonPlayerLedger, requiredFixtureIDs: Set<String>) -> String? {
+        if ledger.uncollectedGames > 0 { return "개인 성적 미수집 \(ledger.uncollectedGames)경기 · 과거 기록을 추정하지 않아 선두를 보류합니다." }
+        let missing = requiredFixtureIDs.subtracting(ledger.fixtureIDs).count
+        if missing > 0 { return "지난 일정 중 개인 기록 확인이 필요한 \(missing)경기 · 선두 집계 보류" }
+        let teams = ledger.teamGames.values.filter { $0 > 0 }.count
+        if teams < 6 { return "리그 기록 \(teams)/6팀 · 모든 팀의 경기 기록을 기다립니다." }
+        if leaders(ledger, requiredFixtureIDs: requiredFixtureIDs).isEmpty {
+            return "규정 표본 또는 양수 기록을 충족한 선수가 아직 없습니다. 아래 기준을 확인하세요."
+        }
+        return nil
+    }
+
     // Short-season game rules: rates need 15 PA / 3 IP minimum as well as proportional qualification.
     static func leaders(_ ledger: SeasonPlayerLedger, requiredFixtureIDs: Set<String>? = nil) -> [LeagueHonor] {
         guard ledger.uncollectedGames == 0, ledger.teamGames.count == 6, ledger.teamGames.values.allSatisfy({$0 > 0}) else { return [] }

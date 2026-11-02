@@ -194,10 +194,10 @@ import SwiftUI
         field.xScale = role == .pitcher && hand == "left" ? -1 : 1
         addChild(field)
         let style = appearance ?? PlayerAppearance(kit: kit)
-        if role == .batter {addBackgroundFielders(ownKit:PlayerAppearance.kitColors[style.kit])}
-        pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-pitcher-v52",columns:4,rows:2,ownKit:PlayerAppearance.kitColors[style.kit])
-        batterFrames = role == .batter ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-batter-v52",columns:3,rows:2,ownKit:PlayerAppearance.kitColors[style.kit])
-        catcherFrames = OpponentMotionArt.textures("catcher-parts",columns:2,rows:2,ownKit:PlayerAppearance.kitColors[style.kit],opponent:false)
+        if role == .batter {addBackgroundFielders(ownKit:style.uniformColor)}
+        pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-pitcher-v52",columns:4,rows:2,ownKit:style.uniformColor)
+        batterFrames = role == .batter ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-batter-v52",columns:3,rows:2,ownKit:style.uniformColor)
+        catcherFrames = OpponentMotionArt.textures("catcher-parts",columns:2,rows:2,ownKit:style.uniformColor,opponent:false)
         mittFrames = Array(catcherFrames.suffix(2))
         guard pitcherFrames.count == (role == .pitcher ? 6 : 8), batterFrames.count == 6, catcherFrames.count == 4 else { ready = false; return }
         pitcher.name = "animatedPitcher";pitcher.zPosition = 4;pitcher.xScale = hand == "left" ? -1 : 1;addChild(pitcher);pitcherPose(0)

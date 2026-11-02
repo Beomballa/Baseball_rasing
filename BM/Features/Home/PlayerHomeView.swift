@@ -537,17 +537,24 @@ struct PlayerHomeView: View {
         let previewCode = (try? todayTraining?.snapshot())?.pitchCode ?? (try? PitchSelectionStore.resolve(player: player)) ?? ""
         return VStack(alignment: .leading, spacing: 16) {
             if player.role == .pitcher { PitchStudyContinuationCard(player: player, calendar: calendar) }
-            TrainingEquipmentShelf(player: player, values: HomeAbilitySummary(player: player, abilities: abilities).originals, selection: activeTrainingKind) { trainingKind = $0 }
-            TrainingScenePreview(player: player, kind: activeTrainingKind, pitchCode: previewCode)
-            TrainingInstructionCard(kind: activeTrainingKind, drillVersion: trainingCardVersion(activeTrainingKind)) {
-                Text(trainingMethod(activeTrainingKind)).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
+            ManagementPanel(activeTrainingKind.label + " · 오늘의 연습", surface: .paper) {
                 TrainingCostStrip(fatigue: player.fatigue)
-                if let current = HomeAbilitySummary(player: player, abilities: abilities).originals.first(where: { $0.id.lowercased() == "home" + activeTrainingKind.rawValue.lowercased() }) {
-                    NotebookAbilityStrip(value: current, onPaper: true)
-                }
                 NavigationLink { CareerTrainingDestination(player: player, calendar: calendar, initialKind: activeTrainingKind) } label: { Text(activeTrainingKind.label + " 훈련 준비") }
                     .buttonStyle(ManagementButtonStyle()).disabled(todayTraining != nil || calendar.hasAction(on: player.gameDate))
                     .accessibilityIdentifier(todayTraining == nil ? "openTraining" : "openNewAbilityTraining")
+                Text("준비 화면에서 확인 · 아직 행동을 사용하지 않아요").managementFont(.helper)
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("trainingQuickPreparation")
+            DisclosureGroup("다른 훈련 고르기 · 현재 " + activeTrainingKind.label) {
+                TrainingEquipmentShelf(player: player, values: HomeAbilitySummary(player: player, abilities: abilities).originals, selection: activeTrainingKind) { trainingKind = $0 }
+            }.tint(GameTheme.gold).accessibilityElement(children: .contain).accessibilityIdentifier("trainingEquipmentChoices")
+            TrainingScenePreview(player: player, kind: activeTrainingKind, pitchCode: previewCode,
+                appearanceOverride: player.appearance.wearing(teamID: try? calendar.teamID(for: player, on: GameDate(player.gameDate))))
+            DisclosureGroup("연습 방법 · 성장과 보유 구종") {
+            TrainingInstructionCard(kind: activeTrainingKind, drillVersion: trainingCardVersion(activeTrainingKind)) {
+                Text(trainingMethod(activeTrainingKind)).managementFont(.body).accessibilityIdentifier("trainingHubMethod")
+                if let current = HomeAbilitySummary(player: player, abilities: abilities).originals.first(where: { $0.id.lowercased() == "home" + activeTrainingKind.rawValue.lowercased() }) {
+                    NotebookAbilityStrip(value: current, onPaper: true)
+                }
                 if activeTrainingKind == .pitch { pitchLibrary(calendar) }
                 DisclosureGroup("현재 능력·성장 예상·보유 구종") {
                     if activeTrainingKind == .pitch {
@@ -575,6 +582,7 @@ struct PlayerHomeView: View {
                     Text("5회 결과·나이·피로에 따라 성장 · 준비 화면 이동은 오늘 행동을 사용하지 않습니다.").managementFont(.helper)
                 }.tint(GameTheme.navy).accessibilityIdentifier("trainingPreparationDetails")
             }
+            }.tint(GameTheme.gold).accessibilityElement(children: .contain).accessibilityIdentifier("trainingMethodDetails")
         }
     }
     private func trainingCardVersion(_ kind: TrainingKind) -> Int? {
@@ -656,17 +664,23 @@ struct PlayerHomeView: View {
                 NavigationLink { ObservationReviewView(player: player, calendar: calendar) } label: { Text("28일 관찰 결산 · 다음 행동") }
                     .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openObservationReview")
             case .goals:
+                let targetState = Result { try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context).developmentTarget }
                 NavigationLink { CareerObjectivesView(player: player, calendar: calendar) } label: { CareerObjectivesHomeLabel(player: player, calendar: calendar) }
                     .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openCareerObjectives")
-                NavigationLink { GoalSpecialActivitiesView(player: player, calendar: calendar) } label: { CareerDeskRoute(icon: "NavTrainingV1", title: "목표 구단 · 특별 훈련 / 평가전", detail: "부족 조건에 맞는 훈련과 실전 점검") }
-                    .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openGoalSpecial")
-                NavigationLink { ClubSeasonGoalsScreen(player: player, calendar: calendar) } label: { HStack(spacing: 14) {
-                        Image("NavGameV1").resizable().interpolation(.none).frame(width: 40, height: 40).accessibilityHidden(true)
-                        ClubSeasonHomeLabel(player: player, calendar: calendar)
-                        Text("›").font(.title2).accessibilityHidden(true)
-                    } }.buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openClubSeasonGoals")
-                NavigationLink { ClubRoleScreen(player: player, calendar: calendar) } label: { CareerDeskRoute(icon: "NavGameV1", title: "구단 역할 · 출전 / 승격 준비", detail: "현재 역할과 다음 기용 조건 확인") }
-                    .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openClubRole")
+                switch targetState {
+                case .success(nil):
+                    Text("먼저 목표 구단과 모집 역할을 정하세요. 필요한 훈련과 관찰 과제가 이어집니다.")
+                        .managementFont(.body).accessibilityIdentifier("careerFirstStep")
+                    DisclosureGroup("소속 구단 목표 · 특별 활동 · 역할 확인") {
+                        careerGoalRoutes(calendar)
+                    }.tint(GameTheme.gold).accessibilityElement(children: .contain).accessibilityIdentifier("careerOtherRoutes")
+                case .success:
+                    careerGoalRoutes(calendar)
+                case .failure(let error):
+                    Text("목표 자료 조회 실패 · " + error.localizedDescription).managementFont(.body)
+                        .accessibilityIdentifier("careerTargetReadError")
+                    careerGoalRoutes(calendar)
+                }
             case .contracts:
                 NavigationLink { ContractMarketView(player: player, calendar: calendar) } label: { CareerDeskRoute(icon: "NavCareerV1", title: "계약 시장 · 잔류 / 외부 비교", detail: "유효 제의 · 역할 · 발효일을 비교") }
                     .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openContractMarket")
@@ -676,6 +690,18 @@ struct PlayerHomeView: View {
                 CareerLifecyclePanel(player:player,calendar:calendar)
             }
         }
+    }
+
+    @ViewBuilder private func careerGoalRoutes(_ calendar: CareerCalendarState) -> some View {
+                NavigationLink { GoalSpecialActivitiesView(player: player, calendar: calendar) } label: { CareerDeskRoute(icon: "NavTrainingV1", title: "목표 구단 · 특별 훈련 / 평가전", detail: "부족 조건에 맞는 훈련과 실전 점검") }
+                    .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openGoalSpecial")
+                NavigationLink { ClubSeasonGoalsScreen(player: player, calendar: calendar) } label: { HStack(spacing: 14) {
+                        Image("NavGameV1").resizable().interpolation(.none).frame(width: 40, height: 40).accessibilityHidden(true)
+                        ClubSeasonHomeLabel(player: player, calendar: calendar)
+                        Text("›").font(.title2).accessibilityHidden(true)
+                    } }.buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openClubSeasonGoals")
+                NavigationLink { ClubRoleScreen(player: player, calendar: calendar) } label: { CareerDeskRoute(icon: "NavGameV1", title: "구단 역할 · 출전 / 승격 준비", detail: "현재 역할과 다음 기용 조건 확인") }
+                    .buttonStyle(CareerDeskRouteStyle()).accessibilityIdentifier("openClubRole")
     }
 
     @ViewBuilder private func playActions(_ calendar: CareerCalendarState, training: Bool = true) -> some View {
