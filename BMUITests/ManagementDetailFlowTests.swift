@@ -2,6 +2,59 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
+    @MainActor func testV109UmpireSoundSettingsAreReadOnlyAndRespectMasterMute() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        func tapSwitch(_ toggle: XCUIElement) {
+            reveal(toggle, app)
+            // A partly scrolled label can be hittable underneath the navigation bar.
+            for _ in 0..<4 where toggle.frame.minY < 150 { app.swipeDown() }
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        }
+        for large in [false, true] {
+            app.terminate()
+            app.launchArguments = ["-management-career-verification"]
+            if large {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]
+            }
+            app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+            let before = status(app)
+            app.buttons["clubhouse-settings"].tap()
+            let master = app.switches["settingSound"], voice = app.switches["settingUmpireVoice"]
+            XCTAssertTrue(master.waitForExistence(timeout: 8))
+            let masterWasOn = master.value as? String == "1"
+            if !masterWasOn { tapSwitch(master) }
+            reveal(voice, app)
+            let voiceWasOn = voice.value as? String == "1"
+            if !voiceWasOn { tapSwitch(voice) }
+            for id in ["previewSound", "previewCatchSound", "previewUmpire-strike", "previewUmpire-ball", "previewUmpire-strikeout", "previewUmpire-walk"] {
+                let button = app.buttons[id]
+                reveal(button, app)
+                XCTAssertTrue(button.isHittable, id)
+                XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+                XCTAssertTrue(button.isEnabled)
+                button.tap()
+            }
+            capture(app, large ? "v109-audio-large-type" : "v109-audio-standard")
+            tapSwitch(voice)
+            reveal(app.buttons["previewUmpire-strike"], app)
+            XCTAssertFalse(app.buttons["previewUmpire-strike"].isEnabled)
+            XCTAssertTrue(app.buttons["previewSound"].isEnabled)
+            if voiceWasOn { tapSwitch(voice) }
+            tapSwitch(master)
+            XCTAssertEqual(master.value as? String, "0")
+            XCTAssertFalse(voice.isEnabled)
+            XCTAssertFalse(app.buttons["previewSound"].isEnabled)
+            XCTAssertFalse(app.buttons["previewCatchSound"].isEnabled)
+            reveal(app.buttons["previewUmpire-ball"], app)
+            XCTAssertFalse(app.buttons["previewUmpire-ball"].isEnabled)
+            if masterWasOn { tapSwitch(master) }
+            app.buttons["closeSettings"].tap()
+            XCTAssertEqual(status(app), before)
+        }
+        app.terminate()
+    }
     @MainActor func testV56TrainingTerminationResumeAndStoredRewardBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication()

@@ -288,6 +288,7 @@ import SwiftUI
         batter.position = point(0.305, 0.34 + 0.61 * (1 - feet[frame] / 512) + 0.305)
     }
     func cancelDelivery() {
+        GameSound.shared.stopVoice()
         contactFlight=nil;fieldHandoff=nil
         pitchFlight=nil;batterFlight=nil;batFinish=nil;pitchReceipt=nil;contactAt=0
         removeAllActions(); ball.removeAllActions(); pitcher.removeAllActions(); batter.removeAllActions(); mitt.removeAllActions();lastPitcherFrame = -1

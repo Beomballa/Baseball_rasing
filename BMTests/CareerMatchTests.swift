@@ -1,6 +1,7 @@
 import XCTest
 import SwiftData
 import SwiftUI
+import AVFoundation
 @testable import BM
 
 @MainActor final class CareerMatchTests: XCTestCase {
@@ -1049,13 +1050,35 @@ extension CareerMatchTests {
         XCTAssertTrue(school.mark.enumerated().contains {$0.offset%4 == 3 && $0.element > 0})
         XCTAssertNotEqual(school.shirt(x:0.5,y:0.1),school.shirt(x:0.5,y:0.8))
     }
-    func testV104OriginalSoundWavesAreBoundedDistinctAndDeterministic() {
+    func testV104OriginalSoundWavesAreBoundedDistinctAndDeterministic() throws {
         let waves=GameSoundCue.allCases.map(GameSoundPCM.wave)
         XCTAssertEqual(Set(waves).count,3)
         for (index,wave) in waves.enumerated() {
             XCTAssertEqual(wave.prefix(4),Data("RIFF".utf8));XCTAssertEqual(wave.subdata(in:8..<12),Data("WAVE".utf8))
-            XCTAssertTrue((4000...8000).contains(wave.count))
+            XCTAssertTrue((4000...13000).contains(wave.count))
             XCTAssertEqual(wave,GameSoundPCM.wave(GameSoundCue.allCases[index]))
+            let player = try AVAudioPlayer(data: wave)
+            XCTAssertEqual(player.numberOfChannels, 1)
+            XCTAssertTrue((0.09...0.30).contains(player.duration))
+            let samples = stride(from: 44, to: wave.count, by: 2).map { offset in
+                Double(Int16(bitPattern: UInt16(wave[offset]) | UInt16(wave[offset + 1]) << 8)) / 32768
+            }
+            XCTAssertLessThan(samples.map(abs).max() ?? 1, 0.6, "Avoid clipped transients")
+            XCTAssertLessThan(abs(samples.last ?? 1), 0.002, "End without a discontinuity")
+            XCTAssertGreaterThan(samples.map(abs).max() ?? 0, 0.1, "Do not ship a silent effect")
+        }
+    }
+    func testV109UmpireCallsUseOnlyFinalSavedOutcome() {
+        for outcome in ["루킹 스트라이크", "헛스윙"] {
+            XCTAssertEqual(UmpireCall(outcome: outcome), .strike)
+        }
+        XCTAssertEqual(UmpireCall(outcome: "볼"), .ball)
+        XCTAssertEqual(UmpireCall(outcome: "삼진"), .strikeout)
+        XCTAssertEqual(UmpireCall(outcome: "볼넷"), .walk)
+        XCTAssertNotEqual(UmpireCall(outcome: "삼진"), .strike)
+        XCTAssertNotEqual(UmpireCall(outcome: "볼넷"), .ball)
+        for outcome in ["", "파울", "안타", "홈런", "범타", "병살", "실책", "진행 중"] {
+            XCTAssertNil(UmpireCall(outcome: outcome), outcome)
         }
     }
 }

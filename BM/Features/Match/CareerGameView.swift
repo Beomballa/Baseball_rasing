@@ -276,6 +276,7 @@ struct CareerGameView: View {
                     } else {
                         judgment = result; arrivedSnapshot = updated
                         pulse = MatchPresentation.countPulse(result.outcome); pulseAt = Date()
+                        GameSound.shared.announce(outcome: result.outcome)
                     }
                 }
                 let showResult: @MainActor () -> Void = {

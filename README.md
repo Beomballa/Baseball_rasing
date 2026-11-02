@@ -1,4 +1,4 @@
-> **V108 확인:** 공개 후보와 QA 앱의 코드·리소스372개를 대조하고 iPhone QA를 기존 저장 삭제 없이 업데이트했습니다. 실기기 UI3개·Git보안9개·비서명 Release 통과. 주 저장·WAL·기존 설정 값은 보존됐으며 QA 타격 안내 키 추가/실행 중 SHM 차이를 구분해 기록했습니다. 직접 소리·손맛·전체VoiceOver·최소OS·TestFlight는 별도입니다. [구현·검증 이력](docs/implementation-history.md)
+> **V109 반영:** 타격·포구 합성 효과음과 포구 후 한국어 심판 음성(스트라이크·볼·삼진·볼넷), 소리/음성 설정·미리 듣기를 연결했습니다. 기존 판정·저장·이어하기·결과1회는 유지합니다. 관련 단위/렌더5·설정UI1·Git보안9개 및 비서명 Release 빌드 통과. 실제 iPhone 청취·무음/통화 인수와 앱 업데이트·TestFlight는 이번 미실시입니다. [구현·검증 이력](docs/implementation-history.md)
 
 <div align="center">
 
