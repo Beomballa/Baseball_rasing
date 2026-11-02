@@ -2,6 +2,38 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV103ExtractedSelectionRetryCoachAndCancelBothRoles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified",
+            "-club-season-verification", "-club-selection-verification", "-club-selection-bench",
+            "-v35-coach-verification", "-v55-selection-detail-failure"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 100))
+        for pitcher in [false, true] {
+            if pitcher { switchToPitcher(app) }
+            let before = labels(app)
+            let prefix = "v103-" + (pitcher ? "pitcher" : "batter")
+            app.buttons["managementTab-game"].tap(); app.buttons["facility-analysis"].tap()
+            app.buttons["gameSection-schedule"].tap()
+            let failure = app.staticTexts["clubSelectionError"]
+            reveal(failure, app); XCTAssertTrue(failure.exists)
+            capture(app, prefix + "-selection-error")
+            let retry = app.buttons["retryClubSelection"]; reveal(retry, app); retry.tap()
+            XCTAssertFalse(failure.exists)
+            let open = app.buttons["openClubSelection"]; reveal(open, app); open.tap()
+            let source = app.descendants(matching: .any).matching(identifier: "selectionEvidenceClock").firstMatch
+            reveal(source, app); XCTAssertTrue(source.label.contains("평가"))
+            capture(app, prefix + "-selection-source")
+            let next = app.staticTexts["coachNextEvaluation"]; reveal(next, app)
+            XCTAssertTrue(next.exists); capture(app, prefix + "-coach-next")
+            let rest = app.buttons["coachRest"]; reveal(rest, app); rest.tap()
+            XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 6))
+            app.buttons["취소 · 돌아가기"].tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
+            app.buttons["managementTab-home"].tap(); XCTAssertEqual(labels(app), before)
+        }
+    }
     @MainActor func testV102FreePracticePreparationBothRolesDoesNotChangeCareer() {
         continueAfterFailure = false
         let app = launch()
@@ -410,8 +442,7 @@ final class ManagementCareerFlowTests: XCTestCase {
             XCTAssertTrue(action.isHittable)
             XCTAssertFalse(app.staticTexts["5회 완료 후 예상"].exists)
             capture(app, pitcher ? "v48-pitcher-training-summary" : "v48-batter-training-summary")
-            let details = app.descendants(matching: .any).matching(identifier: "trainingPreparationDetails").firstMatch
-            details.tap()
+            expand("trainingMethodDetails", app)
             capture(app, pitcher ? "v48-pitcher-training-details" : "v48-batter-training-details")
             closeDetail(app)
             app.buttons["managementTab-home"].tap()
@@ -491,6 +522,7 @@ final class ManagementCareerFlowTests: XCTestCase {
     }
 
     @MainActor func testRestGameCompletionAndNextDayBothRoles() {
+        continueAfterFailure = false
         let app = launch()
         for pitcher in [false, true] {
             if pitcher { switchToPitcher(app) }
@@ -498,21 +530,30 @@ final class ManagementCareerFlowTests: XCTestCase {
             app.buttons["clubhouse-rest"].tap()
             XCTAssertTrue(app.staticTexts["restFatigueForecast"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.staticTexts["restFatigueForecast"].label.contains(pitcher ? "52 → 34" : "24 → 6"))
-            app.buttons["confirmRest"].tap(); XCTAssertTrue(app.staticTexts["restSaved"].exists)
+            app.buttons["confirmRest"].tap(); XCTAssertTrue(app.staticTexts["restSaved"].waitForExistence(timeout: 10))
             app.buttons["restDone"].tap()
             XCTAssertEqual(app.staticTexts["calendarDate"].label, originalDate)
             XCTAssertTrue(app.staticTexts["calendarAction"].label.contains("0/1"))
-            app.buttons["homeTodayGame"].tap()
+            app.buttons["managementTab-game"].tap(); app.buttons["facility-analysis"].tap()
+            app.buttons["gameSection-schedule"].tap()
+            let enter = app.buttons["openCareerGame"]; reveal(enter, app); enter.tap()
             XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout: 8)); app.buttons["opponentTab-plan"].tap()
             reveal(app.buttons["confirmGamePlan"], app); app.buttons["confirmGamePlan"].tap()
             let automatic = app.buttons["gameAutomatic"]; XCTAssertTrue(automatic.waitForExistence(timeout: 10))
             reveal(automatic, app); automatic.tap(); app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(app.staticTexts["careerGameFinished"].waitForExistence(timeout: 15))
+            let score = app.staticTexts["gameFinalScore"]
+            XCTAssertTrue(score.isHittable)
+            XCTAssertTrue(app.staticTexts["gameResultSaved"].isHittable)
             capture(app, pitcher ? "pitcher-completed" : "batter-completed")
             reveal(app.buttons["gameReturnHome"], app); app.buttons["gameReturnHome"].tap()
-            if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
-            XCTAssertTrue(app.buttons["homeTodayGame"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.buttons["homeTodayGame"].label.contains("결과"))
+            XCTAssertTrue(enter.waitForExistence(timeout: 8))
+            let completed = labels(app)
+            reveal(enter, app); enter.tap()
+            XCTAssertTrue(app.staticTexts["gameResultSaved"].waitForExistence(timeout: 8))
+            reveal(app.buttons["gameReturnHome"], app); app.buttons["gameReturnHome"].tap()
+            closeDetail(app)
+            XCTAssertEqual(labels(app), completed)
             app.buttons["managementTab-game"].tap(); app.buttons["facility-gameRecords"].tap()
             XCTAssertTrue(app.buttons["gameOpenSeason"].exists)
             XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeGameResults").firstMatch.exists)
@@ -522,7 +563,7 @@ final class ManagementCareerFlowTests: XCTestCase {
             app.buttons["advanceDay"].tap()
             let next = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "4월 2일 (목)"), object: app.scrollViews["calendarDetailScroll"].staticTexts["calendarDate"])
             XCTAssertEqual(XCTWaiter.wait(for: [next], timeout: 10), .completed)
-            app.buttons["닫기"].tap(); app.buttons["managementTab-home"].tap()
+            app.buttons["closeCalendar"].tap(); app.buttons["managementTab-home"].tap()
             XCTAssertEqual(app.staticTexts["calendarDate"].label, "4월 2일 (목)")
         }
     }

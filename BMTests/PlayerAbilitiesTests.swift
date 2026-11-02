@@ -1361,7 +1361,10 @@ extension PlayerAbilitiesTests {
             var missing=value;missing.contractFit=ScoutingContractFit(comparisons:fit.comparisons,selectedEnvironment:nil,clubs:fit.clubs)
             XCTAssertTrue(ScoutingInterests.make(missing).entries.isEmpty)
             XCTAssertFalse(ScoutingInterests.make(missing).pendingReasons.isEmpty)
-            XCTAssertFalse(value.interests!.entries.contains{entry in fit.clubs.first{$0.id == entry.id+"/"+entry.roleID}?.recruitment.demand == .none})
+            for entry in value.interests!.entries {
+                let club = try XCTUnwrap(fit.clubs.first { $0.id == entry.id + "/" + entry.roleID })
+                XCTAssertNotEqual(club.recruitment.demand, RecruitmentDemand.none)
+            }
             if role == .batter {XCTAssertFalse(value.interests!.entries.contains{$0.roleID == "field"})}
         }
     }

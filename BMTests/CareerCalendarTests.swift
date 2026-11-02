@@ -3013,7 +3013,7 @@ extension CareerCalendarTests {
         try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);defer {try? FileManager.default.removeItem(at:dir)}
         let url=dir.appendingPathComponent("career.store");var id:UUID!,bytes:Data!,source:CareerMembership!
         do {
-            let (store,p,s,member)=try overseasReleaseFixture(.batter,legacyURL:url),c=store.mainContext
+            let (store,p,_,member)=try overseasReleaseFixture(.batter,legacyURL:url),c=store.mainContext
             id=p.id;source=member
             XCTAssertFalse(c.hasChanges,"foreign fixture must be saved")
         }

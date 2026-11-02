@@ -19,7 +19,7 @@ import SwiftData
             let analysis = try CareerMatchStore.opposition(player: player, state: state)
             let preview = try CareerMatchStore.opponentSeason(player: player, state: state, analysis: analysis, in: context)
             XCTAssertFalse(preview.players.isEmpty)
-            XCTAssertEqual(preview.through, try fixture.date.adding(days: -1).description)
+            XCTAssertEqual(preview.through, fixture.date.adding(days: -1).description)
             let ledger = try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: 2026, competition: "highschool", through: fixture.date.adding(days: -1), in: context)
             for row in preview.players {
                 let original = try XCTUnwrap(ledger.players.first { $0.id == row.id && $0.teamID == preview.teamID })
