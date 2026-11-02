@@ -187,7 +187,7 @@ struct CareerGameView: View {
         let match = displaySnapshot.match
         let fixedTeam = match.flatMap { $0.isHome ? $0.playerRecords?.home.teamID : $0.playerRecords?.away.teamID }
         let historicalTeam = record.flatMap { try? calendar.teamID(for: player, on: GameDate($0.gameDate)) }
-        return player.appearance.wearing(teamID: fixedTeam ?? historicalTeam ?? player.schoolID)
+        return player.appearance.wearing(teamID: fixedTeam ?? historicalTeam ?? player.schoolID, away: match?.isHome == false)
     }
     private func configureScene() {
         scene.configure(hand: player.throwingHandRaw, kit: player.kit, role: player.role, appearance: renderAppearance,
@@ -615,6 +615,12 @@ struct CareerGameView: View {
                         Text("\(player.name) #\(player.jerseyNumber)").managementFont(.label)
                     }
                 }
+                if let decisions=match.playerRecords?.decisions,decisions.settled {
+                    if let winner=decisions.winner,let loser=decisions.loser {
+                        Text("승리투수 " + (winner == player.id.uuidString ? player.name:NPCIdentity.name(winner)) + " · 패전투수 " + (loser == player.id.uuidString ? player.name:NPCIdentity.name(loser)))
+                            .managementFont(.body).accessibilityIdentifier("gamePitcherDecision")
+                    } else {Text("무승부 · 승리·패전투수 없음").managementFont(.body)}
+                } else {Text("투수 승패 미채점 · 이전 경기 기록 유지").managementFont(.helper)}
                 Text("결과 저장 완료 · 재열기는 기록·XP·피로 추가 반영 없음").font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
                     .accessibilityIdentifier("gameResultSaved")
             }

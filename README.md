@@ -1,3 +1,5 @@
+> **V104 보완:** 내 선수 홈·원정 복장 패턴/문장과 생성 경기 자세 미리보기, 자체 합성 효과음·끄기 설정, 새 경기 승리/패전투수·다승 집계를 연결했습니다. 옛 경기 미채점과 WAR 미집계를 구분합니다. 관련 검증과 남은 범위는 [구현 이력](docs/implementation-history.md)을 확인하세요.
+
 <div align="center">
 
 # BM · Baseball Career

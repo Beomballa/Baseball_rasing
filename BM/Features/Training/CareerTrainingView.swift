@@ -106,6 +106,7 @@ struct CareerTrainingView: View {
                 record = try CareerTrainingStore.record(player: player, in: context)
                 training = try record?.snapshot()
             }
+            GameSound.shared.play(.confirm)
             angle = selectedKind.initialDirection
             if let fixed = training?.pitchCode { code = fixed }
             else if code.isEmpty { code = try PitchSelectionStore.resolve(player: player) }
@@ -1242,7 +1243,7 @@ struct TrainingResultPortrait: View {
                         scale: size.height / 32, motion: motion, kind: [.speed, .stamina].contains(kind) ? "runner" : "fielder",
                         kit: appearance.uniformColor, skin: PlayerAppearance.skinColors[appearance.skin],
                         hair: PlayerAppearance.hairColors[appearance.hair], number: player.jerseyNumber,
-                        left: player.throwingHandRaw == "left", selected: false, out: false)
+                        left: player.throwingHandRaw == "left", selected: false, out: false, style: appearance.uniformStyle)
                 }
                 .accessibilityLabel(player.name + "의 " + kind.label + " 훈련 도트")
                 .accessibilityAddTraits(.isImage)
@@ -1284,7 +1285,7 @@ struct TrainingScenePreview: View {
         if [.speed, .stamina, .defense, .arm, .mental].contains(kind) {
             let motion = FieldSpriteMotion(facing: .southWest, stage: .ready)
             guard let sample = FieldRasterArt.samples(motion, kind: "fielder", left: player.throwingHandRaw == "left").first else { return nil }
-            return FieldRasterArt.image(sample, kit: appearance.uniformColor, skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: player.jerseyNumber, back: false)
+            return FieldRasterArt.image(sample, kit: appearance.uniformColor, skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: player.jerseyNumber, back: false, style: appearance.uniformStyle)
         }
         return PlayerMotionArt.image(role: pitcher ? .pitcher : .batter, frame: 0, appearance: appearance, number: player.jerseyNumber, hand: player.throwingHandRaw)
     }

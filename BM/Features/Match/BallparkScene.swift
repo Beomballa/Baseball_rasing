@@ -135,6 +135,7 @@ import SwiftUI
                 }
             } else {
                 pitchStage = .received;markArrival()
+                GameSound.shared.play(["안타", "홈런", "범타"].contains(finish.outcome) ? .contact:.catchBall)
                 if ["안타", "홈런", "범타"].contains(finish.outcome) {
                     ball.removeAllActions();receivedBall.isHidden=true
                     let barrel=MatchPresentation.batContact(action:finish.action)
@@ -168,7 +169,8 @@ import SwiftUI
     }
 
     override init(size: CGSize) {
-        super.init(size: size); scaleMode = .aspectFit; backgroundColor = UIColor(red: 0.09, green: 0.20, blue: 0.29, alpha: 1)
+        super.init(size: size)
+        GameSound.shared.prepare(); scaleMode = .aspectFit; backgroundColor = UIColor(red: 0.09, green: 0.20, blue: 0.29, alpha: 1)
     }
     required init?(coder: NSCoder) { fatalError("Storyboard initialization is not used") }
 
@@ -355,6 +357,7 @@ import SwiftUI
     private func finishPitch(outcome: String?, reduced: Bool) {
         pitchStage = .received;markArrival()
         let contact = ["안타", "홈런", "범타"].contains(outcome ?? "")
+        GameSound.shared.play(contact ? .contact:.catchBall)
         if contact {
             ball.run(.sequence([.move(to: point(0.3, 0.15), duration: 0.22), .hide()]))
         } else {
@@ -366,6 +369,7 @@ import SwiftUI
     private func startContact(_ play:MatchDetailedPlay?,homeRun:MatchHomeRun? = nil,origin:CGPoint,reduced:Bool,arrival:(@MainActor () -> Void)?,completion:(@MainActor () -> Void)?,startedAt:Double? = nil) {
         ball.removeAllActions();receivedBall.isHidden=true;ball.isHidden=false
         ball.position=point(origin.x,origin.y)
+        GameSound.shared.play(.contact)
         contactFlight=ContactFlight(play:play,homeRun:homeRun,startedAt:startedAt ?? ProcessInfo.processInfo.systemUptime,origin:origin,reduced:reduced,arrival:arrival,completion:completion)
     }
     func finishBat(action: String, outcome: String, reduced: Bool, matchJudgment: Bool = false, fieldPlay:MatchDetailedPlay? = nil, homeRun:MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil, completion: @escaping @MainActor () -> Void) {

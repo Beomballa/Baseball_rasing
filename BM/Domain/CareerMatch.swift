@@ -459,6 +459,18 @@ struct CareerMatch: Codable, Equatable {
             pitchingRelief:pitching?.change(home:half % 2 == 0) != nil,
             result:result,play:detailed,runs:runs,outsAdded:outs-outsBefore,
             rbi:detailed?.rbi ?? runs,responsible:scoring,earnedContext:earnedContext)
+        if runs > 0, var records=playerRecords, records.decisions != nil {
+            let battingHome=half % 2 == 1
+            let battingTeam=battingHome ? records.home:records.away
+            let defense=battingHome ? records.away:records.home
+            let orderedTags = result == "홈런" && detailed == nil
+                ? (beforeProfiles ?? []).reversed().compactMap {$0?.responsiblePitcher} + [newRunner.responsiblePitcher].compactMap {$0}
+                : scoring
+            let ids=orderedTags.map { $0 == MatchPitching.reliefID(home:!battingHome) ? defense.pitching[1].id:defense.pitching[0].id }
+            records.decisions?.observe(home:homeScore+(battingHome ? runs:0),away:awayScore+(battingHome ? 0:runs),
+                battingHome:battingHome,pitcher:battingTeam.pitching[battingTeam.pitching[1].counts.pitches > 0 ? 1:0].id,responsible:ids)
+            playerRecords=records
+        }
         inningScores?.record(runs: runs, half: half)
         if half % 2 == 0 { awayScore += runs; awayOrder += 1 }
         else { homeScore += runs; homeOrder += 1 }
@@ -472,6 +484,9 @@ struct CareerMatch: Codable, Equatable {
             if half == 17 && homeScore > awayScore { completed = true }
             if half == 18 { completed = true }
             if !completed { inningScores?.enter(half: half) }
+        }
+        if completed, var records=playerRecords, var decisions=records.decisions {
+            decisions.finish(records:records);records.decisions=decisions;playerRecords=records
         }
     }
 }
@@ -919,7 +934,8 @@ struct MatchPlayerRecords:Codable,Equatable {
     // Parallel runner identities observe base movement; existing runner profiles and judgments remain unchanged.
     var runners:[String?]=[nil,nil,nil]
     var earned:MatchEarnedState? = nil
-    static func make(match:CareerMatch,careerID:UUID,fixtureID:String,trackEarnedRuns:Bool=false) -> Self? {
+    var decisions:MatchPitcherDecision? = nil
+    static func make(match:CareerMatch,careerID:UUID,fixtureID:String,trackEarnedRuns:Bool=false,trackDecisions:Bool=false) -> Self? {
         guard let attack=match.npcAttack else {return nil}
         func team(_ isHome:Bool) -> MatchTeamRecords {
             let source=attack.team(home:isHome)
@@ -934,6 +950,7 @@ struct MatchPlayerRecords:Codable,Equatable {
                 pitching:[MatchPitchingRecord(id:starter,role:"starter"),MatchPitchingRecord(id:source.relief.id,role:"relief")])
         }
         var result=Self(careerID:careerID,fixtureID:fixtureID,year:attack.year,competition:attack.competition,home:team(true),away:team(false))
+        if trackDecisions { result.decisions=MatchPitcherDecision() }
         if trackEarnedRuns {
             result.earned=MatchEarnedState(half:match.half)
             for i in 0..<2 {result.home.pitching[i].counts.earnedRuns=0;result.away.pitching[i].counts.earnedRuns=0}
@@ -1028,6 +1045,7 @@ struct MatchPlayerRecords:Codable,Equatable {
             }
         }
         if let earned {try earned.validate(match:match)}
+        if let decisions {try decisions.validate(records:self,match:match)}
         guard (home.pitching+away.pitching).allSatisfy({(earned != nil) == ($0.counts.earnedRuns != nil)}) else {throw MatchError.invalidRecord}
         let offense=match.half % 2 == 1 ? home:away
         guard runners.compactMap({$0}).allSatisfy({id in offense.batting.contains {$0.id == id}}) else {throw MatchError.invalidRecord}

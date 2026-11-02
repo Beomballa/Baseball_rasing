@@ -41,6 +41,9 @@ ART_HASHES.update({'BM/Resources/Assets.xcassets/NavTrainingV1.imageset/icon-nav
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/LockerV1.imageset/Contents.json', 'BM/Resources/Assets.xcassets/BattingRoomV1.imageset/Contents.json', 'BM/Resources/Assets.xcassets/BullpenRoomV1.imageset/Contents.json'})
 ART_HASHES.update({'BM/Resources/Assets.xcassets/LockerV1.imageset/bg-locker-v1.png': 'c108413ae9da738bbb65ffa980833db965f68927703649303b9f380f71d1b889', 'BM/Resources/Assets.xcassets/BattingRoomV1.imageset/bg-batting-room-v1.png': '0eb041bd665f475c6803861c20ba390751cb0243180202ca2ffc32bbc9477533', 'BM/Resources/Assets.xcassets/BullpenRoomV1.imageset/bg-bullpen-room-v1.png': '5600ff83371532b39af75c369f65a498a7081fc16431fa51466397489dfaeef9'})
 
+EXACT_PATHS.add("BM/Resources/Assets.xcassets/GameUniformStylesV104.dataset/Contents.json")
+ART_HASHES["BM/Resources/Assets.xcassets/GameUniformStylesV104.dataset/kits.json"] = "24f72aa958acc81114f95e14f48554c364fbdbee06bfb038dc080868f31381f0"
+
 BLOCKED_PARTS = {"secrets", "credentials", ".ssh", ".aws", ".idea", ".vscode", "xcuserdata", "__pycache__", "generated"}
 # Reviewed V91 standalone, unlettered header portrait.
 EXACT_PATHS.add("BM/Resources/Assets.xcassets/PlayerPortraitV91.imageset/Contents.json")

@@ -582,6 +582,7 @@ struct SaveProtectionView: View {
     @Environment(\.saveProtection) private var protection
     @Environment(\.dismiss) private var dismiss
     @AppStorage("bm-haptics-enabled") private var haptics = true
+    @AppStorage("bm-sound-enabled") private var sound = true
     @State private var document: SaveBackupDocument?
     @State private var exportBytes:Int?
     @Query private var archivePlayers:[CareerPlayer]
@@ -598,7 +599,10 @@ struct SaveProtectionView: View {
                     ManagementFileHeader(eyebrow: "LOCAL SAVE", title: "이 기기의 커리어 보관", note: "내보내기 → 파일 검증 → 전체 복원 확인")
                     ManagementPanel("기기 설정") {
                         Toggle("훈련 햅틱", isOn: $haptics).accessibilityIdentifier("settingHaptics")
-                        Text("화면 읽기와 동작 줄이기는 iPhone의 손쉬운 사용 설정을 따릅니다. 배경음·효과음은 아직 제공하지 않습니다.").managementFont(.body)
+                        Toggle("경기·선택 효과음", isOn: $sound).accessibilityIdentifier("settingSound")
+                            .onChange(of:sound) { _, enabled in if enabled {GameSound.shared.play(.confirm)} else {GameSound.shared.stop()} }
+                        Button("효과음 들어보기") {GameSound.shared.play(.contact)}.disabled(!sound).frame(minHeight:44).accessibilityIdentifier("previewSound")
+                        Text("타격·포구·훈련 시작 효과음. iPhone 무음 설정을 따르며 다른 음악을 중단하지 않습니다. 화면 읽기·동작 줄이기는 손쉬운 사용 설정을 따릅니다. 배경음은 준비 중입니다.").managementFont(.body)
                     }
                     ManagementPanel("이용 안내·고객지원") {
                         Text("개인정보·기기 저장, 구매·환불과 글꼴 라이선스를 확인할 수 있습니다. 문의 창구와 정식 정책은 준비 중입니다.").managementFont(.body)

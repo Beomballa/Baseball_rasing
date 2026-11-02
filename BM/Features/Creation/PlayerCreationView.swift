@@ -229,6 +229,7 @@ struct PlayerCreationView: View {
     }
     private var registrationReview: some View {
         GamePanel(title: "등록 전 확인", onBoard: true) {
+            CreationGamePreview(draft: draft)
             Text(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "이름 미입력" : draft.name)
                 .managementFont(.sectionTitle)
             Text("#\(draft.jerseyNumber) · \(draft.role.label) · \(draft.role == .pitcher ? draft.throwingHand.label : draft.position.label)").managementFont(.body)

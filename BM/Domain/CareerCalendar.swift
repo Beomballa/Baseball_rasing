@@ -801,6 +801,7 @@ struct CalendarDayPresentation: Equatable {
 
 struct PersonalSeasonCoverage: Equatable {
     private(set) var games=0,collectedGames=0,earnedRunGames=0,unscoredPitchingGames=0
+    private(set) var wins=0,losses=0,decisionGames=0
     private(set) var batting=MatchBattingCounts()
     private(set) var pitching=MatchPitchingCounts(earnedRuns:0)
     var missingGames:Int {games-collectedGames}
@@ -813,10 +814,19 @@ struct PersonalSeasonCoverage: Equatable {
             collectedGames += 1;batting.add(counts)
         } else if match.role == "pitcher",let counts=team.pitching.first(where:{$0.id == id})?.counts {
             collectedGames += 1;pitching.add(counts)
+            if let decisions=ledger.decisions,decisions.settled {
+                decisionGames += 1
+                if decisions.winner == id {wins += 1}
+                if decisions.loser == id {losses += 1}
+            }
             if counts.earnedRuns == nil {unscoredPitchingGames += 1} else {earnedRunGames += 1}
         }
     }
     func value(_ code:String,partial:Bool=false) -> String {
+        if code == "W" || code == "L" {
+            guard decisionGames > 0,partial || decisionGames == games else {return "미집계"}
+            return String(code == "W" ? wins:losses)
+        }
         guard (partial ? collectedGames>0:complete) else {return "미집계"}
         return MatchOpponentSeasonPlayer(id:"personal",battingGames:collectedGames,pitchingGames:collectedGames,
             earnedRunGames:earnedRunGames,unscoredPitchingGames:unscoredPitchingGames,batting:batting,pitching:pitching).value(code)

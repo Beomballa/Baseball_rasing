@@ -419,6 +419,9 @@ struct LeaguePlayersScreen: View {
                             }
                         }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.boardPanel)
                     }
+                    if let ledger, ledger.unscoredDecisionGames > 0 {
+                        Text("다승 선두 보류 · 승패 미채점 \(ledger.unscoredDecisionGames)경기").font(.subheadline).accessibilityIdentifier("winsPending")
+                    }
                     ScrollView(.horizontal) {
                         HStack(spacing: 8) { ForEach(teams, id: \.teamID) { team in
                             Button(CareerTeamDirectory.name(team.teamID)) { selected = team.teamID }
@@ -436,7 +439,7 @@ struct LeaguePlayersScreen: View {
                         }
                     }
                     DisclosureGroup("선두·최종 타이틀 기준") {
-                        Text("게임의 30경기 단축 시즌 기준입니다. 타율은 팀 경기×3.1(올림)과 최소15타석, ERA는 팀 경기×3아웃과 최소9아웃을 모두 충족해야 합니다. 홈런/탈삼진은 양수 기록을 비교하며 동률은 공동 선두입니다. 리그6팀 기록이 확인되고 누락 경기가 없을 때만 표시합니다. 팀당30경기 완료 뒤에만 최종1위로 표시합니다. 개인 승패 원장이 없는 다승왕은 아직 표시하지 않습니다.")
+                        Text("게임의 30경기 단축 시즌 기준입니다. 타율은 팀 경기×3.1(올림)과 최소15타석, ERA는 팀 경기×3아웃과 최소9아웃을 모두 충족해야 합니다. 홈런/탈삼진은 양수 기록을 비교하며 동률은 공동 선두입니다. 리그6팀 기록이 확인되고 누락 경기가 없을 때만 표시합니다. 팀당30경기 완료 뒤에만 최종1위로 표시합니다. 다승은 승패 채점을 시작한 경기만 집계하며, 과거 승패 미채점 경기가 있으면 선두를 보류합니다. 선발은 5이닝을 충족해야 하고, 미충족 시 현재 규칙의 유일한 구원투수에게 승리를 기록합니다.")
                             .font(.subheadline).padding(.top, 8)
                     }.tint(GameTheme.gold)
                 }
@@ -454,6 +457,8 @@ struct LeaguePlayersScreen: View {
             }
             ForEach(honors.filter { $0.playerID == id && $0.teamID == teamID }) { LeagueHonorBadge(honor: $0) }
             if id.hasSuffix("/starter") || id.hasSuffix("/relief") || id == player.id.uuidString && player.role == .pitcher {
+                Text(record.map { "승패 " + ($0.decisionGames > 0 ? "\($0.wins)승 \($0.losses)패 · 채점 \($0.decisionGames)경기" : "미집계") + ($0.unscoredDecisionGames > 0 ? " / 미채점 \($0.unscoredDecisionGames)경기" : "") } ?? "승패 미집계")
+                    .font(.subheadline.monospacedDigit()).accessibilityIdentifier("pitcherDecisions-" + id)
                 Text("ERA " + (record?.pitching.era.map { String(format: "%.2f", $0) } ?? "미집계") + " · K " + (record.map { String($0.pitching.strikeouts) } ?? "미집계") + " · IP " + (record?.pitching.innings ?? "미집계"))
                     .font(.subheadline.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
             } else {

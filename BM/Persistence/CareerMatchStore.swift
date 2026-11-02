@@ -189,7 +189,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         }
         match.scoutingPerformance = .tracked
         match.inningScores = MatchInningScores()
-        if match.npcAttack != nil {match.playerRecords=MatchPlayerRecords.make(match:match,careerID:player.id,fixtureID:fixture.id,trackEarnedRuns:true)}
+        if match.npcAttack != nil {match.playerRecords=MatchPlayerRecords.make(match:match,careerID:player.id,fixtureID:fixture.id,trackEarnedRuns:true,trackDecisions:true)}
         if match.playerRecords != nil {
             match.pitchLog=MatchPitchLog()
             match.npcReadiness=try NPCSelectionStore.readiness(playerID:player.id,attack:match.npcAttack!,date:fixture.date,in:context)
@@ -422,6 +422,7 @@ struct SeasonPlayerRecord:Equatable {
     let teamID:String
     let id:String
     var battingGames=0,pitchingGames=0,earnedRunGames=0,unscoredPitchingGames=0
+    var wins=0,losses=0,decisionGames=0,unscoredDecisionGames=0
     var batting=MatchBattingCounts()
     var pitching=MatchPitchingCounts(earnedRuns:0)
 }
@@ -433,6 +434,7 @@ struct SeasonPlayerLedger:Equatable {
     let uncollectedGames:Int
     let players:[SeasonPlayerRecord]
     var teamGames: [String: Int] = [:]
+    var unscoredDecisionGames = 0
 }
 extension CareerMatchStore {
     // Completed match payloads are the ledger. No independent total is incremented on read or result reopening.
@@ -443,9 +445,10 @@ extension CareerMatchStore {
     static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,records:[CareerMatchRecord],automatic:[CareerLeagueGameRecord]=[]) throws -> SeasonPlayerLedger {
         guard (1...9999).contains(year),["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(competition) else {throw MatchError.invalidRecord}
         var seen=[String:Data](),fixtures=[String](),missing=0,totals=[String:SeasonPlayerRecord]()
-        var teamGames: [String: Int] = [:]
+        var teamGames: [String: Int] = [:], unscoredDecisions=0
         func add(_ ledger:MatchPlayerRecords) {
             fixtures.append(ledger.fixtureID)
+            if ledger.decisions?.settled != true {unscoredDecisions += 1}
             teamGames[ledger.home.teamID, default: 0] += 1
             teamGames[ledger.away.teamID, default: 0] += 1
             for team in [ledger.home,ledger.away] {
@@ -460,6 +463,11 @@ extension CareerMatchStore {
                     var sum=totals[key] ?? SeasonPlayerRecord(teamID:team.teamID,id:line.id)
                     if line.counts.pitches > 0 {
                         sum.pitchingGames += 1
+                        if let decisions=ledger.decisions,decisions.settled {
+                            sum.decisionGames += 1
+                            if decisions.winner == line.id {sum.wins += 1}
+                            if decisions.loser == line.id {sum.losses += 1}
+                        } else {sum.unscoredDecisionGames += 1}
                         if line.counts.earnedRuns == nil {sum.unscoredPitchingGames += 1} else {sum.earnedRunGames += 1}
                     }
                     sum.pitching.add(line.counts);totals[key]=sum
@@ -489,7 +497,7 @@ extension CareerMatchStore {
             add(ledger)
         }
         return SeasonPlayerLedger(careerID:playerID,year:year,competition:competition,fixtureIDs:fixtures.sorted(),uncollectedGames:missing,
-            players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID}, teamGames: teamGames)
+            players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID}, teamGames: teamGames, unscoredDecisionGames: unscoredDecisions)
     }
 }
 
@@ -501,7 +509,7 @@ extension CareerMatchStore {
         let ledger = try seasonPlayerRecords(playerID: player.id, year: fixture.date.year, competition: attack.competition, through: cutoff, in: context)
         let rows = ledger.players.filter { $0.teamID == analysis.teamID }.map {
             MatchOpponentSeasonPlayer(id: $0.id, battingGames: $0.battingGames, pitchingGames: $0.pitchingGames,
-                earnedRunGames: $0.earnedRunGames, unscoredPitchingGames: $0.unscoredPitchingGames, batting: $0.batting, pitching: $0.pitching)
+                earnedRunGames: $0.earnedRunGames, unscoredPitchingGames: $0.unscoredPitchingGames, batting: $0.batting, pitching: $0.pitching, wins: $0.unscoredDecisionGames == 0 && $0.decisionGames > 0 ? $0.wins:nil)
         }
         var snapshot = MatchOpponentSeason(version: 1, year: fixture.date.year, competition: attack.competition, teamID: analysis.teamID,
             through: cutoff.description, uncollectedGames: ledger.uncollectedGames, players: rows)

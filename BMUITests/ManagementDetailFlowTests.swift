@@ -2559,3 +2559,31 @@ extension ManagementDetailFlowTests {
         capture(app, "v72-local-files-restored")
     }
 }
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV104CreationMatchPreviewAndSoundSettings() {
+        continueAfterFailure=false
+        let app=XCUIApplication()
+        app.launchArguments=["-management-career-verification","-management-empty-verification"]
+        app.launch()
+        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout:30))
+        for role in ["batter","pitcher"] {
+            app.buttons["creationSection-information"].tap()
+            let button=app.buttons["role-"+role];reveal(button,app);button.tap()
+            reveal(app.buttons["randomSchool"],app);app.buttons["randomSchool"].tap()
+            app.buttons["creationSection-review"].tap()
+            let next=app.buttons["creationNextGamePose"];reveal(next,app)
+            XCTAssertTrue(next.isHittable);XCTAssertGreaterThanOrEqual(next.frame.height,44)
+            capture(app,"v104-creation-"+role)
+            next.tap();XCTAssertTrue(app.staticTexts["자세 2 / 6"].exists)
+            XCTAssertFalse(app.staticTexts["homePlayerName"].exists)
+        }
+        app.terminate();app.launchArguments=["-management-career-verification"];app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30))
+        let before=status(app);app.buttons["clubhouse-settings"].tap()
+        let sound=app.switches["settingSound"];XCTAssertTrue(sound.waitForExistence(timeout:8))
+        capture(app,"v104-sound-settings")
+        if app.buttons["previewSound"].isEnabled {app.buttons["previewSound"].tap()}
+        app.buttons["closeSettings"].tap();XCTAssertEqual(status(app),before)
+    }
+}

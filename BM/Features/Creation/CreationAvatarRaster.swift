@@ -21,7 +21,7 @@ import UIKit
     static func color(_ hex: String) -> Int { Int(hex.dropFirst(), radix: 16) ?? 0x214e72 }
 }
 
-// Shared V93 team palette. Pattern and logo artwork remain independent of the match renderer.
+// Shared V93 primary palette; full match kit details are resolved by GameUniformStyles.
 @MainActor enum GameUniformPalette {
     private struct Entry: Decodable { let id: String; let primary: String }
     private static let colors: [String: Int] = {
@@ -151,6 +151,7 @@ struct CreationAvatarImage: View {
         }
         guard ok else { return nil }
         let kit = SchoolCreationKit.find(a.schoolKitID)
+        let style = GameUniformStyles.find(a.schoolKitID)
         let primary = kit.map { SchoolCreationKit.color($0.primary) } ?? PlayerAppearance.kitColors[a.kit]
         for p in 0..<(w*h) {
             let i = p*4, alpha = Int(bytes[i+3]); if alpha < 24 { continue }
@@ -158,7 +159,7 @@ struct CreationAvatarImage: View {
             let x = Double(p % w)/Double(w), y = Double(p / w)/Double(h)
             var tint: Int?, shade = 1.0
             if isCap {
-                if b > 48 && b > r*12/10 && max(r,max(g,b)) > 55 { tint = primary; shade = Double(b)/115 }
+                if b > 48 && b > r*12/10 && max(r,max(g,b)) > 55 { tint = y > 0.58 ? style?.brim ?? primary:style?.cap ?? primary; shade = Double(b)/115 }
             } else if !body {
                 if r > 115 && r > g*11/10 && g > b*11/10 { tint = PlayerAppearance.skinColors[a.skin]; shade = Double(r)/239 }
                 else if r > 28 && r < 145 && r > g*12/10 && g > b { tint = PlayerAppearance.hairColors[a.hair]; shade = Double(r)/104 }
@@ -168,8 +169,7 @@ struct CreationAvatarImage: View {
                 if skinRegion && r > 185 && r > g*12/10 && g > b*11/10 { tint = PlayerAppearance.skinColors[a.skin]; shade = Double(r)/245 }
                 else if y < 0.48 && b > 55 && b > r*13/10 && b > g*11/10 { tint = primary; shade = Double(b)/110 }
                 else if let kit, r > 145 && g > 145 && b > 135 && abs(r-g) < 45 && y > 0.26 && y < 0.48 {
-                    if kit.home.pattern == "chest-band" && y > 0.34 && y < 0.39 { tint = primary; shade = Double(r)/245 }
-                    else if kit.home.pattern == "pinstripe" && (p % w) % 13 == 0 { tint = primary; shade = 0.8 }
+                    tint = style?.shirt(x:x,y:(y-0.26)/0.22) ?? SchoolCreationKit.color(kit.home.body); shade = Double(r)/245
                 }
             }
             if let tint {

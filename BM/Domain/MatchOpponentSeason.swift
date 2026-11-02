@@ -27,6 +27,7 @@ struct MatchOpponentSeason: Codable, Equatable {
                 case .homeRuns: Double(row.batting.homeRuns)
                 case .strikeouts: Double(row.pitching.strikeouts)
                 case .era: row.pitching.era
+                case .wins: row.wins.map(Double.init)
                 }
                 guard actual.map({ abs($0 - honor.value) < 0.000000001 }) == true else { throw MatchError.invalidRecord }
             }
@@ -35,7 +36,8 @@ struct MatchOpponentSeason: Codable, Equatable {
         for player in players {
             guard player.battingGames >= 0, player.pitchingGames >= 0,
                   player.earnedRunGames >= 0, player.unscoredPitchingGames >= 0,
-                  player.earnedRunGames + player.unscoredPitchingGames == player.pitchingGames else { throw MatchError.invalidRecord }
+                  player.earnedRunGames + player.unscoredPitchingGames == player.pitchingGames,
+                  player.wins.map({(0...player.pitchingGames).contains($0)}) ?? true else { throw MatchError.invalidRecord }
             try player.batting.validate(); try player.pitching.validate()
         }
     }
@@ -48,6 +50,7 @@ struct MatchOpponentSeasonPlayer: Codable, Equatable {
     let unscoredPitchingGames: Int
     let batting: MatchBattingCounts
     let pitching: MatchPitchingCounts
+    var wins: Int? = nil
     func value(_ label: String) -> String {
         func rate(_ value: Double?, digits: Int = 3) -> String { value.map { String(format: "%.*f", digits, $0) } ?? "미집계" }
         switch label {
@@ -56,6 +59,7 @@ struct MatchOpponentSeasonPlayer: Codable, Equatable {
         case "SLG": return rate(batting.sluggingPercentage)
         case "OPS": return rate(batting.ops)
         case "HR": return batting.plateAppearances > 0 ? String(batting.homeRuns) : "미집계"
+        case "W": return wins.map(String.init) ?? "미집계"
         case "ER": return pitchingGames > 0 ? pitching.earnedRuns.map(String.init) ?? "미집계" : "미집계"
         case "ERA": return rate(pitching.era, digits: 2)
         case "WHIP": return rate(pitching.outs > 0 ? Double(pitching.hits + pitching.walks) * 3 / Double(pitching.outs) : nil, digits: 2)
@@ -125,8 +129,8 @@ extension MatchNPCPlayer { var displayName: String { NPCIdentity.name(id) } }
 
 struct LeagueHonor: Codable, Equatable, Identifiable {
     var version = 1
-    enum Kind: String, Codable, CaseIterable { case average, homeRuns, strikeouts, era
-        var label: String { switch self { case .average: "타율"; case .homeRuns: "홈런"; case .strikeouts: "탈삼진"; case .era: "ERA" } }
+    enum Kind: String, Codable, CaseIterable { case average, homeRuns, strikeouts, era, wins
+        var label: String { switch self { case .average: "타율"; case .homeRuns: "홈런"; case .strikeouts: "탈삼진"; case .era: "ERA"; case .wins: "다승" } }
     }
     let playerID: String
     let teamID: String
@@ -165,6 +169,9 @@ enum LeagueHonorRules {
                 case .average:
                     guard row.batting.plateAppearances >= max(15, Int(ceil(Double(games) * 3.1))), let value = row.batting.average else { return nil }
                     return (row, value)
+                case .wins:
+                    guard ledger.unscoredDecisionGames == 0, row.unscoredDecisionGames == 0, row.wins > 0 else { return nil }
+                    return (row,Double(row.wins))
                 case .homeRuns: return row.batting.homeRuns > 0 ? (row, Double(row.batting.homeRuns)) : nil
                 case .strikeouts: return row.pitching.strikeouts > 0 ? (row, Double(row.pitching.strikeouts)) : nil
                 case .era:

@@ -41,11 +41,12 @@ struct PlayerAppearance: Equatable, Codable {
     var creationVersion: Int?
     // Render context only: never changes a saved creation look or a frozen game payload.
     var uniformTeamID: String? = nil
+    var uniformAway = false
     private enum CodingKeys: String, CodingKey {
         case skin, hair, kit, hairStyle, expression, eyeShape, browShape, schoolKitID, creationVersion
     }
-    func wearing(teamID: String?) -> Self {
-        var copy = self; copy.uniformTeamID = teamID; return copy
+    func wearing(teamID: String?, away: Bool = false) -> Self {
+        var copy = self; copy.uniformTeamID = teamID; copy.uniformAway = away; return copy
     }
     static let hairNames = ["스포츠컷", "옆가르마", "곱슬머리", "크루컷", "내린 머리", "가르마", "뻗은 머리", "웨이브"]
     static let expressionNames = ["담담함", "집중", "옅은 미소", "환한 미소", "자신만만", "승부욕"]

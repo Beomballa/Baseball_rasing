@@ -516,7 +516,7 @@ import SwiftUI
             let (p,s)=try setup(role:.pitcher,in:c),r=try ready(p,s,in:c)
             func oldJSON(_ object:Any) -> Any {
                 if let d=object as? [String:Any] {
-                    let laterFields = ["pitching", "responsiblePitcher", "playerRecords", "inningScores"]
+                    let laterFields = ["pitching", "responsiblePitcher", "playerRecords", "inningScores", "pitchLog", "npcReadiness"]
                     return d.filter { !laterFields.contains($0.key) }.mapValues {oldJSON($0)}
                 }
                 if let a=object as? [Any] {return a.map {oldJSON($0)}}
@@ -529,6 +529,7 @@ import SwiftUI
             let p=try XCTUnwrap(c.fetch(FetchDescriptor<CareerPlayer>()).first),s=try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first),r=try CareerMatchStore.start(player:p,state:s,in:c)
             XCTAssertEqual(r.payload,original);var expected=try r.snapshot();XCTAssertNil(expected.pitching);try expected.advance(.automatic)
             try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:.automatic,in:c)
+            expected.projectFeedback=MatchProjectFeedback(version:1,activityKey:r.key,date:r.gameDate,project:nil,clubName:nil,before:nil,after:nil)
             let final=try r.snapshot();XCTAssertEqual(final,expected);XCTAssertNil(final.pitching);XCTAssertEqual(final.line.runsAllowed,final.opponentScore)
             XCTAssertTrue([24,25,26,27].contains(final.line.pitchingOuts))
             let data=r.payload;XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,data)
@@ -757,6 +758,7 @@ import SwiftUI
             XCTAssertEqual(loaded.payload,bytes);XCTAssertNil(try loaded.snapshot().battedBallVersion)
             var expected=old;try expected.advance(.automatic)
             try CareerMatchStore.advance(player:player,state:state,record:loaded,revision:loaded.revision,input:.automatic,in:context)
+            expected.projectFeedback=MatchProjectFeedback(version:1,activityKey:loaded.key,date:loaded.gameDate,project:nil,clubName:nil,before:nil,after:nil)
             XCTAssertEqual(try loaded.snapshot(),expected)
             XCTAssertTrue(expected.fieldPlays!.allSatisfy {$0.battedBall == nil})
             XCTAssertEqual(player.fatigue,min(100,fatigue+expected.appliedFatigueCost))
@@ -814,7 +816,7 @@ import SwiftUI
         let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
         let (p,s)=try growthSetup(in:c),row=try ready(p,s,in:c)
         var old=try row.snapshot();old.npcFielders=nil
-        old.npcAttack=nil;old.playerRecords=nil;old.preparation=nil;old.inningScores=nil
+        old.npcAttack=nil;old.playerRecords=nil;old.preparation=nil;old.inningScores=nil;old.pitchLog=nil;old.npcReadiness=nil
         row.payload=try JSONEncoder().encode(old);try c.save()
         let original=row.payload
         XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,original)
@@ -948,6 +950,112 @@ extension CareerMatchTests {
                     }
                 }
             }
+        }
+    }
+}
+
+extension CareerMatchTests {
+    func testV104DecisionLeadChangesInheritedRunnerAndStarterMinimum() throws {
+        func team(_ name: String) -> MatchTeamRecords {
+            MatchTeamRecords(teamID:name,lineup:[],batting:[],pitching:[
+                MatchPitchingRecord(id:name+"-starter",role:"starter",counts:MatchPitchingCounts(pitches:70,outs:15)),
+                MatchPitchingRecord(id:name+"-relief",role:"relief",counts:MatchPitchingCounts(pitches:20,outs:12))])
+        }
+        var records=MatchPlayerRecords(careerID:UUID(),fixtureID:"fixture",year:2026,competition:"highschool",home:team("h"),away:team("a"))
+        var d=MatchPitcherDecision()
+        d.observe(home:1,away:0,battingHome:true,pitcher:"h-starter",responsible:["a-starter"])
+        XCTAssertEqual(d.candidates(records:records).0,"h-starter")
+        d.observe(home:1,away:1,battingHome:false,pitcher:"a-starter",responsible:["h-starter"])
+        XCTAssertNil(d.candidates(records:records).0)
+        d.observe(home:1,away:3,battingHome:false,pitcher:"a-relief",responsible:["h-starter","h-relief"])
+        XCTAssertEqual(d.candidates(records:records).0,"a-relief")
+        XCTAssertEqual(d.candidates(records:records).1,"h-starter","Go-ahead inherited runner belongs to the removed pitcher")
+        d.observe(home:4,away:3,battingHome:true,pitcher:"h-starter",responsible:["a-starter","a-starter","a-relief"])
+        XCTAssertEqual(d.candidates(records:records).1,"a-relief","The third run is the go-ahead run")
+        records.home.pitching[0].counts.outs=14
+        XCTAssertEqual(d.candidates(records:records).0,"h-relief")
+        d.finish(records:records);let settled=d;d.finish(records:records);XCTAssertEqual(d,settled)
+    }
+    func testV104NewMatchesBothRolesPreserveJudgmentResumeAndSingleResult() throws {
+        for role in PlayerRole.allCases {
+            let memory=try CareerStore.makeContainer(inMemory:true),context=memory.mainContext
+            let (player,state)=try setup(role:role,in:context)
+            let row=try ready(player,state,in:context)
+            let start=try row.snapshot();XCTAssertNotNil(start.playerRecords?.decisions)
+            var observed=start,legacy=start;legacy.playerRecords?.decisions=nil
+            try observed.advance(.automatic);try legacy.advance(.automatic)
+            XCTAssertTrue(observed.playerRecords?.decisions?.settled == true)
+            var compare=observed;compare.playerRecords?.decisions=nil;XCTAssertEqual(compare,legacy)
+            let decoded=try JSONDecoder().decode(CareerMatch.self,from:JSONEncoder().encode(observed))
+            XCTAssertEqual(decoded,observed)
+            try observed.playerRecords?.validate(match:observed)
+            let oldPayload=row.payload
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:.automatic,in:context,save:{_ in throw MatchError.stale}))
+            XCTAssertEqual(row.payload,oldPayload)
+            try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:.automatic,in:context)
+            let result=row.payload,fatigue=player.fatigue
+            let first=try CareerMatchStore.seasonPlayerRecords(playerID:player.id,year:2026,competition:"highschool",in:context)
+            let second=try CareerMatchStore.seasonPlayerRecords(playerID:player.id,year:2026,competition:"highschool",in:context)
+            XCTAssertEqual(first,second);XCTAssertEqual(first.unscoredDecisionGames,0)
+            XCTAssertEqual(first.players.reduce(0){$0+$1.wins},observed.homeScore == observed.awayScore ? 0:1)
+            XCTAssertEqual(first.players.reduce(0){$0+$1.losses},observed.homeScore == observed.awayScore ? 0:1)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:.automatic,in:context))
+            XCTAssertEqual(row.payload,result);XCTAssertEqual(player.fatigue,fatigue)
+        }
+    }
+    func testV104AutomaticGamesDecisionsAndCoverageGate() throws {
+        let memory=try CareerStore.makeContainer(inMemory:true),c=memory.mainContext
+        let (player,state)=try setup(in:c)
+        let dates=Set(try state.fixtures(for:player,year:2026).prefix(4).map(\.date)).sorted()
+        for date in dates {
+            player.gameDate=date.description;try c.save()
+            try AutomaticLeagueStore.completeDay(player:player,state:state,date:date,in:c)
+        }
+        let rows=try AutomaticLeagueStore.records(playerID:player.id,year:2026,in:c)
+        XCTAssertFalse(rows.isEmpty)
+        for row in rows {
+            let game=try row.snapshot();try game.playerRecords?.validate(match:game)
+            XCTAssertTrue(game.playerRecords?.decisions?.settled == true)
+        }
+        let ledger=try CareerMatchStore.seasonPlayerRecords(playerID:player.id,year:2026,competition:"highschool",in:c)
+        XCTAssertEqual(ledger.unscoredDecisionGames,0)
+        let repeated=try CareerMatchStore.seasonPlayerRecords(playerID:player.id,year:2026,competition:"highschool",records:[],automatic:rows+rows)
+        XCTAssertEqual(ledger,repeated)
+        var sample=ledger;sample.unscoredDecisionGames=1
+        XCTAssertFalse(LeagueHonorRules.leaders(sample).contains {$0.kind == .wins})
+        var old=try XCTUnwrap(rows.first).snapshot();old.playerRecords?.decisions=nil
+        try old.playerRecords?.validate(match:old)
+        let data=try JSONEncoder().encode(old)
+        XCTAssertNil(try JSONDecoder().decode(CareerMatch.self,from:data).playerRecords?.decisions)
+    }
+    @MainActor func testV104UniformCatalogAllTeamsAndStablePreviewNoSaveMutation() throws {
+        for school in try SchoolCatalog.load() {XCTAssertNotNil(GameUniformStyles.find(school.id))}
+        for league in ["kbo","npb","mlb"] {for index in 0..<10 {XCTAssertNotNil(GameUniformStyles.find("\(league)-\(index)"))}}
+        let a=PlayerAppearance(skin:2,hair:1,kit:4,hairStyle:2,expression:1,schoolKitID:"hs-ref-001",creationVersion:1)
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        let before=try encoder.encode(a)
+        for role in PlayerRole.allCases {for hand in ["left","right"] {for frame in 0..<6 {
+            let image=try XCTUnwrap(PlayerMotionArt.image(role:role,frame:frame,appearance:a,number:27,hand:hand))
+            XCTAssertEqual(image.size.width,512)
+            if hand == "right",frame == 0 {
+                let attachment=XCTAttachment(image:image);attachment.name="V104-\(role.rawValue)-kit";attachment.lifetime = .keepAlways;add(attachment)
+            }
+        }}}
+        XCTAssertEqual(try encoder.encode(a),before)
+        XCTAssertEqual(try encoder.encode(a.wearing(teamID:"kbo-0",away:true)),before)
+        XCTAssertNotEqual(GameUniformStyles.find("kbo-0")?.id,GameUniformStyles.find("kbo-0",away:true)?.id)
+        XCTAssertNil(GameUniformStyles.find("unknown-team"))
+        let school=try XCTUnwrap(GameUniformStyles.find("hs-ref-001"))
+        XCTAssertTrue(school.mark.enumerated().contains {$0.offset%4 == 3 && $0.element > 0})
+        XCTAssertNotEqual(school.shirt(x:0.5,y:0.1),school.shirt(x:0.5,y:0.8))
+    }
+    func testV104OriginalSoundWavesAreBoundedDistinctAndDeterministic() {
+        let waves=GameSoundCue.allCases.map(GameSoundPCM.wave)
+        XCTAssertEqual(Set(waves).count,3)
+        for (index,wave) in waves.enumerated() {
+            XCTAssertEqual(wave.prefix(4),Data("RIFF".utf8));XCTAssertEqual(wave.subdata(in:8..<12),Data("WAVE".utf8))
+            XCTAssertTrue((4000...8000).contains(wave.count))
+            XCTAssertEqual(wave,GameSoundPCM.wave(GameSoundCue.allCases[index]))
         }
     }
 }
