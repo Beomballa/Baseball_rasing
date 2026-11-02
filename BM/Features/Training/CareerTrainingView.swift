@@ -3,6 +3,8 @@ import SwiftData
 import SpriteKit
 
 struct CareerTrainingView: View {
+    private enum ResultFocus: Hashable { case attempt, summary }
+    @AccessibilityFocusState(for: .voiceOver) private var resultFocus: ResultFocus?
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.careerCompletionNavigation) private var completionNavigation
@@ -253,21 +255,27 @@ struct CareerTrainingView: View {
     }
     private var reviewControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let replayScore { TrainingGradeBanner(score: replayScore) }
-            if let coachNote {
-                Text(coachNote.observation).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
-                Text(coachNote.next).font(.caption).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("trainingCoach")
+            VStack(alignment: .leading, spacing: 8) {
+                if let replayScore { TrainingGradeBanner(score: replayScore) }
+                if let coachNote {
+                    Text(coachNote.observation).font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                    Text(coachNote.next).font(.caption).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("trainingCoach")
+                }
+                if isLocationDrill, let locationReplay {
+                    Text(locationReplay.comparison).font(.caption.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("locationPracticeComparison")
+                    Text(selectedKind == .control ? "조준한 위치 그대로 판정 · 별도 투구 오차 없음" : "선택한 위치의 정확도만 판정 · 포구 성공/실패 판정 없음")
+                        .font(.caption2).foregroundStyle(GameTheme.boardMuted)
+                } else if selectedKind == .arm, let previous = replay {
+                    Text("◇ 목표 " + String(format: "가로 %.1f 세로 %.1f", TrainingRules.basePoint(previous.throwBase(previous.scores.count)).x*100, TrainingRules.basePoint(previous.throwBase(previous.scores.count)).y*100) + "\n+ 입력 도착 " + String(format: "가로 %.1f 세로 %.1f", TrainingRules.throwEndpoint(angle: throwAngle, force: throwForce).x*100, TrainingRules.throwEndpoint(angle: throwAngle, force: throwForce).y*100))
+                        .font(.caption.monospacedDigit()).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("throwPracticeComparison")
+                } else if !isSkillDrill { TrainingMissionBanner(kind: selectedKind, scores: training?.scores ?? []) }
             }
-            if isLocationDrill, let locationReplay {
-                Text(locationReplay.comparison).font(.caption.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("locationPracticeComparison")
-                Text(selectedKind == .control ? "조준한 위치 그대로 판정 · 별도 투구 오차 없음" : "선택한 위치의 정확도만 판정 · 포구 성공/실패 판정 없음")
-                    .font(.caption2).foregroundStyle(GameTheme.boardMuted)
-            } else if selectedKind == .arm, let previous = replay {
-                Text("◇ 목표 " + String(format: "가로 %.1f 세로 %.1f", TrainingRules.basePoint(previous.throwBase(previous.scores.count)).x*100, TrainingRules.basePoint(previous.throwBase(previous.scores.count)).y*100) + "\n+ 입력 도착 " + String(format: "가로 %.1f 세로 %.1f", TrainingRules.throwEndpoint(angle: throwAngle, force: throwForce).x*100, TrainingRules.throwEndpoint(angle: throwAngle, force: throwForce).y*100))
-                    .font(.caption.monospacedDigit()).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("throwPracticeComparison")
-            } else if !isSkillDrill { TrainingMissionBanner(kind: selectedKind, scores: training?.scores ?? []) }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("trainingAttemptReview")
+            .accessibilityFocused($resultFocus, equals: .attempt)
+            .onAppear { resultFocus = .attempt }
             Button(training?.completed == true ? "세트 결산 보기" : "다음 시도 · \((training?.scores.count ?? 0) + 1)/5") {
                 continueSession()
             }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingNext")
@@ -337,6 +345,7 @@ struct CareerTrainingView: View {
                         }.padding(12).frame(minHeight: max(0, geometry.size.height), alignment: .top)
                     }
                 }
+                .accessibilityIdentifier("careerTrainingScroll")
                 .onPreferenceChange(TrainingChromeHeightKey.self) { chromeHeights = $0 }
             }
         }
@@ -845,6 +854,10 @@ struct CareerTrainingView: View {
     private func result(_ value: CareerTraining) -> some View {
         VStack(spacing: 16) {
             TrainingResultHeading(player: player, name: pitchName, kind: value.selectedKind, average: value.average, practice: practice, appearance: renderAppearance)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("trainingSummaryHeading")
+                .accessibilityFocused($resultFocus, equals: .summary)
+                .onAppear { resultFocus = .summary }
             if !practice {Text("완료 결과 보관 · 재열기/연출은 성장·피로를 다시 적용하지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("trainingResultStored")}
             ManagementPanel("5회 훈련 성적표") {
                 scores(value, expanded: true)

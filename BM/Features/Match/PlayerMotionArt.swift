@@ -57,8 +57,11 @@ import UIKit
         return Pose(shirt: shirts[frame], hair: hair[frame], skin: skin[frame], number: centers[frame], numberUnit: units[frame], numberClip: clips[frame],
                     pants: [rect(149,291,113,133),rect(167,306,139,126),rect(119,315,143,112),rect(191,267,117,126),rect(127,280,149,130),rect(125,281,149,130)][frame])
     }
+    static func cacheKey(role: PlayerRole, appearance: PlayerAppearance, number: Int, hand: String) -> String {
+        ([role.rawValue, hand, appearance.uniformStyle?.id ?? "legacy"] + [appearance.creationVersion ?? 0,appearance.skin,appearance.hair,appearance.uniformColor,appearance.hairStyle,appearance.expression,number].map(String.init)).joined(separator: ":")
+    }
     static func textures(role: PlayerRole, appearance: PlayerAppearance, number: Int, hand: String) -> [SKTexture] {
-        let key = ([role.rawValue, hand, appearance.uniformStyle?.id ?? "legacy"] + [appearance.skin,appearance.hair,appearance.uniformColor,appearance.hairStyle,appearance.expression,number].map(String.init)).joined(separator: ":") as NSString
+        let key = cacheKey(role: role, appearance: appearance, number: number, hand: hand) as NSString
         if let cached = cache.object(forKey: key) as? [SKTexture] { return cached }
         let result = (0..<6).compactMap { frame -> SKTexture? in
             guard let image = image(role: role, frame: frame, appearance: appearance, number: number, hand: hand) else { return nil }
@@ -66,6 +69,20 @@ import UIKit
         }
         if result.count == 6 { cache.setObject(result as NSArray, forKey: key, cost: 6 * 512 * 512 * 4) }
         return result
+    }
+    // Only the nape below the helmet is visible from these cameras. Keep its authored outline.
+    static func napeDepth(style: Int, x: Double) -> Double {
+        let x = min(1, max(0, x))
+        switch style {
+        case 1: return 0.56 + x * 0.28
+        case 2: return 0.82 + (Int(x * 8) % 2 == 0 ? 0.12 : 0)
+        case 3: return 0.46
+        case 4: return 0.98 - abs(x - 0.5) * 0.12
+        case 5: return 0.58 + abs(x - 0.5) * 0.62
+        case 6: return 0.62 + (Int(x * 6) % 2 == 0 ? 0.18 : 0)
+        case 7: return 0.80 + sin(x * .pi * 3) * 0.12
+        default: return 0.72
+        }
     }
     // V75 garment masks and visible back anchors are measured in each 512px pose cell.
     static func image(role: PlayerRole, frame: Int, appearance: PlayerAppearance, number: Int, hand: String) -> UIImage? {
@@ -100,14 +117,13 @@ import UIKit
             }
         }
         let mouths = [CGPoint(x:303,y:193),CGPoint(x:264,y:206),CGPoint(x:262,y:218),CGPoint(x:314,y:180),CGPoint(x:273,y:205),CGPoint(x:270,y:206)]
-        let mouth = mouths[frame]
+        let mouth = mouths[frame], bounds = shirt.boundingBox
         for y in 0..<height { for x in 0..<width {
             let index = (y * width + x) * 4, alpha = Int(bytes[index + 3])
             guard alpha > 16 else { continue }
             let r = Int(bytes[index]) * 255 / alpha, g = Int(bytes[index + 1]) * 255 / alpha, b = Int(bytes[index + 2]) * 255 / alpha
             let point = CGPoint(x: x, y: y), high = max(r,g,b), low = min(r,g,b)
             var color: (Int,Int,Int)?
-            let bounds = shirt.boundingBox
             let nx=(Double(x)-bounds.minX)/bounds.width, ny=(Double(y)-bounds.minY)/bounds.height
             let torso = shirt.contains(point)
             let jersey = style?.shirt(x:nx,y:ny) ?? kit
@@ -122,15 +138,22 @@ import UIKit
             } else if let style, pose.pants.contains(point), low > 105, high-low < 70 {
                 color = rgb(style.pants,max(0.35,min(1.1,Double(r+g+b)/735)))
             } else if pose.hair.contains(point) && high > 22 && high - low < 34 {
-                let shaved = appearance.hairStyle == 1 && Double(x) < pose.hair.minX + pose.hair.width * 0.25
-                color = rgb(shaved ? skin : hair, max(0.35,min(1.15,Double(high) / 52)))
+                if appearance.creationVersion == 1 {
+                    let hx=(Double(x)-pose.hair.minX)/pose.hair.width
+                    let hy=(Double(y)-pose.hair.minY)/pose.hair.height
+                    let cropped = hy > napeDepth(style: appearance.hairStyle, x: hx)
+                    color = rgb(cropped ? skin : hair, cropped ? 0.68 : max(0.35,min(1.15,Double(high) / 52)))
+                } else {
+                    let shaved = appearance.hairStyle == 1 && Double(x) < pose.hair.minX + pose.hair.width * 0.25
+                    color = rgb(shaved ? skin : hair, max(0.35,min(1.15,Double(high) / 52)))
+                }
             } else if pose.skin.contains(where: { $0.contains(point) }) && r > 175 && Double(r) > Double(g) * 1.12 && Double(g) > Double(b) * 1.12 {
                 color = rgb(skin, max(0.5,min(1.15,Double(r) / 247)))
             }
-            if appearance.hairStyle == 2 && pose.hair.contains(point) && Double(y) > pose.hair.maxY - 7 && high > 30 && high - low < 90 && (x / 6) % 2 == 0 {
+            if appearance.creationVersion != 1 && appearance.hairStyle == 2 && pose.hair.contains(point) && Double(y) > pose.hair.maxY - 7 && high > 30 && high - low < 90 && (x / 6) % 2 == 0 {
                 color = rgb(hair, 0.8)
             }
-            if role == .batter && appearance.expression > 0 {
+            if appearance.creationVersion != 1 && role == .batter && appearance.expression > 0 {
                 if abs(Double(x) - mouth.x) <= 3 && abs(Double(y) - mouth.y) <= (appearance.expression == 2 ? 2 : 0) && r > 175 && Double(r) > Double(g) * 1.12 && Double(g) > Double(b) * 1.12 {
                     color = rgb(0x85442e, 0.8)
                 }

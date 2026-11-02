@@ -5,6 +5,44 @@ import UIKit
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV107VisibleHairAndCacheIsolationPreserveAppearance() throws {
+        var look = PlayerAppearance(); look.creationVersion = 1; look.schoolKitID = "hs-ref-001"
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let original = try encoder.encode(look)
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        var legacy = look; legacy.creationVersion = nil
+        for role in PlayerRole.allCases {
+            XCTAssertNotEqual(PlayerMotionArt.cacheKey(role: role, appearance: look, number: 27, hand: "right"),
+                              PlayerMotionArt.cacheKey(role: role, appearance: legacy, number: 27, hand: "right"))
+            var pictures = [UIImage](), signatures = Set<Data>()
+            for style in 0..<8 {
+                var selected = look; selected.hairStyle = style
+                pictures.append(try XCTUnwrap(CreationAvatarRaster.image(selected, role: role, number: 27, cap: false)))
+                let action = try XCTUnwrap(PlayerMotionArt.image(role: role, frame: 0, appearance: selected, number: 27, hand: "right"))
+                pictures.append(action); signatures.insert(try XCTUnwrap(action.pngData()))
+                for frame in 0..<6 {
+                    let image = try XCTUnwrap(PlayerMotionArt.image(role: role, frame: frame, appearance: selected, number: 27, hand: "left")?.cgImage)
+                    XCTAssertEqual(image.width, 512); XCTAssertEqual(image.height, 512)
+                }
+            }
+            XCTAssertEqual(signatures.count, 8, "Visible nape profiles must distinguish the selected hairstyles")
+            let sheet = UIGraphicsImageRenderer(size: CGSize(width: 1536, height: 768), format: format).image { _ in
+                for (i, picture) in pictures.enumerated() {
+                    picture.draw(in: CGRect(x: i % 8 * 192, y: i / 8 * 384, width: 192, height: 192))
+                    picture.draw(in: CGRect(x: i % 8 * 192 + 48, y: i / 8 * 384 + 216, width: 96, height: 96))
+                }
+            }
+            let attachment = XCTAttachment(image: sheet); attachment.name = "V107-\(role.rawValue)-visible-hair"
+            attachment.lifetime = .keepAlways; add(attachment)
+            let rear = try XCTUnwrap(PlayerMotionArt.image(role: role, frame: 0, appearance: look, number: 27, hand: "right")?.pngData())
+            var face = look; face.expression = 5; face.eyeShape = 3; face.browShape = 3
+            XCTAssertEqual(rear, PlayerMotionArt.image(role: role, frame: 0, appearance: face, number: 27, hand: "right")?.pngData(),
+                           "Hidden facial features must not be painted over a rear-facing helmet")
+            XCTAssertNotEqual(CreationAvatarRaster.image(look, cap: false)?.pngData(), CreationAvatarRaster.image(face, cap: false)?.pngData())
+        }
+        XCTAssertEqual(try encoder.encode(look), original)
+    }
+
     func testV106UniformPoseNumbersAndTeamPortraits() throws {
         var a=PlayerAppearance();a.creationVersion=1;a.schoolKitID="hs-ref-001"
         let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys

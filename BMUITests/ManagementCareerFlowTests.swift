@@ -2,6 +2,60 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV107TrainingReviewSmallLargeTextResumeBothRoles() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for pitcher in [false, true] {
+            app.terminate()
+            app.launchArguments = ["-management-career-verification", "-v56-disk-session", UUID().uuidString,
+                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]
+            app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+            if pitcher {
+                app.buttons["roomProfile"].tap(); XCTAssertTrue(app.buttons["homeRole-pitcher"].waitForExistence(timeout: 5)); app.buttons["homeRole-pitcher"].tap()
+                if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
+            }
+            app.buttons["managementLargeMenu"].tap(); app.buttons["managementMenu-training"].tap(); app.buttons["facility-physical"].tap()
+            expand("trainingEquipmentChoices", app)
+            let kind = app.buttons["trainingKind-" + (pitcher ? "control" : "defense")]
+            revealV107(kind, app); kind.tap()
+            let open = app.buttons["openTraining"]; revealV107(open, app); open.tap()
+            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
+            let start = app.buttons["startTraining"]; revealV107(start, app); start.tap()
+            for round in 0..<5 {
+                let attempt = app.buttons["trainingAttempt"]; revealV107(attempt, app)
+                XCTAssertTrue(attempt.isHittable); XCTAssertGreaterThanOrEqual(attempt.frame.height, 44)
+                attempt.tap()
+                let next = app.buttons["trainingNext"]
+                XCTAssertTrue(next.waitForExistence(timeout: 15))
+                let review = app.descendants(matching: .any).matching(identifier: "trainingAttemptReview").firstMatch
+                revealV107(review, app); XCTAssertTrue(review.exists); XCTAssertFalse(review.label.isEmpty)
+                if round == 0 {
+                    try app.performAccessibilityAudit(for: [.sufficientElementDescription, .trait])
+                    capture(app, "v107-" + (pitcher ? "pitcher" : "batter") + "-large-review")
+                }
+                revealV107(next, app); XCTAssertTrue(next.isHittable); XCTAssertGreaterThanOrEqual(next.frame.height, 44); next.tap()
+                if round == 1 {
+                    app.terminate(); app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+                    if pitcher {
+                        app.buttons["roomProfile"].tap(); XCTAssertTrue(app.buttons["homeRole-pitcher"].waitForExistence(timeout: 5))
+                        app.buttons["homeRole-pitcher"].tap()
+                        if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
+                    }
+                    app.buttons["managementLargeMenu"].tap(); app.buttons["managementMenu-training"].tap()
+                    let resume = app.buttons["roomPrimary"]; revealV107(resume, app); resume.tap()
+                    let progress = app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch
+                    XCTAssertTrue(progress.waitForExistence(timeout: 10)); XCTAssertTrue(progress.label.contains("3 / 5"))
+                }
+            }
+            let heading = app.descendants(matching: .any).matching(identifier: "trainingSummaryHeading").firstMatch
+            XCTAssertTrue(heading.waitForExistence(timeout: 8)); XCTAssertFalse(heading.label.isEmpty)
+            capture(app, "v107-" + (pitcher ? "pitcher" : "batter") + "-large-summary")
+            let done = app.buttons["trainingReturnHome"]; revealV107(done, app)
+            XCTAssertTrue(done.isHittable); XCTAssertGreaterThanOrEqual(done.frame.height, 44)
+            done.tap()
+        }
+    }
+
     @MainActor func testV106CoreDescriptionsAndRecordCoverage() throws {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-management-career-verification","-v100-league-names"]
@@ -295,11 +349,13 @@ final class ManagementCareerFlowTests: XCTestCase {
     @MainActor private func revealAppearance(_ element: XCUIElement, _ app: XCUIApplication) {
         let scroll = app.scrollViews["appearanceEditorScroll"]
         for _ in 0..<12 {
-            let top = scroll.frame.minY + 8
+            let shortcuts = ["information", "abilities", "appearance", "review"].map { app.buttons["creationSection-" + $0] }.filter(\.exists)
+            let top = max(scroll.frame.minY, shortcuts.map(\.frame.maxY).max() ?? scroll.frame.minY) + 8
             let bottom = min(scroll.frame.maxY, app.buttons["이 모습으로 계속"].frame.minY) - 8
             if element.exists && element.isHittable && element.frame.midY > top && element.frame.midY < bottom { return }
-            if element.exists && element.frame.midY < top { scroll.swipeDown(velocity: .slow) }
-            else { scroll.swipeUp(velocity: .slow) }
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: (top + bottom) / 2))
+            let delta = min(120, (bottom - top) / 3) * (element.exists && element.frame.midY < top ? 1.0 : -1.0)
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: delta)))
         }
         XCTFail("외형 선택 항목을 조작 가능한 스크롤 영역으로 이동하지 못했습니다")
     }
@@ -680,6 +736,25 @@ final class ManagementCareerFlowTests: XCTestCase {
             if element.exists && element.frame.midY < visibleTop + 8 { scroll.swipeDown() }
             else { scroll.swipeUp() }
         }
+    }
+    @MainActor private func revealV107(_ element: XCUIElement, _ app: XCUIApplication) {
+        for _ in 0..<24 {
+            let training = app.scrollViews["careerTrainingScroll"]
+            let detail = app.scrollViews["roomDetailScroll"]
+            let scroll = training.exists ? training : detail.exists ? detail : app.scrollViews.firstMatch
+            let nav = app.navigationBars.firstMatch
+            let close = app.buttons["closeRoomDetail"]
+            let top = max(scroll.frame.minY, nav.exists ? nav.frame.maxY : 0, detail.exists && close.exists ? close.frame.maxY : 0) + 8
+            let bottom = min(scroll.frame.maxY, app.frame.maxY - 16) - 8
+            if element.exists && element.isHittable && element.frame.midY > top && element.frame.midY < bottom { return }
+            if !element.exists || element.frame.midY > bottom + scroll.frame.height { scroll.swipeUp(); continue }
+            if element.frame.midY < top - scroll.frame.height { scroll.swipeDown(); continue }
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: (top + bottom) / 2))
+            let delta = min(160, (bottom - top) / 3) * (element.frame.midY < top ? 1.0 : -1.0)
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: delta)))
+        }
+        capture(app, "v107-unreachable-control")
+        XCTFail("훈련 조작을 헤더에 가리지 않는 위치로 이동하지 못했습니다")
     }
     @MainActor private func capture(_ app: XCUIApplication, _ title: String) {
         let screenshot = app.screenshot()
