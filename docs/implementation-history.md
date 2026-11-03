@@ -1,3 +1,11 @@
+## 2026.11.03 · V114 최신 음원 및 경기 연출 코드 역할별 정리
+
+V113 Strike 발음 구간 복원과 V110 Ball/Out·타격·포구·관중 음원을 그대로 번들에 연결한다. BM/Audio를 GameSound(설정·진동·기존 API), GameAudioCues(콜 대응), GameAudioOutput(직렬 재생 큐), GameSoundPCM(확인음)으로 분리한다. Match/Presentation은 Scene(BallparkScene), Motion(PlayerMotionArt·PitcherPresentationPose·BatterPlantMotion), Stadium(StadiumSceneDress)으로 나눈다. 새 패키지/타깃/의존성 없이 같은 BM 모듈을 유지한다.
+
+녹음6개와 출처 자료는 Assets.xcassets/Audio 아래로 이동한다. NSDataAsset 이름과 파일 바이트는 같으며 구현 본문도 import/공백 외 동일하다. Xcode 등록·Git 리소스 허용 경로를 함께 갱신했다. 기존 V112 모션·V111 큐·판정/RNG·V15·고정 보고서·이어하기/결과1회를 유지하며 사용자 변경과 개인 서명 설정은 커밋에서 제외한다.
+
+검증: 관련 단위/렌더/저장8개, 기본·큰 글자/동작 줄이기의 실제 오디오 설정 UI1개, 보안9개 통과. 개인 설정을 제외한 Release 빌드와 iPhone용 QA114 빌드 성공. 두 앱 저장·설정15개를 백업했으나 설치 시 iPhone 연결 서비스가 unavailable로 바뀌어 QA 설치는 대기 중이다. 일반 앱·TestFlight는 업데이트하지 않았다. 실제 청취·손맛·장시간 성능·전체 VoiceOver는 미확인이다. 내부 구조 문서 docs/code-organization-v114.md, design_V114, 버전QA organization-v114에 기록한다.
+
 ## 2026.11.03 · V113 스트라이크 콜 발음 구간 복원
 
 알아듣기 어렵다는 사용자 피드백에 따라 기존 Mike Koenig CC BY3.0 스트라이크 녹음의 편집 범위를 0.16~0.76초(0.60초)에서0~0.82초로 변경했다. 실제 잘린 앞부분160ms에 신호가 있음을 확인했으며 정확한 발음 인식은 청취 인수로 남긴다. RMS2:1/-24dBFS 압축으로 약한 소리와 큰 소리의 차이를 줄이고 최고 -1.51dBFS,속도/음높이는 유지한다. 새 성우/중계 추출/기본 TTS로 교체한 것이 아니다.
