@@ -1263,16 +1263,17 @@ extension ManualMatchTests {
             let pitcher=try XCTUnwrap(scene.childNode(withName:"animatedPitcher") as? SKSpriteNode)
             let batter=try XCTUnwrap(scene.childNode(withName:"animatedBatter") as? SKSpriteNode)
             XCTAssertEqual(pitcher.position.x,scene.size.width*(hand == "left" ? 0.24 : 0.76),accuracy:0.001)
-            XCTAssertEqual(pitcher.position.y,scene.size.height*(1-0.895),accuracy:0.001)
+            XCTAssertEqual(pitcher.position.y,scene.size.height*(1-0.870),accuracy:0.001)
             XCTAssertEqual(pitcher.size.width,pitcher.size.height,accuracy:0.001)
             XCTAssertEqual(batter.position.x,scene.size.width*(side == .left ? 0.32:0.70),accuracy:0.001)
             XCTAssertNotNil(pitcher.texture);XCTAssertNotNil(batter.texture)
             scene.preparePitch(phase:0.3,reduced:true)
             XCTAssertEqual(scene.pitchStage,.preparing)
-            XCTAssertEqual(pitcher.position.x,scene.size.width*(hand == "left" ? 0.24 : 0.76),accuracy:0.001)
+            let travel = PitcherPresentationPose.travel(role: .pitcher, phase: 0.3 / ManualMatchRules.releaseCenter * 2.99, hand: hand)
+            XCTAssertEqual(pitcher.position.x,scene.size.width*((hand == "left" ? 0.24 : 0.76)+travel.x),accuracy:0.001)
             let sourcePivot=PitcherPresentationPose(role:.pitcher,frame:1,hand:"right").pivot
             let planted=Double(pitcher.position.x)+(sourcePivot.x-pitcher.anchorPoint.x)*pitcher.size.width*pitcher.xScale
-            XCTAssertEqual(planted,scene.size.width*(hand == "left" ? 0.24 : 0.76),accuracy:0.001,"The actual source foot, not only the node origin, must sit on the rubber")
+            XCTAssertEqual(planted,scene.size.width*((hand == "left" ? 0.24 : 0.76)+travel.x),accuracy:0.001,"The source foot follows the measured mound anchor and small weight transfer")
             let right=PitcherPresentationPose(role:.pitcher,frame:1,hand:"right")
             let left=PitcherPresentationPose(role:.pitcher,frame:1,hand:"left")
             XCTAssertEqual(right.pivot.x+left.pivot.x,1,accuracy:0.001)
@@ -1351,7 +1352,7 @@ extension ManualMatchTests {
             scene.configure(hand: hand, kit: 2)
             XCTAssertTrue(scene.demonstrate(reduceMotion: true, flightDuration: 1, preparedRelease: true))
             let ball = try XCTUnwrap(scene.childNode(withName: "baseball"))
-            XCTAssertEqual(ball.position.x, 320 * (release.foot.x + release.width * (release.hand.x-release.pivot.x)), accuracy: 0.001)
+            XCTAssertEqual(ball.position.x, 320 * (release.foot.x + release.width * (release.hand.x-release.pivot.x) + PitcherPresentationPose.travel(role: .pitcher, phase: 3, hand: hand).x), accuracy: 0.001)
             let pitcher = try XCTUnwrap(scene.childNode(withName: "animatedPitcher"))
             XCTAssertLessThan(pitcher.frame.minX, 320); XCTAssertGreaterThan(pitcher.frame.maxX, 0)
             scene.cancelDelivery()
@@ -1390,5 +1391,73 @@ extension ManualMatchTests {
         let contact = XCTAttachment(image: UIImage(cgImage: try XCTUnwrap(view.texture(from: scene)?.cgImage())))
         contact.name = "v75-batting-contact-facing-pitcher"; contact.lifetime = .keepAlways; add(contact)
         scene.cancelDelivery(); view.presentScene(nil)
+    }
+}
+
+
+extension ManualMatchTests {
+    func testV112MoundHeldBallAndMonotonicStrideBothHands() throws {
+        for hand in ["right", "left"] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+            scene.configure(hand: hand, kit: 1)
+            let pitcher = try XCTUnwrap(scene.childNode(withName: "animatedPitcher") as? SKSpriteNode)
+            let ball = try XCTUnwrap(scene.childNode(withName: "baseball"))
+            XCTAssertEqual(pitcher.position.y / scene.size.height, 0.13, accuracy: 0.001)
+            scene.preparePitch(phase: 0, reduced: false)
+            XCTAssertTrue(ball.isHidden, "Do not draw another ball outside the closed glove")
+            scene.preparePitch(phase: 0.4, reduced: false)
+            XCTAssertTrue(ball.isHidden)
+            scene.preparePitch(phase: 0.65, reduced: false)
+            XCTAssertFalse(ball.isHidden)
+            let location = pitcher.position, held = ball.position, texture = pitcher.texture
+            scene.preparePitch(phase: 0.2, reduced: true)
+            XCTAssertEqual(pitcher.position, location, "Reversing gauge must not rewind the stride")
+            XCTAssertEqual(ball.position, held); XCTAssertTrue(texture === pitcher.texture)
+            XCTAssertTrue(scene.demonstrate(reduceMotion: true, flightDuration: 1, preparedRelease: true))
+            let pose = PitcherPresentationPose(role: .pitcher, frame: 3, hand: "right")
+            let renderedHand = pitcher.convert(CGPoint(x: (pose.hand.x-pitcher.anchorPoint.x)*pitcher.size.width,
+                                                       y: (1-pose.hand.y-pitcher.anchorPoint.y)*pitcher.size.height), to: scene)
+            XCTAssertEqual(ball.position.x, renderedHand.x, accuracy: 0.001)
+            XCTAssertEqual(ball.position.y, renderedHand.y, accuracy: 0.001)
+            scene.cancelDelivery(); XCTAssertTrue(ball.isHidden)
+            scene.preparePitch(phase: 0, reduced: false); XCTAssertTrue(ball.isHidden)
+        }
+    }
+
+    func testV112MotionContactAndActualSceneFrames() throws {
+        for role in [PlayerRole.pitcher, .batter] { for hand in ["right", "left"] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+            scene.configure(hand: hand, kit: 1, role: role, jerseyNumber: 27)
+            let view = SKView(frame: CGRect(origin: .zero, size: scene.size)); view.presentScene(scene)
+            func capture(_ stage: String) throws {
+                let image = UIImage(cgImage: try XCTUnwrap(view.texture(from: scene)?.cgImage()))
+                let a = XCTAttachment(image: image); a.name = "v112-\(role.rawValue)-\(hand)-\(stage)"; a.lifetime = .keepAlways; add(a)
+            }
+            try capture("00-ready")
+            let start = ProcessInfo.processInfo.systemUptime
+            let timeline = MatchInputTimeline(startedAt: start, windup: 0.35, duration: 1.4)
+            var arrivals = 0
+            if role == .pitcher {
+                for (index, phase) in [0.2, 0.4, 0.6].enumerated() {
+                    scene.preparePitch(phase: phase, reduced: false); try capture("0\(index+1)-prepare")
+                }
+                XCTAssertTrue(scene.demonstrate(reduceMotion: false, flightDuration: 1.4, preparedRelease: true, onArrival: { arrivals += 1 }))
+                try capture("04-release")
+                scene.advanceDelivery(at: ProcessInfo.processInfo.systemUptime + 0.3); try capture("05-follow")
+                scene.advanceDelivery(at: ProcessInfo.processInfo.systemUptime + 1.41); try capture("06-received")
+            } else {
+                XCTAssertTrue(scene.demonstrate(reduceMotion: false, inputTimeline: timeline))
+                scene.advanceDelivery(at: start+0.15); try capture("01-windup")
+                scene.advanceDelivery(at: timeline.releaseAt+0.01); try capture("02-release")
+                scene.advanceDelivery(at: timeline.contactAt-0.20); try capture("03-load")
+                scene.finishBat(action: "swing", outcome: "헛스윙", reduced: false, onArrival: { arrivals += 1 }) {}
+                scene.advanceDelivery(at: timeline.contactAt-0.01); XCTAssertEqual(arrivals,0); try capture("04-plant")
+                scene.advanceDelivery(at: timeline.contactAt); XCTAssertEqual(arrivals,1); try capture("05-contact")
+                scene.advanceDelivery(at: timeline.contactAt+0.32); try capture("06-follow")
+            }
+            XCTAssertEqual(arrivals,1)
+            scene.advanceDelivery(at: start+10); XCTAssertEqual(arrivals,1)
+            scene.cancelDelivery(); view.presentScene(nil)
+        }}
     }
 }
