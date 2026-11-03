@@ -1,6 +1,7 @@
 import SpriteKit
 import SwiftUI
 
+/// 확정된 경기 정보를 장면으로 재생한다. 비행·접촉·포구가 끝난 시점을 호출자에게 알린다.
 @MainActor final class BallparkScene: SKScene {
     private let ball = SKSpriteNode(texture: PixelBaseball.texture)
     private let receivedBall = SKSpriteNode(texture: PixelBaseball.texture)
@@ -34,8 +35,8 @@ import SwiftUI
         let reduced: Bool
         let receipt: Double
         let outcome: String?
-        let fieldPlay:MatchDetailedPlay?
-        let homeRun:MatchHomeRun?
+        let fieldPlay: MatchDetailedPlay?
+        let homeRun: MatchHomeRun?
         let arrival: (@MainActor () -> Void)?
         let completion: (@MainActor () -> Void)?
     }
@@ -59,243 +60,404 @@ import SwiftUI
         let completion: @MainActor () -> Void
     }
     private struct ContactFlight {
-        let play:MatchDetailedPlay?
-        let homeRun:MatchHomeRun?
-        let startedAt:Double
-        let origin:CGPoint
-        let reduced:Bool
-        let arrival:(@MainActor () -> Void)?
-        let completion:(@MainActor () -> Void)?
+        let play: MatchDetailedPlay?
+        let homeRun: MatchHomeRun?
+        let startedAt: Double
+        let origin: CGPoint
+        let reduced: Bool
+        let arrival: (@MainActor () -> Void)?
+        let completion: (@MainActor () -> Void)?
     }
-    private var contactFlight:ContactFlight?
-    private(set) var fieldHandoff:FieldContactHandoff?
+    private var contactFlight: ContactFlight?
+    private(set) var fieldHandoff: FieldContactHandoff?
     private var pitchFlight: PitchFlight?
     private var batterFlight: BatterFlight?
     private var batFinish: BatFinish?
-    private var pitchReceipt: (deadline:Double, completion:(@MainActor () -> Void)?)?
+    private var pitchReceipt: (deadline: Double, completion: (@MainActor () -> Void)?)?
 
+    /// 입력 타임라인과 동일한 단조 시계를 사용해 프레임마다 연출을 진행한다.
     override func update(_ currentTime: TimeInterval) {
         #if DEBUG
-        let measuredAt=MatchRenderMetrics.begin()
-        defer {MatchRenderMetrics.end("spriteUpdate",started:measuredAt)}
+            let measuredAt = MatchRenderMetrics.begin()
+            defer { MatchRenderMetrics.end("spriteUpdate", started: measuredAt) }
         #endif
         advanceDelivery(at: ProcessInfo.processInfo.systemUptime)
     }
 
+    /// 한 프레임의 준비→비행→접촉→완료를 순서대로 갱신한다.
+    /// 앞 단계가 만든 상태를 같은 프레임의 뒤 단계에서 사용하므로 호출 순서를 유지한다.
     func advanceDelivery(at now: Double) {
+        advanceWindup(at: now)
+        advanceBatRecovery(at: now)
+        advanceBatterFlight(at: now)
+        advancePitcherFlight(at: now)
+        advanceBatFinish(at: now)
+        advanceContactFlight(at: now)
+        completeReceipt(at: now)
+    }
+
+    /// 투구 준비 동작을 진행하고 릴리스 시점에 비행을 시작한다.
+    private func advanceWindup(at now: Double) {
         if let windup = pitchWindup {
             let phase = min(1, max(0, (now - windup.started) / MatchDelivery.windup))
             pitcherMotion(phase * 3)
             showHeldBall()
-            if phase >= 1 { pitchWindup = nil; windup.launch(now) }
+            if phase >= 1 {
+                pitchWindup = nil
+                windup.launch(now)
+            }
         }
+    }
+
+    /// 접촉 후 타자의 마무리 자세를 진행한다.
+    private func advanceBatRecovery(at now: Double) {
         if let started = batRecovery {
             let phase = min(1, max(0, (now - started) / 0.32))
             batterMotion(2 + phase)
             if phase >= 1 { batRecovery = nil }
         }
+    }
 
-        if let flight=batterFlight {
-            let timeline=flight.timeline
+    /// 타자 시점의 비행을 입력 타임라인과 같은 시계로 진행한다.
+    private func advanceBatterFlight(at now: Double) {
+        if let flight = batterFlight {
+            let timeline = flight.timeline
             if now < timeline.releaseAt {
-                pitchStage = .preparing; ball.isHidden = true
-                let windupPhase=(now-timeline.startedAt)/max(0.001,timeline.windup)
+                pitchStage = .preparing
+                ball.isHidden = true
+                let windupPhase = (now - timeline.startedAt) / max(0.001, timeline.windup)
                 pitcherMotion(min(3.99, max(0, windupPhase) * 4))
             } else {
-                let t=min(1,max(0,(now-timeline.releaseAt)/(timeline.duration*MatchDelivery.contactPhase)))
-                let depth=t/(2.4-1.4*t)
-                pitchStage = .flight; ball.isHidden = false
-                ball.position=MatchBallPath.point(from:flight.start,to:flight.end,size:size,role:.batter,hand:hand,code:flight.code,progress:t)
-                ball.setScale(0.35+depth*0.9)
+                let t = min(1, max(0, (now - timeline.releaseAt) / (timeline.duration * MatchDelivery.contactPhase)))
+                let depth = t / (2.4 - 1.4 * t)
+                pitchStage = .flight
+                ball.isHidden = false
+                ball.position = MatchBallPath.point(
+                    from: flight.start, to: flight.end, size: size, role: .batter, hand: hand, code: flight.code,
+                    progress: t)
+                ball.setScale(0.35 + depth * 0.9)
                 pitcherMotion(4 + min(2, max(0, now - timeline.releaseAt) / 0.10))
                 if batFinish == nil && batRecovery == nil { batterMotion(min(1.7, max(0, (t - 0.48) / 0.52) * 1.7)) }
                 if now >= timeline.contactAt {
-                    batterFlight=nil;pitchStage = .received;ball.position=flight.end;ball.isHidden=true;pitcherPose(7);markArrival()
-                    if flight.completion != nil { pitchReceipt=(now+flight.receipt,flight.completion) }
+                    batterFlight = nil
+                    pitchStage = .received
+                    ball.position = flight.end
+                    ball.isHidden = true
+                    pitcherPose(7)
+                    markArrival()
+                    if flight.completion != nil { pitchReceipt = (now + flight.receipt, flight.completion) }
                     flight.arrival?()
                 }
             }
         }
-        if let flight=pitchFlight {
-            let t=min(1,max(0,(now-flight.started)/flight.duration))
+    }
+
+    /// 투수 시점의 비행을 진행하고 도착 후 포구 또는 인플레이로 넘긴다.
+    private func advancePitcherFlight(at now: Double) {
+        if let flight = pitchFlight {
+            let t = min(1, max(0, (now - flight.started) / flight.duration))
             pitcherMotion(3 + min(1.99, max(0, now - flight.started) / 0.10))
             if batRecovery == nil { batterMotion(min(1.7, max(0, (t - 0.55) / 0.45) * 1.7)) }
-            ball.position=MatchBallPath.point(from:flight.start,to:flight.end,size:size,role:.pitcher,hand:hand,code:flight.code,progress:t)
-            ball.setScale(1.1-(2.4*t/(1+1.4*t))*0.4)
+            ball.position = MatchBallPath.point(
+                from: flight.start, to: flight.end, size: size, role: .pitcher, hand: hand, code: flight.code,
+                progress: t)
+            ball.setScale(1.1 - (2.4 * t / (1 + 1.4 * t)) * 0.4)
             if t >= 1 {
-                pitchFlight=nil;ball.position=flight.end;pitcherPose(5)
-                if flight.fieldPlay != nil || flight.homeRun != nil || ["헛스윙", "파울", "안타", "홈런", "범타"].contains(flight.outcome ?? "") {
+                pitchFlight = nil
+                ball.position = flight.end
+                pitcherPose(5)
+                if flight.fieldPlay != nil || flight.homeRun != nil
+                    || ["헛스윙", "파울", "안타", "홈런", "범타"].contains(flight.outcome ?? "")
+                {
                     batterPose(2)
                     batRecovery = now
                 }
-                if let play=flight.fieldPlay {
+                if let play = flight.fieldPlay {
                     pitchStage = .received
-                    startContact(play,origin:CGPoint(x:flight.end.x/size.width,y:1-flight.end.y/size.height),reduced:flight.reduced,arrival:flight.arrival,completion:flight.completion,startedAt:now)
-                } else if let homeRun=flight.homeRun {
+                    startContact(
+                        play, origin: CGPoint(x: flight.end.x / size.width, y: 1 - flight.end.y / size.height),
+                        reduced: flight.reduced, arrival: flight.arrival, completion: flight.completion, startedAt: now)
+                } else if let homeRun = flight.homeRun {
                     pitchStage = .received
-                    startContact(nil,homeRun:homeRun,origin:CGPoint(x:flight.end.x/size.width,y:1-flight.end.y/size.height),reduced:flight.reduced,arrival:flight.arrival,completion:flight.completion,startedAt:now)
+                    startContact(
+                        nil, homeRun: homeRun,
+                        origin: CGPoint(x: flight.end.x / size.width, y: 1 - flight.end.y / size.height),
+                        reduced: flight.reduced, arrival: flight.arrival, completion: flight.completion, startedAt: now)
                 } else {
-                    finishPitch(outcome:flight.outcome,reduced:flight.reduced)
-                    pitchReceipt=(now+flight.receipt,flight.completion)
+                    finishPitch(outcome: flight.outcome, reduced: flight.reduced)
+                    pitchReceipt = (now + flight.receipt, flight.completion)
                     flight.arrival?()
                 }
             }
         }
+    }
+
+    /// 확정된 타격 입력을 접촉 시점까지 기다린 뒤 연출한다.
+    private func advanceBatFinish(at now: Double) {
         if let finish = batFinish, finish.action == "swing", now < finish.at {
             batterMotion(min(1.99, max(1, 2 - (finish.at - now) / 0.18)))
         }
-        if let finish=batFinish, now >= finish.at {
-            batFinish=nil;batterFlight=nil
-            if finish.action != "watch" { batterPose(finish.action == "bunt" ? 5:2) }
+        if let finish = batFinish, now >= finish.at {
+            batFinish = nil
+            batterFlight = nil
+            if finish.action != "watch" { batterPose(finish.action == "bunt" ? 5 : 2) }
             if finish.action == "swing" { batRecovery = now }
             if finish.action == "watch" { batterPose(0) }
             if finish.play != nil || finish.homeRun != nil {
-                startContact(finish.play,homeRun:finish.homeRun,origin:MatchPresentation.batContact(action:finish.action),
-                             reduced:finish.reduced,arrival:finish.arrival,completion:finish.completion,startedAt:now)
+                startContact(
+                    finish.play, homeRun: finish.homeRun, origin: MatchPresentation.batContact(action: finish.action),
+                    reduced: finish.reduced, arrival: finish.arrival, completion: finish.completion, startedAt: now)
             } else {
-                pitchStage = .received;markArrival()
-                if ["안타", "홈런", "범타", "파울"].contains(finish.outcome) {GameSound.shared.contact()}
-                else {GameSound.shared.play(.catchBall)}
+                pitchStage = .received
+                markArrival()
+                if ["안타", "홈런", "범타", "파울"].contains(finish.outcome) {
+                    GameSound.shared.contact()
+                } else {
+                    GameSound.shared.play(.catchBall)
+                }
                 if ["안타", "홈런", "범타"].contains(finish.outcome) {
-                    ball.removeAllActions();receivedBall.isHidden=true
-                    let barrel=MatchPresentation.batContact(action:finish.action)
-                    ball.position=point(barrel.x,barrel.y);ball.isHidden=false
-                    ball.run(.sequence([.move(to:point(finish.action == "bunt" ? 0.54:0.7,finish.outcome == "홈런" ? 0.06:0.40),duration:finish.reduced ? 0.1:0.26),.hide()]))
-                } else { ball.isHidden=true }
-                pitchReceipt=(now+finish.receipt,{ [weak self] in
-                    guard let self else { return }
-                    self.ball.isHidden=true
-                    if finish.action == "swing" { self.batterPose(3) }
-                    finish.completion()
-                })
+                    ball.removeAllActions()
+                    receivedBall.isHidden = true
+                    let barrel = MatchPresentation.batContact(action: finish.action)
+                    ball.position = point(barrel.x, barrel.y)
+                    ball.isHidden = false
+                    ball.run(
+                        .sequence([
+                            .move(
+                                to: point(finish.action == "bunt" ? 0.54 : 0.7, finish.outcome == "홈런" ? 0.06 : 0.40),
+                                duration: finish.reduced ? 0.1 : 0.26), .hide(),
+                        ]))
+                } else {
+                    ball.isHidden = true
+                }
+                pitchReceipt = (
+                    now + finish.receipt,
+                    { [weak self] in
+                        guard let self else { return }
+                        self.ball.isHidden = true
+                        if finish.action == "swing" { self.batterPose(3) }
+                        finish.completion()
+                    }
+                )
                 finish.arrival?()
             }
         }
-        if let contact=contactFlight {
-            let elapsed=max(0,now-contact.startedAt)
-            let p=contact.homeRun.map {HomeRunPresentation.sourcePoint($0,time:elapsed,origin:contact.origin,size:size)}
-                ?? contact.play.map {FieldContactPresentation.sourcePoint($0,time:elapsed,origin:contact.origin,size:size)} ?? contact.origin
-            ball.position=point(p.x,p.y)
-            ball.setScale(contact.reduced ? 0.8:max(0.5,1-elapsed*0.6))
-            if elapsed >= (contact.play.map {FieldContactPresentation.duration($0)} ?? 0.28) {
-                contactFlight=nil
-                fieldHandoff=FieldContactHandoff(startedAt:contact.startedAt,cutAt:now,sourcePoint:p)
-                contact.arrival?();contact.completion?()
+    }
+
+    /// 타구가 수비 화면으로 이어질 좌표와 경과 시간을 넘긴다.
+    private func advanceContactFlight(at now: Double) {
+        if let contact = contactFlight {
+            let elapsed = max(0, now - contact.startedAt)
+            let p =
+                contact.homeRun.map {
+                    HomeRunPresentation.sourcePoint($0, time: elapsed, origin: contact.origin, size: size)
+                }
+                ?? contact.play.map {
+                    FieldContactPresentation.sourcePoint($0, time: elapsed, origin: contact.origin, size: size)
+                } ?? contact.origin
+            ball.position = point(p.x, p.y)
+            ball.setScale(contact.reduced ? 0.8 : max(0.5, 1 - elapsed * 0.6))
+            if elapsed >= (contact.play.map { FieldContactPresentation.duration($0) } ?? 0.28) {
+                contactFlight = nil
+                fieldHandoff = FieldContactHandoff(startedAt: contact.startedAt, cutAt: now, sourcePoint: p)
+                contact.arrival?()
+                contact.completion?()
             }
         }
-        if let receipt=pitchReceipt, now >= receipt.deadline {
-            pitchReceipt=nil;receipt.completion?()
+    }
+
+    /// 포구 대기가 끝나면 등록된 완료 콜백을 한 번 호출한다.
+    private func completeReceipt(at now: Double) {
+        if let receipt = pitchReceipt, now >= receipt.deadline {
+            pitchReceipt = nil
+            receipt.completion?()
         }
+
     }
 
     override init(size: CGSize) {
         super.init(size: size)
-        GameSound.shared.prepare(); scaleMode = .aspectFit; backgroundColor = UIColor(red: 0.09, green: 0.20, blue: 0.29, alpha: 1)
+        GameSound.shared.prepare()
+        scaleMode = .aspectFit
+        backgroundColor = UIColor(red: 0.09, green: 0.20, blue: 0.29, alpha: 1)
     }
     required init?(coder: NSCoder) { fatalError("Storyboard initialization is not used") }
 
-    private func textures(_ name: String, columns: Int, rows: Int) -> [SKTexture] {
-        guard let image = MatchArt.image(name) else { return [] }
-        let sheet = SKTexture(image: image)
-        return (0..<(columns * rows)).map { i in
-            let texture = SKTexture(rect: CGRect(x: Double(i % columns) / Double(columns), y: 1 - Double(i / columns + 1) / Double(rows),
-                                                width: 1 / Double(columns), height: 1 / Double(rows)), in: sheet)
-            texture.filteringMode = .nearest
-            return texture
-        }
-    }
-    func configure(hand: String, kit: Int, role: PlayerRole = .pitcher, appearance: PlayerAppearance? = nil, jerseyNumber: Int = 1, batterSide: OpponentBatterSide = .left) {
-        cancelDelivery(); self.hand = hand; self.role = role; self.batterSide = batterSide; lastPitcherFrame = -1
+    /// 기존 연출을 취소하고 현재 선수·투타 시점의 배경과 도트 자산을 구성한다.
+    func configure(
+        hand: String, kit: Int, role: PlayerRole = .pitcher, appearance: PlayerAppearance? = nil, jerseyNumber: Int = 1,
+        batterSide: OpponentBatterSide = .left
+    ) {
+        cancelDelivery()
+        self.hand = hand
+        self.role = role
+        self.batterSide = batterSide
+        lastPitcherFrame = -1
         size = CGSize(width: 320, height: role == .batter ? 320 : 320 * 1290 / 1219)
         removeAllChildren()
-        guard let image = MatchArt.image(role == .batter ? "batter-field-v52" : "pitcher-field-v52") else { ready = false; return }
-        let texture = SKTexture(image: image); texture.filteringMode = .nearest
-        let field = SKSpriteNode(texture: texture, size: size); field.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        guard let image = MatchArt.image(role == .batter ? "batter-field-v52" : "pitcher-field-v52") else {
+            ready = false
+            return
+        }
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .nearest
+        let field = SKSpriteNode(texture: texture, size: size)
+        field.position = CGPoint(x: size.width / 2, y: size.height / 2)
         field.name = "fixedStadiumBackground"
-        // Reverse the rear camera with a left-handed pitcher, keeping the rubber under the planted foot.
+        // 좌투는 배경 시점도 반전해 마운드와 축발 위치가 어긋나지 않게 한다.
         field.xScale = role == .pitcher && hand == "left" ? -1 : 1
         addChild(field)
         let style = appearance ?? PlayerAppearance(kit: kit)
         if role == .batter {
-            addBackgroundFielders(appearance:style)
+            addBackgroundFielders(appearance: style)
             _ = BatterPlantMotion.geometry(progress: 0)
         }
-        pitcherFrames = role == .pitcher ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-pitcher-v52",columns:4,rows:2,ownKit:style.uniformColor,teamColor:style.opponentUniformColor,style:style.opponentUniformStyle)
-        batterFrames = role == .batter ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand) : OpponentMotionArt.textures("opponent-batter-v52",columns:3,rows:2,ownKit:style.uniformColor,teamColor:style.opponentUniformColor,style:style.opponentUniformStyle)
-        catcherFrames = OpponentMotionArt.textures("catcher-parts",columns:2,rows:2,ownKit:style.uniformColor,opponent:false,teamColor:role == .pitcher ? style.uniformColor:style.opponentUniformColor,style:role == .pitcher ? style.uniformStyle:style.opponentUniformStyle)
+        pitcherFrames =
+            role == .pitcher
+            ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand)
+            : OpponentMotionArt.textures(
+                "opponent-pitcher-v52", columns: 4, rows: 2, ownKit: style.uniformColor,
+                teamColor: style.opponentUniformColor, style: style.opponentUniformStyle)
+        batterFrames =
+            role == .batter
+            ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand)
+            : OpponentMotionArt.textures(
+                "opponent-batter-v52", columns: 3, rows: 2, ownKit: style.uniformColor,
+                teamColor: style.opponentUniformColor, style: style.opponentUniformStyle)
+        catcherFrames = OpponentMotionArt.textures(
+            "catcher-parts", columns: 2, rows: 2, ownKit: style.uniformColor, opponent: false,
+            teamColor: role == .pitcher ? style.uniformColor : style.opponentUniformColor,
+            style: role == .pitcher ? style.uniformStyle : style.opponentUniformStyle)
         mittFrames = Array(catcherFrames.suffix(2))
-        guard pitcherFrames.count == (role == .pitcher ? 6 : 8), batterFrames.count == 6, catcherFrames.count == 4 else { ready = false; return }
-        pitcher.name = "animatedPitcher";pitcher.zPosition = 4;pitcher.xScale = hand == "left" ? -1 : 1;addChild(pitcher);pitcherPose(0)
-        batter.name = "animatedBatter";batter.zPosition = 3;batter.isHidden = false;addChild(batter);batterPose(0)
+        guard pitcherFrames.count == (role == .pitcher ? 6 : 8), batterFrames.count == 6, catcherFrames.count == 4
+        else {
+            ready = false
+            return
+        }
+        pitcher.name = "animatedPitcher"
+        pitcher.zPosition = 4
+        pitcher.xScale = hand == "left" ? -1 : 1
+        addChild(pitcher)
+        pitcherPose(0)
+        batter.name = "animatedBatter"
+        batter.zPosition = 3
+        batter.isHidden = false
+        addChild(batter)
+        batterPose(0)
         if role == .pitcher {
-            catcher.texture = catcherFrames[0]; catcher.size = CGSize(width: size.width * 0.22, height: size.height * 0.22)
-            catcher.position = point(0.50, 0.41); catcher.zPosition = 2; addChild(catcher)
-            mitt.texture = mittFrames[0]; mitt.size = CGSize(width: size.width * 0.09, height: size.height * 0.09)
-            mitt.position = point(hand == "left" ? 0.45 : 0.55, 0.475); mitt.zPosition = 6; addChild(mitt)
+            catcher.texture = catcherFrames[0]
+            catcher.size = CGSize(width: size.width * 0.22, height: size.height * 0.22)
+            catcher.position = point(0.50, 0.41)
+            catcher.zPosition = 2
+            addChild(catcher)
+            mitt.texture = mittFrames[0]
+            mitt.size = CGSize(width: size.width * 0.09, height: size.height * 0.09)
+            mitt.position = point(hand == "left" ? 0.45 : 0.55, 0.475)
+            mitt.zPosition = 6
+            addChild(mitt)
         }
-        ball.name="baseball";ball.zPosition=8;ball.size=CGSize(width:10,height:10)
-        ball.isHidden=true;addChild(ball)
-        strikeZone.name="pitchStrikeZone";strikeZone.zPosition=5;strikeZone.strokeColor=UIColor(white:1,alpha:0.8)
-        strikeZone.lineWidth=0.65;strikeZone.fillColor = .clear
-        let a=arrivalPoint(x:0.2,y:0.2),b=arrivalPoint(x:0.8,y:0.8)
-        let path=CGMutablePath();path.addRect(CGRect(x:a.x,y:b.y,width:b.x-a.x,height:a.y-b.y))
-        for value in [0.4,0.6] {
-            let v=arrivalPoint(x:value,y:value)
-            path.move(to:CGPoint(x:v.x,y:a.y));path.addLine(to:CGPoint(x:v.x,y:b.y))
-            path.move(to:CGPoint(x:a.x,y:v.y));path.addLine(to:CGPoint(x:b.x,y:v.y))
+        ball.name = "baseball"
+        ball.zPosition = 8
+        ball.size = CGSize(width: 10, height: 10)
+        ball.isHidden = true
+        addChild(ball)
+        strikeZone.name = "pitchStrikeZone"
+        strikeZone.zPosition = 5
+        strikeZone.strokeColor = UIColor(white: 1, alpha: 0.8)
+        strikeZone.lineWidth = 0.65
+        strikeZone.fillColor = .clear
+        let a = arrivalPoint(x: 0.2, y: 0.2)
+        let b = arrivalPoint(x: 0.8, y: 0.8)
+        let path = CGMutablePath()
+        path.addRect(CGRect(x: a.x, y: b.y, width: b.x - a.x, height: a.y - b.y))
+        for value in [0.4, 0.6] {
+            let v = arrivalPoint(x: value, y: value)
+            path.move(to: CGPoint(x: v.x, y: a.y))
+            path.addLine(to: CGPoint(x: v.x, y: b.y))
+            path.move(to: CGPoint(x: a.x, y: v.y))
+            path.addLine(to: CGPoint(x: b.x, y: v.y))
         }
-        strikeZone.path=path;addChild(strikeZone)
-        receivedBall.name="receivedBaseball";receivedBall.zPosition=9;receivedBall.size=CGSize(width:10,height:10)
-        receivedBall.isHidden=true;addChild(receivedBall);ready=true
+        strikeZone.path = path
+        addChild(strikeZone)
+        receivedBall.name = "receivedBaseball"
+        receivedBall.zPosition = 9
+        receivedBall.size = CGSize(width: 10, height: 10)
+        receivedBall.isHidden = true
+        addChild(receivedBall)
+        ready = true
         setStadium(stadium)
     }
+    /// 선수 동작은 유지하고 연습장 배경으로 바꾸며 경기용 장식을 제거한다.
     func usePracticeSetting() {
         guard let field = childNode(withName: "fixedStadiumBackground") as? SKSpriteNode else { return }
         let image = role == .batter ? MatchArt.image("batting-practice-v75") : TrainingEnvironmentArt.image(.bullpen)
         if let image {
-            let texture = SKTexture(image: image); texture.filteringMode = .nearest
+            let texture = SKTexture(image: image)
+            texture.filteringMode = .nearest
             field.texture = texture
         }
-        dress?.removeFromParent(); dress = nil
+        dress?.removeFromParent()
+        dress = nil
         for i in 0..<3 { childNode(withName: "backgroundFielder-\(i)")?.removeFromParent() }
         if role == .pitcher { batter.isHidden = true }
     }
+    /// 구장 식별 정보에 맞는 장식만 교체한다.
     func setStadium(_ value: StadiumIdentity) {
-        stadium = value; dress?.removeFromParent()
+        stadium = value
+        dress?.removeFromParent()
         guard ready else { return }
         let next = StadiumSceneDress(stadium: value, size: size, camera: role == .pitcher ? .pitcher : .batter)
-        next.zPosition = 1; addChild(next); dress = next
+        next.zPosition = 1
+        addChild(next)
+        dress = next
     }
-    private func addBackgroundFielders(appearance:PlayerAppearance) {
-        let motion=FieldSpriteMotion(facing:.south,stage:.ready)
-        guard let sample=FieldRasterArt.samples(motion,kind:"fielder",left:false).first,
-              let image=FieldRasterArt.image(sample,kit:appearance.opponentUniformColor,skin:0xefbe91,hair:0x263b48,number:0,back:false,style:appearance.opponentUniformStyle) else {return}
-        let texture=SKTexture(image:image);texture.filteringMode = .nearest
-        for (index,placement) in [(0.105,0.295,0.075),(0.637,0.245,0.045),(0.925,0.295,0.075)].enumerated() {
-            let height=size.width*placement.2,frame=sample.frame
-            let node=SKSpriteNode(texture:texture);node.name="backgroundFielder-\(index)"
-            node.anchorPoint=CGPoint(x:frame.pivot[0]/frame.rect[2],y:1-frame.pivot[1]/frame.rect[3])
-            node.size=CGSize(width:height*frame.rect[2]/frame.rect[3],height:height)
-            node.position=point(placement.0,placement.1);node.zPosition=2;addChild(node)
+    private func addBackgroundFielders(appearance: PlayerAppearance) {
+        let motion = FieldSpriteMotion(facing: .south, stage: .ready)
+        guard let sample = FieldRasterArt.samples(motion, kind: "fielder", left: false).first,
+            let image = FieldRasterArt.image(
+                sample, kit: appearance.opponentUniformColor, skin: 0xefbe91, hair: 0x263b48, number: 0, back: false,
+                style: appearance.opponentUniformStyle)
+        else { return }
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .nearest
+        for (index, placement) in [(0.105, 0.295, 0.075), (0.637, 0.245, 0.045), (0.925, 0.295, 0.075)].enumerated() {
+            let height = size.width * placement.2
+            let frame = sample.frame
+            let node = SKSpriteNode(texture: texture)
+            node.name = "backgroundFielder-\(index)"
+            node.anchorPoint = CGPoint(x: frame.pivot[0] / frame.rect[2], y: 1 - frame.pivot[1] / frame.rect[3])
+            node.size = CGSize(width: height * frame.rect[2] / frame.rect[3], height: height)
+            node.position = point(placement.0, placement.1)
+            node.zPosition = 2
+            addChild(node)
         }
     }
-    func arrivalPoint(x:Double,y:Double) -> CGPoint {
-        role == .batter ? point(0.5+(x-0.5)*0.16,0.68+(y-0.5)*0.22):point((hand == "left" ? 0.46 : 0.54)+(x-0.5)*0.22,0.43+(y-0.5)*0.24)
+    /// 조준 좌표를 현재 투타 시점의 화면 도착 좌표로 변환한다.
+    func arrivalPoint(x: Double, y: Double) -> CGPoint {
+        role == .batter
+            ? point(0.5 + (x - 0.5) * 0.16, 0.68 + (y - 0.5) * 0.22)
+            : point((hand == "left" ? 0.46 : 0.54) + (x - 0.5) * 0.22, 0.43 + (y - 0.5) * 0.24)
     }
-    private func markArrival() {receivedBall.position=destination;receivedBall.isHidden=false}
+    private func markArrival() {
+        receivedBall.position = destination
+        receivedBall.isHidden = false
+    }
+    /// 위쪽이 0인 정규화 좌표를 아래쪽이 0인 SpriteKit 좌표로 변환한다.
     private func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * size.width, y: (1 - y) * size.height) }
     private func pitcherPose(_ frame: Int) {
         guard pitcherFrames.indices.contains(frame) else { return }
-        if frame != lastPitcherFrame { pitcher.texture = pitcherFrames[frame]; lastPitcherFrame = frame }
+        if frame != lastPitcherFrame {
+            pitcher.texture = pitcherFrames[frame]
+            lastPitcherFrame = frame
+        }
         let pose = PitcherPresentationPose(role: role, frame: frame, hand: hand)
         let source = PitcherPresentationPose(role: role, frame: frame, hand: "right")
         pitcher.size = CGSize(width: size.width * pose.width, height: size.width * pose.width)
-        // xScale mirrors around the source pivot; mirroring the anchor again would move the planted foot off the rubber.
-        pitcher.anchorPoint = CGPoint(x: source.pivot.x,y: 1-source.pivot.y)
-        pitcher.position = point(pose.foot.x,pose.foot.y)
+        // xScale이 이미 반전하므로 기준점까지 다시 뒤집으면 축발이 마운드를 벗어난다.
+        pitcher.anchorPoint = CGPoint(x: source.pivot.x, y: 1 - source.pivot.y)
+        pitcher.position = point(pose.foot.x, pose.foot.y)
     }
-    // Retain the authored joint poses, but carry the body forward continuously between them.
-    // The ball uses the transformed sprite hand, never a second independent screen coordinate.
+    // 원화의 관절 자세를 유지하면서 몸통 이동을 보간한다. 공은 변환된 손 좌표를 따른다.
     private func pitcherMotion(_ phase: Double) {
         let last = role == .pitcher ? 5.0 : 7.0
         let p = min(last, max(0, phase))
@@ -306,15 +468,20 @@ import SwiftUI
         pitcher.position.y -= travel.y * size.height
     }
     private func showHeldBall() {
-        // Hands together hide the ball inside the glove; show it only after separation.
+        // 양손을 모은 동안 공은 글러브 안에 숨기고 손을 분리한 뒤 표시한다.
         let separated = role == .pitcher && lastPitcherFrame >= 2
         ball.isHidden = !separated
-        if separated { ball.position = displayedHandPoint(); ball.setScale(1) }
+        if separated {
+            ball.position = displayedHandPoint()
+            ball.setScale(1)
+        }
     }
+    /// 반전·크기·자세 이동을 모두 반영한 실제 손 위치에서 공을 출발시킨다.
     private func displayedHandPoint() -> CGPoint {
         let pose = PitcherPresentationPose(role: role, frame: max(0, lastPitcherFrame), hand: "right")
-        let local = CGPoint(x: (pose.hand.x - pitcher.anchorPoint.x) * pitcher.size.width,
-                            y: (1 - pose.hand.y - pitcher.anchorPoint.y) * pitcher.size.height)
+        let local = CGPoint(
+            x: (pose.hand.x - pitcher.anchorPoint.x) * pitcher.size.width,
+            y: (1 - pose.hand.y - pitcher.anchorPoint.y) * pitcher.size.height)
         return pitcher.convert(local, to: self)
     }
     private func batterMotion(_ phase: Double) {
@@ -322,7 +489,7 @@ import SwiftUI
         let frame = p < 0.55 ? 0 : p < 2 ? 1 : p < 2.25 ? 2 : 3
         batterPose(frame)
         if role == .batter && frame == 1 { batter.warpGeometry = BatterPlantMotion.geometry(progress: max(0, p - 1)) }
-        // Load onto the back leg, then plant before contact. Contact itself keeps the barrel anchor.
+        // 뒷다리 준비→앞발 착지 순서로 이동하며 접촉 순간의 배트 기준점은 유지한다.
         let shift: Double = p < 1 ? -0.012 * p : p < 2 ? -0.012 * (2 - p) : 0.012 * (p - 2)
         let direction: Double = role == .pitcher && batterSide == .right ? -1 : 1
         batter.position.x += shift * size.width * direction
@@ -332,95 +499,165 @@ import SwiftUI
         batter.texture = batterFrames[frame]
         batter.warpGeometry = nil
         if role == .pitcher {
-            batter.size = CGSize(width: size.width*0.30,height: size.width*0.30)
-            batter.anchorPoint = CGPoint(x: 0.5,y: 0.04)
+            batter.size = CGSize(width: size.width * 0.30, height: size.width * 0.30)
+            batter.anchorPoint = CGPoint(x: 0.5, y: 0.04)
             batter.xScale = batterSide == .left ? 1 : -1
-            batter.position = point(batterSide == .left ? 0.32 : 0.70,0.565)
+            batter.position = point(batterSide == .left ? 0.32 : 0.70, 0.565)
             return
         }
-        batter.xScale = 1;batter.anchorPoint = CGPoint(x:0.5,y:0.5)
+        batter.xScale = 1
+        batter.anchorPoint = CGPoint(x: 0.5, y: 0.5)
         let feet = [496.0, 494, 503, 469, 471, 471]
         batter.size = CGSize(width: size.width * 0.62, height: size.height * 0.61)
         batter.position = point(0.305, 0.34 + 0.61 * (1 - feet[frame] / 512) + 0.305)
     }
+    /// 화면 이탈·재설정 때 상태와 콜백을 함께 버려 취소된 연출이 완료되지 않게 한다.
     func cancelDelivery() {
         GameSound.shared.stop()
-        contactFlight=nil;fieldHandoff=nil
-        pitchFlight=nil;batterFlight=nil;batFinish=nil;pitchReceipt=nil;contactAt=0
-        preparationPhase=0;pitchWindup=nil;batRecovery=nil
-        removeAllActions(); ball.removeAllActions(); pitcher.removeAllActions(); batter.removeAllActions(); mitt.removeAllActions();lastPitcherFrame = -1
+        contactFlight = nil
+        fieldHandoff = nil
+        pitchFlight = nil
+        batterFlight = nil
+        batFinish = nil
+        pitchReceipt = nil
+        contactAt = 0
+        preparationPhase = 0
+        pitchWindup = nil
+        batRecovery = nil
+        removeAllActions()
+        ball.removeAllActions()
+        pitcher.removeAllActions()
+        batter.removeAllActions()
+        mitt.removeAllActions()
+        lastPitcherFrame = -1
         pitchStage = .idle
-        ball.isHidden = true; receivedBall.isHidden=true; ball.setScale(1); pitcherPose(0); batterPose(0)
+        ball.isHidden = true
+        receivedBall.isHidden = true
+        ball.setScale(1)
+        pitcherPose(0)
+        batterPose(0)
         if catcherFrames.count >= 2 {
-            catcher.texture = catcherFrames[0]; mitt.texture = mittFrames[0]
+            catcher.texture = catcherFrames[0]
+            mitt.texture = mittFrames[0]
             mitt.position = point(hand == "left" ? 0.45 : 0.55, 0.475)
         }
     }
+    /// 릴리스 입력의 준비 자세만 갱신하며 새 판정이나 저장을 실행하지 않는다.
     func preparePitch(phase: Double, reduced: Bool) {
         guard ready, role == .pitcher, pitchStage != .flight else { return }
         if pitchStage == .received { cancelDelivery() }
         pitchStage = .preparing
-        // The release gauge can reverse; a body cannot rewind its stride with it.
+        // 게이지가 되돌아가더라도 투수의 준비 동작은 역재생하지 않는다.
         preparationPhase = max(preparationPhase, min(2.99, max(0, phase) / ManualMatchRules.releaseCenter * 2.99))
-        pitcherMotion(preparationPhase); showHeldBall()
+        pitcherMotion(preparationPhase)
+        showHeldBall()
     }
-    @discardableResult func demonstrate(reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5,
-                                       pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false, matchJudgment: Bool = false, fieldPlay:MatchDetailedPlay? = nil, homeRun:MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil, completion: (@MainActor () -> Void)? = nil, inputTimeline: MatchInputTimeline? = nil) -> Bool {
+    /// 준비된 장면에 투구를 등록한다. 타자 입력 타임라인과 도착 시점을 공유한다.
+    @discardableResult func demonstrate(
+        reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5,
+        pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false,
+        matchJudgment: Bool = false, fieldPlay: MatchDetailedPlay? = nil, homeRun: MatchHomeRun? = nil,
+        onArrival: (@MainActor () -> Void)? = nil, completion: (@MainActor () -> Void)? = nil,
+        inputTimeline: MatchInputTimeline? = nil
+    ) -> Bool {
         guard ready else { return false }
         cancelDelivery()
-        destination = arrivalPoint(x:x,y:y)
+        destination = arrivalPoint(x: x, y: y)
         let releaseFrame = role == .batter ? 4 : 3
         pitcherMotion(Double(releaseFrame))
         let release = displayedHandPoint()
         pitcherPose(0)
         if role == .batter {
-            let timeline=inputTimeline ?? MatchInputTimeline(windup:MatchDelivery.windup,duration:(flightDuration ?? 1.1)/MatchDelivery.contactPhase)
-            contactAt=timeline.contactAt
-            pitchStage = .preparing;ball.position=release;ball.isHidden=true
-            batterFlight=BatterFlight(timeline:timeline,start:release,end:destination,code:pitchCode,reduced:reduceMotion,
-                receipt:DeliveryPresentation.receipt(reduced:reduceMotion,match:matchJudgment),arrival:onArrival,completion:completion)
+            let timeline =
+                inputTimeline
+                ?? MatchInputTimeline(
+                    windup: MatchDelivery.windup, duration: (flightDuration ?? 1.1) / MatchDelivery.contactPhase)
+            contactAt = timeline.contactAt
+            pitchStage = .preparing
+            ball.position = release
+            ball.isHidden = true
+            batterFlight = BatterFlight(
+                timeline: timeline, start: release, end: destination, code: pitchCode, reduced: reduceMotion,
+                receipt: DeliveryPresentation.receipt(reduced: reduceMotion, match: matchJudgment), arrival: onArrival,
+                completion: completion)
             return true
         }
-        let duration=DeliveryPresentation.flight(flightDuration ?? 1.1,reduced:reduceMotion,role:role)
-        contactAt=ProcessInfo.processInfo.systemUptime+MatchDelivery.windup+duration
-        ball.position=displayedHandPoint();ball.isHidden=true
+        let duration = DeliveryPresentation.flight(flightDuration ?? 1.1, reduced: reduceMotion, role: role)
+        contactAt = ProcessInfo.processInfo.systemUptime + MatchDelivery.windup + duration
+        ball.position = displayedHandPoint()
+        ball.isHidden = true
         let launch: (Double) -> Void = { [weak self] now in
             guard let self else { return }
-            self.pitchStage = .flight; self.pitcherMotion(3); self.ball.position = release; self.ball.isHidden = false
+            self.pitchStage = .flight
+            self.pitcherMotion(3)
+            self.ball.position = release
+            self.ball.isHidden = false
             if self.role == .pitcher && !["안타", "홈런", "범타"].contains(outcome ?? "") {
-                if reduceMotion {self.mitt.position=self.destination}
-                else {self.mitt.run(.move(to: self.destination, duration: duration * 0.8))}
+                if reduceMotion {
+                    self.mitt.position = self.destination
+                } else {
+                    self.mitt.run(.move(to: self.destination, duration: duration * 0.8))
+                }
             }
-            // Movement and receipt share elapsed time; an early first SKAction tick cannot shorten a pitch.
-            self.pitchFlight=PitchFlight(start:release,end:self.destination,started:now,
-                duration:duration,code:pitchCode,reduced:reduceMotion,receipt:DeliveryPresentation.receipt(reduced:reduceMotion,match:matchJudgment),outcome:outcome,fieldPlay:fieldPlay,homeRun:homeRun,arrival:onArrival,completion:completion)
+            // 비행과 포구를 같은 경과 시간으로 처리해 첫 프레임이 투구 시간을 줄이지 않게 한다.
+            self.pitchFlight = PitchFlight(
+                start: release, end: self.destination, started: now,
+                duration: duration, code: pitchCode, reduced: reduceMotion,
+                receipt: DeliveryPresentation.receipt(reduced: reduceMotion, match: matchJudgment), outcome: outcome,
+                fieldPlay: fieldPlay, homeRun: homeRun, arrival: onArrival, completion: completion)
         }
-        if preparedRelease && role == .pitcher { launch(ProcessInfo.processInfo.systemUptime) }
-        else { pitchStage = .preparing; pitchWindup = (ProcessInfo.processInfo.systemUptime, launch) }
+        if preparedRelease && role == .pitcher {
+            launch(ProcessInfo.processInfo.systemUptime)
+        } else {
+            pitchStage = .preparing
+            pitchWindup = (ProcessInfo.processInfo.systemUptime, launch)
+        }
         return true
     }
+    /// 공 도착 후 확정 결과에 맞춰 포구 또는 타격 효과를 표시한다.
     private func finishPitch(outcome: String?, reduced: Bool) {
-        pitchStage = .received;markArrival()
+        pitchStage = .received
+        markArrival()
         if !["헛스윙", "파울", "안타", "홈런", "범타"].contains(outcome ?? "") { batterPose(0) }
         let contact = ["안타", "홈런", "범타"].contains(outcome ?? "")
-        if contact || outcome == "파울" {GameSound.shared.contact()} else {GameSound.shared.play(.catchBall)}
+        if contact || outcome == "파울" { GameSound.shared.contact() } else { GameSound.shared.play(.catchBall) }
         if contact {
             ball.run(.sequence([.move(to: point(0.3, 0.15), duration: 0.22), .hide()]))
         } else {
-            ball.isHidden = true; mitt.position = destination
-            catcher.texture = catcherFrames[1]; mitt.texture = mittFrames[1]
-            if !reduced { mitt.run(.sequence([.moveBy(x: 0, y: -2, duration: 0.06), .moveBy(x: 0, y: 2, duration: 0.1)])) }
+            ball.isHidden = true
+            mitt.position = destination
+            catcher.texture = catcherFrames[1]
+            mitt.texture = mittFrames[1]
+            if !reduced {
+                mitt.run(.sequence([.moveBy(x: 0, y: -2, duration: 0.06), .moveBy(x: 0, y: 2, duration: 0.1)]))
+            }
         }
     }
-    private func startContact(_ play:MatchDetailedPlay?,homeRun:MatchHomeRun? = nil,origin:CGPoint,reduced:Bool,arrival:(@MainActor () -> Void)?,completion:(@MainActor () -> Void)?,startedAt:Double? = nil) {
-        ball.removeAllActions();receivedBall.isHidden=true;ball.isHidden=false
-        ball.position=point(origin.x,origin.y)
+    /// 배트 접촉 지점에서 타구 비행을 시작하고 수비 화면으로 넘길 상태를 보관한다.
+    private func startContact(
+        _ play: MatchDetailedPlay?, homeRun: MatchHomeRun? = nil, origin: CGPoint, reduced: Bool,
+        arrival: (@MainActor () -> Void)?, completion: (@MainActor () -> Void)?, startedAt: Double? = nil
+    ) {
+        ball.removeAllActions()
+        receivedBall.isHidden = true
+        ball.isHidden = false
+        ball.position = point(origin.x, origin.y)
         GameSound.shared.contact()
-        contactFlight=ContactFlight(play:play,homeRun:homeRun,startedAt:startedAt ?? ProcessInfo.processInfo.systemUptime,origin:origin,reduced:reduced,arrival:arrival,completion:completion)
+        contactFlight = ContactFlight(
+            play: play, homeRun: homeRun, startedAt: startedAt ?? ProcessInfo.processInfo.systemUptime, origin: origin,
+            reduced: reduced, arrival: arrival, completion: completion)
     }
-    func finishBat(action: String, outcome: String, reduced: Bool, matchJudgment: Bool = false, fieldPlay:MatchDetailedPlay? = nil, homeRun:MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil, completion: @escaping @MainActor () -> Void) {
-        if action != "watch" { batterPose(action == "bunt" ? 4:1) }
-        batFinish=BatFinish(at:max(contactAt,ProcessInfo.processInfo.systemUptime),action:action,outcome:outcome,reduced:reduced,
-            receipt:DeliveryPresentation.receipt(reduced:reduced,match:matchJudgment),play:fieldPlay,homeRun:homeRun,arrival:onArrival,completion:completion)
+    /// 확정 입력의 연출을 공 접촉 시점 이후로 예약한다. 점수 계산은 호출자에서 끝난 상태다.
+    func finishBat(
+        action: String, outcome: String, reduced: Bool, matchJudgment: Bool = false,
+        fieldPlay: MatchDetailedPlay? = nil, homeRun: MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil,
+        completion: @escaping @MainActor () -> Void
+    ) {
+        if action != "watch" { batterPose(action == "bunt" ? 4 : 1) }
+        batFinish = BatFinish(
+            at: max(contactAt, ProcessInfo.processInfo.systemUptime), action: action, outcome: outcome,
+            reduced: reduced,
+            receipt: DeliveryPresentation.receipt(reduced: reduced, match: matchJudgment), play: fieldPlay,
+            homeRun: homeRun, arrival: onArrival, completion: completion)
     }
 }

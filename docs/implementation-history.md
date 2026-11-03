@@ -1,3 +1,11 @@
+## 2026.11.03 · V115 오디오·경기 연출 함수 가독성과 한글 주석
+
+V114의 9개 Swift 파일을 Swift API Design Guidelines·Kodeco Swift Style Guide·Apple 오디오/Dispatch 문서와 대조했다. Kodeco의 Swift5 범위는 가독성 원칙만 적용하고, 기존 Xcode swift-format으로 4칸/120열을 정리했다. 동시성/판정/저장 설계를 새 패턴으로 교체하지 않는다.
+
+BallparkScene.advanceDelivery를 준비·타격 마무리·양시점 비행·타격 확정·인플레이 전달·포구 완료의7함수로 분리했다. 기존 본문/호출 순서를 대조하고 미사용 private textures를 제거했다. 오디오150ms요청 제한·140ms콜 지연·관중0.65는 이름 있는 상수/공통 음량 함수로 정리했다. 좌표 반전·손/축발·캐시/번호·직렬 큐와 콜백 계약을 한글로 설명하고 원화 윤곽 반복문을 for-in으로 정리했다. 수식·수치·음원·V15·고정 보고서·경기 RNG·이어하기/결과1회 유지.
+
+관련 고유 테스트9개(양역할/동작줄이기·반복 프레임·콜백1회/취소 신규1개 포함), 마지막 렌더/콜백2개 재검증, 보안9개 통과. 9파일 서식 경고0, 개인 설정 제외 최종 Release 빌드 성공. 전체 저장소 함수 리뷰·실기기 청취/손맛·장시간/전체VoiceOver는 미실시며 앱 업데이트는 사용자 요청대로 보류했다. 내부 함수 안내 docs/code-readability-v115.md와 qa/versions/2026-11-03/readability-v115에 근거를 보관한다. UI 변경이 없어 새 화면 시안을 만들지 않았다.
+
 ## 2026.11.03 · V114 최신 음원 및 경기 연출 코드 역할별 정리
 
 V113 Strike 발음 구간 복원과 V110 Ball/Out·타격·포구·관중 음원을 그대로 번들에 연결한다. BM/Audio를 GameSound(설정·진동·기존 API), GameAudioCues(콜 대응), GameAudioOutput(직렬 재생 큐), GameSoundPCM(확인음)으로 분리한다. Match/Presentation은 Scene(BallparkScene), Motion(PlayerMotionArt·PitcherPresentationPose·BatterPlantMotion), Stadium(StadiumSceneDress)으로 나눈다. 새 패키지/타깃/의존성 없이 같은 BM 모듈을 유지한다.

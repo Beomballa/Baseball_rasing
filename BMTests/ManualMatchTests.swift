@@ -1482,4 +1482,36 @@ extension ManualMatchTests {
             scene.cancelDelivery(); XCTAssertTrue(ready === batter.texture)
         }
     }
+    /// 단계별 함수로 분리해도 같은 프레임 재호출과 취소가 콜백을 중복 실행하지 않아야 한다.
+    func testV115DeliveryStagesCompleteOnceAndDropCancelledCallbacks() {
+        for role in [PlayerRole.batter, .pitcher] {
+            for reduced in [false, true] {
+                let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+                scene.configure(hand: "right", kit: 1, role: role)
+                var events: [String] = []
+                func startPitch() {
+                    let timeline = MatchInputTimeline(windup: 0.35, duration: 1.4)
+                    XCTAssertTrue(scene.demonstrate(
+                        reduceMotion: reduced, flightDuration: 1.4, preparedRelease: true,
+                        onArrival: { events.append("arrival") },
+                        completion: { events.append("completion") }, inputTimeline: timeline
+                    ))
+                }
+                startPitch()
+                let afterFlight = ProcessInfo.processInfo.systemUptime + 3
+                scene.advanceDelivery(at: afterFlight)
+                XCTAssertEqual(events, ["arrival"])
+                scene.advanceDelivery(at: afterFlight)
+                XCTAssertEqual(events, ["arrival"], "같은 프레임에서는 포구 대기를 건너뛰지 않는다")
+                scene.advanceDelivery(at: afterFlight + 3)
+                scene.advanceDelivery(at: afterFlight + 4)
+                XCTAssertEqual(events, ["arrival", "completion"])
+                startPitch()
+                scene.cancelDelivery()
+                scene.advanceDelivery(at: afterFlight + 10)
+                XCTAssertEqual(events, ["arrival", "completion"], "취소한 투구 콜백은 실행하지 않는다")
+            }
+        }
+    }
+
 }
