@@ -124,7 +124,7 @@ import SwiftUI
             ball.setScale(1.1-(2.4*t/(1+1.4*t))*0.4)
             if t >= 1 {
                 pitchFlight=nil;ball.position=flight.end;pitcherPose(5)
-                if flight.fieldPlay != nil || flight.homeRun != nil || flight.outcome == "헛스윙" {
+                if flight.fieldPlay != nil || flight.homeRun != nil || ["헛스윙", "파울", "안타", "홈런", "범타"].contains(flight.outcome ?? "") {
                     batterPose(2)
                     batRecovery = now
                 }
@@ -401,6 +401,7 @@ import SwiftUI
     }
     private func finishPitch(outcome: String?, reduced: Bool) {
         pitchStage = .received;markArrival()
+        if !["헛스윙", "파울", "안타", "홈런", "범타"].contains(outcome ?? "") { batterPose(0) }
         let contact = ["안타", "홈런", "범타"].contains(outcome ?? "")
         if contact || outcome == "파울" {GameSound.shared.contact()} else {GameSound.shared.play(.catchBall)}
         if contact {

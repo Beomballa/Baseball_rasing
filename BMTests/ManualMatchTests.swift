@@ -1461,3 +1461,25 @@ extension ManualMatchTests {
         }}
     }
 }
+
+
+extension ManualMatchTests {
+    func testV112WatchedPitchSettlesAndFoulKeepsSwingFollowThrough() throws {
+        for outcome in ["스트라이크", "볼", "파울", "헛스윙"] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340)); scene.configure(hand: "right", kit: 1)
+            let batter = try XCTUnwrap(scene.childNode(withName: "animatedBatter") as? SKSpriteNode)
+            let ready = batter.texture
+            XCTAssertTrue(scene.demonstrate(reduceMotion: true, flightDuration: 1, outcome: outcome, preparedRelease: true))
+            let start = ProcessInfo.processInfo.systemUptime
+            scene.advanceDelivery(at: start+0.9); XCTAssertFalse(ready === batter.texture)
+            scene.advanceDelivery(at: start+1.01)
+            if outcome == "볼" || outcome == "스트라이크" { XCTAssertTrue(ready === batter.texture) }
+            else {
+                let contact = batter.texture
+                scene.advanceDelivery(at: start+1.4)
+                XCTAssertFalse(contact === batter.texture); XCTAssertFalse(ready === batter.texture)
+            }
+            scene.cancelDelivery(); XCTAssertTrue(ready === batter.texture)
+        }
+    }
+}
