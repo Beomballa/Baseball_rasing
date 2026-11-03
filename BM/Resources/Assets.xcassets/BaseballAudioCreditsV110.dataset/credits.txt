@@ -26,7 +26,7 @@ https://soundbible.com/504-Baseball-Game-Strike.html
 https://soundbible.com/505-Umpire-Saying-Ball.html
 https://soundbible.com/506-Umpire-Saying-Youre-Out.html
 https://creativecommons.org/licenses/by/3.0/
-각 공개 MP3의 0.16–0.76 / 0.04–0.76 / 0.20–1.12초 발췌. 모노 변환, 음량 정규화, 페이드 적용. 합성 음성이나 특정 KBO·MLB 심판의 모사 음성이 아닙니다.
+V113 스트라이크: 원본 0–0.82초로 앞 발음 구간 복원, RMS 압축(2:1, -24dBFS), 피크 -1.51dBFS, 페이드 적용. 속도·음높이 유지. 볼/아웃은 기존 0.04–0.76 / 0.20–1.12초 발췌와 모노 변환·음량 정규화·페이드 유지. 합성 음성이나 특정 KBO·MLB 심판의 모사 음성이 아닙니다.
 
 CC BY 음원은 제작자·원본·라이선스와 변경 내용을 표시해야 합니다. 해당 녹음에 대한 재이용 권리는 원 라이선스를 따르며 게임 코드·다른 아트의 권리와 구분됩니다. 편집본도 같은 CC BY / CC0 조건으로 별도 공개합니다:
 https://github.com/Beomballa/Baseball_rasing/tree/main/BM/Resources/Assets.xcassets
