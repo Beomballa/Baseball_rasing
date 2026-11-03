@@ -493,6 +493,7 @@ struct CareerGameView: View {
                             if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
                             #endif
                             fieldResolved=true
+                            if let call=UmpireCall.resolvedField(outsAdded:play.outsAdded) {GameSound.shared.announce(call)}
                             if let updated=displaySnapshot.match {
                                 arrivedSnapshot=updated;pulse=MatchPresentation.countPulse(updated.lastManual?.outcome ?? "");pulseAt=Date()
                             }
@@ -518,7 +519,7 @@ struct CareerGameView: View {
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(event.half%2 == 0) == match.isHome,stadium:stadium,
                         scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,
-                        playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{
+                        playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,playsSound:true,onResolved:{
                             #if DEBUG
                             if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
                             #endif

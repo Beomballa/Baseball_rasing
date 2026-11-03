@@ -158,6 +158,10 @@ ART_HASHES.update({'BM/Resources/Assets.xcassets/Club-kbo-0.imageset/Club-kbo-0.
 EXACT_PATHS.update({"BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/Contents.json",
                     "BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/colors.json"})
 
+# V110 licensed baseball recordings; exact bytes and attribution reviewed.
+EXACT_PATHS.update({'BM/Resources/Assets.xcassets/BaseballAudioCreditsV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/UmpireStrikeV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/BaseballContactV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/BaseballCatchV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/UmpireOutV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/UmpireBallV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/BaseballCrowdV110.dataset/Contents.json'})
+ART_HASHES.update({'BM/Resources/Assets.xcassets/UmpireOutV110.dataset/sound.wav': '6503419ac05ac8ee434b0bcbb549f5228b0adc44ff2f7e9f01c40130b4f8134c', 'BM/Resources/Assets.xcassets/BaseballContactV110.dataset/sound.wav': 'bee7c92c7262db4f74cd81a397e056e6634037a29b84669bb5e40ed9eea19804', 'BM/Resources/Assets.xcassets/BaseballCatchV110.dataset/sound.wav': 'ad44c17d9d486b2c075250e20783eb12c6ed79fcda200de316c5017ff0a2c34e', 'BM/Resources/Assets.xcassets/BaseballAudioCreditsV110.dataset/credits.txt': '51a4fc064ecd55a0e70b83221da5141afda288b726a47b41e54ec57d21c9b041', 'BM/Resources/Assets.xcassets/BaseballCrowdV110.dataset/sound.wav': '5ffb19bcc8866f8b2ac93bf28ea3dd6c2f35aeb673c145029f5fdecaa052b9b9', 'BM/Resources/Assets.xcassets/UmpireStrikeV110.dataset/sound.wav': '5eb20b62437dd338e383d4012a99a9ecb8f146fb71420a3890547927dcd9e510', 'BM/Resources/Assets.xcassets/UmpireBallV110.dataset/sound.wav': '3532951ef9af9cf599f5bd00c70b2966639900b14ad04e5a8eca377b5d947fc8'})
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):

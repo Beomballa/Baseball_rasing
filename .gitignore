@@ -483,3 +483,19 @@
 # V102 reviewed school/club presentation colors
 !/BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/Contents.json
 !/BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/colors.json
+
+# V110 individually reviewed licensed recordings and attribution
+!/BM/Resources/Assets.xcassets/BaseballAudioCreditsV110.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/BaseballAudioCreditsV110.dataset/credits.txt
+!/BM/Resources/Assets.xcassets/BaseballCatchV110.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/BaseballCatchV110.dataset/sound.wav
+!/BM/Resources/Assets.xcassets/BaseballContactV110.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/BaseballContactV110.dataset/sound.wav
+!/BM/Resources/Assets.xcassets/BaseballCrowdV110.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/BaseballCrowdV110.dataset/sound.wav
+!/BM/Resources/Assets.xcassets/UmpireBallV110.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/UmpireBallV110.dataset/sound.wav
+!/BM/Resources/Assets.xcassets/UmpireOutV110.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/UmpireOutV110.dataset/sound.wav
+!/BM/Resources/Assets.xcassets/UmpireStrikeV110.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/UmpireStrikeV110.dataset/sound.wav

@@ -846,7 +846,8 @@ extension ManualMatchTests {
                 guard let h=scene.fieldHandoff else {XCTFail("Missing contact handoff");return}
                 XCTAssertGreaterThanOrEqual(h.cutAt-h.startedAt,0.28)
                 XCTAssertTrue(scene.childNode(withName:"receivedBaseball")!.isHidden)
-                let start=role == .batter ? MatchPresentation.batContact(action:"swing"):CGPoint(x:0.54,y:0.43)
+                let arrival=scene.arrivalPoint(x:0.5,y:0.5)
+                let start=role == .batter ? MatchPresentation.batContact(action:"swing"):CGPoint(x:arrival.x/scene.size.width,y:1-arrival.y/scene.size.height)
                 let target=HomeRunPresentation.sourcePoint(event,time:h.cutAt-h.startedAt,origin:start,size:scene.size)
                 XCTAssertEqual(target.x,h.sourcePoint.x,accuracy:0.001);XCTAssertEqual(target.y,h.sourcePoint.y,accuracy:0.001)
             }
@@ -1303,11 +1304,14 @@ extension ManualMatchTests {
             let dress=StadiumSceneDress(stadium:StadiumIdentity(homeTeamID:"ground-\(n)"),size:CGSize(width:400,height:600),camera:.field)
             XCTAssertNil(dress.celebration);XCTAssertEqual(dress.effectNodeCount,0)
             dress.celebrate(.homeRun,reduced:reduced)
+            XCTAssertEqual(dress.floodlightCount,4)
+            XCTAssertEqual(dress.animatedLightCount,reduced ? 0:16)
             XCTAssertEqual(dress.celebrationCount,1);XCTAssertLessThanOrEqual(dress.effectNodeCount,40)
             if reduced {XCTAssertEqual(dress.effectNodeCount,0)}
             dress.celebrate(.homeRun,reduced:reduced);dress.celebrate(.doublePlay,reduced:reduced)
             XCTAssertEqual(dress.celebrationCount,1)
             dress.reduceEffects();XCTAssertEqual(dress.effectNodeCount,0)
+            XCTAssertEqual(dress.animatedLightCount,0)
         }}
     }
 }

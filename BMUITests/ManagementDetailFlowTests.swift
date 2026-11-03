@@ -2,7 +2,7 @@ import XCTest
 
 /// Production screens with in-memory QA players; no installed player store is opened.
 final class ManagementDetailFlowTests: XCTestCase {
-    @MainActor func testV109UmpireSoundSettingsAreReadOnlyAndRespectMasterMute() {
+    @MainActor func testV110RecordedSoundSettingsAreReadOnlyAndRespectMasterMute() {
         continueAfterFailure = false
         let app = XCUIApplication()
         func tapSwitch(_ toggle: XCUIElement) {
@@ -28,7 +28,9 @@ final class ManagementDetailFlowTests: XCTestCase {
             reveal(voice, app)
             let voiceWasOn = voice.value as? String == "1"
             if !voiceWasOn { tapSwitch(voice) }
-            for id in ["previewSound", "previewCatchSound", "previewUmpire-strike", "previewUmpire-ball", "previewUmpire-strikeout", "previewUmpire-walk"] {
+            let volume=app.sliders["settingSoundVolume"]
+            reveal(volume,app);XCTAssertTrue(volume.isEnabled)
+            for id in ["previewSound", "previewCatchSound", "previewCrowdSound", "previewUmpire-strike", "previewUmpire-ball", "previewUmpire-strikeout", "previewUmpire-walk", "previewUmpire-out"] {
                 let button = app.buttons[id]
                 reveal(button, app)
                 XCTAssertTrue(button.isHittable, id)
@@ -36,7 +38,7 @@ final class ManagementDetailFlowTests: XCTestCase {
                 XCTAssertTrue(button.isEnabled)
                 button.tap()
             }
-            capture(app, large ? "v109-audio-large-type" : "v109-audio-standard")
+            capture(app, large ? "v110-audio-large-type" : "v110-audio-standard")
             tapSwitch(voice)
             reveal(app.buttons["previewUmpire-strike"], app)
             XCTAssertFalse(app.buttons["previewUmpire-strike"].isEnabled)

@@ -1050,23 +1050,33 @@ extension CareerMatchTests {
         XCTAssertTrue(school.mark.enumerated().contains {$0.offset%4 == 3 && $0.element > 0})
         XCTAssertNotEqual(school.shirt(x:0.5,y:0.1),school.shirt(x:0.5,y:0.8))
     }
-    func testV104OriginalSoundWavesAreBoundedDistinctAndDeterministic() throws {
-        let waves=GameSoundCue.allCases.map(GameSoundPCM.wave)
-        XCTAssertEqual(Set(waves).count,3)
+    func testV110BundledRecordingsDecodeAndKeepHeadroomAndAttribution() throws {
+        let waves=try GameRecording.allCases.map {try XCTUnwrap($0.data())}
+        XCTAssertEqual(Set(waves).count,6)
         for (index,wave) in waves.enumerated() {
             XCTAssertEqual(wave.prefix(4),Data("RIFF".utf8));XCTAssertEqual(wave.subdata(in:8..<12),Data("WAVE".utf8))
-            XCTAssertTrue((4000...13000).contains(wave.count))
-            XCTAssertEqual(wave,GameSoundPCM.wave(GameSoundCue.allCases[index]))
+            XCTAssertTrue((30000...500000).contains(wave.count))
+            XCTAssertEqual(wave,GameRecording.allCases[index].data())
             let player = try AVAudioPlayer(data: wave)
             XCTAssertEqual(player.numberOfChannels, 1)
-            XCTAssertTrue((0.09...0.30).contains(player.duration))
+            XCTAssertTrue((0.3...4.9).contains(player.duration))
             let samples = stride(from: 44, to: wave.count, by: 2).map { offset in
                 Double(Int16(bitPattern: UInt16(wave[offset]) | UInt16(wave[offset + 1]) << 8)) / 32768
             }
-            XCTAssertLessThan(samples.map(abs).max() ?? 1, 0.6, "Avoid clipped transients")
+            XCTAssertLessThan(samples.map(abs).max() ?? 1, 0.91, "Avoid clipped transients")
             XCTAssertLessThan(abs(samples.last ?? 1), 0.002, "End without a discontinuity")
-            XCTAssertGreaterThan(samples.map(abs).max() ?? 0, 0.1, "Do not ship a silent effect")
+            XCTAssertGreaterThan(samples.map(abs).max() ?? 0, 0.7, "Do not ship a quiet/empty sample")
         }
+        let credits=try XCTUnwrap(SupportInformation.audioLicense())
+        for text in ["CGEffex","keus92","FoolBoyMedia","Mike Koenig","CC BY 3.0","CC BY 4.0","CC0 1.0","soundbible.com","freesound.org"] {XCTAssertTrue(credits.contains(text))}
+        XCTAssertEqual(GameSoundPCM.confirmation(),GameSoundPCM.confirmation())
+        XCTAssertEqual(GameSound.volume(nil),0.9,accuracy:0.001)
+        XCTAssertEqual(GameSound.volume(-1),0);XCTAssertEqual(GameSound.volume(2),1)
+        XCTAssertEqual(GameSound.volume(.nan),0.9,accuracy:0.001)
+        XCTAssertEqual(UmpireCall.strikeout.recording,.out);XCTAssertEqual(UmpireCall.walk.recording,.ball)
+        XCTAssertNil(UmpireCall.resolvedField(outsAdded:0))
+        XCTAssertEqual(UmpireCall.resolvedField(outsAdded:1),.out)
+        XCTAssertEqual(UmpireCall.resolvedField(outsAdded:2),.out)
     }
     func testV109UmpireCallsUseOnlyFinalSavedOutcome() {
         for outcome in ["루킹 스트라이크", "헛스윙"] {

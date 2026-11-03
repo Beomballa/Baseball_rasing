@@ -12,6 +12,10 @@ enum SupportInformation {
         guard let data = NSDataAsset(name: "ManagementPixelLicenseV59", bundle: bundle)?.data else { return nil }
         return String(data: data, encoding: .utf8)
     }
+    static func audioLicense(bundle: Bundle = .main) -> String? {
+        guard let data=NSDataAsset(name:"BaseballAudioCreditsV110",bundle:bundle)?.data else {return nil}
+        return String(data:data,encoding:.utf8)
+    }
 }
 
 enum SupportTopic: String, CaseIterable, Identifiable {
@@ -24,7 +28,7 @@ enum SupportTopic: String, CaseIterable, Identifiable {
         case .refund: "구매·환불 안내"
         case .children: "어린이·보호자 안내"
         case .dataRequests: "문의·자료 관리"
-        case .licenses: "글꼴·라이선스"
+        case .licenses: "글꼴·음원·라이선스"
         }
     }
     var subtitle: String {
@@ -34,7 +38,7 @@ enum SupportTopic: String, CaseIterable, Identifiable {
         case .refund: "Apple의 신청 경로와 처리 절차"
         case .children: "실명 없이 플레이하고 문의는 신중하게"
         case .dataRequests: "문의에 필요한 정보와 삭제 요청 구분"
-        case .licenses: "NeoDunggeunmo · SIL OFL 1.1 원문"
+        case .licenses: "글꼴 원문 · 경기 녹음 출처와 이용 조건"
         }
     }
     var sections: [(title: String, text: String)] {
@@ -139,6 +143,11 @@ private struct SupportTopicView: View {
                     SupportExternalLink(title: "Apple TestFlight 개인정보 안내", url: SupportInformation.testFlightPrivacyURL, identifier: "supportTestFlightPrivacy")
                 }
                 if topic == .licenses {
+                    ManagementPanel("경기 음원 · 출처와 편집",surface:.paper) {
+                        Text(SupportInformation.audioLicense() ?? "음원 출처 파일을 읽지 못했습니다.")
+                            .managementFont(.body).textSelection(.enabled)
+                            .fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("supportAudioLicense")
+                    }
                     ManagementPanel("SIL OPEN FONT LICENSE · 원문", surface: .paper) {
                         Text(license ?? "라이선스 파일을 읽지 못했습니다. 앱 버전과 함께 문의해 주세요.")
                             .managementFont(.helper).textSelection(.enabled)

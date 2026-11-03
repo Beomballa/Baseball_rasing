@@ -1,13 +1,31 @@
 import AVFoundation
 import UIKit
 
-enum GameSoundCue: CaseIterable { case contact, catchBall, confirm }
+enum GameSoundCue: CaseIterable {
+    case contact, catchBall, confirm, crowd
+    var recording: GameRecording? {
+        switch self {case .contact: .contact; case .catchBall: .catchBall; case .crowd: .crowd; case .confirm: nil}
+    }
+}
+
+enum GameRecording: String, CaseIterable {
+    case contact = "BaseballContactV110", catchBall = "BaseballCatchV110", crowd = "BaseballCrowdV110"
+    case strike = "UmpireStrikeV110", ball = "UmpireBallV110", out = "UmpireOutV110"
+    func data(bundle: Bundle = .main) -> Data? { NSDataAsset(name: rawValue, bundle: bundle)?.data }
+}
 
 enum UmpireCall: String, CaseIterable {
     case strike = "스트라이크"
     case ball = "볼"
     case strikeout = "삼진"
     case walk = "볼넷"
+    case out = "타구 아웃"
+
+    // The recordings say Strike / Ball / You're out. Detailed outcomes remain Korean captions.
+    var recording: GameRecording {
+        switch self {case .strike: .strike; case .ball, .walk: .ball; case .strikeout, .out: .out}
+    }
+    static func resolvedField(outsAdded: Int) -> Self? { outsAdded > 0 ? .out : nil }
 
     init?(outcome: String) {
         switch outcome {
@@ -20,30 +38,16 @@ enum UmpireCall: String, CaseIterable {
     }
 }
 
-/// Original synthesized effects: no downloaded recording, network, or gameplay RNG.
+/// Only the non-baseball UI confirmation remains synthesized.
 enum GameSoundPCM {
     static let sampleRate = 22_050
-    static func wave(_ cue: GameSoundCue) -> Data {
-        let duration: Double = cue == .confirm ? 0.10 : cue == .contact ? 0.28 : 0.24
+    static func confirmation() -> Data {
+        let duration: Double = 0.10
         let count=Int(Double(sampleRate)*duration)
-        var samples=Data(), noise: UInt32=0xBACE104
+        var samples=Data()
         for i in 0..<count {
             let t=Double(i)/Double(sampleRate), p=Double(i)/Double(count)
-            noise=noise &* 1664525 &+ 1013904223
-            let n=Double(noise & 0xffff)/32767.5-1
-            let wave: Double
-            switch cue {
-            case .contact:
-                let crack = n * 0.72 * exp(-t * 310)
-                let wood = (sin(t * 2 * .pi * 880) * 0.22 + sin(t * 2 * .pi * 1740) * 0.16) * exp(-t * 48)
-                let body = sin(t * 2 * .pi * 210) * 0.23 * exp(-t * 30)
-                wave = (crack + wood + body) * min(1, t * 8000) * (1 - p)
-            case .catchBall:
-                let thump = sin(2 * .pi * (180 * t - 140 * t * t)) * 0.62 * exp(-t * 34)
-                let leather = n * 0.32 * exp(-t * 78)
-                wave = (thump + leather) * min(1, t * 4000) * (1 - p)
-            case .confirm: wave=sin(t*2*Double.pi*(p < 0.5 ? 660:880))*sin(p*Double.pi)*0.3
-            }
+            let wave=sin(t*2*Double.pi*(p < 0.5 ? 660:880))*sin(p*Double.pi)*0.3
             var value=Int16(max(-32767,min(32767,Int(wave*16000)))).littleEndian
             withUnsafeBytes(of:&value) { samples.append(contentsOf:$0) }
         }
@@ -59,10 +63,10 @@ enum GameSoundPCM {
 @MainActor final class GameSound {
     static let shared = GameSound()
     private var players: [GameSoundCue: AVAudioPlayer] = [:]
-    private let speech = AVSpeechSynthesizer()
+    private var voices: [GameRecording: AVAudioPlayer] = [:]
+    private let impact = UIImpactFeedbackGenerator(style: .heavy)
     private var observers: [NSObjectProtocol] = []
     private init() {
-        speech.usesApplicationAudioSession = true
         for name in [UIApplication.willResignActiveNotification, AVAudioSession.interruptionNotification,
                      UIAccessibility.voiceOverStatusDidChangeNotification] {
             observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
@@ -73,14 +77,23 @@ enum GameSoundPCM {
     func prepare() {
         guard players.isEmpty else { return }
         for cue in GameSoundCue.allCases {
-            if let player=try? AVAudioPlayer(data:GameSoundPCM.wave(cue)) {player.volume=0.45;player.prepareToPlay();players[cue]=player}
+            let data = cue == .confirm ? GameSoundPCM.confirmation() : cue.recording?.data()
+            if let data, let player=try? AVAudioPlayer(data:data) {player.prepareToPlay();players[cue]=player}
         }
+        for recording in [GameRecording.strike, .ball, .out] {
+            if let data=recording.data(),let player=try? AVAudioPlayer(data:data) {player.prepareToPlay();voices[recording]=player}
+        }
+        impact.prepare()
     }
     private var canPlay: Bool {
-        (UserDefaults.standard.object(forKey: "bm-sound-enabled") as? Bool ?? true)
-            && UIApplication.shared.applicationState == .active
-            && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+        (UserDefaults.standard.object(forKey: "bm-sound-enabled") as? Bool ?? true) && active
     }
+    private var active: Bool {UIApplication.shared.applicationState == .active && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil}
+    static func volume(_ stored: Double?) -> Float {
+        guard let stored,stored.isFinite else {return 0.9}
+        return Float(max(0,min(1,stored)))
+    }
+    private var volume: Float {Self.volume(UserDefaults.standard.object(forKey:"bm-sound-volume") as? Double)}
     private func configureSession() -> Bool {
         // Voice and effects share the ambient session, including the hardware silent switch.
         do {
@@ -94,7 +107,18 @@ enum GameSoundPCM {
         guard canPlay else { return }
         prepare()
         guard configureSession() else { return }
+        players[cue]?.volume=volume * (cue == .crowd ? 0.65 : 1)
         players[cue]?.currentTime=0;players[cue]?.play()
+    }
+    func contact() {
+        if active,UserDefaults.standard.object(forKey:"bm-haptics-enabled") as? Bool ?? true {
+            impact.impactOccurred(intensity:0.9);impact.prepare()
+        }
+        play(.contact)
+    }
+    func updateVolume() {
+        for (cue,player) in players {player.volume=volume * (cue == .crowd ? 0.65 : 1)}
+        for player in voices.values {player.volume=volume}
     }
     func announce(outcome: String) {
         guard let call = UmpireCall(outcome: outcome) else { return }
@@ -104,17 +128,13 @@ enum GameSoundPCM {
         // Do not queue an old call behind the next pitch or compete with VoiceOver.
         stopVoice()
         guard canPlay, UserDefaults.standard.object(forKey: "bm-umpire-voice-enabled") as? Bool ?? true,
-              !UIAccessibility.isVoiceOverRunning,
-              let voice = AVSpeechSynthesisVoice(language: "ko-KR"), configureSession() else { return }
-        let utterance = AVSpeechUtterance(string: call.rawValue)
-        utterance.voice = voice
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
-        utterance.pitchMultiplier = 0.9
-        utterance.volume = 0.85
-        utterance.preUtteranceDelay = 0.18
-        speech.speak(utterance)
+              !UIAccessibility.isVoiceOverRunning, configureSession() else { return }
+        prepare()
+        guard let player=voices[call.recording] else {return}
+        player.volume=volume;player.currentTime=0
+        player.play(atTime:player.deviceCurrentTime+0.14)
     }
-    func stopVoice() { speech.stopSpeaking(at: .immediate) }
+    func stopVoice() { for player in voices.values {player.stop();player.currentTime=0} }
     func stop() {
         stopVoice()
         for player in players.values { player.stop();player.currentTime=0 }

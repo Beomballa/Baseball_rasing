@@ -2662,7 +2662,8 @@ extension FieldTrainingTests {
                 let view=SKView(frame:CGRect(x:0,y:0,width:400,height:600));controller.view=view;view.presentScene(scene)
                 let result=try XCTUnwrap(scene.childNode(withName:"//finalPlayResult"))
                 let dress=try XCTUnwrap(scene.childNode(withName:"//stadiumDress-*") as? StadiumSceneDress)
-                scene.display(time:replay.duration-0.001,finished:false);XCTAssertTrue(result.isHidden);XCTAssertNil(dress.celebration)
+                scene.display(time:replay.duration-0.001,finished:false);XCTAssertTrue(result.isHidden)
+                if case .homeRun=replay {XCTAssertEqual(dress.celebration,.homeRun)} else {XCTAssertNil(dress.celebration)}
                 scene.setFinished(true);XCTAssertFalse(result.isHidden);XCTAssertEqual(dress.celebrationCount,1)
                 scene.setFinished(true);XCTAssertEqual(dress.celebrationCount,1)
                 try await Task.sleep(for:.seconds(0.35))
@@ -2736,5 +2737,34 @@ extension FieldTrainingTests {
             view.presentScene(nil)
         }
         XCTAssertEqual(play, try JSONDecoder().decode(MatchDetailedPlay.self, from: original))
+    }
+}
+
+extension FieldTrainingTests {
+    func testV110HomeRunFeedbackWaitsForFenceAndDoesNotReplayFromStillFrames() throws {
+        for pitcher in [false,true] {for reduced in [false,true] {
+            let event=try XCTUnwrap(MatchReplayFixture.make(pitcher:pitcher).last?.homeRun)
+            let encoder=JSONEncoder();encoder.outputFormatting = [.sortedKeys]
+            let original=try encoder.encode(event)
+            let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:"left",ownTeamFielding:pitcher)
+            let scene=InplayFieldScene(replay:.homeRun(event),sprites:sprites,prepared:FieldRasterArt.Prepared(images:[:]),scoreText:"H 0 : 0 A")
+            var calls=0;scene.onHomeRunFenceCrossed={calls+=1}
+            scene.setEffectsReduced(reduced)
+            scene.display(time:event.duration,finished:true)
+            scene.emitHomeRunFeedbackIfNeeded(time:event.duration)
+            XCTAssertEqual(calls,0,"Static result must be silent")
+            scene.setClock(start:1,handoff:nil,reduced:false)
+            scene.setPreviewTime(event.duration)
+            scene.emitHomeRunFeedbackIfNeeded(time:event.duration)
+            XCTAssertEqual(calls,0,"Manual preview must be silent")
+            scene.setPreviewTime(nil)
+            scene.emitHomeRunFeedbackIfNeeded(time:event.flight-0.001)
+            XCTAssertEqual(calls,0)
+            scene.emitHomeRunFeedbackIfNeeded(time:event.flight)
+            scene.emitHomeRunFeedbackIfNeeded(time:event.flight+0.1)
+            scene.setFinished(true);scene.emitHomeRunFeedbackIfNeeded(time:event.duration)
+            XCTAssertEqual(calls,1,"Repeated frames and final result cannot repeat the cheer")
+            XCTAssertEqual(try encoder.encode(event),original)
+        }}
     }
 }

@@ -1269,10 +1269,11 @@ struct DetailedFieldReplayBoard:View {
     var onResolved:@MainActor () -> Void = {}
     let complete:@MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var systemReduced
+    @Environment(\.accessibilityDimFlashingLights) private var dimFlashingLights
     @Environment(\.dynamicTypeSize) private var typeSize
     private var reduced:Bool {playbackMode.reducesMovement(system:systemReduced)}
     private var replay:InplayReplay {.field(play)}
-    private var effectsReduced:Bool {reduceMotionOverride ?? (systemReduced || reduced)}
+    private var effectsReduced:Bool {dimFlashingLights || (reduceMotionOverride ?? (systemReduced || reduced))}
     @State private var scene:InplayFieldScene?
     @State private var prepared:FieldRasterArt.Prepared?
     @State private var preparationDelay=0.0
@@ -1671,12 +1672,14 @@ struct HomeRunReplayBoard:View {
     var reduceMotionOverride:Bool?=nil
     var playbackMode:FieldPlaybackMode = .system
     var preparesMotion=false
+    var playsSound=false
     var onResolved:@MainActor () -> Void = {}
     var complete:@MainActor () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var systemReduced
+    @Environment(\.accessibilityDimFlashingLights) private var dimFlashingLights
     private var reduced:Bool {playbackMode.reducesMovement(system:systemReduced)}
     private var replay:InplayReplay {.homeRun(event)}
-    private var effectsReduced:Bool {reduceMotionOverride ?? (systemReduced || reduced)}
+    private var effectsReduced:Bool {dimFlashingLights || (reduceMotionOverride ?? (systemReduced || reduced))}
     @State private var scene:InplayFieldScene?
     @State private var prepared:FieldRasterArt.Prepared?
     @State private var preparationDelay=0.0
@@ -1719,6 +1722,9 @@ struct HomeRunReplayBoard:View {
             #endif
             if usesSpriteKit {
                 let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText,stadium:stadium)
+                if playsSound,animated,previewTime == nil {
+                    next.onHomeRunFenceCrossed={GameSound.shared.play(.crowd)}
+                }
                 #if DEBUG
                 MatchRenderMetrics.mark("sceneCreated")
                 #endif
@@ -1752,6 +1758,7 @@ struct HomeRunReplayBoard:View {
             do {try await Task.sleep(for:.seconds(DeliveryPresentation.receipt(reduced:effectsReduced,match:true)))} catch {return}
             if !Task.isCancelled {complete()}
         }
+        .onDisappear {if playsSound {GameSound.shared.stop()}}
     }
     @ViewBuilder private func frame(now:Double) -> some View {
         let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:playbackHandoff,now:now)
@@ -2001,6 +2008,8 @@ struct InplayStartupReadiness {
     private var actors:[ActorNode]=[]
     private var textures:[String:SKTexture]=[:]
     private var started=0.0,handoff:FieldContactHandoff?
+    var onHomeRunFenceCrossed: (@MainActor () -> Void)?
+    private var fenceSignaled=false
     private var reduced=false,effectsReduced=false,finished=false
     private var previewTime:Double?
     private var startup=InplayStartupReadiness()
@@ -2134,11 +2143,17 @@ struct InplayStartupReadiness {
         let now=ProcessInfo.processInfo.systemUptime
         let elapsed=FieldReplayPresentation.elapsed(start:started,handoff:handoff,now:now)
         display(time:replay.time(elapsed:elapsed,reduced:reduced),finished:false)
+        emitHomeRunFeedbackIfNeeded(time:displayedTime)
         if let handoff,canvasFrame.width>0,canvasFrame.height>0 {
             let point=replay.ballPoint(time:max(0,handoff.cutAt-handoff.startedAt),size:canvasFrame.size,leftIndex:leftIndex)
             let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:point,canvas:canvasFrame,now:now,reduced:effectsReduced)
             content.position=CGPoint(x:offset.x*size.width/canvasFrame.width,y:-offset.y*size.height/canvasFrame.height)
         }
+    }
+    func emitHomeRunFeedbackIfNeeded(time:Double) {
+        guard started>0,previewTime == nil,!finished,!fenceSignaled,
+              case .homeRun(let event)=replay,time>=event.flight else {return}
+        fenceSignaled=true;onHomeRunFenceCrossed?()
     }
     private var leftIndex:Int? {
         guard case .field(let play)=replay,sprites.throwingHand == "left",sprites.ownTeamFielding ?? !play.ownBatter else {return nil}
@@ -2161,6 +2176,7 @@ struct InplayStartupReadiness {
             target.isHidden=true;ballShadow.isHidden=true
             let diameter=max(6,size.width*0.016);ball.size=CGSize(width:diameter,height:diameter)
             ballVisible=time<=event.flight;trailEnd=event.flight
+            if time>=event.flight {stadiumDress?.celebrate(.homeRun,reduced:effectsReduced)}
         }
         ball.isHidden = !ballVisible;ball.position=convertPoint(replay.ballPoint(time:time,size:size,leftIndex:leftIndex))
         for (index,node) in trail.enumerated() {

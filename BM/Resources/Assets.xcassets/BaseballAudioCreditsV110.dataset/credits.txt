@@ -1,0 +1,33 @@
+경기 녹음 음원 · V110
+
+방송 중계 음원을 추출하지 않았습니다. 아래 공개 배포 녹음을 편집해 오프라인으로 재생합니다. 제작자나 리그가 이 게임을 후원한다는 의미가 아닙니다.
+
+목재 배트: Hitting baseball w. wooden bat.wav
+CGEffex · Freesound · CC BY 4.0
+https://freesound.org/people/CGEffex/sounds/93136/
+https://creativecommons.org/licenses/by/4.0/
+공개 HQ 미리듣기 중 4.82–5.50초의 타격 1회 발췌. 모노 변환, 앞 무음/DC 제거, 음량 정규화, 끝 페이드 적용.
+
+글러브: Baseball Into Glove.aif
+keus92 · Freesound · CC0 1.0
+https://freesound.org/people/keus92/sounds/432502/
+https://creativecommons.org/publicdomain/zero/1.0/
+공개 HQ 미리듣기 중 1.40–1.95초 발췌. 모노 변환, 앞 무음/DC 제거, 음량 정규화, 끝 페이드 적용. 특정 프로 포수의 녹음은 아닙니다.
+
+관중: Crowd Cheer
+FoolBoyMedia · Freesound · CC0 1.0
+https://freesound.org/people/FoolBoyMedia/sounds/397434/
+https://creativecommons.org/publicdomain/zero/1.0/
+공개 HQ 미리듣기 중 0–4.8초 발췌. 모노 변환, 음량 정규화, 페이드 적용. 원본은 스포츠 경기 환호이며 특정 야구장 녹음으로 표시하지 않습니다.
+
+심판: Baseball Game Strike / Umpire Saying Ball / Umpire Saying Youre Out
+Mike Koenig · SoundBible · CC BY 3.0
+https://soundbible.com/504-Baseball-Game-Strike.html
+https://soundbible.com/505-Umpire-Saying-Ball.html
+https://soundbible.com/506-Umpire-Saying-Youre-Out.html
+https://creativecommons.org/licenses/by/3.0/
+각 공개 MP3의 0.16–0.76 / 0.04–0.76 / 0.20–1.12초 발췌. 모노 변환, 음량 정규화, 페이드 적용. 합성 음성이나 특정 KBO·MLB 심판의 모사 음성이 아닙니다.
+
+CC BY 음원은 제작자·원본·라이선스와 변경 내용을 표시해야 합니다. 해당 녹음에 대한 재이용 권리는 원 라이선스를 따르며 게임 코드·다른 아트의 권리와 구분됩니다. 편집본도 같은 CC BY / CC0 조건으로 별도 공개합니다:
+https://github.com/Beomballa/Baseball_rasing/tree/main/BM/Resources/Assets.xcassets
+확인 버튼음만 게임의 원본 합성음입니다.

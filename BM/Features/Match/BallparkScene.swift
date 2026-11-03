@@ -135,7 +135,8 @@ import SwiftUI
                 }
             } else {
                 pitchStage = .received;markArrival()
-                GameSound.shared.play(["안타", "홈런", "범타"].contains(finish.outcome) ? .contact:.catchBall)
+                if ["안타", "홈런", "범타", "파울"].contains(finish.outcome) {GameSound.shared.contact()}
+                else {GameSound.shared.play(.catchBall)}
                 if ["안타", "홈런", "범타"].contains(finish.outcome) {
                     ball.removeAllActions();receivedBall.isHidden=true
                     let barrel=MatchPresentation.batContact(action:finish.action)
@@ -288,7 +289,7 @@ import SwiftUI
         batter.position = point(0.305, 0.34 + 0.61 * (1 - feet[frame] / 512) + 0.305)
     }
     func cancelDelivery() {
-        GameSound.shared.stopVoice()
+        GameSound.shared.stop()
         contactFlight=nil;fieldHandoff=nil
         pitchFlight=nil;batterFlight=nil;batFinish=nil;pitchReceipt=nil;contactAt=0
         removeAllActions(); ball.removeAllActions(); pitcher.removeAllActions(); batter.removeAllActions(); mitt.removeAllActions();lastPitcherFrame = -1
@@ -358,7 +359,7 @@ import SwiftUI
     private func finishPitch(outcome: String?, reduced: Bool) {
         pitchStage = .received;markArrival()
         let contact = ["안타", "홈런", "범타"].contains(outcome ?? "")
-        GameSound.shared.play(contact ? .contact:.catchBall)
+        if contact || outcome == "파울" {GameSound.shared.contact()} else {GameSound.shared.play(.catchBall)}
         if contact {
             ball.run(.sequence([.move(to: point(0.3, 0.15), duration: 0.22), .hide()]))
         } else {
@@ -370,7 +371,7 @@ import SwiftUI
     private func startContact(_ play:MatchDetailedPlay?,homeRun:MatchHomeRun? = nil,origin:CGPoint,reduced:Bool,arrival:(@MainActor () -> Void)?,completion:(@MainActor () -> Void)?,startedAt:Double? = nil) {
         ball.removeAllActions();receivedBall.isHidden=true;ball.isHidden=false
         ball.position=point(origin.x,origin.y)
-        GameSound.shared.play(.contact)
+        GameSound.shared.contact()
         contactFlight=ContactFlight(play:play,homeRun:homeRun,startedAt:startedAt ?? ProcessInfo.processInfo.systemUptime,origin:origin,reduced:reduced,arrival:arrival,completion:completion)
     }
     func finishBat(action: String, outcome: String, reduced: Bool, matchJudgment: Bool = false, fieldPlay:MatchDetailedPlay? = nil, homeRun:MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil, completion: @escaping @MainActor () -> Void) {
@@ -416,9 +417,13 @@ struct PitcherPresentationPose {
     let fieldSize: CGSize
     private let effects = SKNode()
     private var lamps: [SKSpriteNode] = []
+    private var floodlights: [SKNode] = []
+    private let homeRunSign = SKNode()
     private(set) var celebration: Celebration?
     private(set) var celebrationCount = 0
     var effectNodeCount: Int { effects.children.count }
+    var floodlightCount: Int {floodlights.count}
+    var animatedLightCount: Int {(lamps.map {$0 as SKNode}+floodlights).filter {$0.hasActions()}.count}
     init(stadium: StadiumIdentity, size: CGSize, camera: Camera) {
         self.stadium = stadium;fieldSize = size
         super.init();name = "stadiumDress-" + stadium.theme.title
@@ -440,18 +445,43 @@ struct PitcherPresentationPose {
             light.position = CGPoint(x:size.width*(0.12+Double(i)*0.069),y:size.height*(1-(camera == .field ? 0.19:0.205)))
             light.alpha = 0.48;lamps.append(light);addChild(light)
         }
+        if camera == .field {
+            for i in 0..<4 {
+                let bank=SKNode()
+                bank.position=CGPoint(x:size.width*(i.isMultiple(of:2) ? 0.08:0.92),y:size.height*(i<2 ? 0.95:0.76))
+                let frame=SKSpriteNode(color:UIColor(Color(hex:stadium.theme.panel)),size:CGSize(width:32,height:17));bank.addChild(frame)
+                for cell in 0..<8 {
+                    let bulb=SKSpriteNode(color:UIColor(GameTheme.paper),size:CGSize(width:5,height:5))
+                    bulb.position=CGPoint(x:CGFloat(cell%4)*7-10.5,y:CGFloat(cell/4)*7-3.5);bank.addChild(bulb)
+                }
+                bank.alpha=0.55;floodlights.append(bank);addChild(bank)
+            }
+            let plate=SKSpriteNode(color:UIColor(Color(hex:stadium.theme.panel)),size:CGSize(width:size.width*0.52,height:28))
+            let text=SKLabelNode(fontNamed:"Menlo-Bold");text.text="HOME RUN";text.fontSize=18
+            text.fontColor=UIColor(GameTheme.gold);text.verticalAlignmentMode = .center
+            homeRunSign.addChild(plate);homeRunSign.addChild(text)
+            homeRunSign.position=CGPoint(x:size.width*0.5,y:size.height*0.875);homeRunSign.isHidden=true;addChild(homeRunSign)
+        }
         effects.zPosition = 2;addChild(effects)
     }
     required init?(coder:NSCoder) {fatalError("Storyboard initialization is not used")}
     func reduceEffects() {
         effects.removeAllChildren()
         for light in lamps {light.removeAllActions();light.alpha = celebration == nil ? 0.48:0.8}
+        for bank in floodlights {bank.removeAllActions();bank.alpha=0.8}
     }
     func celebrate(_ kind:Celebration,reduced:Bool) {
         guard celebration == nil else {return}
         celebration = kind;celebrationCount += 1
+        homeRunSign.isHidden = kind != .homeRun
         guard !reduced else {reduceEffects();return}
         let delay = Double(stadium.variation)*0.08
+        // Two slow local light-bank sweeps, never a full-screen blackout or strobe.
+        for (i,bank) in floodlights.enumerated() {
+            bank.run(.sequence([.wait(forDuration:Double(i)*0.18+delay),.repeat(.sequence([
+                .fadeAlpha(to:0.18,duration:0.28),.fadeAlpha(to:1,duration:0.35),.wait(forDuration:0.6)
+            ]),count:2),.fadeAlpha(to:0.8,duration:0.25)]))
+        }
         for (i,light) in lamps.enumerated() {
             let at = Double(stadium.theme == .brick ? i:11-i)*0.04+delay
             light.run(.sequence([.wait(forDuration:at),.fadeAlpha(to:1,duration:0.18),.wait(forDuration:0.35),.fadeAlpha(to:0.65,duration:0.35)]))

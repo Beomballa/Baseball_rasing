@@ -584,6 +584,7 @@ struct SaveProtectionView: View {
     @AppStorage("bm-haptics-enabled") private var haptics = true
     @AppStorage("bm-sound-enabled") private var sound = true
     @AppStorage("bm-umpire-voice-enabled") private var umpireVoice = true
+    @AppStorage("bm-sound-volume") private var soundVolume = 0.9
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.dynamicTypeSize) private var audioTypeSize
     @State private var document: SaveBackupDocument?
@@ -601,10 +602,15 @@ struct SaveProtectionView: View {
                 VStack(spacing: 16) {
                     ManagementFileHeader(eyebrow: "LOCAL SAVE", title: "이 기기의 커리어 보관", note: "내보내기 → 파일 검증 → 전체 복원 확인")
                     ManagementPanel("기기 설정") {
-                        Toggle("훈련 햅틱", isOn: $haptics).accessibilityIdentifier("settingHaptics")
+                        Toggle("경기·훈련 진동", isOn: $haptics).accessibilityIdentifier("settingHaptics")
                         Toggle("경기 소리", isOn: $sound).accessibilityIdentifier("settingSound")
                             .onChange(of:sound) { _, enabled in if enabled {GameSound.shared.play(.confirm)} else {GameSound.shared.stop()} }
-                        Toggle("심판 음성 · 한국어", isOn: $umpireVoice).disabled(!sound)
+                        Text("소리 크기 · \(Int(GameSound.volume(soundVolume)*100))%").managementFont(.label)
+                        Slider(value:$soundVolume,in:0...1,step:0.05)
+                            .accessibilityLabel("경기 소리 크기").accessibilityValue("\(Int(GameSound.volume(soundVolume)*100))퍼센트")
+                            .accessibilityIdentifier("settingSoundVolume").disabled(!sound)
+                            .onChange(of:soundVolume) {_,_ in GameSound.shared.updateVolume()}
+                        Toggle("심판 음성 · 영어 녹음", isOn: $umpireVoice).disabled(!sound)
                             .accessibilityIdentifier("settingUmpireVoice")
                             .onChange(of: umpireVoice) { _, enabled in if !enabled {GameSound.shared.stopVoice()} }
                         Button("타격음 들어보기") {GameSound.shared.play(.contact)}
@@ -613,6 +619,9 @@ struct SaveProtectionView: View {
                         Button("포구음 들어보기") {GameSound.shared.play(.catchBall)}
                             .buttonStyle(ManagementButtonStyle(variant: .secondary)).disabled(!sound)
                             .accessibilityIdentifier("previewCatchSound")
+                        Button("홈런 환호 들어보기") {GameSound.shared.play(.crowd)}
+                            .buttonStyle(ManagementButtonStyle(variant:.secondary)).disabled(!sound)
+                            .accessibilityIdentifier("previewCrowdSound")
                         Text("심판 판정 들어보기").managementFont(.label)
                         LazyVGrid(columns: audioTypeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 130))], spacing: 8) {
                             ForEach(UmpireCall.allCases, id: \.rawValue) { call in
@@ -622,8 +631,8 @@ struct SaveProtectionView: View {
                                     .accessibilityIdentifier("previewUmpire-\(call)")
                             }
                         }.disabled(!sound || !umpireVoice || voiceOver)
-                        Text("iPhone 무음 설정을 따릅니다. 심판은 기기의 한국어 합성 음성으로 포구 후 판정을 읽습니다. 한국어 음성을 사용할 수 없거나 VoiceOver가 켜져 있으면 화면 판정으로 안내합니다.").managementFont(.body)
-                        Text("타격·포구는 합성 효과음입니다. 배경음은 준비 중입니다.").managementFont(.body)
+                        Text("iPhone 무음·기기 음량을 따릅니다. 진동은 소리와 별도로 설정합니다. VoiceOver 사용 중에는 심판 음성을 끄고 한국어 화면 판정으로 안내합니다.").managementFont(.body)
+                        Text("Strike · Ball · You're out 녹음입니다. 볼넷은 Ball, 삼진·땅볼·뜬공 아웃은 Out 콜과 한국어 판정으로 구분합니다. 목재 배트·글러브·관중 녹음의 출처는 고객지원의 음원·라이선스에서 확인할 수 있습니다.").managementFont(.body)
                     }
                     ManagementPanel("이용 안내·고객지원") {
                         Text("개인정보·기기 저장, 구매·환불과 글꼴 라이선스를 확인할 수 있습니다. 문의 창구와 정식 정책은 준비 중입니다.").managementFont(.body)
