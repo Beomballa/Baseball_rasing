@@ -1050,6 +1050,25 @@ extension CareerMatchTests {
         XCTAssertTrue(school.mark.enumerated().contains {$0.offset%4 == 3 && $0.element > 0})
         XCTAssertNotEqual(school.shirt(x:0.5,y:0.1),school.shirt(x:0.5,y:0.8))
     }
+    func testV111BusyAudioQueueNeverBlocksGameThread() async throws {
+        let queue = DispatchQueue(label: "test.audio.busy")
+        let gate = DispatchSemaphore(value: 0)
+        queue.async { _ = gate.wait(timeout: .now() + 2) }
+        let output = GameAudioOutput(queue: queue)
+        let start = ProcessInfo.processInfo.systemUptime
+        output.prepare()
+        output.play(.catchBall, volume: 0)
+        output.announce(.strike, volume: 0)
+        output.updateVolume(0)
+        output.stopVoice()
+        output.stop(invalidateSession: true)
+        let elapsed = ProcessInfo.processInfo.systemUptime - start
+        gate.signal()
+        XCTAssertLessThan(elapsed, 0.05, "Audio backend congestion must not hold the game thread")
+        print("V111 audio enqueue elapsed: \(elapsed * 1000) ms")
+        await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
+    }
+
     func testV110BundledRecordingsDecodeAndKeepHeadroomAndAttribution() throws {
         let waves=try GameRecording.allCases.map {try XCTUnwrap($0.data())}
         XCTAssertEqual(Set(waves).count,6)

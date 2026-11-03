@@ -60,83 +60,131 @@ enum GameSoundPCM {
     }
 }
 
-@MainActor final class GameSound {
-    static let shared = GameSound()
+/// All AVFoundation work is confined to this queue, never the SpriteKit/main actor.
+final class GameAudioOutput: @unchecked Sendable {
+    private let queue: DispatchQueue
+    init(queue: DispatchQueue = DispatchQueue(label: "dev.bm.audio", qos: .userInitiated)) { self.queue = queue }
     private var players: [GameSoundCue: AVAudioPlayer] = [:]
     private var voices: [GameRecording: AVAudioPlayer] = [:]
+    private var sessionReady = false
+
+    func prepare() { queue.async { self.prepareOnQueue() } }
+    private func prepareOnQueue() {
+        if !sessionReady {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true)
+                sessionReady = true
+            } catch { return }
+        }
+        guard players.isEmpty else { return }
+        for cue in GameSoundCue.allCases {
+            let data = cue == .confirm ? GameSoundPCM.confirmation() : cue.recording?.data()
+            if let data, let player = try? AVAudioPlayer(data: data) {
+                player.prepareToPlay(); players[cue] = player
+            }
+        }
+        for recording in [GameRecording.strike, .ball, .out] {
+            if let data = recording.data(), let player = try? AVAudioPlayer(data: data) {
+                player.prepareToPlay(); voices[recording] = player
+            }
+        }
+    }
+    func play(_ cue: GameSoundCue, volume: Float) {
+        let requested = ProcessInfo.processInfo.systemUptime
+        queue.async {
+            self.prepareOnQueue()
+            // Slow audio startup must not produce a delayed hit/catch after the visual event.
+            guard self.sessionReady, ProcessInfo.processInfo.systemUptime - requested < 0.15 else { return }
+            let player = self.players[cue]
+            player?.volume = volume * (cue == .crowd ? 0.65 : 1)
+            player?.currentTime = 0; player?.play()
+        }
+    }
+    func announce(_ call: UmpireCall, volume: Float) {
+        let requested = ProcessInfo.processInfo.systemUptime
+        queue.async {
+            self.stopVoiceOnQueue(); self.prepareOnQueue()
+            guard self.sessionReady, ProcessInfo.processInfo.systemUptime - requested < 0.15,
+                  let player = self.voices[call.recording] else { return }
+            player.volume = volume; player.currentTime = 0
+            player.play(atTime: player.deviceCurrentTime + 0.14)
+        }
+    }
+    func updateVolume(_ volume: Float) {
+        queue.async {
+            for (cue, player) in self.players { player.volume = volume * (cue == .crowd ? 0.65 : 1) }
+            for player in self.voices.values { player.volume = volume }
+        }
+    }
+    private func stopVoiceOnQueue() {
+        for player in voices.values { player.stop(); player.currentTime = 0 }
+    }
+    func stopVoice() { queue.async { self.stopVoiceOnQueue() } }
+    func stop(invalidateSession: Bool = false) {
+        queue.async {
+            self.stopVoiceOnQueue()
+            for player in self.players.values { player.stop(); player.currentTime = 0 }
+            if invalidateSession {
+                self.sessionReady = false
+                self.players.removeAll(); self.voices.removeAll()
+            }
+        }
+    }
+}
+
+@MainActor final class GameSound {
+    static let shared = GameSound()
+    private let output = GameAudioOutput()
     private let impact = UIImpactFeedbackGenerator(style: .heavy)
     private var observers: [NSObjectProtocol] = []
     private init() {
         for name in [UIApplication.willResignActiveNotification, AVAudioSession.interruptionNotification,
-                     UIAccessibility.voiceOverStatusDidChangeNotification] {
-            observers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
-                Task { @MainActor in self?.stop() }
+                     AVAudioSession.mediaServicesWereResetNotification, UIAccessibility.voiceOverStatusDidChangeNotification] {
+            let invalidates = name != UIAccessibility.voiceOverStatusDidChangeNotification
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.output.stop(invalidateSession: invalidates) }
             })
         }
+        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.prepare() }
+        })
     }
     func prepare() {
-        guard players.isEmpty else { return }
-        for cue in GameSoundCue.allCases {
-            let data = cue == .confirm ? GameSoundPCM.confirmation() : cue.recording?.data()
-            if let data, let player=try? AVAudioPlayer(data:data) {player.prepareToPlay();players[cue]=player}
-        }
-        for recording in [GameRecording.strike, .ball, .out] {
-            if let data=recording.data(),let player=try? AVAudioPlayer(data:data) {player.prepareToPlay();voices[recording]=player}
-        }
-        impact.prepare()
+        guard canPlay else { return }
+        output.prepare(); impact.prepare()
     }
     private var canPlay: Bool {
         (UserDefaults.standard.object(forKey: "bm-sound-enabled") as? Bool ?? true) && active
     }
-    private var active: Bool {UIApplication.shared.applicationState == .active && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil}
+    private var active: Bool { UIApplication.shared.applicationState == .active && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil }
     static func volume(_ stored: Double?) -> Float {
-        guard let stored,stored.isFinite else {return 0.9}
-        return Float(max(0,min(1,stored)))
+        guard let stored, stored.isFinite else { return 0.9 }
+        return Float(max(0, min(1, stored)))
     }
-    private var volume: Float {Self.volume(UserDefaults.standard.object(forKey:"bm-sound-volume") as? Double)}
-    private func configureSession() -> Bool {
-        // Voice and effects share the ambient session, including the hardware silent switch.
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-            try session.setActive(true)
-            return true
-        } catch { return false }
-    }
+    private var volume: Float { Self.volume(UserDefaults.standard.object(forKey: "bm-sound-volume") as? Double) }
     func play(_ cue: GameSoundCue) {
         guard canPlay else { return }
-        prepare()
-        guard configureSession() else { return }
-        players[cue]?.volume=volume * (cue == .crowd ? 0.65 : 1)
-        players[cue]?.currentTime=0;players[cue]?.play()
+        output.play(cue, volume: volume)
     }
     func contact() {
-        if active,UserDefaults.standard.object(forKey:"bm-haptics-enabled") as? Bool ?? true {
-            impact.impactOccurred(intensity:0.9);impact.prepare()
+        if active, UserDefaults.standard.object(forKey: "bm-haptics-enabled") as? Bool ?? true {
+            impact.impactOccurred(intensity: 0.9); impact.prepare()
         }
         play(.contact)
     }
-    func updateVolume() {
-        for (cue,player) in players {player.volume=volume * (cue == .crowd ? 0.65 : 1)}
-        for player in voices.values {player.volume=volume}
-    }
+    func updateVolume() { output.updateVolume(volume) }
     func announce(outcome: String) {
         guard let call = UmpireCall(outcome: outcome) else { return }
         announce(call)
     }
     func announce(_ call: UmpireCall) {
-        // Do not queue an old call behind the next pitch or compete with VoiceOver.
-        stopVoice()
+        output.stopVoice()
         guard canPlay, UserDefaults.standard.object(forKey: "bm-umpire-voice-enabled") as? Bool ?? true,
-              !UIAccessibility.isVoiceOverRunning, configureSession() else { return }
-        prepare()
-        guard let player=voices[call.recording] else {return}
-        player.volume=volume;player.currentTime=0
-        player.play(atTime:player.deviceCurrentTime+0.14)
+              !UIAccessibility.isVoiceOverRunning else { return }
+        output.announce(call, volume: volume)
     }
-    func stopVoice() { for player in voices.values {player.stop();player.currentTime=0} }
-    func stop() {
-        stopVoice()
-        for player in players.values { player.stop();player.currentTime=0 }
-    }
+    func stopVoice() { output.stopVoice() }
+    func stop() { output.stop() }
 }
