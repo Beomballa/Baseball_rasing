@@ -134,7 +134,7 @@ import SwiftUI
                     .fadeAlpha(to: 0.65, duration: 0.35),
                 ]))
         }
-        // 장식 개수와 경로를 고정해 경기 RNG를 소비하지 않는다.
+        // 장식 개수와 경로를 고정해 경기 난수를 소비하지 않는다.
         let count = kind == .doublePlay ? 12 : stadium.theme == .harbor ? 40 : 24
         for i in 0..<count {
             let node = SKSpriteNode(

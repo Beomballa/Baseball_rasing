@@ -75,7 +75,7 @@ import SwiftUI
     private var batFinish: BatFinish?
     private var pitchReceipt: (deadline: Double, completion: (@MainActor () -> Void)?)?
 
-    /// 입력 타임라인과 동일한 단조 시계를 사용해 프레임마다 연출을 진행한다.
+    /// 입력 시간표과 시간이 뒤로 흐르지 않는 동일한 경과 시간 기준를 사용해 프레임마다 연출을 진행한다.
     override func update(_ currentTime: TimeInterval) {
         #if DEBUG
             let measuredAt = MatchRenderMetrics.begin()
@@ -118,7 +118,7 @@ import SwiftUI
         }
     }
 
-    /// 타자 시점의 비행을 입력 타임라인과 같은 시계로 진행한다.
+    /// 타자 시점의 비행을 입력 시간표과 같은 시계로 진행한다.
     private func advanceBatterFlight(at now: Double) {
         if let flight = batterFlight {
             let timeline = flight.timeline
@@ -266,7 +266,7 @@ import SwiftUI
         }
     }
 
-    /// 포구 대기가 끝나면 등록된 완료 콜백을 한 번 호출한다.
+    /// 포구 대기가 끝나면 등록된 완료 알림 함수을 한 번 호출한다.
     private func completeReceipt(at now: Double) {
         if let receipt = pitchReceipt, now >= receipt.deadline {
             pitchReceipt = nil
@@ -453,7 +453,7 @@ import SwiftUI
         let pose = PitcherPresentationPose(role: role, frame: frame, hand: hand)
         let source = PitcherPresentationPose(role: role, frame: frame, hand: "right")
         pitcher.size = CGSize(width: size.width * pose.width, height: size.width * pose.width)
-        // xScale이 이미 반전하므로 기준점까지 다시 뒤집으면 축발이 마운드를 벗어난다.
+        // 좌우 배율(xScale)이 이미 반전하므로 기준점까지 다시 뒤집으면 축발이 마운드를 벗어난다.
         pitcher.anchorPoint = CGPoint(x: source.pivot.x, y: 1 - source.pivot.y)
         pitcher.position = point(pose.foot.x, pose.foot.y)
     }
@@ -511,7 +511,7 @@ import SwiftUI
         batter.size = CGSize(width: size.width * 0.62, height: size.height * 0.61)
         batter.position = point(0.305, 0.34 + 0.61 * (1 - feet[frame] / 512) + 0.305)
     }
-    /// 화면 이탈·재설정 때 상태와 콜백을 함께 버려 취소된 연출이 완료되지 않게 한다.
+    /// 화면 이탈·재설정 때 진행 상태와 예약된 알림 함수을 함께 버려 취소된 연출이 완료되지 않게 한다.
     func cancelDelivery() {
         GameSound.shared.stop()
         contactFlight = nil
@@ -552,7 +552,7 @@ import SwiftUI
         pitcherMotion(preparationPhase)
         showHeldBall()
     }
-    /// 준비된 장면에 투구를 등록한다. 타자 입력 타임라인과 도착 시점을 공유한다.
+    /// 준비된 장면에 투구를 등록한다. 타자 입력 시간표과 도착 시점을 공유한다.
     @discardableResult func demonstrate(
         reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5,
         pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false,

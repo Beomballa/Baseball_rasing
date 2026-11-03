@@ -31,7 +31,7 @@ enum UmpireCall: String, CaseIterable {
     case walk = "볼넷"
     case out = "타구 아웃"
 
-    // 녹음은 Strike/Ball/Out을 사용하고, 삼진·볼넷 등의 구분은 한국어 자막으로 유지한다.
+    // 녹음은 영어 스트라이크·볼·아웃을 사용하고, 삼진·볼넷 구분은 한국어 자막으로 유지한다.
     var recording: GameRecording {
         switch self {
         case .strike: .strike

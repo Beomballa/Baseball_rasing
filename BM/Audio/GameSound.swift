@@ -1,7 +1,7 @@
 import AVFoundation
 import UIKit
 
-/// 화면에서 호출하는 소리·진동 진입점이다. 설정을 확인한 뒤 재생 큐에 요청한다.
+/// 화면의 소리·진동 요청을 받는다. 설정을 확인한 뒤 오디오 전용 작업 대기열로 전달한다.
 @MainActor final class GameSound {
     static let shared = GameSound()
     private let output = GameAudioOutput()
@@ -64,7 +64,7 @@ import UIKit
         guard let call = UmpireCall(outcome: outcome) else { return }
         announce(call)
     }
-    /// 이전 콜을 정리하고, VoiceOver 사용 중에는 안내 음성이 겹치지 않게 한다.
+    /// 이전 콜을 정리하고, 화면 읽기 기능 사용 중에는 안내 음성이 겹치지 않게 한다.
     func announce(_ call: UmpireCall) {
         output.stopVoice()
         guard canPlay, UserDefaults.standard.object(forKey: "bm-umpire-voice-enabled") as? Bool ?? true,

@@ -109,7 +109,7 @@ import UIKit
                 appearance.hairStyle, appearance.expression, number,
             ].map(String.init)).joined(separator: ":")
     }
-    /// 6개 자세가 모두 준비됐을 때만 캐시에 보관한다.
+    /// 6개 자세가 모두 준비됐을 때만 임시 보관해 다음 요청에서 재사용한다.
     static func textures(role: PlayerRole, appearance: PlayerAppearance, number: Int, hand: String) -> [SKTexture] {
         let key = cacheKey(role: role, appearance: appearance, number: number, hand: hand) as NSString
         if let cached = cache.object(forKey: key) as? [SKTexture] { return cached }
@@ -139,7 +139,7 @@ import UIKit
         }
     }
     // 의상 마스크와 등번호 위치는 원화의 512px 자세 셀 기준이다.
-    /// 원화 픽셀의 음영·투명도를 유지하며 외형과 복장을 합성한다. 유효하지 않으면 nil을 반환한다.
+    /// 원화 픽셀의 음영·투명도를 유지하며 외형과 복장을 합성한다. 유효하지 않으면 결과 없음(nil)을 반환한다.
     static func image(role: PlayerRole, frame: Int, appearance: PlayerAppearance, number: Int, hand: String) -> UIImage?
     {
         guard (0..<6).contains(frame), appearance.isValid, (0...99).contains(number),

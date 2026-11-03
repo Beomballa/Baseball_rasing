@@ -1,9 +1,9 @@
 import Foundation
 
-/// 야구 효과음은 녹음을 사용하고 UI 확인음만 짧은 PCM으로 합성한다.
+/// 야구 효과음은 녹음을 사용하고 버튼 확인음만 짧은 PCM으로 합성한다.
 enum GameSoundPCM {
     static let sampleRate = 22_050
-    /// 같은 입력 없이도 항상 동일한 16비트 모노 WAV를 만든다. 경기 RNG는 사용하지 않는다.
+    /// 같은 입력 없이도 항상 동일한 16비트 모노 WAV를 만든다. 경기 난수는 사용하지 않는다.
     static func confirmation() -> Data {
         let duration: Double = 0.10
         let count = Int(Double(sampleRate) * duration)

@@ -1,18 +1,18 @@
 import AVFoundation
 import UIKit
 
-/// 음원 준비·재생 상태는 아래 직렬 큐에서만 접근한다.
-/// @unchecked Sendable은 이 큐 격리를 전제로 하며, 주입하는 큐도 직렬이어야 한다.
+/// 음원 준비·재생 상태는 아래 작업 대기열에서 한 번에 하나씩 접근한다.
+/// 컴파일러 대신 개발자가 동시 접근 안전성을 보장한다. 외부에서 전달하는 대기열도 순차 실행 방식이어야 한다.
 final class GameAudioOutput: @unchecked Sendable {
     private let queue: DispatchQueue
-    /// 테스트용 큐를 지정할 때도 직렬 큐를 사용한다. 이 큐에서만 플레이어 상태를 변경한다.
+    /// 테스트용 대기열도 순차 실행 방식으로 지정하며, 재생 상태는 이 대기열 안에서만 변경한다.
     init(queue: DispatchQueue = DispatchQueue(label: "dev.bm.audio", qos: .userInitiated)) { self.queue = queue }
     private var players: [GameSoundCue: AVAudioPlayer] = [:]
     private var voices: [GameRecording: AVAudioPlayer] = [:]
     private var sessionReady = false
-    // 화면 사건보다 150ms 이상 늦어진 요청은 버려 뒤늦은 타격·포구음을 방지한다.
+    // 화면 사건보다 0.15초 이상 늦어진 요청은 버려 뒤늦은 타격·포구음을 방지한다.
     private static let maximumRequestAge: TimeInterval = 0.15
-    // 포구 효과음 다음에 심판 콜이 들리도록 기존 140ms 간격을 유지한다.
+    // 포구 효과음 다음에 심판 콜이 들리도록 기존 0.14초 간격을 유지한다.
     private static let umpireDelay: TimeInterval = 0.14
     private static let crowdVolumeRatio: Float = 0.65
 
@@ -42,7 +42,7 @@ final class GameAudioOutput: @unchecked Sendable {
             }
         }
     }
-    /// 효과음을 큐에 예약하며 화면 사건보다 늦어진 요청은 건너뛴다.
+    /// 효과음을 작업 대기열에 예약하며 화면 사건보다 늦어진 요청은 건너뛴다.
     func play(_ cue: GameSoundCue, volume: Float) {
         let requested = ProcessInfo.processInfo.systemUptime
         queue.async {
