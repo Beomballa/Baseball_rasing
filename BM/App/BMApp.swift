@@ -184,7 +184,8 @@ struct CareerPathVerification: View {
                 let c = try CareerStore.makeContainer(inMemory:true), schools = try SchoolCatalog.load()
                 let args = ProcessInfo.processInfo.arguments
                 let age = args.contains("-career-age20") ? 20 : args.contains("-career-age19") ? 19 : 16
-                for role in PlayerRole.allCases {
+                let verifyDivisions = args.contains("-v147-divisions-verification")
+                for role in verifyDivisions ? [PlayerRole.batter] : PlayerRole.allCases {
                     var draft = PlayerDraft();draft.name = role == .batter ? "CareerBat":"CareerPitch";draft.role = role;draft.schoolID = schools[0].id
                     let p = try CareerStore.create(draft,schools:schools,in:c.mainContext)
                     let calendar = try c.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id }!
@@ -357,7 +358,17 @@ struct CareerPathVerification: View {
                         try seedRenewal(player:p,calendar:calendar,in:c.mainContext,empty:args.contains("-renewal-empty"),expired:args.contains("-renewal-expired"))
                     }
                     if args.contains("-pro-career-verification"),args.contains("-renewal-verification") {
+                        if verifyDivisions {
+                            try calendar.adoptOverseasExpansion(after: GameDate(p.gameDate))
+                            try c.mainContext.save()
+                        }
                         try seedProCareer(player:p,calendar:calendar,in:c.mainContext)
+                        if verifyDivisions {
+                            let entry = try acceptProfessionalNPB(player:p,calendar:calendar,in:c.mainContext)
+                            p.gameDate = entry.effective
+                            calendar.actionDate = nil
+                            try c.mainContext.save()
+                        }
                     }
                     if args.contains("-fa-verification"),args.contains("-pro-career-verification") {
                         try seedFA(player:p,calendar:calendar,in:c.mainContext)
@@ -408,12 +419,16 @@ struct CareerPathVerification: View {
         try context.save()
         try OverseasReportStore.capture(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
     }
-    @MainActor private func seedFA(player p:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws {
+    @MainActor private func acceptProfessionalNPB(player p:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws -> OverseasOffer {
         try OverseasContractStore.register(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
         try OverseasContractStore.requestConsent(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
         try OverseasContractStore.evaluate(player:p,calendar:calendar,date:p.gameDate,revision:calendar.revision,in:context)
         guard let entry=try ContractRegistrationStore.journal(player:p,calendar:calendar,in:context).overseasCareer?.evaluations.last?.offers.first(where:{$0.route == .npbFirstTeam}) else {throw OverseasProgressError.requirements}
         try OverseasContractStore.decide(player:p,calendar:calendar,offerID:entry.id,accept:true,date:p.gameDate,revision:calendar.revision,in:context)
+        return entry
+    }
+    @MainActor private func seedFA(player p:CareerPlayer,calendar:CareerCalendarState,in context:ModelContext) throws {
+        let entry = try acceptProfessionalNPB(player:p,calendar:calendar,in:context)
         let first=try GameDate(entry.effective).year,count=p.role == .pitcher ? 9:1
         for year in first..<(first+count) {
             var totals=PersonalSeasonTotals()

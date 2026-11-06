@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ClubBadge: View {
     let name: String
@@ -64,29 +65,63 @@ struct ClubAbilityComparison: View {
 
 struct ClubDirectoryView: View {
     @State private var league = ClubIdentity.League.kbo
+    @State private var venueClub: ClubIdentity?
     @Environment(\.dynamicTypeSize) private var typeSize
+    private var clubs: [ClubIdentity] { ClubIdentity.all.filter { $0.league == league } }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("구단을 알아보세요").font(.title2.bold())
-                Text("가상 구단 30개 · 계약 참가 18개").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubDirectorySummary")
+                Text("가상 구단 \(ClubIdentity.all.count)개")
+                    .font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("clubDirectorySummary")
                 leagueTabs
-                Text("참가 구단의 관심·모집 기준은 내 고정 보고서에서 확인합니다. 미참여 구단은 도감만 제공하며 목표 지정·계약·경기가 열리지 않습니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 12) {
-                    ForEach(ClubIdentity.all.filter { $0.league == league }) { club in
-                        VStack(spacing: 10) {
-                            ClubBadge(name: club.name, size: 100)
-                            Text(club.name).font(.headline).multilineTextAlignment(.center)
-                            Text(club.motif).font(.subheadline).foregroundStyle(GameTheme.boardMuted).multilineTextAlignment(.center)
-                            Text(club.participates ? "참가 · 관찰 대상" : "미참여 · 도감 전용")
-                                .font(.subheadline.bold()).foregroundStyle(club.participates ? GameTheme.growth : GameTheme.gold)
-                        }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            .background(GameTheme.boardPanel).overlay(ManagementStepFrame().stroke(GameTheme.boardLine, lineWidth: 1))
-                            .accessibilityElement(children: .combine).accessibilityIdentifier("clubDirectory-" + club.id)
+                if league == .kbo {
+                    Text("참가 구단의 관심·모집 기준은 내 고정 보고서에서 확인합니다. 도감 전용 구단도 홈구장을 볼 수 있습니다.")
+                        .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    cards(clubs)
+                } else {
+                    Text("동서부 편성 · \(clubs.count)구단. 현재 시즌 참가 팀은 경기 일정에서 확인할 수 있습니다.")
+                        .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    ForEach(ClubIdentity.Division.allCases, id: \.self) { division in
+                        let teams = clubs.filter { $0.division == division }
+                        Text("\(division.label) \(teams.count)팀")
+                            .font(.headline).foregroundStyle(GameTheme.gold).accessibilityAddTraits(.isHeader)
+                            .accessibilityIdentifier("clubDivision-\(league.id)-\(division.rawValue)")
+                        cards(teams)
                     }
                 }
             }.padding(16)
         }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("가상 구단 도감").navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $venueClub) { club in ClubStadiumPreview(club: club) }
+    }
+    private func cards(_ teams: [ClubIdentity]) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 12) {
+            ForEach(teams) { club in
+                let showsUniform = ClubUniformArtwork.isAvailable(for: club)
+                VStack(spacing: 10) {
+                    VStack(spacing: 10) {
+                        ClubBadge(name: club.name, size: 100)
+                        Text(club.name).font(.headline).multilineTextAlignment(.center)
+                        Text(club.motif).font(.subheadline).foregroundStyle(GameTheme.boardMuted).multilineTextAlignment(.center)
+                        if let division = club.division, let city = club.city {
+                            Text(division.label + " · " + city)
+                                .font(.subheadline.bold()).foregroundStyle(GameTheme.growth).multilineTextAlignment(.center)
+                        } else {
+                            Text(club.participates ? "참가 · 관찰 대상" : "미참여 · 도감 전용")
+                                .font(.subheadline.bold()).foregroundStyle(club.participates ? GameTheme.growth : GameTheme.gold)
+                        }
+                    }.accessibilityElement(children: .combine).accessibilityIdentifier("clubDirectory-" + club.id)
+                    Button { venueClub = club } label: {
+                        Text(showsUniform ? "홈구장·유니폼" : "홈구장")
+                            .font(.subheadline.bold()).frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(MatchPixelButtonStyle())
+                        .accessibilityLabel(club.name + (showsUniform ? " 홈구장과 유니폼" : " 홈구장"))
+                        .accessibilityIdentifier("clubStadium-" + club.id)
+                }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .background(GameTheme.boardPanel).overlay(ManagementStepFrame().stroke(GameTheme.boardLine, lineWidth: 1))
+            }
+        }
     }
     private var leagueTabs: some View {
         HStack(spacing: 8) {
@@ -94,6 +129,138 @@ struct ClubDirectoryView: View {
                 Button { league = value } label: { Text((league == value ? "◆ " : "") + value.label).font(.subheadline.bold()).frame(maxWidth: .infinity, minHeight: 44) }
                     .buttonStyle(MatchPixelButtonStyle(primary: league == value)).accessibilityIdentifier("clubLeague-" + value.id)
                     .accessibilityAddTraits(league == value ? .isSelected : [])
+            }
+        }
+    }
+}
+
+@MainActor enum ClubUniformArtwork {
+    private static let previews: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 4
+        return cache
+    }()
+
+    static func isAvailable(for club: ClubIdentity) -> Bool {
+        club.isExpansionClub || GameUniformStyles.find(club.id)?.pro != nil
+    }
+
+    static func renderedPreview(club: ClubIdentity, away: Bool) -> (image: UIImage, label: String)? {
+        guard let style = GameUniformStyles.find(club.id, away: away), let design = style.pro else { return nil }
+        let key = style.id as NSString
+        if let image = previews.object(forKey: key) { return (image, design.label) }
+
+        let appearance = PlayerAppearance().wearing(teamID: club.id, away: away)
+        guard let frontCamera = FullBodyPitcherArt.manifest?.front,
+              let frontFrame = frontCamera.frames.first,
+              let front = FullBodyPitcherArt.image(frame: frontFrame, file: frontCamera.file,
+                                                   kit: appearance.uniformColor, style: style,
+                                                   appearance: appearance, number: nil, mirrored: false),
+              let back = FullBodyPitcherArt.refinedPreviewImage(appearance: appearance, number: 27) else { return nil }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let frontFootCenter = CGFloat((frontFrame.leadFoot[0] + frontFrame.rearFoot[0]) / 2)
+        let frontSize = CGSize(width: front.size.width * 3, height: front.size.height * 3)
+        let backSize = CGSize(width: back.size.width * 3, height: back.size.height * 3)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 768, height: 512), format: format).image { renderer in
+            renderer.cgContext.interpolationQuality = .none
+            front.draw(in: CGRect(x: (192 - frontSize.width * frontFootCenter).rounded(), y: 72,
+                                  width: frontSize.width, height: frontSize.height))
+            back.draw(in: CGRect(x: 576 - backSize.width / 2, y: 48,
+                                 width: backSize.width, height: backSize.height))
+        }
+        previews.setObject(image, forKey: key)
+        return (image, design.label)
+    }
+
+    static func image(club: ClubIdentity, away: Bool) -> UIImage? {
+        guard club.isExpansionClub else { return nil }
+        let name = "club-kit-v147-" + club.id + (away ? "-away" : "-home")
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "MatchArt") else { return nil }
+        return UIImage(contentsOfFile: url.path)
+    }
+}
+
+private struct ClubStadiumPreview: View {
+    private enum Artwork: String, CaseIterable {
+        case stadium, home, away
+        var label: String {
+            switch self { case .stadium: "홈구장"; case .home: "홈 유니폼"; case .away: "원정 유니폼" }
+        }
+    }
+    let club: ClubIdentity
+    @State private var artwork = Artwork.stadium
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(club.name + " " + artwork.label).font(.title2.bold())
+                        .accessibilityAddTraits(.isHeader).accessibilityIdentifier("clubStadiumPreview-" + club.id)
+                    if ClubUniformArtwork.isAvailable(for: club) { artworkTabs }
+                    if artwork == .stadium {
+                        Canvas { context, size in
+                            let stadium = StadiumIdentity(homeTeamID: club.id)
+                            let board = InplayStadiumArt.draw(in: context, size: size, stadium: stadium)
+                            if let board {
+                                InplayStadiumArt.drawScore("홈구장", in: context, size: size, board: board, homeRun: false)
+                            }
+                        }.aspectRatio(2.0 / 3, contentMode: .fit)
+                            .background(GameTheme.boardPanel)
+                            .accessibilityElement().accessibilityAddTraits(.isImage)
+                            .accessibilityLabel(club.name + " 홈구장 전경").accessibilityIdentifier("clubStadiumArtwork-" + club.id)
+                    } else {
+                        uniformArtwork
+                    }
+                }.padding(16)
+            }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("닫기") { dismiss() }.accessibilityIdentifier("clubStadiumClose")
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder private var uniformArtwork: some View {
+        let away = artwork == .away
+        if let preview = ClubUniformArtwork.renderedPreview(club: club, away: away) {
+            Text(preview.label)
+                .font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 4) {
+                uniformImage(preview.image).background(Color(hex: 0xf3ead7))
+                HStack {
+                    Text("앞면").frame(maxWidth: .infinity)
+                    Text("뒷면").frame(maxWidth: .infinity)
+                }.font(.caption.bold()).foregroundStyle(GameTheme.boardMuted).accessibilityHidden(true)
+            }
+        } else if let image = ClubUniformArtwork.image(club: club, away: away) {
+            uniformImage(image)
+        } else {
+            Text("유니폼 이미지를 불러올 수 없습니다.").foregroundStyle(GameTheme.boardMuted)
+        }
+    }
+
+    private func uniformImage(_ image: UIImage) -> some View {
+        Image(uiImage: image).interpolation(.none).resizable().scaledToFit()
+            .accessibilityLabel(club.name + " " + artwork.label + " 앞면과 뒷면")
+            .accessibilityIdentifier("clubUniformArtwork-\(club.id)-\(artwork.rawValue)")
+    }
+
+    private var artworkTabs: some View {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        return layout {
+            ForEach(Artwork.allCases, id: \.self) { option in
+                Button { artwork = option } label: {
+                    Text(option.label).font(.subheadline.bold())
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(MatchPixelButtonStyle(primary: artwork == option))
+                    .accessibilityAddTraits(artwork == option ? .isSelected : [])
+                    .accessibilityIdentifier("clubArtworkTab-" + option.rawValue)
             }
         }
     }

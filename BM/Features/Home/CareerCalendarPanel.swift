@@ -314,10 +314,12 @@ struct CalendarAnnualScheduleView:View {
     let todayState:CalendarDayPresentation
     @Environment(\.dynamicTypeSize) private var typeSize
     var body:some View {
+        let plan = try? state.competition(for: player, year: GameDate(player.gameDate).year)
+        let team = plan?.teamID ?? player.schoolID
         LazyVStack(alignment:.leading,spacing:12) {
             GamePanel(title:"SEASON CALENDAR · "+String(player.gameDate.prefix(4)),onBoard:true) {
                 Text("게임 1년 · 팀당 30경기").font(.title3.bold()).foregroundStyle(GameTheme.gold)
-                Text("6팀 조별리그 · 상대별 6회 / 홈·원정 각 3회").font(.subheadline)
+                Text(plan?.teamIDs.count == 15 ? "동부·서부 15구단 · 홈 15경기 / 원정 15경기" : "6팀 조별리그 · 상대별 6회 / 홈·원정 각 3회").font(.subheadline)
                 if schedule.annual.count < 30 {
                     Text("내 등록 대상 \(schedule.annual.count)경기 · 부분 시즌").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
                 }
@@ -330,7 +332,6 @@ struct CalendarAnnualScheduleView:View {
                 let saved=records.first {$0.playerID == player.id && $0.fixtureID == fixture.id}
                 let mark=CalendarSavedMatch.read(saved)
                 let text=fixture.date.description == player.gameDate ? todayState.participation:rowStatus(fixture,mark:mark)
-                let team=(try? state.teamID(for:player,on:fixture.date)) ?? player.schoolID
                 let layout=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:10)):AnyLayout(HStackLayout(alignment:.center,spacing:12))
                 layout {
                     Text("\(fixture.number)차전").font(.headline.monospacedDigit()).foregroundStyle(GameTheme.gold).frame(minWidth:52)

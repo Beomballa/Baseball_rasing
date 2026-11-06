@@ -1649,8 +1649,8 @@ extension CareerCalendarTests {
 }
 
 extension CareerCalendarTests {
-    private func renewalFixture(_ role:PlayerRole,games:Bool=true,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
-        let (store,p,s,packet)=try acceptance(role,legacyURL:legacyURL),c=store.mainContext
+    private func renewalFixture(_ role:PlayerRole,games:Bool=true,legacyURL:URL?=nil,legacyVersion:Int=12) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+        let (store,p,s,packet)=try acceptance(role,legacyURL:legacyURL,legacyVersion:legacyVersion),c=store.mainContext
         let offer=try XCTUnwrap(packet.offers.first {$0.route == .rookie})
         try ContractRegistrationStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
         let member=try XCTUnwrap(s.registration(for:p))
@@ -2422,6 +2422,95 @@ extension CareerCalendarTests {
 }
 
 extension CareerCalendarTests {
+    func testV147OverseasMarketExpandsOnlyNewReportsAndPreservesFrozenRows() throws {
+        let encoder=JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        for role in PlayerRole.allCases {
+            let (store,p,s)=try collegeProFixture(role),c=store.mainContext
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let legacy=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c))
+            let legacyBytes=try encoder.encode(legacy)
+            XCTAssertEqual(legacy.version,3)
+
+            let oldDate=try GameDate(p.gameDate)
+            try s.adoptOverseasExpansion(after:oldDate)
+            try c.save()
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            XCTAssertEqual(try encoder.encode(XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c))),legacyBytes)
+
+            p.gameDate=oldDate.adding(days:28).description
+            try c.save()
+            try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+            let report=try XCTUnwrap(OverseasReportStore.current(player:p,calendar:s,in:c))
+            let market=try XCTUnwrap(report.market)
+            XCTAssertEqual(report.version,4)
+            XCTAssertEqual(market.version,3)
+            let sameReportLegacyMarket=OverseasMarket.make(report:report,version:2)
+            let grade=try XCTUnwrap(report.observation.grades.first?.id)
+            for (route,count) in [(OverseasRoute.mlbDevelopment,6),(.npbFirstTeam,15),(.mlbFirstTeam,15)] {
+                let rows=market.clubs.filter {$0.route == route}
+                XCTAssertEqual(rows.filter {$0.roleID == grade}.count,count)
+                let before=sameReportLegacyMarket.clubs.filter {$0.route == route}
+                XCTAssertEqual(Array(rows.prefix(before.count)),before)
+                for index in 0..<count {
+                    let row=try XCTUnwrap(rows.first {$0.id == route.id+"/\(index)/"+grade})
+                    let team=CareerTeamDirectory.teams(level:route == .mlbDevelopment ? "mlb-development":route == .npbFirstTeam ? "npb-first-team":"mlb-first-team",expanded:true)[index]
+                    XCTAssertEqual(row.name,CareerTeamDirectory.name(team))
+                }
+            }
+            let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c)
+            XCTAssertEqual(try encoder.encode(XCTUnwrap(owner.overseasReports?.first {$0.id == legacy.id})),legacyBytes)
+            s.rulesVersion="career-core-v1"
+            XCTAssertThrowsError(try ContractRegistrationStore.journal(player:p,calendar:s,in:c))
+            c.rollback()
+        }
+    }
+
+    func testV147ExpandedParticipationAndFAEvidenceUseSameFixtureIDs() throws {
+        let year=2033,level="npb-first-team",team="jp-pro-14",id=UUID()
+        let fixtures=try CareerTeamDirectory.fixtures(level:level,year:year,expanded:true)
+            .filter {$0.includes(team)}.map {$0.forTeam(team)}
+        let games=fixtures.map { fixture in
+            ClubParticipationGame(key:CareerMatchRecord.key(id,fixture.id),fixtureID:fixture.id,
+                date:fixture.date.description,rotationDay:fixture.isAppearance(for:.pitcher),appearance:nil,kind:.missing)
+        }
+        let basis=ClubParticipationBasis(playerID:id,membershipID:"new-club",teamID:team,level:level,playerRole:"pitcher",
+            year:year,from:"2033-04-01",through:"2033-11-01",games:games,expandedSchedule:true)
+        let restored=try JSONDecoder().decode(ClubParticipationBasis.self,from:JSONEncoder().encode(basis))
+        XCTAssertEqual(restored,basis)
+        XCTAssertNoThrow(try restored.validate())
+        XCTAssertEqual(restored.turns,6)
+        var legacy=restored;legacy.expandedSchedule=nil
+        XCTAssertThrowsError(try legacy.validate())
+
+        var member=CareerMembership(offerID:basis.membershipID,route:.rookie,teamID:team,name:CareerTeamDirectory.name(team),
+            since:basis.from,economicEnd:"2034-03-31",enrollmentEnd:nil,economicIndex:100)
+        member.competitionLevel=level
+        var owner=CareerContractJournal(playerID:id);owner.memberships=[member]
+        var records:[CareerMatchRecord]=[]
+        var totals=PersonalSeasonTotals()
+        let values=PlayerInitialValues(contact:88,power:88,discipline:88,speed:75,defense:80,arm:80)
+        for (index,fixture) in fixtures.enumerated() {
+            var match=ScoutingReferenceSimulation.fixture(role:.batter,position:"SS",values:values,
+                seed:UInt64(3300+index),home:fixture.homeID == team,tracked:true)
+            match.competition=level
+            try match.advance(.automatic)
+            records.append(try CareerMatchRecord(verificationPlayerID:id,teamID:team,fixture:fixture,match:match,fatigue:0))
+            try totals.add(match.line)
+            if totals.line.plateAppearances >= 100 {break}
+        }
+        let today=try GameDate(basis.through)
+        let evidence=try FASeasonEvidence.collect(owner:owner,role:.batter,on:today,rows:records,expandedFrom:year)
+        XCTAssertEqual(evidence,[FASeasonEvidence(year:year,sourceID:member.offerID,level:level,matchKeys:records.map(\.key).sorted())])
+        XCTAssertTrue(try FASeasonEvidence.collect(owner:owner,role:.batter,on:today,rows:records,expandedFrom:year+1).isEmpty)
+        var fullYear=CareerMembership(offerID:member.offerID,route:.rookie,teamID:team,name:member.name,
+            since:"2033-01-01",economicEnd:member.economicEnd,enrollmentEnd:nil,economicIndex:member.economicIndex)
+        fullYear.competitionLevel=level
+        owner.memberships=[fullYear]
+        XCTAssertEqual(try GameProSeasonEvidence.collect(owner:owner,role:.batter,today:GameDate("2034-04-01"),rows:records),
+            [GameProSeasonEvidence(year:year,sourceOfferID:member.offerID,level:level,matchKeys:records.map(\.key).sorted())])
+    }
+
     func testOverseasMarketUsesFrozenRoleDemandAndRightsWithoutCreatingOffers() throws {
         for role in PlayerRole.allCases {
             let (store,p,s)=try collegeProFixture(role),c=store.mainContext
@@ -2532,8 +2621,8 @@ extension CareerCalendarTests {
 }
 
 extension CareerCalendarTests {
-    private func proCareerFixture(_ role:PlayerRole,seasons:Int=1,rating:Double=80,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
-        let (store,p,s)=try renewalFixture(role,legacyURL:legacyURL),c=store.mainContext
+    private func proCareerFixture(_ role:PlayerRole,seasons:Int=1,rating:Double=80,legacyURL:URL?=nil,legacyVersion:Int=12) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+        let (store,p,s)=try renewalFixture(role,legacyURL:legacyURL,legacyVersion:legacyVersion),c=store.mainContext
         try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
         let promotionYear=try GameDate(p.gameDate).year
         try OverseasContractStore.promoteDomestic(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
@@ -2571,6 +2660,12 @@ extension CareerCalendarTests {
             XCTAssertEqual(try s.registration(for:p)?.level,"domestic-development")
             XCTAssertEqual(try s.competition(for:p,year:year).membership?.level,"domestic-development")
             XCTAssertEqual(try s.competition(for:p,year:year+1).membership?.level,"domestic-first-team")
+            let firstTeamGames = try s.fixtures(for: p, year: year + 1)
+            XCTAssertEqual(firstTeamGames.count, 30)
+            for game in firstTeamGames {
+                let index = try XCTUnwrap(CareerTeamDirectory.domesticFirstIDs.firstIndex(of: game.homeID))
+                XCTAssertEqual(StadiumIdentity(homeTeamID: game.homeID).pro?.club.id, "kbo-\(index)")
+            }
             XCTAssertEqual(try ContractRegistrationStore.journal(player:p,calendar:s,in:c).memberships,original)
             try OverseasContractStore.promoteDomestic(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c,save:{_ in XCTFail("duplicate")})
         }
@@ -2609,6 +2704,13 @@ extension CareerCalendarTests {
 }
 
 extension CareerCalendarTests {
+    private func assertProStadium(_ record: CareerMatchRecord, for fixture: SeasonFixture, league: ClubIdentity.League, teamIDs: [String]) throws {
+        let homeID = try XCTUnwrap(record.snapshot().playerRecords?.home.teamID)
+        XCTAssertEqual(homeID, fixture.homeID)
+        let index = try XCTUnwrap(teamIDs.firstIndex(of: homeID))
+        XCTAssertEqual(StadiumIdentity(homeTeamID: homeID).pro?.club.id, "\(league.id)-\(index)")
+    }
+
     private func professionalOffers(_ p:CareerPlayer,_ s:CareerCalendarState,_ c:ModelContext) throws -> [OverseasOffer] {
         try OverseasContractStore.register(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
         try OverseasContractStore.collectService(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
@@ -2628,7 +2730,9 @@ extension CareerCalendarTests {
             p.gameDate=offer.effective;try c.save()
             XCTAssertEqual(try s.registration(for:p)?.level,"npb-first-team");XCTAssertEqual(try s.fixtures(for:p,year:oldYear+1).count,30)
             try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let fixture = try CareerMatchStore.today(player: p, state: s)
             let record=try CareerMatchStore.start(player:p,state:s,in:c)
+            try assertProStadium(record, for: fixture, league: .npb, teamIDs: CareerTeamDirectory.japaneseFirstIDs)
             try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c)
             XCTAssertEqual(try record.snapshot().competition,"npb-first-team")
             XCTAssertEqual(try CareerSeasonStore.load(player:p,state:s,year:oldYear,in:c).totals.games,old)
@@ -2646,7 +2750,9 @@ extension CareerCalendarTests {
             try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:revision,in:c)
             p.gameDate=offer.effective;try c.save();XCTAssertEqual(try s.registration(for:p)?.level,"mlb-first-team")
             try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
+            let fixture = try CareerMatchStore.today(player: p, state: s)
             let record=try CareerMatchStore.start(player:p,state:s,in:c)
+            try assertProStadium(record, for: fixture, league: .mlb, teamIDs: CareerTeamDirectory.americanFirstIDs)
             try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? p.pitches[0].code:nil,in:c)
             XCTAssertEqual(try CareerMatchStore.start(player:p,state:s,in:c).payload,record.payload)
             try CareerMatchStore.advance(player:p,state:s,record:record,revision:record.revision,input:.automatic,in:c)
@@ -6399,5 +6505,145 @@ extension CareerCalendarTests {
         }
         XCTAssertNotEqual(base[RestPlayerPose.standing.rawValue].pngData(), base[RestPlayerPose.seated.rawValue].pngData())
         XCTAssertNotEqual(base[RestPlayerPose.seated.rawValue].pngData(), base[RestPlayerPose.drink.rawValue].pngData())
+    }
+}
+
+extension CareerCalendarTests {
+    func testV147ExpandedScheduleBalancesDivisionsAndPreservesPersonalRotation() throws {
+        for eastCount in [7, 8] {
+            let east = (0..<eastCount).map { "east-\($0)" }
+            let west = (0..<(15 - eastCount)).map { "west-\($0)" }
+            let fixtures = try SeasonSchedule.expandedFixtures(year: 2036, east: east, west: west)
+            XCTAssertEqual(fixtures, try SeasonSchedule.expandedFixtures(year: 2036, east: east, west: west))
+            XCTAssertEqual(fixtures.count, 225)
+            XCTAssertEqual(Set(fixtures.map(\.id)).count, 225)
+            XCTAssertEqual(fixtures.first?.date.description, "2036-04-01")
+            XCTAssertEqual(fixtures.last?.date.description, "2036-09-22")
+            let days = Dictionary(grouping: fixtures, by: \.date)
+            XCTAssertEqual(days.count, 35)
+            for games in days.values {
+                let playing = games.flatMap { [$0.homeID, $0.awayID] }
+                XCTAssertEqual(Set(playing).count, playing.count)
+            }
+            for division in [east, west] {
+                for team in division {
+                    let own = fixtures.filter { $0.includes(team) }.map { $0.forTeam(team) }
+                    XCTAssertEqual(own.map(\.number), Array(1...30))
+                    XCTAssertEqual(own.filter { $0.homeID == team }.count, 15)
+                    XCTAssertEqual(own.filter { $0.awayID == team }.count, 15)
+                    XCTAssertEqual(own.filter { $0.isAppearance(for: .pitcher) }.map(\.number), [1, 6, 11, 16, 21, 26])
+                    let cross = own.filter { !division.contains($0.opponent(of: team)) }
+                    XCTAssertEqual(cross.count, 15 - division.count)
+                    XCTAssertEqual(Set(cross.map { $0.opponent(of: team) }).count, cross.count)
+                }
+            }
+        }
+        XCTAssertThrowsError(try SeasonSchedule.expandedFixtures(year: 2036, east: ["same"], west: ["same"]))
+    }
+
+    func testV147ExpandedStandingsAndSeasonCompletionUseAllFifteenTeams() throws {
+        let east = (0..<8).map { "east-\($0)" }, west = (0..<7).map { "west-\($0)" }
+        let fixtures = try SeasonSchedule.expandedFixtures(year: 2036, east: east, west: west)
+        let origin = try GameDate("2026-04-01")
+        let date = try GameDate("2036-09-22")
+        let opening = try AnnualLeague.make(playerID: UUID(), schoolIDs: east + west, origin: origin,
+            startAge: 16, today: date, year: 2036, official: [], competitionFixtures: fixtures)
+        XCTAssertTrue(opening.hasFullSchedule)
+        XCTAssertFalse(opening.isComplete)
+        let draws = fixtures.map { LeagueOfficialResult(fixtureID: $0.id, homeScore: 2, awayScore: 2) }
+        let completed = try AnnualLeague.make(playerID: UUID(), schoolIDs: east + west, origin: origin,
+            startAge: 16, today: date.adding(days: 1), year: 2036, official: draws, competitionFixtures: fixtures)
+        XCTAssertTrue(completed.isComplete)
+        XCTAssertEqual(completed.results.count, 225)
+        XCTAssertEqual(completed.displayStandings(for: Set(east)).map(\.rank), Array(repeating: 1, count: 8))
+        XCTAssertEqual(completed.displayStandings(for: Set(west)).map(\.rank), Array(repeating: 1, count: 7))
+        let off = try OffseasonPlan.make(summary: CareerSeasonSummary(league: completed, totals: PersonalSeasonTotals()),
+            origin: origin, startAge: 16, today: date.adding(days: 1))
+        XCTAssertEqual(off.target.description, "2037-04-01")
+    }
+
+    func testV147OverseasCutoffUsesOnlyCommittedDateAdvanceAndNextApril() throws {
+        let (store, player, state) = try fixture(date: "2026-04-02")
+        let context = store.mainContext
+        let current = try state.fixtures(for: player, year: 2026)
+        XCTAssertNil(try state.overseasExpansionYear)
+        try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context)
+        XCTAssertNil(try state.overseasExpansionYear)
+        XCTAssertThrowsError(try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision,
+            in: context, save: { _ in throw CalendarError.staleState }))
+        XCTAssertNil(try state.overseasExpansionYear)
+        XCTAssertEqual(player.gameDate, "2026-04-02")
+        try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context)
+        XCTAssertEqual(try state.overseasExpansionYear, 2027)
+        XCTAssertEqual(try state.fixtures(for: player, year: 2026), current)
+        try state.adoptOverseasExpansion(after: GameDate("2037-05-01"))
+        XCTAssertEqual(try state.overseasExpansionYear, 2027)
+        let (otherStore, other, old) = try fixture(date: "2028-03-31")
+        try withExtendedLifetime(otherStore) {
+            try old.adoptOverseasExpansion(after: GameDate(other.gameDate))
+            XCTAssertEqual(try old.overseasExpansionYear, 2028)
+            old.rulesVersion = "career-core-v1+overseas-v147:02028"
+            XCTAssertThrowsError(try old.overseasExpansionYear)
+        }
+    }
+
+    func testV147LegacyOverseasSeasonAndNewVenueGameSurviveDiskReopen() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("career.store")
+        let savedPlayerID: UUID, legacyYear: Int, legacyFixtures: [SeasonFixture], oldFixture: SeasonFixture, legacyPayload: Data
+        do {
+            let (store, player, state) = try proCareerFixture(.batter, seasons: 1, rating: 99, legacyURL: url, legacyVersion: 15)
+            let context = store.mainContext
+            let offer = try XCTUnwrap(professionalOffers(player, state, context).first)
+            try OverseasContractStore.decide(player: player, calendar: state, offerID: offer.id, accept: true,
+                date: player.gameDate, revision: state.revision, in: context)
+            player.gameDate = offer.effective
+            try context.save()
+            savedPlayerID = player.id
+            legacyYear = try GameDate(offer.effective).year
+            let legacy = try state.competition(for: player, year: legacyYear)
+            XCTAssertEqual(legacy.teamIDs.count, 6)
+            XCTAssertEqual(legacy.fixtures.count, 90)
+            legacyFixtures = legacy.fixtures
+            try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context)
+            oldFixture = try CareerMatchStore.today(player: player, state: state)
+            let match = try CareerMatchStore.start(player: player, state: state, in: context)
+            let pendingPayload = match.payload
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context)) {
+                XCTAssertEqual($0 as? CalendarError, .fixturePending)
+            }
+            XCTAssertNil(try state.overseasExpansionYear)
+            XCTAssertEqual(try CareerMatchStore.start(player: player, state: state, in: context).payload, pendingPayload)
+            try CareerMatchStore.advance(player: player, state: state, record: match, revision: match.revision, input: .automatic, in: context)
+            legacyPayload = match.payload
+            try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context)
+            XCTAssertEqual(try state.overseasExpansionYear, legacyYear + 1)
+        }
+        let store = try CareerStore.makeContainer(url: url), context = store.mainContext
+        let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == savedPlayerID })
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == savedPlayerID })
+        XCTAssertEqual(try state.overseasExpansionYear, legacyYear + 1)
+        XCTAssertEqual(try state.competition(for: player, year: legacyYear).fixtures, legacyFixtures)
+        XCTAssertEqual(try CareerMatchStore.record(player: player, fixture: oldFixture, in: context)?.payload, legacyPayload)
+        XCTAssertEqual(try AnnualLeagueStore.load(player: player, state: state, year: legacyYear, in: context).standings.count, 6)
+        let expanded = try state.competition(for: player, year: legacyYear + 1)
+        XCTAssertEqual(expanded.teamIDs.count, 15)
+        XCTAssertEqual(expanded.fixtures.count, 225)
+        let newTeamIDs = Set(CareerTeamDirectory.japaneseExpandedFirstIDs.dropFirst(10))
+        let newVenue = try XCTUnwrap(try state.fixtures(for: player, year: legacyYear + 1).first { newTeamIDs.contains($0.homeID) })
+        player.gameDate = newVenue.date.description
+        try context.save()
+        try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context)
+        let match = try CareerMatchStore.start(player: player, state: state, in: context)
+        XCTAssertEqual(match.fixtureID, newVenue.id)
+        XCTAssertEqual(try match.snapshot().npcFielders?.home.teamID, newVenue.homeID)
+        try CareerMatchStore.advance(player: player, state: state, record: match, revision: match.revision, input: .automatic, in: context)
+        let completedPayload = match.payload
+        XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: state, record: match, revision: match.revision,
+            input: .automatic, in: context))
+        XCTAssertEqual(match.payload, completedPayload)
+        XCTAssertEqual(try CareerMatchStore.record(player: player, fixture: oldFixture, in: context)?.payload, legacyPayload)
     }
 }

@@ -109,6 +109,56 @@ struct BattingAimZone: View {
     }
 }
 
+/// 판정 좌표는 그대로 두고 홈플레이트 앞의 같은 평면으로 투영한다.
+/// 투구 손이나 타자 위치가 바뀌어도 포수 앞 스트라이크존은 이동하지 않는다.
+struct MatchPitchProjection {
+    let role: PlayerRole
+
+    var aspectRatio: CGFloat { role == .pitcher ? 1219.0 / 1290.0 : 1 }
+    func size(width: CGFloat) -> CGSize {
+        CGSize(width: width, height: width / aspectRatio)
+    }
+
+    private var center: CGPoint {
+        role == .pitcher ? CGPoint(x: 0.5, y: 0.465) : CGPoint(x: 0.5, y: 0.68)
+    }
+    private var extent: CGSize {
+        role == .pitcher ? CGSize(width: 0.22, height: 0.18) : CGSize(width: 0.16, height: 0.22)
+    }
+    func normalizedPoint(x: Double, y: Double) -> CGPoint {
+        CGPoint(x: center.x + (x - 0.5) * extent.width,
+                y: center.y + (y - 0.5) * extent.height)
+    }
+    func scenePoint(x: Double, y: Double, size: CGSize) -> CGPoint {
+        let p = normalizedPoint(x: x, y: y)
+        return CGPoint(x: p.x * size.width, y: (1 - p.y) * size.height)
+    }
+    func viewPoint(x: Double, y: Double, size: CGSize) -> CGPoint {
+        let ratio = aspectRatio
+        let width = min(size.width, size.height * ratio), height = width / ratio
+        let p = normalizedPoint(x: x, y: y)
+        return CGPoint(x: (size.width - width) / 2 + p.x * width,
+                       y: (size.height - height) / 2 + p.y * height)
+    }
+}
+
+struct PitchingTargetMarker: View {
+    let target: PitchTarget
+    var body: some View {
+        Canvas { context, size in
+            let p = MatchPitchProjection(role: .pitcher).viewPoint(x: target.x, y: target.y, size: size)
+            for dx in [-1.0, 1] { for dy in [-1.0, 1] {
+                var corner = Path()
+                corner.move(to: CGPoint(x: p.x + dx * 3, y: p.y + dy * 6))
+                corner.addLine(to: CGPoint(x: p.x + dx * 6, y: p.y + dy * 6))
+                corner.addLine(to: CGPoint(x: p.x + dx * 6, y: p.y + dy * 3))
+                context.stroke(corner, with: .color(GameTheme.gold), lineWidth: 2)
+            }}
+            context.fill(Path(CGRect(x: p.x - 1, y: p.y - 1, width: 2, height: 2)), with: .color(GameTheme.paper))
+        }.allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+
 // Broadcast values come only from the match snapshot currently being presented.
 enum MatchBroadcastData {
     static func inningMark(_ match: CareerMatch, home: Bool, inning: Int) -> String {
@@ -135,7 +185,7 @@ enum MatchBroadcastData {
     }
 }
 
-struct MatchBroadcastBoard: View {
+struct MatchBroadcastBoard: View, @MainActor Equatable {
     let match: CareerMatch
     let homeName: String
     let awayName: String
@@ -143,11 +193,16 @@ struct MatchBroadcastBoard: View {
     let pulse: String?
     let pulseAt: Date
     var stadium: StadiumIdentity = .legacy
+    static func ==(lhs:Self,rhs:Self)->Bool {
+        lhs.match == rhs.match && lhs.homeName == rhs.homeName && lhs.awayName == rhs.awayName
+            && lhs.date == rhs.date && lhs.pulse == rhs.pulse && lhs.pulseAt == rhs.pulseAt
+            && lhs.stadium == rhs.stadium
+    }
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     private let paper = Color(hex: 0xf3edcf)
     private let muted = Color(hex: 0x93aab8)
-    private var panel: Color { Color(hex: stadium.theme.panel) }
+    private var panel: Color { Color(hex: stadium.panelColor) }
     private var activeInning: Int? { match.completed ? nil : match.half / 2 + 1 }
     private var pitchCount: Int? { match.role == "pitcher" ? match.line.pitches : nil }
     private var displayedDate: String {
@@ -184,7 +239,7 @@ struct MatchBroadcastBoard: View {
                     .accessibilityLabel("\(teamSummary(home: false)). \(MatchBroadcastData.inningSummary(match, home: false)). \(teamSummary(home: true)). \(MatchBroadcastData.inningSummary(match, home: true))")
                     .accessibilityIdentifier("careerGameScore")
             }
-            Rectangle().fill(Color(hex: stadium.theme.trim)).frame(height: stadium.theme == .brick ? 2 : 1)
+            Rectangle().fill(Color(hex: stadium.trimColor)).frame(height: stadium.theme == .brick ? 2 : 1)
             TimelineView(.animation(minimumInterval: 0.2, paused: reduced || pulse == nil)) { timeline in
                 let elapsed = timeline.date.timeIntervalSince(pulseAt)
                 let blink = !reduced && elapsed >= 0 && elapsed < 1.2 && Int(elapsed / 0.2).isMultiple(of: 2)
@@ -517,7 +572,7 @@ private struct StadiumBoardFrame: View {
     let stadium: StadiumIdentity
     var body: some View {
         GeometryReader { g in
-            let color = Color(hex: stadium.theme.trim)
+            let color = Color(hex: stadium.trimColor)
             ZStack {
                 Rectangle().strokeBorder(color, lineWidth: 2)
                 if stadium.theme == .brick {

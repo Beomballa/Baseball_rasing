@@ -1050,6 +1050,80 @@ extension CareerMatchTests {
         XCTAssertTrue(school.mark.enumerated().contains {$0.offset%4 == 3 && $0.element > 0})
         XCTAssertNotEqual(school.shirt(x:0.5,y:0.1),school.shirt(x:0.5,y:0.8))
     }
+
+    func testV148ProUniformsHaveDistinctHomeAndAwayConstruction() throws {
+        let clubs = ClubIdentity.all
+        XCTAssertEqual(clubs.count, 40)
+        var constructions = Set<[String]>()
+        for club in clubs {
+            let home = try XCTUnwrap(GameUniformStyles.find(club.id))
+            let away = try XCTUnwrap(GameUniformStyles.find(club.id, away: true))
+            XCTAssertNotEqual(home.body, away.body, club.id)
+            XCTAssertEqual(home.mark, away.mark, club.id)
+            for kit in [home, away] {
+                let design = try XCTUnwrap(kit.pro, kit.id)
+                XCTAssertFalse(design.label.isEmpty, kit.id)
+                XCTAssertTrue(constructions.insert([design.cut.rawValue, design.cuff.rawValue,
+                    design.pantsStyle.rawValue, design.legStripe.rawValue, design.sockStyle.rawValue]).inserted, kit.id)
+            }
+        }
+        XCTAssertEqual(constructions.count, 80)
+        XCTAssertNil(GameUniformStyles.find("hs-ref-001")?.pro)
+
+        let seoul = try XCTUnwrap(GameUniformStyles.find("kbo-3"))
+        XCTAssertEqual(seoul.pro?.cut, .vest)
+        XCTAssertEqual(GameUniformStyles.find("kbo-3", away: true)?.pro?.cut, .orbit)
+        let gales = try XCTUnwrap(GameUniformStyles.find("npb-13"))
+        XCTAssertEqual(gales.shirt(x: 0.1, y: 0.28), gales.sleeves)
+        XCTAssertEqual(gales.shirt(x: 0.9, y: 0.28, back: true), gales.sleeves)
+        XCTAssertEqual(gales.shirt(x: 0.9, y: 0.28), gales.body)
+        XCTAssertEqual(gales.leg(base: gales.pants, x: 0.07, y: 0.5), gales.trim)
+        XCTAssertEqual(gales.leg(base: gales.pants, x: 0.93, y: 0.5, back: true), gales.trim)
+        let portland = try XCTUnwrap(GameUniformStyles.find("mlb-12"))
+        XCTAssertEqual(portland.pro?.pantsStyle, .knicker)
+        XCTAssertEqual(portland.pro?.sockStyle, .stirrup)
+        XCTAssertNotEqual(portland.sock(base: portland.socks, y: 0.2), portland.sock(base: portland.socks, y: 0.33))
+    }
+
+    func testV148RepresentativeUniformsRenderBothSidesInClubDirectory() throws {
+        for id in ["kbo-3", "npb-13", "mlb-12"] {
+            let club = try XCTUnwrap(ClubIdentity.resolve(id: id))
+            let home = try XCTUnwrap(ClubUniformArtwork.renderedPreview(club: club, away: false))
+            let away = try XCTUnwrap(ClubUniformArtwork.renderedPreview(club: club, away: true))
+            XCTAssertNotEqual(home.label, away.label)
+            XCTAssertNotEqual(home.image.pngData(), away.image.pngData())
+            for (side, preview) in [("home", home), ("away", away)] {
+                XCTAssertEqual(preview.image.size, CGSize(width: 768, height: 512))
+                let attachment = XCTAttachment(image: preview.image)
+                attachment.name = "V148-\(id)-\(side)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+    }
+
+    func testV148UniformChangePreservesPlayerEdgesAcrossLiveAndFieldRenders() throws {
+        let home = PlayerAppearance().wearing(teamID: "npb-13")
+        let away = home.wearing(teamID: "npb-13", away: true)
+        let field = try XCTUnwrap(FieldRasterArt.samples(FieldSpriteMotion(facing: .south, stage: .ready), kind: "fielder", left: false).first)
+        let renderers: [(String, (PlayerAppearance) -> UIImage?)] = [
+            ("batter", { PlayerMotionArt.image(role: .batter, frame: 0, appearance: $0, number: 27, hand: "right") }),
+            ("opponent-batter", { OpponentMotionArt.image("opponent-batter-v116", frame: 2, columns: 3, rows: 2, kit: $0.uniformColor, style: $0.uniformStyle) }),
+            ("fielder", { FieldRasterArt.image(field, kit: $0.uniformColor, skin: 0xefbe91, hair: 0x263b48, number: 27, back: false, style: $0.uniformStyle) })
+        ]
+        for (role, render) in renderers {
+            let first = try XCTUnwrap(render(home)?.cgImage, role)
+            let second = try XCTUnwrap(render(away)?.cgImage, role)
+            let lhs = try XCTUnwrap(first.dataProvider?.data, role) as Data
+            let rhs = try XCTUnwrap(second.dataProvider?.data, role) as Data
+            XCTAssertEqual(first.bytesPerRow, second.bytesPerRow, role)
+            XCTAssertEqual(lhs.count, rhs.count, role)
+            XCTAssertNotEqual(lhs, rhs, role)
+            XCTAssertEqual(stride(from: 3, to: lhs.count, by: 4).map { lhs[$0] },
+                           stride(from: 3, to: rhs.count, by: 4).map { rhs[$0] }, role)
+        }
+    }
+
     func testV111BusyAudioQueueNeverBlocksGameThread() async throws {
         let queue = DispatchQueue(label: "test.audio.busy")
         let gate = DispatchSemaphore(value: 0)

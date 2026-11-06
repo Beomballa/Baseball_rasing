@@ -4,7 +4,15 @@ private struct CareerCompletionNavigationKey: EnvironmentKey {
     static let defaultValue: (@MainActor @Sendable (ManagementTab) -> Void)? = nil
 }
 
+private struct CareerMatchVisibilityKey: EnvironmentKey {
+    static let defaultValue: (@MainActor @Sendable (Bool) -> Void)? = nil
+}
+
 extension EnvironmentValues {
+    var careerMatchVisibility: (@MainActor @Sendable (Bool) -> Void)? {
+        get { self[CareerMatchVisibilityKey.self] }
+        set { self[CareerMatchVisibilityKey.self] = newValue }
+    }
     var careerCompletionNavigation: (@MainActor @Sendable (ManagementTab) -> Void)? {
         get { self[CareerCompletionNavigationKey.self] }
         set { self[CareerCompletionNavigationKey.self] = newValue }
@@ -21,8 +29,11 @@ struct ManagementSectionTabs<Selection: Hashable>: View {
     var body: some View {
         if horizontal && !typeSize.isAccessibilitySize {
             HStack(spacing: 8) { choices }
+        } else if typeSize.isAccessibilitySize {
+            // Pinned report tabs must stay mounted while the document scrolls.
+            VStack(spacing: 8) { choices }
         } else {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 8) { choices }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) { choices }
         }
     }
     private var choices: some View {

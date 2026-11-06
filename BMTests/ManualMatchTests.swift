@@ -5,7 +5,418 @@ import SwiftData
 import SwiftUI
 @testable import BM
 
+extension ManualMatchTests {
+    func testV143FinishHoldsItsAuthoredFootPositionAndResetsOnCancel() throws {
+        let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+        scene.configure(hand: "right", kit: 1, role: .pitcher)
+        let pitcher = try XCTUnwrap(scene.childNode(withName: "animatedPitcher") as? SKSpriteNode)
+        let rig = try XCTUnwrap(pitcher.childNode(withName: "fullBodyPitcher") as? FullBodyPitcherNode)
+        let body = try XCTUnwrap(rig.childNode(withName: "pitcherWholeBody") as? SKSpriteNode)
+        let width = pitcher.size.width, anchor = pitcher.anchorPoint
+        XCTAssertTrue(rig.usesRefinedDelivery)
+        rig.apply(progress: 2, canvas: width, anchor: anchor)
+        let texture = body.texture, position = body.position, hand = rig.handPoint, index = rig.frameIndex
+        rig.apply(progress: 2.2, canvas: width, anchor: anchor)
+        XCTAssertEqual(rig.frameIndex, index)
+        XCTAssertTrue(body.texture === texture)
+        XCTAssertEqual(body.position, position)
+        XCTAssertEqual(rig.handPoint, hand)
+        rig.apply(progress: 2.2, canvas: width * 2, anchor: anchor)
+        XCTAssertEqual(body.size.width, width * 2)
+        XCTAssertEqual(rig.handPoint.x, hand.x * 2, accuracy: 0.000001)
+        XCTAssertEqual(rig.handPoint.y, hand.y * 2, accuracy: 0.000001)
+        scene.cancelDelivery()
+        XCTAssertEqual(rig.frameIndex, 0)
+        XCTAssertEqual(body.size.width, width)
+    }
+
+    func testV124DarkTrouserShadowsKeepClothInsteadOfLeatherColor() throws {
+        let camera = try XCTUnwrap(FullBodyPitcherArt.manifest).back
+        let url = try XCTUnwrap(Bundle.main.url(forResource: camera.file, withExtension: "png", subdirectory: "MatchArt"))
+        let source = try XCTUnwrap(UIImage(contentsOfFile: url.path)?.cgImage)
+        let style = GameUniformStyle(id: "qa-v124-cloth", pattern: "solid", body: 0x245d51, sleeves: 0x503040,
+            cap: 0x503040, brim: 0x342539, trim: 0xf4ce61, ink: 0xf1f3ee, mark: [], pants: 0x9eacb8)
+        func pixels(_ image: CGImage) -> [UInt8] {
+            var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            bytes.withUnsafeMutableBytes { p in
+                let context = CGContext(data: p.baseAddress, width: image.width, height: image.height,
+                    bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue)
+                context?.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            }
+            return bytes
+        }
+        var checked = 0
+        for frame in camera.frames {
+            let rect = frame.rect
+            let crop = try XCTUnwrap(source.cropping(to: CGRect(x: rect[0], y: rect[1], width: rect[2], height: rect[3])))
+            let rendered = try XCTUnwrap(FullBodyPitcherArt.image(frame: frame, file: camera.file, kit: style.body,
+                style: style, appearance: PlayerAppearance(kit: 1), number: 27, mirrored: false)?.cgImage)
+            let original = pixels(crop), actual = pixels(rendered)
+            for y in 0..<128 where Double(y)/128 > frame.shirt[1] + frame.shirt[3] * 0.8 {
+                for x in 0..<128 {
+                    let sx = min(rect[2]-1, Int((Double(x)+0.5)*Double(rect[2])/128))
+                    let sy = min(rect[3]-1, Int((Double(y)+0.5)*Double(rect[3])/128))
+                    let i = (sy*rect[2]+sx)*4, j = (y*128+x)*4
+                    guard original[i+3] > 200, actual[j+3] == 255 else { continue }
+                    let rgb = (0..<3).map { Double(original[i+$0])/Double(original[i+3]) }
+                    let high = rgb.max()!, low = rgb.min()!
+                    guard high > 0.24, high <= 0.5, (high-low)/high < 0.25 else { continue }
+                    let observed = (0..<3).map { Double(actual[j+$0]) }
+                    let target = [158.0, 172.0, 184.0]
+                    for c in 0..<3 {
+                        XCTAssertEqual(observed[c]/observed.reduce(0,+), target[c]/target.reduce(0,+), accuracy: 0.015,
+                            "A dark neutral trouser pixel must keep the team's cloth hue, not become leather/skin")
+                    }
+                    checked += 1
+                }
+            }
+        }
+        XCTAssertGreaterThan(checked, 100, "Exercise actual dark folds across the atlas, not just white cloth highlights")
+    }
+
+    func testV124PitchZoneStaysOnPlateAcrossThrowingHandsAndBatterSides() throws {
+        for hand in ["left", "right"] { for side in [OpponentBatterSide.left, .right] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+            scene.configure(hand: hand, kit: 1, role: .pitcher, batterSide: side)
+            XCTAssertEqual(scene.size.width / scene.size.height, 1219.0 / 1290.0, accuracy: 0.000001,
+                           "SpriteKit and the overlay must share the artwork aspect ratio without integer truncation")
+            let zone = try XCTUnwrap(scene.childNode(withName: "pitchStrikeZone") as? SKShapeNode)
+            let bounds = try XCTUnwrap(zone.path).boundingBox
+            XCTAssertEqual(bounds.midX / scene.size.width, 0.5, accuracy: 0.000001,
+                           "The catcher and plate stay centered when the pitching hand changes")
+            XCTAssertEqual(1 - bounds.midY / scene.size.height, 0.465, accuracy: 0.000001)
+            XCTAssertEqual(bounds.minX / scene.size.width, 0.434, accuracy: 0.000001)
+            XCTAssertEqual(bounds.maxX / scene.size.width, 0.566, accuracy: 0.000001)
+            XCTAssertEqual(1 - bounds.maxY / scene.size.height, 0.411, accuracy: 0.000001)
+            XCTAssertEqual(1 - bounds.minY / scene.size.height, 0.519, accuracy: 0.000001)
+            for value in [0.0, 0.2, 0.5, 0.8, 1.0] {
+                let point = scene.arrivalPoint(x: value, y: value)
+                let marker = MatchPitchProjection(role: .pitcher).viewPoint(x: value, y: value, size: scene.size)
+                XCTAssertEqual(point.x, marker.x, accuracy: 0.000001)
+                XCTAssertEqual(scene.size.height - point.y, marker.y, accuracy: 0.000001)
+            }
+        }}
+        let batter = MatchPitchProjection(role: .batter)
+        let batterEdge = batter.normalizedPoint(x: 0, y: 0)
+        XCTAssertEqual(batterEdge.x, 0.42, accuracy: 0.000001)
+        XCTAssertEqual(batterEdge.y, 0.57, accuracy: 0.000001,
+                       "The existing batter-camera aiming plane stays unchanged")
+    }
+
+    func testV124PitchTargetCornersRemainWholeAtAimExtremesAndAspectFitSizes() throws {
+        let targets = [PitchTarget(x: 0, y: 0), PitchTarget(x: 1, y: 0), PitchTarget(x: 0, y: 1),
+                       PitchTarget(x: 1, y: 1), PitchTarget(x: 0.5, y: 0.5)]
+        for size in [CGSize(width: 320, height: 320 * 1290.0 / 1219.0),
+                     CGSize(width: 375, height: 667), CGSize(width: 667, height: 375)] {
+            for target in targets {
+                let renderer = ImageRenderer(content: PitchingTargetMarker(target: target)
+                    .frame(width: size.width, height: size.height))
+                renderer.scale = 1
+                let image = try XCTUnwrap(renderer.uiImage?.cgImage)
+                let width = image.width, height = image.height
+                var pixels = [UInt8](repeating: 0, count: width * height * 4)
+                pixels.withUnsafeMutableBytes { data in
+                    let context = CGContext(data: data.baseAddress, width: width, height: height,
+                        bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue)
+                    context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+                }
+                var minX = width, maxX = -1, minY = height, maxY = -1
+                for y in 0..<height { for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 128 {
+                    minX = min(minX, x); maxX = max(maxX, x)
+                    minY = min(minY, y); maxY = max(maxY, y)
+                }}
+                XCTAssertGreaterThanOrEqual(maxX - minX + 1, 13, "A target at the aim boundary must not lose half of its marker")
+                XCTAssertGreaterThanOrEqual(maxY - minY + 1, 13)
+                XCTAssertGreaterThan(minX, 0); XCTAssertLessThan(maxX, width - 1)
+                XCTAssertGreaterThan(minY, 0); XCTAssertLessThan(maxY, height - 1)
+                let point = MatchPitchProjection(role: .pitcher).viewPoint(x: target.x, y: target.y, size: size)
+                XCTAssertEqual(Double(minX + maxX) / 2, point.x, accuracy: 1)
+            }
+        }
+    }
+
+    func testV124PitchArrivalUsesDisplayedPlatePlaneAtCenterAndEdgesForBothHands() throws {
+        for hand in ["left", "right"] { for target in [PitchTarget(x: 0, y: 0), PitchTarget(x: 1, y: 1), PitchTarget(x: 0.5, y: 0.5)] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+            scene.configure(hand: hand, kit: 1, role: .pitcher)
+            XCTAssertTrue(scene.demonstrate(reduceMotion: false, flightDuration: 0.5,
+                x: target.x, y: target.y, preparedRelease: true))
+            scene.advanceDelivery(at: ProcessInfo.processInfo.systemUptime + 0.6)
+            let received = try XCTUnwrap(scene.childNode(withName: "receivedBaseball"))
+            XCTAssertFalse(received.isHidden)
+            XCTAssertEqual(received.position.x / scene.size.width, 0.5 + (target.x - 0.5) * 0.22, accuracy: 0.000001)
+            XCTAssertEqual(1 - received.position.y / scene.size.height, 0.465 + (target.y - 0.5) * 0.18, accuracy: 0.000001)
+            scene.cancelDelivery()
+        }}
+    }
+
+    func testV143RenderedPitcherPlantsTowardHomeAndReleasesFromProjectedHand() throws {
+        var plantedByHand: [String: CGPoint] = [:]
+        for hand in ["left", "right"] {
+            let scene = BallparkScene(size: CGSize(width: 320, height: 340))
+            scene.configure(hand: hand, kit: 1, role: .pitcher)
+            let pitcher = try XCTUnwrap(scene.childNode(withName: "animatedPitcher") as? SKSpriteNode)
+            let rig = try XCTUnwrap(pitcher.childNode(withName: "fullBodyPitcher") as? FullBodyPitcherNode)
+            XCTAssertTrue(rig.usesRefinedDelivery)
+            let mound = pitcher.position
+            let home = CGPoint(x: scene.size.width * 0.5, y: scene.size.height * (1 - 0.55))
+            var plant: CGPoint?
+            for progress in [0.88, 0.95, 1.0, 1.3, 1.78, 2] {
+                rig.apply(progress: progress, canvas: pitcher.size.width, anchor: pitcher.anchorPoint)
+                let foot = rig.convert(rig.leadFoot, to: scene)
+                if let plant {
+                    XCTAssertEqual(foot.x, plant.x, accuracy: 0.000001)
+                    XCTAssertEqual(foot.y, plant.y, accuracy: 0.000001,
+                                   "After landing, the displayed foot stays planted through follow-through")
+                } else { plant = foot }
+            }
+            let foot = try XCTUnwrap(plant)
+            plantedByHand[hand] = foot
+            XCTAssertGreaterThan(foot.y, mound.y, "The stride must advance toward home, not remain on a horizontal mound line")
+            XCTAssertLessThan(hypot(foot.x - home.x, foot.y - home.y), hypot(mound.x - home.x, mound.y - home.y))
+            XCTAssertEqual(abs(foot.x - mound.x), 45.87287270902384, accuracy: 0.001)
+            XCTAssertEqual(foot.y - mound.y, 6.8334276987739, accuracy: 0.001)
+            XCTAssertTrue(scene.demonstrate(reduceMotion: false, flightDuration: 1, preparedRelease: true))
+            let ball = try XCTUnwrap(scene.childNode(withName: "baseball"))
+            let release = rig.convert(rig.handPoint, to: scene)
+            XCTAssertEqual(ball.position.x, release.x, accuracy: 0.000001)
+            XCTAssertEqual(ball.position.y, release.y, accuracy: 0.000001)
+            scene.cancelDelivery()
+        }
+        let left = try XCTUnwrap(plantedByHand["left"]), right = try XCTUnwrap(plantedByHand["right"])
+        XCTAssertEqual(left.x + right.x, 320, accuracy: 0.000001)
+        XCTAssertEqual(left.y, right.y, accuracy: 0.000001)
+    }
+}
+
 @MainActor final class ManualMatchTests: XCTestCase {
+    func testV121DisplayReceiptRejectsMutationInsideSaveCallback() async throws {
+        let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+        let (player,calendar,record)=try fixture(in:context)
+        let prepared=try await CareerMatchStore.prepareManual(player:player,state:calendar,record:record,revision:record.revision,
+            input:.watch,pitchCode:nil,control:ManualMatchInput())
+        let committed=try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context,
+            save:{context in try context.save();record.payload=Data("changed-by-observer".utf8)})
+        var display=MatchDisplaySnapshot()
+        XCTAssertFalse(committed.matches(record))
+        XCTAssertThrowsError(try display.refresh(record,committed:committed))
+        context.rollback()
+        XCTAssertNoThrow(try record.snapshot())
+    }
+    func testV121LastManualRewardFailureRetryIsAtomic() async throws {
+        enum Injected:Error {case save}
+        let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+        let (player,calendar,record)=try fixture(in:context)
+        var expected=try record.snapshot(),lastBefore=expected
+        for _ in 0..<200 where !expected.completed {
+            lastBefore=expected
+            let ball=expected.delivery(pitchCode:"four-seam")
+            try expected.advance(.swing,pitchCode:"four-seam",control:ManualMatchInput(x:ball.x,y:ball.y,timing:MatchDelivery.contactPhase))
+        }
+        XCTAssertTrue(expected.completed);XCTAssertFalse(lastBefore.completed)
+        record.payload=try JSONEncoder().encode(lastBefore);try context.save()
+        let payload=record.payload,values=try CareerLifecycleStore.values(player:player,in:context),fatigue=player.fatigue
+        let ball=lastBefore.delivery(pitchCode:"four-seam")
+        let prepared=try await CareerMatchStore.prepareManual(player:player,state:calendar,record:record,revision:record.revision,
+            input:.swing,pitchCode:"four-seam",control:ManualMatchInput(x:ball.x,y:ball.y,timing:MatchDelivery.contactPhase))
+        XCTAssertFalse(prepared.preparedOnMainThread)
+        var saves=0
+        XCTAssertThrowsError(try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context,
+            save:{_ in saves+=1;throw Injected.save}))
+        XCTAssertEqual(record.payload,payload);XCTAssertFalse(record.completed);XCTAssertEqual(player.fatigue,fatigue)
+        XCTAssertEqual(try CareerLifecycleStore.values(player:player,in:context),values)
+        let committed=try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context,
+            save:{context in saves+=1;try context.save()})
+        XCTAssertTrue(record.completed);XCTAssertEqual(committed.updated.random,expected.random)
+        XCTAssertEqual(committed.updated.line,expected.line);XCTAssertEqual(committed.updated.abilityExperience,expected.abilityExperience)
+        for award in expected.abilityExperience?.result?.awards ?? [] {
+            XCTAssertEqual(try CareerTrainingStore.value(player:player,code:nil,kind:award.kind,in:context),award.after)
+        }
+        let after=record.payload,finalValues=try CareerLifecycleStore.values(player:player,in:context),finalFatigue=player.fatigue
+        XCTAssertThrowsError(try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context))
+        XCTAssertEqual(saves,2);XCTAssertEqual(record.payload,after);XCTAssertEqual(player.fatigue,finalFatigue)
+        XCTAssertEqual(try CareerLifecycleStore.values(player:player,in:context),finalValues)
+    }
+    func testV121PendingBatDecisionDoesNotInventReceiptOrDuplicateResult() throws {
+        let scene=BallparkScene(size:CGSize(width:320,height:320));scene.configure(hand:"right",kit:1,role:.batter)
+        let start=ProcessInfo.processInfo.systemUptime,timeline=MatchInputTimeline(startedAt:start,windup:0,duration:1)
+        XCTAssertTrue(scene.demonstrate(reduceMotion:false,inputTimeline:timeline))
+        scene.awaitBatDecision()
+        scene.advanceDelivery(at:timeline.contactAt+0.1)
+        let received=try XCTUnwrap(scene.childNode(withName:"receivedBaseball"))
+        XCTAssertTrue(received.isHidden,"백그라운드 확정 대기 중 포구 공을 미리 표시하면 안 됨")
+        var arrivals=0,completions=0
+        scene.finishBat(action:"swing",outcome:"안타",reduced:false,onArrival:{arrivals+=1}) {completions+=1}
+        scene.advanceDelivery(at:timeline.contactAt+0.2)
+        XCTAssertTrue(received.isHidden)
+        scene.advanceDelivery(at:start+5);scene.advanceDelivery(at:start+6)
+        XCTAssertEqual(arrivals,1);XCTAssertEqual(completions,1)
+        scene.cancelDelivery()
+        XCTAssertTrue(scene.demonstrate(reduceMotion:false,inputTimeline:timeline))
+        scene.advanceDelivery(at:timeline.contactAt+0.1)
+        XCTAssertFalse(received.isHidden,"취소 뒤 다음 투구의 정상 포구 표시를 복구해야 함")
+    }
+    func testV121PreparedManualMatchesSimulationAndDisplayCacheBothRoles() async throws {
+        for role in PlayerRole.allCases {
+            let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+            let (player,calendar,record)=try fixture(in:context,role:role)
+            var display=MatchDisplaySnapshot();_ = try display.refresh(record)
+            for _ in 0..<3 where !record.completed {
+                let before=try record.snapshot(),delivery=before.delivery(pitchCode:"four-seam")
+                let input:MatchInput=role == .batter ? .swing:.pitch
+                let control=role == .batter ? ManualMatchInput(x:delivery.x,y:delivery.y,timing:MatchDelivery.contactPhase):ManualMatchInput(release:ManualMatchRules.releaseCenter)
+                var expected=before;try expected.advance(input,pitchCode:"four-seam",control:control)
+                let prepared=try await CareerMatchStore.prepareManual(player:player,state:calendar,record:record,
+                    revision:record.revision,input:input,pitchCode:"four-seam",control:control)
+                XCTAssertFalse(prepared.preparedOnMainThread)
+                XCTAssertEqual(try record.snapshot(),before,"계산 완료만으로 원장을 변경하지 않음")
+                let committed=try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context)
+                XCTAssertEqual(committed.previous,before)
+                XCTAssertEqual(try display.refresh(record,committed:committed),expected)
+                XCTAssertEqual(try record.snapshot(),expected)
+                _ = try display.refresh(record)
+                XCTAssertEqual(display.decodeCount,1,"검증된 저장 결과를 표시할 때 원장 전체를 다시 해석하지 않음")
+                let payload=record.payload
+                XCTAssertThrowsError(try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context))
+                XCTAssertEqual(record.payload,payload)
+            }
+        }
+    }
+
+    func testV121PreparedManualRejectsStaleMetadataAndCancellation() async throws {
+        for damage in 0..<4 {
+            let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+            let (player,calendar,record)=try fixture(in:context)
+            let prepared=try await CareerMatchStore.prepareManual(player:player,state:calendar,record:record,revision:record.revision,
+                input:.watch,pitchCode:nil,control:ManualMatchInput())
+            let original=record.payload
+            switch damage {
+            case 0:calendar.revision+=1
+            case 1:record.payload=Data("damaged".utf8)
+            case 2:player.fatigue+=1
+            default:record.opponentID="changed-without-revision"
+            }
+            let altered=record.payload
+            XCTAssertThrowsError(try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context))
+            XCTAssertEqual(record.payload,altered);XCTAssertEqual(record.revision,0)
+            if damage != 1 {XCTAssertEqual(record.payload,original)}
+        }
+        let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+        let (player,calendar,record)=try fixture(in:context),payload=record.payload
+        let job=Task {try await CareerMatchStore.prepareManual(player:player,state:calendar,record:record,revision:record.revision,
+            input:.watch,pitchCode:nil,control:ManualMatchInput())}
+        job.cancel()
+        do {_ = try await job.value;XCTFail("취소된 준비는 적용 결과를 반환하면 안 됨")} catch is CancellationError {}
+        XCTAssertEqual(record.payload,payload);XCTAssertEqual(record.revision,0)
+    }
+
+    func testV121PreparedManualSaveFailureRetryAndCompletionRemainOnce() async throws {
+        enum Injected:Error {case save}
+        for role in PlayerRole.allCases {
+            let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
+            let (player,calendar,record)=try fixture(in:context,role:role)
+            let payload=record.payload,revision=record.revision,calendarRevision=calendar.revision,fatigue=player.fatigue
+            let match=try record.snapshot(),delivery=match.delivery(pitchCode:"four-seam")
+            let input:MatchInput=role == .batter ? .swing:.pitch
+            let control=role == .batter ? ManualMatchInput(x:delivery.x,y:delivery.y,timing:MatchDelivery.contactPhase):ManualMatchInput(release:ManualMatchRules.releaseCenter)
+            let prepared=try await CareerMatchStore.prepareManual(player:player,state:calendar,record:record,revision:revision,
+                input:input,pitchCode:"four-seam",control:control)
+            XCTAssertThrowsError(try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context,
+                save:{_ in throw Injected.save}))
+            XCTAssertEqual(record.payload,payload);XCTAssertEqual(record.revision,revision)
+            XCTAssertEqual(calendar.revision,calendarRevision);XCTAssertEqual(player.fatigue,fatigue)
+            let committed=try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context)
+            var display=MatchDisplaySnapshot();_ = try display.refresh(record,committed:committed)
+            let valid=record.payload;record.payload=Data("damaged".utf8)
+            XCTAssertThrowsError(try display.refresh(record,committed:committed),"표시 캐시도 원문이 달라지면 재검증해야 함")
+            record.payload=valid
+            try CareerMatchStore.advance(player:player,state:calendar,record:record,revision:record.revision,input:.automatic,in:context)
+            let completed=record.payload,finalFatigue=player.fatigue
+            XCTAssertTrue(record.completed)
+            XCTAssertThrowsError(try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context))
+            let reopened=try CareerMatchStore.start(player:player,state:calendar,in:context)
+            XCTAssertEqual(reopened.payload,completed);XCTAssertEqual(player.fatigue,finalFatigue)
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerMatchRecord>()),1)
+        }
+    }
+    func testV121ManualCommitStageAuditPreservesSimulationBothRoles() throws {
+        let wasEnabled=MatchRenderMetrics.enabled
+        MatchRenderMetrics.enabled=true
+        defer {MatchRenderMetrics.enabled=wasEnabled;MatchRenderMetrics.reset()}
+        for role in PlayerRole.allCases {
+            let container=try CareerStore.makeContainer(inMemory:true)
+            let (player,calendar,record)=try fixture(in:container.mainContext,role:role)
+            MatchRenderMetrics.reset()
+            for _ in 0..<3 where !record.completed {
+                let before=try record.snapshot(),delivery=before.delivery(pitchCode:"four-seam")
+                let input:MatchInput=role == .batter ? .swing:.pitch
+                let control=role == .batter ? ManualMatchInput(x:delivery.x,y:delivery.y,timing:MatchDelivery.contactPhase):ManualMatchInput(release:ManualMatchRules.releaseCenter)
+                var expected=before;try expected.advance(input,pitchCode:"four-seam",control:control)
+                try CareerMatchStore.advance(player:player,state:calendar,record:record,revision:record.revision,input:input,pitchCode:"four-seam",control:control,in:container.mainContext)
+                XCTAssertEqual(try record.snapshot(),expected)
+            }
+            let data=try JSONEncoder().encode(MatchRenderMetrics.lifecycle)
+            let attachment=XCTAttachment(data:data,uniformTypeIdentifier:"public.json")
+            attachment.name="v121-commit-stages-"+role.rawValue;attachment.lifetime = .keepAlways;add(attachment)
+        }
+    }
+    private func visiblePitcher(in actor: SKNode) throws -> SKSpriteNode {
+        try XCTUnwrap(actor.childNode(withName:"fullBodyPitcher")?.childNode(withName:"pitcherWholeBody") as? SKSpriteNode)
+    }
+    func testV116BatterSequenceAdvancesThroughPlantContactAndFollow() {
+        let phases=[0.0,0.8,1.3,1.9,2.0,2.5,3.0]
+        XCTAssertEqual(phases.map {BatterSequencePose(phase:$0).stage},[.ready,.load,.plant,.turn,.contact,.followThrough,.followThrough])
+        XCTAssertEqual(phases.map {BatterSequencePose(phase:$0).frame},[0,1,1,1,2,3,3])
+        let plant=(0...20).map {BatterSequencePose(phase:Double($0)/10).plant}
+        XCTAssertEqual(plant,plant.sorted());XCTAssertEqual(plant.first,0);XCTAssertEqual(plant.last,1)
+    }
+
+    func testV116OpponentSequenceBothSidesHandsAndNextBatterReset() throws {
+        for hand in ["right","left"] {for side in OpponentBatterSide.allCases {
+            let scene=BallparkScene(size:CGSize(width:320,height:340))
+            var look=PlayerAppearance();look.uniformTeamID="kbo-0";look.opponentUniformTeamID="kbo-1"
+            scene.configure(hand:hand,kit:1,appearance:look,batterSide:side)
+            let batter=try XCTUnwrap(scene.childNode(withName:"animatedBatter") as? SKSpriteNode)
+            let pitcher=try XCTUnwrap(scene.childNode(withName:"animatedPitcher") as? SKSpriteNode)
+            let visible=try visiblePitcher(in:pitcher)
+            let ready=batter.texture,pitcherReady=visible.texture,facing=batter.xScale
+            let view=SKView(frame:CGRect(origin:.zero,size:scene.size));view.presentScene(scene);scene.isPaused=true
+            func capture(_ stage:String) throws {
+                let shot=XCTAttachment(image:UIImage(cgImage:try XCTUnwrap(view.texture(from:scene)?.cgImage())))
+                shot.name="v116-\(hand)-\(side.rawValue)-\(stage)";shot.lifetime = .keepAlways;add(shot)
+                XCTAssertEqual(batter.xScale,facing,"같은 스윙 중 좌우 반전 금지")
+            }
+            try capture("00-ready")
+            for (index,phase) in [0.2,0.4,0.65].enumerated() {scene.preparePitch(phase:phase,reduced:false);try capture("0\(index+1)-pitch-prepare")}
+            XCTAssertTrue(scene.demonstrate(reduceMotion:false,flightDuration:1,outcome:"헛스윙",preparedRelease:true))
+            let start=ProcessInfo.processInfo.systemUptime
+            try capture("04-release")
+            for (stage,time) in [("05-load",0.80),("06-plant",0.96),("07-contact",1.01),("08-follow",1.20),("09-settled",1.50)] {
+                scene.advanceDelivery(at:start+time);try capture(stage)
+            }
+            XCTAssertFalse(ready === batter.texture)
+            scene.advanceDelivery(at:start+4);XCTAssertTrue(pitcherReady === visible.texture,"판정 확인 뒤 투수 세트 자세 복귀")
+            scene.cancelDelivery();XCTAssertTrue(ready === batter.texture);try capture("10-next-batter-ready")
+            view.presentScene(nil)
+        }}
+    }
+
+    func testV116BattedContactDoesNotLeaveCaughtBallAndReceiptCompletesOnce() throws {
+        let scene=BallparkScene(size:CGSize(width:320,height:320));scene.configure(hand:"right",kit:1,role:.batter)
+        let start=ProcessInfo.processInfo.systemUptime,timeline=MatchInputTimeline(startedAt:start,windup:0.35,duration:1.4)
+        var arrivals=0,completions=0
+        XCTAssertTrue(scene.demonstrate(reduceMotion:false,inputTimeline:timeline))
+        scene.finishBat(action:"swing",outcome:"파울",reduced:false,onArrival:{arrivals += 1}) {completions += 1}
+        scene.advanceDelivery(at:timeline.contactAt+0.01)
+        XCTAssertEqual(arrivals,1)
+        let received=try XCTUnwrap(scene.childNode(withName:"receivedBaseball"))
+        XCTAssertTrue(received.isHidden,"접촉한 공을 동시에 미트 포구 공으로 표시하면 안 됨")
+        scene.advanceDelivery(at:timeline.contactAt+4);scene.advanceDelivery(at:timeline.contactAt+5)
+        XCTAssertEqual(arrivals,1);XCTAssertEqual(completions,1)
+    }
+
     func testV27InningScoreStatesDistinguishZeroFutureSkippedAndLegacy() throws {
         var game = match(); game.half = 0
         var scores = MatchInningScores()
@@ -236,8 +647,8 @@ import SwiftUI
                 elapsed.append(time)
                 XCTAssertGreaterThanOrEqual(time,duration * MatchDelivery.contactPhase - 0.04)
                 let ball = scene.childNode(withName:"baseball")
-                XCTAssertEqual(ball?.position.x ?? -1,320 * (0.54 + 0.25 * 0.22),accuracy:0.01)
-                XCTAssertEqual(ball?.position.y ?? -1,scene.size.height * (1 - (0.43 - 0.2 * 0.24)),accuracy:0.01)
+                XCTAssertEqual(ball?.position.x ?? -1,320 * (0.5 + 0.25 * 0.22),accuracy:0.01)
+                XCTAssertEqual(ball?.position.y ?? -1,scene.size.height * (1 - (0.465 - 0.2 * 0.18)),accuracy:0.01)
                 XCTAssertEqual(scene.pitchStage,.received); arrival.fulfill()
             })
             try await Task.sleep(for:.seconds(0.2)); XCTAssertEqual(scene.pitchStage,.flight)
@@ -268,7 +679,7 @@ import SwiftUI
                 try await Task.sleep(for:.seconds(duration*0.45))
                 let ball=try XCTUnwrap(scene.childNode(withName:"baseball"))
                 XCTAssertEqual(scene.pitchStage,.flight);XCTAssertFalse(arrived);XCTAssertFalse(finished);XCTAssertFalse(ball.isHidden)
-                let end=CGPoint(x:scene.size.width*0.54,y:scene.size.height*0.57)
+                let end=scene.arrivalPoint(x:0.5,y:0.5)
                 XCTAssertGreaterThan(hypot(ball.position.x-end.x,ball.position.y-end.y),10)
                 XCTAssertGreaterThanOrEqual(ball.frame.width,5)
                 await fulfillment(of:[event],timeout:3)
@@ -751,6 +1162,322 @@ import SwiftUI
 }
 
 extension ManualMatchTests {
+    func testV118RigidBodyLengthsDoNotStretchDuringPitch() {
+        for i in 0...1272 {
+            let pose=PitcherContinuousPose(progress:Double(i)/480)
+            let bones:[(CGPoint,CGPoint,Double)]=[
+                (pose.hip,pose.chest,PitcherContinuousPose.trunkLength),
+                (pose.throwingShoulder,pose.elbow,PitcherContinuousPose.upperArmLength),
+                (pose.elbow,pose.wrist,PitcherContinuousPose.forearmLength),
+                (pose.gloveShoulder,pose.gloveElbow,PitcherContinuousPose.gloveUpperLength),
+                (pose.gloveElbow,pose.glove,PitcherContinuousPose.gloveForearmLength),
+                (pose.leadHip,pose.knee,PitcherContinuousPose.thighLength),
+                (pose.knee,pose.ankle,PitcherContinuousPose.shinLength),
+                (pose.rearHip,pose.rearKnee,PitcherContinuousPose.thighLength),
+                (pose.rearKnee,pose.rearAnkle,PitcherContinuousPose.shinLength)]
+            for (root,end,length) in bones {
+                XCTAssertEqual(hypot(end.x-root.x,end.y-root.y),length,accuracy:0.000001,
+                               "A connected limb must rotate without stretching or collapsing")
+            }
+        }
+    }
+    func testV118PlantReleaseAndRecoveryKeepContinuousFirmPose() {
+        func speed(_ time:Double)->Double {
+            let a=PitcherContinuousPose(progress:time-0.001).wrist,b=PitcherContinuousPose(progress:time+0.001).wrist
+            return hypot(b.x-a.x,b.y-a.y)/0.002
+        }
+        XCTAssertGreaterThan(speed(0.99),speed(0.28)*3,"The short release accelerates after the controlled lift")
+        XCTAssertLessThan(speed(1.55),speed(0.99)/10,"Follow-through settles rather than continuing to float")
+        for time in [0.76,0.86,0.94,1.0,1.045,1.10,1.22,1.38,1.55,1.85] {
+            let e=0.000001,a=PitcherContinuousPose(progress:time-e),b=PitcherContinuousPose(progress:time+e)
+            for (p,q) in [(a.wrist,b.wrist),(a.knee,b.knee),(a.rearKnee,b.rearKnee),(a.chest,b.chest)] {
+                XCTAssertLessThan(hypot(p.x-q.x,p.y-q.y),0.02,"No jump at plant, release or deceleration boundaries")
+            }
+            XCTAssertEqual(PitcherContinuousPose(progress:time).ankle,CGPoint(x:128,y:440))
+        }
+        XCTAssertEqual(PitcherContinuousPose(progress:2.65).wrist,PitcherContinuousPose(progress:0).wrist)
+    }
+    func testV120WholeBodySilhouetteUsesOneSpriteAndTransparentCorners() throws {
+        for role in [PlayerRole.pitcher,.batter] {
+            let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:"right",kit:1,role:role,jerseyNumber:27)
+            let node=try XCTUnwrap(scene.childNode(withName:"animatedPitcher")?.childNode(withName:"fullBodyPitcher") as? FullBodyPitcherNode)
+            XCTAssertEqual(node.children.count,1,"The selected whole-body direction must not reintroduce detached limb sprites")
+            XCTAssertNil((node.parent as? SKSpriteNode)?.texture,"The old invisible pitcher frames must not remain in the render path")
+            let body=try XCTUnwrap(node.childNode(withName:"pitcherWholeBody") as? SKSpriteNode)
+            let image=try XCTUnwrap(body.texture?.cgImage())
+            var rgba=[UInt8](repeating:0,count:image.width*image.height*4)
+            rgba.withUnsafeMutableBytes {p in
+                let c=CGContext(data:p.baseAddress,width:image.width,height:image.height,bitsPerComponent:8,bytesPerRow:image.width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue)
+                c?.draw(image,in:CGRect(x:0,y:0,width:image.width,height:image.height))
+            }
+            XCTAssertEqual(rgba[3],0);XCTAssertEqual(rgba[(image.width-1)*4+3],0)
+            let opaque=stride(from:3,to:rgba.count,by:4).filter {rgba[$0]>200}.count
+            XCTAssertGreaterThan(opaque,1000);XCTAssertLessThan(opaque,image.width*image.height/2)
+        }
+    }
+    func testV122WholeBodyRecoveryDoesNotJumpBetweenFootRegistrations() throws {
+        let manifest=try XCTUnwrap(FullBodyPitcherArt.manifest)
+        for camera in [manifest.back,manifest.front] {
+            let before=FullBodyPitcherNode.recoveryOffset(progress:1.78,camera:camera)
+            let after=FullBodyPitcherNode.recoveryOffset(progress:1.780001,camera:camera)
+            XCTAssertEqual(before.x,after.x,accuracy:0.000001)
+            XCTAssertEqual(before.y,after.y,accuracy:0.000001)
+            var previous=before
+            for index in 1...240 {
+                let p=FullBodyPitcherNode.recoveryOffset(progress:1.78+0.87*Double(index)/240,camera:camera)
+                XCTAssertLessThan(hypot(p.x-previous.x,p.y-previous.y),0.005)
+                previous=p
+            }
+            XCTAssertEqual(previous.x,camera.frames[31].offset[0],accuracy:0.000001)
+            XCTAssertEqual(previous.y,camera.frames[31].offset[1],accuracy:0.000001)
+            for time in [0.0,0.48,0.78,1.0,1.78] {
+                let frame=camera.frames[FullBodyPitcherArt.index(progress:time)]
+                let p=FullBodyPitcherNode.recoveryOffset(progress:time,camera:camera)
+                XCTAssertEqual(p.x,frame.offset[0]);XCTAssertEqual(p.y,frame.offset[1])
+            }
+        }
+    }
+    func testV123PixelGridKeepsWholeNumberAndVisibleReleaseHand() throws {
+        let manifest=try XCTUnwrap(FullBodyPitcherArt.manifest)
+        for role in [PlayerRole.pitcher,.batter] {
+            let a=try XCTUnwrap(FullBodyPitcherArt.prepare(role:role,appearance:PlayerAppearance(kit:1),number:27,hand:"right"))
+            let b=try XCTUnwrap(FullBodyPitcherArt.prepare(role:role,appearance:PlayerAppearance(kit:1),number:54,hand:"right"))
+            for index in 0..<32 {
+                let image=try XCTUnwrap(a.textures[index].cgImage())
+                XCTAssertEqual(image.width,128);XCTAssertEqual(image.height,128)
+                var pixels=[UInt8](repeating:0,count:128*128*4)
+                pixels.withUnsafeMutableBytes {p in
+                    let c=CGContext(data:p.baseAddress,width:128,height:128,bitsPerComponent:8,bytesPerRow:512,
+                        space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue)
+                    c?.draw(image,in:CGRect(x:0,y:0,width:128,height:128))
+                }
+                XCTAssertTrue(stride(from:3,to:pixels.count,by:4).allSatisfy {pixels[$0]==0 || pixels[$0]==255})
+                let frame=(role == .pitcher ? manifest.back:manifest.front).frames[index]
+                if index==19 {
+                    let x=Int(frame.hand[0]*128),y=Int(frame.hand[1]*128)
+                    XCTAssertTrue((-2...2).contains {dy in (-2...2).contains {dx in
+                        let xx=x+dx,yy=y+dy
+                        return xx>=0 && yy>=0 && xx<128 && yy<128 && pixels[(yy*128+xx)*4+3]==255
+                    }},"Release ball anchor remains on the actual raster hand")
+                }
+                if role == .pitcher && [0,14,19,28].contains(index) {
+                    XCTAssertNotEqual(a.textures[index].cgImage().dataProvider!.data! as Data,b.textures[index].cgImage().dataProvider!.data! as Data,"Visible back numbers remain readable/distinct")
+                }
+            }
+        }
+    }
+    func testV123UniformBadgeMovesInsideClothInsteadOfClippingDigits() throws {
+        let width=40,height=40
+        let cloth=(0..<height).flatMap {y in (0..<width).map {x in (8..<32).contains(x) && (9..<31).contains(y)}}
+        for angle in [-0.4,0,0.4] {
+            let point=try XCTUnwrap(FullBodyPitcherArt.badgeCenter(near:CGPoint(x:7,y:14),angle:angle,columns:7,rows:5,eligible:cloth,width:width,height:height))
+            XCTAssertGreaterThan(point.x,10)
+            var bytes=[UInt8](repeating:80,count:width*height*4)
+            for i in stride(from:3,to:bytes.count,by:4) {bytes[i]=255}
+            PlayerMotionArt.drawNumber(27,at:point,angle:angle,mirrored:false,unit:1,eligible:cloth,bytes:&bytes,width:width,height:height)
+            XCTAssertGreaterThan(stride(from:0,to:bytes.count,by:4).filter {bytes[$0] != 80}.count,10)
+        }
+        XCTAssertNil(FullBodyPitcherArt.badgeCenter(near:.zero,angle:0,columns:7,rows:5,eligible:[Bool](repeating:false,count:1600),width:40,height:40))
+    }
+    func testV123PitcherFollowsThroughThenRecoversWithoutRewinding() {
+        var previous=1.0
+        for index in 0...360 {
+            let value=PitcherMotionPlayback.progress(elapsed:Double(index)/240)
+            XCTAssertGreaterThanOrEqual(value,previous);XCTAssertLessThanOrEqual(value,2.65)
+            XCTAssertLessThan(value-previous,0.008);previous=value
+        }
+        XCTAssertEqual(PitcherMotionPlayback.progress(elapsed:0.42),1.78,accuracy:0.000001)
+        XCTAssertEqual(PitcherMotionPlayback.progress(elapsed:1.12),2.65,accuracy:0.000001)
+        XCTAssertEqual(PitcherMotionPlayback.progress(elapsed:-1),1)
+    }
+    func testV123SocksUseTeamColorAndPantsKeepClothColor() throws {
+        let style=GameUniformStyle(id:"qa-v123",pattern:"solid",body:0x245d51,sleeves:0x503040,
+            cap:0x503040,brim:0x342539,trim:0xf4ce61,ink:0xf1f3ee,mark:[],pants:0x9eacb8)
+        let manifest=try XCTUnwrap(FullBodyPitcherArt.manifest)
+        func pixels(_ image:CGImage)->[UInt8] {
+            var result=[UInt8](repeating:0,count:image.width*image.height*4)
+            result.withUnsafeMutableBytes {p in
+                let c=CGContext(data:p.baseAddress,width:image.width,height:image.height,bitsPerComponent:8,
+                    bytesPerRow:image.width*4,space:CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo:CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue)
+                c?.draw(image,in:CGRect(x:0,y:0,width:image.width,height:image.height))
+            };return result
+        }
+        var socks=0,pants=0
+        for camera in [manifest.back,manifest.front] {
+            let url=try XCTUnwrap(Bundle.main.url(forResource:camera.file,withExtension:"png",subdirectory:"MatchArt"))
+            let source=try XCTUnwrap(UIImage(contentsOfFile:url.path)?.cgImage)
+            for index in [0,14,19,28] {
+                let frame=camera.frames[index],r=frame.rect
+                let crop=try XCTUnwrap(source.cropping(to:CGRect(x:r[0],y:r[1],width:r[2],height:r[3])))
+                let image=try XCTUnwrap(FullBodyPitcherArt.image(frame:frame,file:camera.file,kit:style.body,
+                    style:style,appearance:PlayerAppearance(kit:1),number:nil,mirrored:false)?.cgImage)
+                let a=pixels(crop),b=pixels(image)
+                for y in 80..<112 {for x in 0..<128 {
+                    let sx=min(r[2]-1,Int((Double(x)+0.5)*Double(r[2])/128))
+                    let sy=min(r[3]-1,Int((Double(y)+0.5)*Double(r[3])/128))
+                    let i=(sy*r[2]+sx)*4,j=(y*128+x)*4
+                    guard a[i+3]>200,b[j+3]==255 else {continue}
+                    let red=Double(a[i]),green=Double(a[i+1]),blue=Double(a[i+2])
+                    let hi=max(red,green,blue),lo=min(red,green,blue)
+                    let isSock=hi>80 && green>=blue && red>green*1.8 && red>blue*1.8 && abs(green-blue)<(hi-lo)*0.18
+                    let isPants=y<100 && hi>160 && (hi-lo)/hi<0.18
+                    guard isSock || isPants else {continue}
+                    let color=isSock ? style.cap:style.pants
+                    let target=[Double((color>>16)&255),Double((color>>8)&255),Double(color&255)]
+                    let actual=[Double(b[j]),Double(b[j+1]),Double(b[j+2])]
+                    let total=actual.reduce(0,+),expected=target.reduce(0,+)
+                    guard total>0 else {continue}
+                    for c in 0..<3 {XCTAssertEqual(actual[c]/total,target[c]/expected,accuracy:0.035)}
+                    if isSock {socks+=1} else {pants+=1}
+                }}
+            }
+        }
+        XCTAssertGreaterThan(socks,40);XCTAssertGreaterThan(pants,100)
+    }
+    func testV120WholeBodyMaterialMarkersBecomeOwnAndOpponentKitColors() throws {
+        func pixels(_ image:CGImage)->[UInt8] {
+            var data=[UInt8](repeating:0,count:image.width*image.height*4)
+            data.withUnsafeMutableBytes {p in
+                let c=CGContext(data:p.baseAddress,width:image.width,height:image.height,bitsPerComponent:8,bytesPerRow:image.width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue)
+                c?.draw(image,in:CGRect(x:0,y:0,width:image.width,height:image.height))
+            };return data
+        }
+        let metadata=try XCTUnwrap(FullBodyPitcherArt.manifest),appearance=PlayerAppearance(kit:2)
+        for role in [PlayerRole.pitcher,.batter] {
+            let prepared=try XCTUnwrap(FullBodyPitcherArt.prepare(role:role,appearance:appearance,number:27,hand:"right"))
+            let camera=role == .pitcher ? metadata.back:metadata.front
+            let url=try XCTUnwrap(Bundle.main.url(forResource:camera.file,withExtension:"png",subdirectory:"MatchArt"))
+            let atlas=try XCTUnwrap(UIImage(contentsOfFile:url.path)?.cgImage)
+            let kit=role == .pitcher ? appearance.uniformColor:appearance.opponentUniformColor
+            let target=[Double((kit>>16)&255),Double((kit>>8)&255),Double(kit&255)],sum=target.reduce(0,+)
+            for index in 0..<32 {
+                let f=camera.frames[index],rect=f.rect
+                let original=try XCTUnwrap(atlas.cropping(to:CGRect(x:rect[0],y:rect[1],width:rect[2],height:rect[3])))
+                let rendered=try XCTUnwrap(prepared.textures[index].cgImage()),a=pixels(original),b=pixels(rendered)
+                var caps=0,shirts=0
+                for oy in stride(from:0,to:rendered.height,by:1) {for ox in stride(from:0,to:rendered.width,by:1) {
+                    let x=min(rect[2]-1,Int((Double(ox)+0.5)*Double(rect[2])/Double(rendered.width)))
+                    let y=min(rect[3]-1,Int((Double(oy)+0.5)*Double(rect[3])/Double(rendered.height)))
+                    let i=(oy*rendered.width+ox)*4,j=(y*rect[2]+x)*4
+                    guard a[j+3]>200,b[i+3]>200 else {continue}
+                    let r=Double(a[j]),g=Double(a[j+1]),blue=Double(a[j+2])
+                    let px=Double(x)/Double(rect[2]),py=Double(y)/Double(rect[3])
+                    let cap=g>r*1.4 && g>blue*1.1 && g>70 && px>=f.cap[0] && px<=f.cap[0]+f.cap[2] && py>=f.cap[1] && py<=f.cap[1]+f.cap[3]
+                    let shirt=blue>r*1.4 && blue>g*1.3 && blue>100
+                    guard cap || shirt else {continue}
+                    let out=[Double(b[i]),Double(b[i+1]),Double(b[i+2])],high=out.max()!,low=out.min()!
+                    let whiteMark = low>120 && high-low<40 && target.max()!-target.min()!>50
+                    guard high>100,!whiteMark else {continue}
+                    if role == .batter && shirt && appearance.opponentUniformStyle != nil {
+                        let cx=(f.shirt[0]+f.shirt[2]*0.55)*Double(rect[2]),cy=(f.shirt[1]+f.shirt[3]*0.30)*Double(rect[3])
+                        if abs(Double(x)-cx)<10 && abs(Double(y)-cy)<10 {continue}
+                    }
+                    let total=out.reduce(0,+)
+                    for c in 0..<3 {XCTAssertEqual(out[c]/total,target[c]/sum,accuracy:0.035,"Technical marker colors must not leak into the displayed kit: role \(role.rawValue) frame \(index) pixel \(x),\(y) source \(r),\(g),\(blue)")}
+                    if cap {caps+=1}else{shirts+=1}
+                }}
+                XCTAssertGreaterThanOrEqual(caps,5);XCTAssertGreaterThanOrEqual(shirts,5)
+            }
+        }
+    }
+    func testV120WholeBodyMetadataContactAndCacheRespectSavedAppearance() throws {
+        let metadata=try XCTUnwrap(FullBodyPitcherArt.manifest)
+        XCTAssertEqual(metadata.progress.count,32)
+        var appearance=PlayerAppearance(kit:1);appearance.skin=2;appearance.hair=1
+        let a=try XCTUnwrap(FullBodyPitcherArt.prepare(role:.pitcher,appearance:appearance,number:27,hand:"right"))
+        let again=try XCTUnwrap(FullBodyPitcherArt.prepare(role:.pitcher,appearance:appearance,number:27,hand:"right"))
+        let b=try XCTUnwrap(FullBodyPitcherArt.prepare(role:.pitcher,appearance:appearance,number:54,hand:"right"))
+        XCTAssertTrue(a === again);XCTAssertFalse(a === b)
+        XCTAssertEqual(a.textures.count,32)
+        let first=try XCTUnwrap(a.textures[0].cgImage()),other=try XCTUnwrap(b.textures[0].cgImage())
+        XCTAssertNotEqual(CFDataGetLength(first.dataProvider!.data!),0)
+        XCTAssertNotEqual(first.dataProvider!.data! as Data,other.dataProvider!.data! as Data,"Saved jersey numbers remain distinct")
+        for camera in [metadata.back,metadata.front] {
+            XCTAssertEqual(camera.frames.count,32)
+            for f in camera.frames {
+                XCTAssertEqual(f.clipRows.count,f.rect[3]);XCTAssertGreaterThan(f.shirt[2],0);XCTAssertGreaterThan(f.shirt[3],0)
+                XCTAssertTrue(f.hand.allSatisfy { $0.isFinite });XCTAssertTrue(f.offset.allSatisfy { $0.isFinite })
+            }
+            let planted=(14...27).map {camera.frames[$0]}.map { CGPoint(x:$0.leadFoot[0]+$0.offset[0],y:$0.leadFoot[1]+$0.offset[1]) }
+            for p in planted {XCTAssertEqual(p.x,planted[0].x,accuracy:0.000001);XCTAssertEqual(p.y,planted[0].y,accuracy:0.000001)}
+            XCTAssertTrue(camera.frames[19].handVisible,"The actual drawn release hand must be known")
+            XCTAssertEqual(camera.frames[31].rect,camera.frames[0].rect,"Recovery ends at the same authored ready pose")
+        }
+        XCTAssertEqual(FullBodyPitcherArt.index(progress:1.0),19)
+        XCTAssertEqual(FullBodyPitcherArt.index(progress:3),31)
+    }
+    func testV117ContinuousJointsAndFootPlantAcrossDenseTimeSamples() {
+        var previous=PitcherContinuousPose(progress:0)
+        var changed=0
+        for i in 1...636 {
+            let t=Double(i)/240,pose=PitcherContinuousPose(progress:t)
+            for point in [pose.hip,pose.chest,pose.wrist,pose.elbow,pose.glove,pose.knee,pose.ankle,pose.rearAnkle] {
+                XCTAssertTrue(point.x.isFinite && point.y.isFinite)
+                XCTAssertTrue((-30...550).contains(point.x) && (-30...550).contains(point.y))
+            }
+            let distance=hypot(pose.wrist.x-previous.wrist.x,pose.wrist.y-previous.wrist.y)
+            XCTAssertLessThan(distance,24,"No discontinuous frame replacement at release/pose boundaries")
+            if distance>0.001 {changed+=1}
+            if (PitcherContinuousPose.plant...1.55).contains(t) {
+                XCTAssertEqual(pose.ankle,CGPoint(x:128,y:440),"Lead foot stays grounded through release and deceleration")
+            }
+            previous=pose
+        }
+        XCTAssertGreaterThan(changed,600)
+        let before=PitcherContinuousPose(progress:0.999999),after=PitcherContinuousPose(progress:1.000001)
+        XCTAssertLessThan(hypot(after.wrist.x-before.wrist.x,after.wrist.y-before.wrist.y),0.02)
+        XCTAssertEqual(PitcherContinuousPose(progress:2.65).wrist,PitcherContinuousPose(progress:0).wrist)
+    }
+    func testV117SceneOwnsPreparationClockAndReleasesFromConnectedHand() throws {
+        for hand in ["left","right"] {
+            let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:hand,kit:2)
+            let start=ProcessInfo.processInfo.systemUptime,timeline=MatchInputTimeline(startedAt:start,windup:0,duration:1.8)
+            scene.preparePitch(timeline:timeline)
+            let rig=try XCTUnwrap(scene.childNode(withName:"animatedPitcher")?.childNode(withName:"fullBodyPitcher") as? FullBodyPitcherNode)
+            let first=rig.handPoint
+            scene.advanceDelivery(at:start+0.45)
+            let middle=rig.handPoint;XCTAssertNotEqual(first,middle)
+            scene.advanceDelivery(at:start+0.52);XCTAssertNotEqual(middle,rig.handPoint)
+            XCTAssertLessThan(hypot(middle.x-rig.handPoint.x,middle.y-rig.handPoint.y),48)
+            let prepared=rig.handPoint
+            XCTAssertTrue(scene.demonstrate(reduceMotion:true,flightDuration:1.2,preparedRelease:true))
+            XCTAssertEqual(scene.pitchStage,.preparing)
+            XCTAssertLessThan(hypot(prepared.x-rig.handPoint.x,prepared.y-rig.handPoint.y),0.001,"Early release continues from the displayed preparation")
+            scene.advanceDelivery(at:ProcessInfo.processInfo.systemUptime+0.25)
+            XCTAssertEqual(scene.pitchStage,.flight)
+            let ball=try XCTUnwrap(scene.childNode(withName:"baseball"))
+            XCTAssertEqual(ball.position.x,rig.convert(rig.handPoint,to:scene).x,accuracy:0.001)
+            XCTAssertEqual(ball.position.y,rig.convert(rig.handPoint,to:scene).y,accuracy:0.001)
+            scene.cancelDelivery();let cancelled=rig.handPoint
+            scene.advanceDelivery(at:start+10);XCTAssertEqual(rig.handPoint,cancelled)
+        }
+    }
+    func testV117ActualContinuousSceneCapturesBothCamerasHands() throws {
+        for role in [PlayerRole.pitcher,.batter] {for hand in ["right","left"] {
+            let scene=BallparkScene(size:CGSize(width:320,height:340));scene.configure(hand:hand,kit:1,role:role,jerseyNumber:27)
+            let view=SKView(frame:CGRect(origin:.zero,size:scene.size));view.presentScene(scene)
+            let start=ProcessInfo.processInfo.systemUptime,timeline=MatchInputTimeline(startedAt:start,windup:1.2,duration:1.5)
+            var arrivals=0
+            var releaseOrigin:Double?
+            if role == .batter {XCTAssertTrue(scene.demonstrate(reduceMotion:false,onArrival:{arrivals+=1},inputTimeline:timeline))}
+            let frames=role == .pitcher && hand == "right" ? 90:18
+            for i in 0..<frames {
+                let time=Double(i)/Double(frames-1)*2.8
+                if role == .pitcher {
+                    if time<1.2 {scene.preparePitch(phase:time/1.2*ManualMatchRules.releaseCenter,reduced:false)}
+                    else if arrivals == 0 && scene.pitchStage != .flight && scene.pitchStage != .received {
+                        XCTAssertTrue(scene.demonstrate(reduceMotion:false,flightDuration:1.5,preparedRelease:true,onArrival:{arrivals+=1}))
+                        releaseOrigin=ProcessInfo.processInfo.systemUptime
+                    }
+                    if time>=1.2,let releaseOrigin {scene.advanceDelivery(at:releaseOrigin+time-1.2)}
+                } else {scene.advanceDelivery(at:start+time)}
+                let a=XCTAttachment(image:UIImage(cgImage:try XCTUnwrap(view.texture(from:scene)?.cgImage())))
+                a.name=String(format:"v120-%@-%@-%03d",role.rawValue,hand,i);a.lifetime = .keepAlways;add(a)
+            }
+            scene.cancelDelivery();view.presentScene(nil)
+        }}
+    }
     func testPixelBaseballHasTransparentCornersWhiteLeatherAndRedSeams() throws {
         XCTAssertEqual(PixelBaseball.rows.count,12)
         XCTAssertTrue(PixelBaseball.rows.allSatisfy {$0.count == 12})
@@ -813,7 +1540,7 @@ extension ManualMatchTests {
                 callbacks+=1
                 guard let h=scene.fieldHandoff else {XCTFail("contact clock missing");return}
                 XCTAssertGreaterThanOrEqual(h.cutAt-h.startedAt,FieldContactPresentation.duration(play)-0.001)
-                let origin=action == "pitch" ? CGPoint(x:0.54,y:0.43):MatchPresentation.batContact(action:action)
+                let origin=action == "pitch" ? CGPoint(x:0.5,y:0.465):MatchPresentation.batContact(action:action)
                 XCTAssertGreaterThan(h.sourcePoint.x,origin.x)
                 XCTAssertTrue(scene.childNode(withName:"receivedBaseball")!.isHidden)
             }
@@ -1266,14 +1993,12 @@ extension ManualMatchTests {
             XCTAssertEqual(pitcher.position.y,scene.size.height*(1-0.870),accuracy:0.001)
             XCTAssertEqual(pitcher.size.width,pitcher.size.height,accuracy:0.001)
             XCTAssertEqual(batter.position.x,scene.size.width*(side == .left ? 0.32:0.70),accuracy:0.001)
-            XCTAssertNotNil(pitcher.texture);XCTAssertNotNil(batter.texture)
+            XCTAssertNotNil(try visiblePitcher(in:pitcher).texture);XCTAssertNotNil(batter.texture)
             scene.preparePitch(phase:0.3,reduced:true)
             XCTAssertEqual(scene.pitchStage,.preparing)
-            let travel = PitcherPresentationPose.travel(role: .pitcher, phase: 0.3 / ManualMatchRules.releaseCenter * 2.99, hand: hand)
-            XCTAssertEqual(pitcher.position.x,scene.size.width*((hand == "left" ? 0.24 : 0.76)+travel.x),accuracy:0.001)
-            let sourcePivot=PitcherPresentationPose(role:.pitcher,frame:1,hand:"right").pivot
-            let planted=Double(pitcher.position.x)+(sourcePivot.x-pitcher.anchorPoint.x)*pitcher.size.width*pitcher.xScale
-            XCTAssertEqual(planted,scene.size.width*((hand == "left" ? 0.24 : 0.76)+travel.x),accuracy:0.001,"The source foot follows the measured mound anchor and small weight transfer")
+            XCTAssertEqual(pitcher.position.x,scene.size.width*(hand == "left" ? 0.24 : 0.76),accuracy:0.001)
+            let rig=try XCTUnwrap(pitcher.childNode(withName:"fullBodyPitcher") as? FullBodyPitcherNode)
+            XCTAssertTrue(rig.leadFoot.x.isFinite)
             let right=PitcherPresentationPose(role:.pitcher,frame:1,hand:"right")
             let left=PitcherPresentationPose(role:.pitcher,frame:1,hand:"left")
             XCTAssertEqual(right.pivot.x+left.pivot.x,1,accuracy:0.001)
@@ -1285,13 +2010,13 @@ extension ManualMatchTests {
         for reduced in [false,true] {
             let scene=BallparkScene(size:CGSize(width:320,height:320));scene.configure(hand:"right",kit:0,role:.batter)
             let pitcher=try XCTUnwrap(scene.childNode(withName:"animatedPitcher") as? SKSpriteNode)
-            let initial=pitcher.texture
+            let visible=try visiblePitcher(in:pitcher),initial=visible.texture
             XCTAssertEqual(scene.children.filter {$0.name?.hasPrefix("backgroundFielder-") == true}.count,3)
             let start=ProcessInfo.processInfo.systemUptime,timeline=MatchInputTimeline(startedAt:start,windup:0.5,duration:1.2)
             var arrivals=0
             XCTAssertTrue(scene.demonstrate(reduceMotion:reduced,x:0.7,y:0.4,onArrival:{arrivals += 1},inputTimeline:timeline))
             scene.advanceDelivery(at:start+0.3)
-            XCTAssertFalse(initial === pitcher.texture)
+            XCTAssertFalse(initial === visible.texture)
             scene.advanceDelivery(at:timeline.contactAt-0.001);XCTAssertEqual(arrivals,0)
             scene.advanceDelivery(at:timeline.contactAt+0.001);XCTAssertEqual(arrivals,1)
             scene.advanceDelivery(at:timeline.contactAt+1);XCTAssertEqual(arrivals,1)
@@ -1352,8 +2077,10 @@ extension ManualMatchTests {
             scene.configure(hand: hand, kit: 2)
             XCTAssertTrue(scene.demonstrate(reduceMotion: true, flightDuration: 1, preparedRelease: true))
             let ball = try XCTUnwrap(scene.childNode(withName: "baseball"))
-            XCTAssertEqual(ball.position.x, 320 * (release.foot.x + release.width * (release.hand.x-release.pivot.x) + PitcherPresentationPose.travel(role: .pitcher, phase: 3, hand: hand).x), accuracy: 0.001)
             let pitcher = try XCTUnwrap(scene.childNode(withName: "animatedPitcher"))
+            let rig=try XCTUnwrap(pitcher.childNode(withName:"fullBodyPitcher") as? FullBodyPitcherNode)
+            XCTAssertEqual(ball.position.x,rig.convert(rig.handPoint,to:scene).x,accuracy:0.001)
+            XCTAssertEqual(ball.position.y,rig.convert(rig.handPoint,to:scene).y,accuracy:0.001)
             XCTAssertLessThan(pitcher.frame.minX, 320); XCTAssertGreaterThan(pitcher.frame.maxX, 0)
             scene.cancelDelivery()
         }
@@ -1405,18 +2132,18 @@ extension ManualMatchTests {
             XCTAssertEqual(pitcher.position.y / scene.size.height, 0.13, accuracy: 0.001)
             scene.preparePitch(phase: 0, reduced: false)
             XCTAssertTrue(ball.isHidden, "Do not draw another ball outside the closed glove")
-            scene.preparePitch(phase: 0.4, reduced: false)
+            scene.preparePitch(phase: 0.2, reduced: false)
             XCTAssertTrue(ball.isHidden)
             scene.preparePitch(phase: 0.65, reduced: false)
             XCTAssertFalse(ball.isHidden)
-            let location = pitcher.position, held = ball.position, texture = pitcher.texture
+            let visible=try visiblePitcher(in:pitcher)
+            let location = pitcher.position, held = ball.position, texture = visible.texture
             scene.preparePitch(phase: 0.2, reduced: true)
             XCTAssertEqual(pitcher.position, location, "Reversing gauge must not rewind the stride")
-            XCTAssertEqual(ball.position, held); XCTAssertTrue(texture === pitcher.texture)
+            XCTAssertEqual(ball.position, held); XCTAssertTrue(texture === visible.texture)
             XCTAssertTrue(scene.demonstrate(reduceMotion: true, flightDuration: 1, preparedRelease: true))
-            let pose = PitcherPresentationPose(role: .pitcher, frame: 3, hand: "right")
-            let renderedHand = pitcher.convert(CGPoint(x: (pose.hand.x-pitcher.anchorPoint.x)*pitcher.size.width,
-                                                       y: (1-pose.hand.y-pitcher.anchorPoint.y)*pitcher.size.height), to: scene)
+            let rig=try XCTUnwrap(pitcher.childNode(withName:"fullBodyPitcher") as? FullBodyPitcherNode)
+            let renderedHand=rig.convert(rig.handPoint,to:scene)
             XCTAssertEqual(ball.position.x, renderedHand.x, accuracy: 0.001)
             XCTAssertEqual(ball.position.y, renderedHand.y, accuracy: 0.001)
             scene.cancelDelivery(); XCTAssertTrue(ball.isHidden)
@@ -1514,4 +2241,107 @@ extension ManualMatchTests {
         }
     }
 
+}
+
+extension ManualMatchTests {
+    func testV143SharesDeliveryInMatchPitchTrainingAndBullpenDrills() throws {
+        let cases: [(String, String?)] = [("left", nil), ("right", nil), ("left", "npb-13")]
+        for (hand, club) in cases {
+            let appearance = PlayerAppearance(kit: 1).wearing(teamID: club)
+            let captureID = club.map { "v148-\($0)-\(hand)" } ?? "v143-\(hand)"
+            let firstStarted = ProcessInfo.processInfo.systemUptime
+            let variant = try XCTUnwrap(FullBodyPitcherArt.prepareRefined(appearance: appearance, number: 54, hand: hand))
+            let firstDuration = ProcessInfo.processInfo.systemUptime - firstStarted
+            let repeatStarted = ProcessInfo.processInfo.systemUptime
+            let repeated = FullBodyPitcherArt.prepareRefined(appearance: appearance, number: 54, hand: hand)
+            let repeatDuration = ProcessInfo.processInfo.systemUptime - repeatStarted
+            XCTAssertTrue(variant === repeated)
+            let timing = XCTAttachment(string: String(format: "First preparation %.3f ms; cached preparation %.3f ms", firstDuration * 1000, repeatDuration * 1000))
+            timing.name = "\(captureID)-prep-timing"
+            timing.lifetime = .keepAlways
+            add(timing)
+            let originalNumber = try XCTUnwrap(FullBodyPitcherArt.prepareRefined(appearance: appearance, number: 27, hand: hand))
+            let manifest = try XCTUnwrap(variant.refined)
+            let releaseIndex = try XCTUnwrap(manifest.progress.firstIndex(of: 1))
+            XCTAssertEqual(variant.textures.count, 46)
+            XCTAssertFalse(variant === originalNumber)
+            let customRelease = try XCTUnwrap(variant.textures[releaseIndex].cgImage())
+            let originalRelease = try XCTUnwrap(originalNumber.textures[releaseIndex].cgImage())
+            XCTAssertNotEqual(customRelease.dataProvider!.data! as Data, originalRelease.dataProvider!.data! as Data)
+            func checkRelease(_ rig: FullBodyPitcherNode, _ sprite: SKSpriteNode) throws {
+                XCTAssertTrue(rig.usesRefinedDelivery)
+                XCTAssertEqual(rig.frameIndex, releaseIndex)
+                let displayed = try XCTUnwrap(sprite.texture?.cgImage())
+                XCTAssertEqual(displayed.dataProvider!.data! as Data, customRelease.dataProvider!.data! as Data)
+            }
+
+            let game = BallparkScene(size: CGSize(width: 320, height: 339))
+            game.configure(hand: hand, kit: 1, appearance: appearance, jerseyNumber: 54)
+            game.setStadium(StadiumIdentity(homeTeamID: "pro-harbors"))
+            let matchRig = try XCTUnwrap(game.childNode(withName: "//fullBodyPitcher") as? FullBodyPitcherNode)
+            let matchSprite = try XCTUnwrap(matchRig.childNode(withName: "pitcherWholeBody") as? SKSpriteNode)
+            let view = SKView(frame: CGRect(origin: .zero, size: game.size))
+            view.presentScene(game)
+            func capture(_ scene: SKScene, _ stage: String) throws {
+                let rendered = try XCTUnwrap(view.texture(from: scene)?.cgImage())
+                let attachment = XCTAttachment(image: UIImage(cgImage: rendered))
+                attachment.name = "\(captureID)-\(stage)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            game.preparePitch(phase: ManualMatchRules.releaseCenter * 0.91, reduced: false)
+            try capture(game, "match-plant")
+            XCTAssertTrue(game.demonstrate(reduceMotion: false, flightDuration: 1, preparedRelease: true))
+            try checkRelease(matchRig, matchSprite)
+            try capture(game, "match-release")
+            game.advanceDelivery(at: ProcessInfo.processInfo.systemUptime + 1.1)
+            XCTAssertEqual(matchRig.frameIndex, variant.textures.count - 1)
+            try capture(game, "match-finish")
+
+            game.cancelDelivery()
+            game.usePracticeSetting()
+            XCTAssertTrue(game.demonstrate(reduceMotion: false, flightDuration: 1, preparedRelease: true))
+            try checkRelease(matchRig, matchSprite)
+            try capture(game, "pitch-training-release")
+            game.cancelDelivery()
+            view.presentScene(nil)
+
+            let bullpen = LocationDrillScene(size: CGSize(width: 320, height: 340))
+            bullpen.configure(kind: .control, appearance: appearance, number: 54, hand: hand)
+            let trainingRig = try XCTUnwrap(bullpen.childNode(withName: "//fullBodyPitcher") as? FullBodyPitcherNode)
+            let trainingSprite = try XCTUnwrap(trainingRig.childNode(withName: "pitcherWholeBody") as? SKSpriteNode)
+            let ball = try XCTUnwrap(bullpen.childNode(withName: "locationBall"))
+            let target = TrainingTarget(x: 0.7, y: 0.4)
+            let replay = LocationDrillReplay(kind: .control, target: target, input: target, score: 72)
+            view.presentScene(bullpen)
+            var completions = 0
+            let now = 40.0
+            bullpen.play(replay, at: now, preparedRelease: false) { completions += 1 }
+            XCTAssertTrue(ball.isHidden)
+            bullpen.advance(at: now + LocationDrillReplay.windup)
+            try checkRelease(trainingRig, trainingSprite)
+            let release = trainingRig.convert(trainingRig.handPoint, to: bullpen)
+            XCTAssertEqual(ball.position.x, release.x, accuracy: 0.000001)
+            XCTAssertEqual(ball.position.y, release.y, accuracy: 0.000001)
+            try capture(bullpen, "bullpen-release")
+            bullpen.advance(at: now + LocationDrillReplay.windup + LocationDrillReplay.flight + 0.001)
+            XCTAssertEqual(trainingRig.frameIndex, variant.textures.count - 1)
+            XCTAssertEqual(completions, 0)
+            try capture(bullpen, "bullpen-finish")
+            bullpen.advance(at: now + 3)
+            bullpen.advance(at: now + 4)
+            XCTAssertEqual(completions, 1)
+            bullpen.prepareDrill(phase: 0.65)
+            let earlyFrame = trainingRig.frameIndex
+            XCTAssertLessThan(earlyFrame, releaseIndex)
+            bullpen.play(replay, at: now + 5, preparedRelease: true) { completions += 1 }
+            XCTAssertEqual(trainingRig.frameIndex, earlyFrame, "Early rhythm input continues the visible windup")
+            bullpen.advance(at: now + 5.15)
+            XCTAssertGreaterThanOrEqual(trainingRig.frameIndex, releaseIndex)
+            bullpen.cancel()
+            XCTAssertEqual(trainingRig.frameIndex, 0)
+            XCTAssertTrue(ball.isHidden)
+            view.presentScene(nil)
+        }
+    }
 }

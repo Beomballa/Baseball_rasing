@@ -85,6 +85,7 @@ struct CalendarAdvanceFailure: LocalizedError {
             != ScoutingPeriod(origin: GameDate(state.originDate), today: GameDate(nextDate)).index
         do {
             try AutomaticLeagueStore.completeDay(player:player,state:state,date:today,in:context)
+            try state.adoptOverseasExpansion(after: today)
             if !prepared { player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest) }
             player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.sleep)
             player.gameDate = nextDate

@@ -1,6 +1,34 @@
 import XCTest
 
 final class CareerFlowTests: XCTestCase {
+    @MainActor func testV147OverseasDivisionTablesAndEarlierSeason() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified",
+                               "-renewal-verification", "-pro-career-verification", "-v147-divisions-verification"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 100))
+        app.buttons["managementTab-game"].tap()
+        app.buttons["facility-standings"].tap()
+        let format = app.staticTexts["leagueSeasonFormat"]
+        XCTAssertTrue(format.waitForExistence(timeout: 10))
+        XCTAssertTrue(format.label.contains("15구단"))
+        XCTAssertTrue(app.staticTexts["leagueDivision-east"].exists)
+        XCTAssertTrue(app.staticTexts["leagueDivision-west"].exists)
+
+        let all = app.buttons["openAnnualLeague"]
+        revealFit(all, in: app); all.tap()
+        let prior = app.buttons["leaguePreviousYear"]
+        XCTAssertTrue(prior.waitForExistence(timeout: 10))
+        let current = XCTAttachment(screenshot: app.screenshot())
+        current.name = "V147 expanded standings"; current.lifetime = .keepAlways; add(current)
+        prior.tap()
+        let legacyFormat = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "6팀"), object: format)
+        XCTAssertEqual(XCTWaiter.wait(for: [legacyFormat], timeout: 8), .completed)
+        XCTAssertFalse(app.staticTexts["leagueDivision-east"].exists)
+        XCTAssertFalse(app.staticTexts["leagueDivision-west"].exists)
+    }
+
     @MainActor func testLiveScoutingBothRolesActualRecordsReadOnlyAndLargeText() throws {
         let app = XCUIApplication(); app.launch()
         for pitcher in [false, true] {
@@ -22,6 +50,7 @@ final class CareerFlowTests: XCTestCase {
             reveal(app.buttons["scoutAbilityDetails"],in:app); app.buttons["scoutAbilityDetails"].tap()
             let ability = app.descendants(matching:.any).matching(identifier:pitcher ? "homeControl" : "homeContact").firstMatch
             reveal(ability,in:app); XCTAssertTrue(ability.exists)
+            revealFit(app.buttons["currentScoutSection-records"], in: app); app.buttons["currentScoutSection-records"].tap()
             reveal(app.staticTexts["scoutSampleWaiting"],in:app); XCTAssertTrue(app.staticTexts["scoutSampleWaiting"].exists)
             reveal(app.buttons["scoutReportRefresh"],in:app); app.buttons["scoutReportRefresh"].tap()
             XCTAssertFalse(app.staticTexts["scoutReportError"].exists)
@@ -38,6 +67,7 @@ final class CareerFlowTests: XCTestCase {
             reveal(app.staticTexts["homeFatigue"],in:app)
             let finalFatigue = app.staticTexts["homeFatigue"].label, finalAction = app.staticTexts["calendarAction"].label
             reveal(app.buttons["openScoutingReport"],in:app); app.buttons["openScoutingReport"].tap()
+            revealFit(app.buttons["currentScoutSection-records"], in: app); app.buttons["currentScoutSection-records"].tap()
             let sample = app.staticTexts["scoutSample-1"]
             reveal(sample,in:app); XCTAssertTrue(sample.exists); XCTAssertTrue(sample.label.contains(pitcher ? "1등판" : "1경기"))
             XCTAssertFalse(app.staticTexts["scoutSampleWaiting"].exists)
@@ -49,6 +79,7 @@ final class CareerFlowTests: XCTestCase {
             let role = app.buttons[pitcher ? "homeRole-pitcher" : "homeRole-batter"]
             if role.exists { reveal(role,in:app); role.tap() }
             reveal(app.buttons["openScoutingReport"],in:app); app.buttons["openScoutingReport"].tap()
+            revealFit(app.buttons["currentScoutSection-records"], in: app); app.buttons["currentScoutSection-records"].tap()
             reveal(app.staticTexts["scoutSample-1"],in:app); XCTAssertEqual(app.staticTexts["scoutSample-1"].label,expectedSample)
             let large = XCTAttachment(screenshot:app.screenshot()); large.name = pitcher ? "Actual pitcher sample accessibility XXXL" : "Actual batter sample accessibility XXXL"; large.lifetime = .keepAlways; add(large)
             reveal(app.buttons["scoutReportRefresh"],in:app); XCTAssertTrue(app.buttons["scoutReportRefresh"].isHittable)
@@ -2208,9 +2239,11 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["scoutSavedCount"].label.contains("보고서 1건"))
             app.buttons["openSavedScoutingReport"].tap()
             XCTAssertTrue(app.staticTexts["scoutFrozenDate"].waitForExistence(timeout:5))
+            revealFit(app.buttons["frozenScoutSection-abilities"], in: app); app.buttons["frozenScoutSection-abilities"].tap()
             let grade=app.staticTexts[pitcher ? "scoutGrade-starter":"scoutGrade-slugger"]
             reveal(grade,in:app);XCTAssertTrue(grade.exists);let score=grade.label
             let image=XCTAttachment(screenshot:app.screenshot());image.name=pitcher ? "Frozen pitcher role grade":"Frozen batter role grade";image.lifetime = .keepAlways;add(image)
+            revealFit(app.buttons["frozenScoutSection-records"], in: app); app.buttons["frozenScoutSection-records"].tap()
             reveal(app.staticTexts["scoutFrozenSample"],in:app);XCTAssertTrue(app.staticTexts["scoutFrozenSample"].label.contains("경기 0건"))
             app.navigationBars.buttons.element(boundBy:0).tap()
             reveal(app.buttons["restToday"],in:app);app.buttons["restToday"].tap()
@@ -2227,10 +2260,13 @@ extension CareerFlowTests {
             reveal(app.buttons["gameReturnHome"],in:app);app.buttons["gameReturnHome"].tap()
             let fatigue=app.staticTexts["homeFatigue"].label,action=app.staticTexts["calendarAction"].label
             reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.buttons["frozenScoutSection-abilities"], in: app); app.buttons["frozenScoutSection-abilities"].tap()
             reveal(grade,in:app);XCTAssertEqual(grade.label,score)
+            revealFit(app.buttons["frozenScoutSection-records"], in: app); app.buttons["frozenScoutSection-records"].tap()
             reveal(app.staticTexts["scoutFrozenSample"],in:app);XCTAssertTrue(app.staticTexts["scoutFrozenSample"].label.contains("경기 0건"))
             app.navigationBars.buttons.element(boundBy:0).tap()
             reveal(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            revealFit(app.buttons["currentScoutSection-records"], in: app); app.buttons["currentScoutSection-records"].tap()
             reveal(app.staticTexts["scoutSample-1"],in:app);XCTAssertTrue(app.staticTexts["scoutSample-1"].label.contains(pitcher ? "1등판":"1경기"))
             app.navigationBars.buttons.element(boundBy:0).tap()
             reveal(app.staticTexts["calendarDate"],in:app);XCTAssertEqual(app.staticTexts["calendarDate"].label,"2026-04-01")
@@ -2257,10 +2293,12 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["scoutSavedCount"].label.contains("보고서 8건"))
             let fatigue=app.staticTexts["homeFatigue"].label
             reveal(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            revealFit(app.buttons["currentScoutSection-archive"], in: app); app.buttons["currentScoutSection-archive"].tap()
             reveal(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
             reveal(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
             XCTAssertTrue(app.staticTexts["scoutFrozenDate"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["scoutFrozenDate"].label.contains("2026-04-01"))
             let old=XCTAttachment(screenshot:app.screenshot());old.name=pitcher ? "Archived pitcher identity accessibility XXXL":"Archived batter identity accessibility XXXL";old.lifetime = .keepAlways;add(old)
+            revealFit(app.buttons["frozenScoutSection-records"], in: app); app.buttons["frozenScoutSection-records"].tap()
             reveal(app.staticTexts["scoutFrozenSample"],in:app);XCTAssertTrue(app.staticTexts["scoutFrozenSample"].label.contains("경기 0건"))
             app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
             reveal(app.staticTexts["calendarDate"],in:app);XCTAssertEqual(app.staticTexts["calendarDate"].label,"2026-10-23");XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
@@ -2276,6 +2314,7 @@ extension CareerFlowTests {
             let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
             let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
             reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.buttons["frozenScoutSection-records"], in: app); app.buttons["frozenScoutSection-records"].tap()
             var comparisons=[String]()
             for index in 0..<2 {
                 let label=app.staticTexts["scoutComparison-\(index)"],usage=app.staticTexts["scoutInputUsage-\(index)"]
@@ -2284,6 +2323,7 @@ extension CareerFlowTests {
                 XCTAssertTrue(usage.label.contains(index == 0 ? "자동 0구":"자동 "))
             }
             let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "Pitcher direct mixed comparison":"Batter direct mixed comparison";shot.lifetime = .keepAlways;add(shot)
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
             let fit=app.staticTexts[pitcher ? "scoutClub-comets/starter":"scoutClub-comets/slugger"]
             revealFit(fit,in:app);let expected=fit.label;XCTAssertTrue(expected.contains("/ P "))
@@ -2292,7 +2332,9 @@ extension CareerFlowTests {
             let restored=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(restored,in:app);restored.tap()
             XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
             reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.buttons["frozenScoutSection-records"], in: app); app.buttons["frozenScoutSection-records"].tap()
             for index in 0..<2 {let label=app.staticTexts["scoutComparison-\(index)"];revealFit(label,in:app);XCTAssertEqual(label.label,comparisons[index])}
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
             revealFit(fit,in:app);XCTAssertEqual(fit.label,expected)
             app.navigationBars.buttons.element(boundBy:0).tap()
@@ -2311,6 +2353,7 @@ extension CareerFlowTests {
             let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "Pitcher actual club interest home":"Batter actual club interest home";shot.lifetime = .keepAlways;add(shot)
             revealFit(app.buttons["scoutInterestDetails"],in:app);XCTAssertTrue(app.buttons["scoutInterestDetails"].exists);app.buttons["scoutInterestDetails"].tap()
             revealFit(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             XCTAssertEqual(app.staticTexts["scoutInterestCount"].label,count);XCTAssertEqual(first.label,name)
             app.terminate();app.launch()
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
@@ -2319,9 +2362,11 @@ extension CareerFlowTests {
             revealFit(app.staticTexts["scoutInterestCount"],in:app);XCTAssertEqual(app.staticTexts["scoutInterestCount"].label,count)
             revealFit(first,in:app);XCTAssertEqual(first.label,name)
             revealFit(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            revealFit(app.buttons["currentScoutSection-archive"], in: app); app.buttons["currentScoutSection-archive"].tap()
             XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","관심은 확정 보고서 기준")).firstMatch.exists)
             revealFit(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
             revealFit(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             XCTAssertTrue(app.staticTexts["scoutInterestEmpty"].waitForExistence(timeout:5))
             app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
         }
@@ -2335,8 +2380,10 @@ extension CareerFlowTests {
             revealFit(first,in:app);XCTAssertTrue(first.isHittable);XCTAssertLessThanOrEqual(first.frame.maxX,app.windows.firstMatch.frame.maxX)
             let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "Pitcher interest accessibility XXXL":"Batter interest accessibility XXXL";shot.lifetime = .keepAlways;add(shot)
             revealFit(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            revealFit(app.buttons["currentScoutSection-archive"], in: app); app.buttons["currentScoutSection-archive"].tap()
             revealFit(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
             revealFit(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             revealFit(app.staticTexts["scoutInterestEmpty"],in:app);XCTAssertTrue(app.staticTexts["scoutInterestEmpty"].isHittable)
             app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
         }
@@ -2354,9 +2401,11 @@ extension CareerFlowTests {
             let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
             let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
             reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.buttons["frozenScoutSection-records"], in: app); app.buttons["frozenScoutSection-records"].tap()
             revealFit(app.staticTexts["scoutComparison-0"],in:app);XCTAssertTrue(app.staticTexts["scoutComparison-0"].exists)
             XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","표준 NPC 입력 기준")).firstMatch.exists)
             let comparison=app.staticTexts["scoutComparison-0"].label
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
             let row=app.staticTexts[pitcher ? "scoutClub-comets/starter":"scoutClub-comets/slugger"]
             revealFit(row,in:app);XCTAssertTrue(row.label.contains("H "));XCTAssertTrue(row.label.contains("/ C "));XCTAssertTrue(row.label.contains("/ F "))
@@ -2368,7 +2417,9 @@ extension CareerFlowTests {
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
             let restored=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(restored,in:app);restored.tap()
             reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.buttons["frozenScoutSection-records"], in: app); app.buttons["frozenScoutSection-records"].tap()
             revealFit(app.staticTexts["scoutComparison-0"],in:app);XCTAssertEqual(app.staticTexts["scoutComparison-0"].label,comparison)
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
             revealFit(row,in:app);XCTAssertEqual(row.label,expected)
             app.navigationBars.buttons.element(boundBy:0).tap()
@@ -2380,16 +2431,20 @@ extension CareerFlowTests {
         for pitcher in [false,true] {
             let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
             reveal(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
+            revealFit(app.buttons["frozenScoutSection-records"], in: app); app.buttons["frozenScoutSection-records"].tap()
             revealFit(app.staticTexts["scoutComparison-0"],in:app);XCTAssertTrue(app.staticTexts["scoutComparison-0"].isHittable)
             let sample=XCTAttachment(screenshot:app.screenshot());sample.name=pitcher ? "Pitcher NPC comparison accessibility XXXL":"Batter NPC comparison accessibility XXXL";sample.lifetime = .keepAlways;add(sample)
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             revealFit(app.buttons["scoutClubDetails"],in:app);app.buttons["scoutClubDetails"].tap()
             let row=app.staticTexts[pitcher ? "scoutClub-comets/starter":"scoutClub-comets/slugger"]
             revealFit(row,in:app);XCTAssertTrue(row.isHittable);XCTAssertLessThanOrEqual(row.frame.maxX,app.windows.firstMatch.frame.maxX)
             app.navigationBars.buttons.element(boundBy:0).tap()
             revealFit(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
+            revealFit(app.buttons["currentScoutSection-archive"], in: app); app.buttons["currentScoutSection-archive"].tap()
             reveal(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
             revealFit(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
             XCTAssertTrue(app.staticTexts["scoutFrozenDate"].waitForExistence(timeout:5));XCTAssertTrue(app.staticTexts["scoutFrozenDate"].label.contains("2026-04-01"))
+            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
             revealFit(app.buttons["scoutClubDetails"],in:app);XCTAssertTrue(app.buttons["scoutClubDetails"].isHittable)
             app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
         }
@@ -2867,7 +2922,9 @@ extension CareerFlowTests {
             let open=app.buttons["openOverseasReport"];revealFit(open,in:app);open.tap()
             let capture=app.buttons["captureOverseasReport"];capture.tap()
             let date=app.staticTexts["overseasReportDate"];XCTAssertTrue(date.waitForExistence(timeout:5));let frozen=date.label
+            revealFit(app.buttons["overseasScoutSection-records"], in: app); app.buttons["overseasScoutSection-records"].tap()
             let comparison=app.staticTexts["overseasComparison"].firstMatch;revealFit(comparison,in:app);XCTAssertTrue(comparison.exists)
+            revealFit(app.buttons["overseasScoutSection-growth"], in: app); app.buttons["overseasScoutSection-growth"].tap()
             let projection=app.staticTexts["overseasProjection-"+(role == "batter" ? "slugger":"starter")];revealFit(projection,in:app);XCTAssertTrue(projection.label.contains("기준"))
             revealFit(capture,in:app);capture.tap();XCTAssertEqual(date.label,frozen)
             XCTAssertFalse(app.staticTexts["overseasReportError"].exists)
@@ -2883,6 +2940,7 @@ extension CareerFlowTests {
         for role in ["batter","pitcher"] {
             let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
             let open=app.buttons["openOverseasReport"];revealFit(open,in:app);open.tap();app.buttons["captureOverseasReport"].tap()
+            revealFit(app.buttons["overseasScoutSection-clubs"], in: app); app.buttons["overseasScoutSection-clubs"].tap()
             let interest=app.staticTexts["overseasClubInterest"].firstMatch;revealFit(interest,in:app);XCTAssertTrue(interest.exists)
             let all=app.buttons["overseasInterestDetails"];revealFit(all,in:app);all.tap()
             XCTAssertFalse(app.buttons["acceptOverseasOffer"].exists)
@@ -3168,8 +3226,10 @@ extension CareerFlowTests {
             let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
             let open=app.buttons["openObservationReview"];revealFit(open,in:app);open.tap()
             XCTAssertTrue(app.staticTexts["reviewCurrentDate"].waitForExistence(timeout:20));XCTAssertTrue(app.staticTexts["reviewPreviousDate"].exists)
+            let growthTab = app.buttons["observationReviewSection-growth"]; revealFit(growthTab, in: app); growthTab.tap()
             let ability=app.staticTexts["reviewAbility-homeSpeed"];revealFit(ability,in:app);XCTAssertTrue(ability.label.contains("+1.0"))
             let growth=XCTAttachment(screenshot:app.screenshot());growth.name="observation-review-"+role+"-growth";growth.lifetime = .keepAlways;add(growth)
+            let summaryTab = app.buttons["observationReviewSection-summary"]; revealFit(summaryTab, in: app); summaryTab.tap()
             let target=app.staticTexts["reviewTarget"];revealFit(target,in:app);XCTAssertTrue(target.exists)
             let market=app.buttons["reviewAction-market"];revealFit(market,in:app);XCTAssertTrue(market.exists)
             XCTAssertFalse(app.staticTexts["reviewError"].exists)
@@ -3193,6 +3253,7 @@ extension CareerFlowTests {
                 let player=app.buttons["homeRole-"+role];revealFit(player,in:app);player.tap()
                 if reportMode {
                     let open=app.buttons["openObservationReview"];revealFit(open,in:app);open.tap()
+                    revealFit(app.buttons["observationReviewSection-projects"], in: app); app.buttons["observationReviewSection-projects"].tap()
                     let frozen=app.staticTexts["reportAssignmentFocus"];guard frozen.waitForExistence(timeout:20) else {XCTFail("fixed assignment evidence missing");return};revealFit(frozen,in:app);XCTAssertTrue(frozen.exists)
                     XCTAssertTrue(app.staticTexts["reportProjectEvidence"].exists)
                     XCTAssertFalse(app.staticTexts["reviewError"].exists)
@@ -3308,6 +3369,7 @@ extension CareerFlowTests {
             let action=app.buttons.matching(identifier:"clubObservationAction-play").firstMatch;revealFit(action,in:app);XCTAssertTrue(action.exists)
             app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
             let review=app.buttons["openObservationReview"];revealFit(review,in:app);review.tap()
+            revealFit(app.buttons["observationReviewSection-projects"], in: app); app.buttons["observationReviewSection-projects"].tap()
             let proof=app.staticTexts.matching(identifier:"clubObservationGames").firstMatch
             XCTAssertTrue(proof.waitForExistence(timeout:15));revealFit(proof,in:app)
             Thread.sleep(forTimeInterval:1)

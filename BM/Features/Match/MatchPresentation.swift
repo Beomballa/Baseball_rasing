@@ -4,6 +4,72 @@ import SpriteKit
 #if DEBUG
 import Darwin
 import os
+import Metal
+import QuartzCore
+import ObjectiveC
+#endif
+
+#if DEBUG
+/// QA opt-in only: read the drawable's actual presentedTime, independently of main-thread callbacks.
+final class MatchDrawableProbe:@unchecked Sendable {
+    static let shared=MatchDrawableProbe()
+    struct Frame:Encodable {let presented:Double;let uptime:Double;let surface:String}
+    struct Snapshot:Encodable {let frames:[Frame];let zeroTimes:Int;let layers:Int;let hostOffset:Double;let endHostOffset:Double}
+    private let lock=NSLock()
+    private var layerIDs=Set<ObjectIdentifier>(),viewIDs=Set<ObjectIdentifier>()
+    private var surfaces:[ObjectIdentifier:String]=[:]
+    private var frames:[Frame]=[],zeroTimes=0,hostOffset=0.0,hooked=false
+    private var enabled:Bool {ProcessInfo.processInfo.arguments.contains("-qa-presented-times")}
+    @MainActor func register(_ view:SKView,surface:String="arena") {
+        guard enabled else {return}
+        lock.lock();let known=viewIDs.contains(ObjectIdentifier(view));lock.unlock();if known {return}
+        var found=Set<ObjectIdentifier>()
+        func visit(_ layer:CALayer) {
+            if layer is CAMetalLayer {found.insert(ObjectIdentifier(layer))}
+            for child in layer.sublayers ?? [] {visit(child)}
+        }
+        visit(view.layer)
+        lock.lock();layerIDs.formUnion(found)
+        for id in found {surfaces[id]=surface}
+        if !found.isEmpty {viewIDs.insert(ObjectIdentifier(view))}
+        let install = !hooked;hooked=true;lock.unlock()
+        if install,let original=class_getInstanceMethod(CAMetalLayer.self,#selector(CAMetalLayer.nextDrawable)),
+           let replacement=class_getInstanceMethod(CAMetalLayer.self,#selector(CAMetalLayer.bmQANextDrawable)) {
+            method_exchangeImplementations(original,replacement)
+        }
+    }
+    func tracks(_ layer:CAMetalLayer)->Bool {lock.lock();defer{lock.unlock()};return layerIDs.contains(ObjectIdentifier(layer))}
+    func record(_ time:Double,layer:CAMetalLayer) {
+        lock.lock();defer{lock.unlock()}
+        if time>0,frames.count<5000 {frames.append(Frame(presented:time,uptime:time+hostOffset,surface:surfaces[ObjectIdentifier(layer)] ?? "unknown"))}
+        else if time<=0 {zeroTimes+=1}
+    }
+    @MainActor func reset() {
+        lock.lock();defer{lock.unlock()};frames=[];zeroTimes=0
+        hostOffset=ProcessInfo.processInfo.systemUptime-CACurrentMediaTime()
+    }
+    @MainActor func snapshot()->Snapshot {
+        lock.lock();defer{lock.unlock()}
+        return Snapshot(frames:frames,zeroTimes:zeroTimes,layers:layerIDs.count,hostOffset:hostOffset,
+                        endHostOffset:ProcessInfo.processInfo.systemUptime-CACurrentMediaTime())
+    }
+}
+private extension CAMetalLayer {
+    @objc dynamic func bmQANextDrawable()->(any CAMetalDrawable)? {
+        let drawable=bmQANextDrawable()
+        let selector=NSSelectorFromString("addPresentedHandler:")
+        if let object=drawable as? NSObject,MatchDrawableProbe.shared.tracks(self),object.responds(to:selector) {
+            // 일부 SDK의 Drawable 전방 선언을 피하고 같은 공개 ObjC API를 호출한다.
+            let handler:@convention(block)(AnyObject)->Void = { value in
+                if let number=(value as? NSObject)?.value(forKey:"presentedTime") as? NSNumber {
+                    MatchDrawableProbe.shared.record(number.doubleValue,layer:self)
+                }
+            }
+            _ = object.perform(selector,with:handler)
+        }
+        return drawable
+    }
+}
 #endif
 
 // Presentation geometry never changes the saved pitch, timing window or RNG.
@@ -11,7 +77,7 @@ enum MatchArt {
     static let names = ["batter-view-clean", "stadium-clean", "batter-actions", "pitcher-delivery-v2", "catcher-parts",
                         "grip-fastball", "grip-slider", "grip-changeup", "grips-extra", "inplay-stadium-arcade-v1",
                         "batter-field-v52", "pitcher-field-v52", "opponent-pitcher-v52", "opponent-batter-v52",
-                        "batter-actions-v75", "pitcher-delivery-v75", "batting-practice-v75"]
+                        "batter-actions-v75", "pitcher-delivery-v75", "batting-practice-v75", "opponent-batter-v116"]
     private static let images: [String: UIImage] = Dictionary(uniqueKeysWithValues: names.compactMap { name in
         guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "MatchArt"),
               let image = UIImage(contentsOfFile: url.path) else { return nil }
@@ -161,11 +227,18 @@ enum MatchArt {
         let kit:Int,skin:Int,hair:Int,number:Int
         let back:Bool,mirrored:Bool
         let style:GameUniformStyle?
+        let garmentBack: Bool
+        let garmentMirrored: Bool
         init(sample:Sample,kit:Int,skin:Int,hair:Int,number:Int,back:Bool,style:GameUniformStyle?=nil) {
             frame=sample.frame;self.style=style;self.kit=kit;self.skin=skin;self.hair=hair
             self.number=back && sample.rearFacing ? number:0;self.back=back && sample.rearFacing;mirrored=self.back && sample.mirrored
+            garmentBack = style?.pro != nil && back
+            garmentMirrored = style?.pro != nil && sample.mirrored
         }
-        var key:String {"\(frame.file):\(frame.rect):\(kit):\(skin):\(hair):\(number):\(back):\(mirrored):\(style?.id ?? "legacy")"}
+        var key:String {
+            let legacy = "\(frame.file):\(frame.rect):\(kit):\(skin):\(hair):\(number):\(back):\(mirrored):\(style?.id ?? "legacy")"
+            return style?.pro == nil ? legacy : "\(legacy):\(garmentBack):\(garmentMirrored)"
+        }
     }
     // Immutable images cross the worker boundary, then live only for this replay.
     struct Prepared:Sendable {
@@ -202,33 +275,57 @@ enum MatchArt {
         guard ok else {return nil}
         var bounds=[(Int,Int)](repeating:(0,0),count:h)
         var backCloth=[Bool](repeating:false,count:w*h),sumX=0.0,sumY=0.0,clothCount=0.0
+        let pro = request.style?.pro != nil
+        let catcher = f.file.hasPrefix("catcher-")
+        // In other poses the blue fabric can be a raised cleat, so its existing colors stay in place.
+        let standingFielder = f.action == "ready" && (f.file == "fielder-s-v1.png" || f.file == "fielder-n-v1.png")
         for row in f.clipRows where row.count==3 && row[0]<h {bounds[row[0]]=(row[1],row[1]+row[2])}
         for y in 0..<h {for x in 0..<w {
             let i=(y*w+x)*4,a=Int(bytes[i+3])
             guard x>=bounds[y].0 && x<bounds[y].1 else {bytes[i+3]=0;bytes[i]=0;bytes[i+1]=0;bytes[i+2]=0;continue}
             guard a>128 else {continue}
             let r=Double(bytes[i])*255/Double(a),g=Double(bytes[i+1])*255/Double(a),b=Double(bytes[i+2])*255/Double(a)
+            let nx = Double(x) / Double(w), ny = Double(y) / Double(h)
             var color:Int?,shade=1.0
             if b>40 && b>r*1.35 && b>g*1.08 {
-                let nx=Double(x)/Double(w),ny=Double(y)/Double(h)
                 if (0.30...0.68).contains(nx) && (0.30...0.65).contains(ny) {
                     backCloth[y*w+x]=true;sumX+=Double(x);sumY+=Double(y);clothCount+=1
                 }
                 if let style=request.style {
-                    color=ny < 0.30 ? (ny > 0.26 ? style.brim:style.cap) : ny < 0.56 ? style.shirt(x:nx,y:(ny-0.32)/0.24) : style.sleeves
+                    if pro && catcher { color = style.gear ?? style.sleeves }
+                    else if ny < 0.30 { color = ny > 0.26 ? style.brim : style.cap }
+                    else if ny < 0.56 {
+                        color = style.shirt(x: nx, y: (ny - 0.32) / 0.24, back: request.garmentBack, mirrored: request.garmentMirrored)
+                    } else if pro && standingFielder && (0.77..<0.865).contains(ny) {
+                        color = style.sock(base: style.sleeves, y: (ny - 0.77) / 0.095)
+                    } else { color = style.gear ?? style.sleeves }
                 } else {color=kit}
                 shade=max(0.3,min(1.5,b/155))
             }
-            else if let style=request.style, min(r,g,b)>110, max(r,g,b)-min(r,g,b)<65,
-                    Double(y)/Double(h)>0.56, Double(y)/Double(h)<0.81 {
-                color=style.pants;shade=max(0.35,min(1.1,(r+g+b)/735))
+            else if pro && standingFielder, let style = request.style, min(r,g,b) > 110, max(r,g,b)-min(r,g,b) < 65,
+                    (0.40...0.52).contains(ny), nx < 0.36 || nx > 0.64 {
+                color = style.sleeve(base: style.sleeves, y: 1)
+                shade = max(0.35, min(1.1, (r + g + b) / 735))
+            }
+            else if let style=request.style, !(pro && catcher), min(r,g,b)>110, max(r,g,b)-min(r,g,b)<65,
+                    ny > 0.56, ny < 0.81 {
+                if pro && !catcher {
+                    let (left, right) = bounds[y]
+                    color = style.leg(base: style.pants, x: Double(x - left) / Double(right - left),
+                                      y: (ny - 0.56) / 0.25,
+                                      back: request.garmentBack, mirrored: request.garmentMirrored)
+                } else { color = style.pants }
+                shade=max(0.35,min(1.1,(r+g+b)/735))
             }
             // Keep the glove's brown leather independent from skin recoloring.
             else if (f.file.hasPrefix("runner-") || abs(Double(x)-f.glove[0])>Double(w)*0.16 || abs(Double(y)-f.glove[1])>Double(h)*0.18) && r>185 && r>g*1.13 && g>b*1.12 && g>95 {color=skin;shade=max(0.45,min(1.2,r/240))}
             else if Double(y)>Double(h)*0.19 && Double(y)<Double(h)*0.36 && Double(x)>Double(w)*0.23 && Double(x)<Double(w)*0.77 && r<65 && abs(r-g)<22 && abs(g-b)<22 {color=hair;shade=max(0.5,(r+g+b)/100)}
             if let color {for (offset,shift) in [(0,16),(1,8),(2,0)] {bytes[i+offset]=UInt8(min(255,Double((color>>shift)&255)*shade)*Double(a)/255)}}
         }}
-        if !back {request.style?.drawMark(at:CGPoint(x:Double(w)*0.35,y:Double(h)*0.40),unit:1,mirrored:request.mirrored,bytes:&bytes,width:w,height:h)}
+        if !back && !(pro && catcher) {
+            request.style?.drawMark(at: CGPoint(x: Double(w) * (request.garmentMirrored ? 0.65 : 0.35), y: Double(h) * 0.40), unit: 1,
+                                    mirrored: request.garmentMirrored, eligible: pro ? backCloth : nil, bytes: &bytes, width: w, height: h)
+        }
         if back, clothCount > 0 {
             let center=CGPoint(x:f.numberCenter?[0] ?? sumX/clothCount,y:f.numberCenter?[1] ?? sumY/clothCount)
             let ink=request.style?.ink ?? 0xf4f0db
@@ -310,7 +407,7 @@ enum MatchPresentation {
                        y: 0.34 + 0.61 * (1 - feet / 512) + 0.61 * (bunt ? 245 : 266) / 512)
     }
     static func fieldSize(available: CGSize, role: PlayerRole, chromeHeight: CGFloat = 310) -> CGSize {
-        let ratio: CGFloat = role == .batter ? 1 : 1219 / 1290
+        let ratio = MatchPitchProjection(role: role).aspectRatio
         let height = min(max(150, available.height - chromeHeight), max(1, available.width) / ratio)
         return CGSize(width: height * ratio, height: height)
     }
@@ -600,6 +697,109 @@ enum FieldReplayPresentation {
 
 }
 
+/// Supporting movement is derived for display. Saved pursuit, contact and throws keep their own paths.
+enum FieldBackupRoutes {
+    struct Route {
+        let nodes: [FieldNode]
+        let focus: FieldPoint
+
+        func motion(at time: Double) -> FieldSpriteMotion {
+            var motion = FieldSpriteAnimation.travel(nodes, time: time)
+            if motion.stage == .ready {
+                let point = FieldNode.sample(nodes, at: time)
+                motion.facing = .direction(dx: focus.x - point.x, dy: focus.y - point.y)
+            }
+            return motion
+        }
+    }
+
+    static func make(_ play: MatchDetailedPlay) -> [Int: Route] {
+        // An error already has its own missed reception and recovery choreography.
+        guard play.misplay == nil else { return [:] }
+        var assigned: Set<Int> = [play.fielder]
+        if play.ballAt > play.flight { assigned.insert(play.receiver) }
+        if let relay = play.relay { assigned.insert(relay.fielder) }
+        if let second = play.secondThrow { assigned.insert(second.receiver) }
+
+        func idleStart(_ index: Int) -> FieldPoint? {
+            guard play.fielders.indices.contains(index), !assigned.contains(index),
+                  let first = play.fielders[index].first else { return nil }
+            let nodes = play.fielders[index]
+            if nodes.allSatisfy({ $0.point == first.point }) { return first.point }
+            // Some saved grounders give all uninvolved fielders the same small shift toward the ball.
+            if nodes.count == 2, nodes[1].at == play.pickupAt,
+               nodes[1].point == first.point.towards(play.landing, fraction: 0.12) { return first.point }
+            return nil
+        }
+
+        var routes: [Int: Route] = [:]
+        func add(_ index: Int, toward goal: FieldPoint, focus: FieldPoint, reaction: Double, deadline: Double) {
+            guard let start = idleStart(index), routes[index] == nil else { return }
+            let distance = start.distance(to: goal)
+            let duration = min(distance / 5.8 + 0.20, deadline - reaction)
+            let travel = (duration - 0.20) * 5.8
+            guard distance >= 1, travel >= 1 else { return }
+            let end = start.towards(goal, fraction: travel / distance)
+            routes[index] = Route(nodes: [
+                FieldNode(at: 0, point: start),
+                FieldNode(at: reaction, point: start),
+                FieldNode(at: reaction + duration * 0.18, point: start.towards(end, fraction: 0.11)),
+                FieldNode(at: reaction + duration * 0.83, point: start.towards(end, fraction: 0.91)),
+                FieldNode(at: reaction + duration, point: end)
+            ], focus: focus)
+        }
+
+        if let fly = play.fly {
+            let landing = play.landing
+            let deadline = fly.caught ? play.flight : min(play.pickupAt, play.flight + 0.45)
+            let preferred = landing.x < -8 ? 6 : landing.x > 8 ? 8 : 7
+            // A nearby outfielder takes the far side of the drop; the original fielder owns the catch.
+            let outfield = [6, 7, 8].compactMap { index in idleStart(index).map { (index, $0) } }
+            let backup = outfield.first { $0.0 == preferred } ?? outfield.min {
+                $0.1.distance(to: landing) < $1.1.distance(to: landing)
+            }
+            if let (index, start) = backup {
+                let side = start.x < landing.x ? -1.0 : 1.0
+                let goal = FieldPoint(x: landing.x + 8 * side, y: min(96, landing.y + 8))
+                add(index, toward: goal, focus: landing, reaction: 0.28, deadline: deadline)
+                if play.fielder < 6, index != 7, routes[index] != nil, let center = idleStart(7) {
+                    let gap = center.towards(start, fraction: 0.4)
+                    add(7, toward: gap, focus: landing, reaction: 0.48, deadline: deadline)
+                }
+            }
+
+            if (play.outsBefore ?? 0) < 2 {
+                if play.fielder == 4, play.runners.contains(where: { $0.from == 2 || $0.from == 3 }) {
+                    let bag = DetailedFieldRules.bases[3]
+                    add(5, toward: FieldPoint(x: bag.x + 1.5, y: bag.y + 1), focus: landing,
+                        reaction: 0.44, deadline: play.flight)
+                } else if play.fielder == 2, play.runners.contains(where: { $0.from == 1 }) {
+                    let bag = DetailedFieldRules.bases[1]
+                    add(3, toward: FieldPoint(x: bag.x - 1.5, y: bag.y + 1), focus: landing,
+                        reaction: 0.44, deadline: play.flight)
+                }
+            }
+        } else if play.ballAt > play.flight {
+            func backUpThrow(to base: Int, by arrival: Double) {
+                let outfielder: Int
+                let offsetX: Double
+                switch base {
+                case 1: (outfielder, offsetX) = (8, 6)
+                case 2: (outfielder, offsetX) = (7, 0)
+                case 3: (outfielder, offsetX) = (6, -6)
+                default: return
+                }
+                let bag = DetailedFieldRules.bases[base]
+                add(outfielder, toward: FieldPoint(x: bag.x + offsetX, y: bag.y + 8), focus: bag,
+                    reaction: 0.42, deadline: min(play.duration, arrival + 0.12))
+            }
+            backUpThrow(to: play.targetBase, by: play.ballAt)
+            if let second = play.secondThrow { backUpThrow(to: 1, by: second.ballAt) }
+        }
+        return routes
+    }
+}
+
 enum FieldFacing: Int,CaseIterable,Equatable {
     case north,northEast,east,southEast,south,southWest,west,northWest
     var back:Bool {[.north,.northEast,.northWest].contains(self)}
@@ -833,6 +1033,25 @@ enum FieldSpriteAnimation {
         let nodes=play.fielders[index],at=FieldNode.sample(nodes,at:time)
         let events=throwsIn(play)
         var motion=travel(nodes,time:time)
+        if index == play.fielder, time < play.pickupAt {
+            if motion.stage == .ready {
+                let incoming = FieldNode.sample(play.ball, at: time)
+                let focus = at.distance(to: play.landing) > 1 ? play.landing : incoming
+                if at.distance(to: focus) > 0.01 {
+                    motion.facing = .direction(dx: focus.x - at.x, dy: focus.y - at.y)
+                }
+            } else if play.fly != nil {
+                // Finish the last running stride before switching to the stationary glove pose.
+                if time >= play.pickupAt - 0.32 {
+                    let incoming = FieldNode.sample(play.ball, at: max(0, play.pickupAt - 0.32))
+                    if at.distance(to: incoming) > 0.01 {
+                        let facing = FieldFacing.direction(dx: incoming.x - at.x, dy: incoming.y - at.y)
+                        motion.facing = .turn(from: motion.facing, to: facing, fraction: (time - (play.pickupAt - 0.32)) / 0.32)
+                    }
+                }
+                return motion
+            }
+        }
         if let event=events.first(where:{$0.fielder == index && time >= $0.caughtAt-0.12 && time<=$0.releaseAt+0.38}) {
             let receiver=FieldNode.sample(play.fielders[event.receiver],at:event.receivedAt)
             motion.willThrow=true
@@ -882,7 +1101,10 @@ enum FieldSpriteAnimation {
         return motion
     }
     static func ballOffset(_ play:MatchDetailedPlay,time:Double,leftIndex:Int?) -> CGPoint {
-        if FieldMisplayAnimation.ballIsLoose(play,time:time) {return .zero}
+        ballContact(play,time:time,leftIndex:leftIndex)?.offset ?? .zero
+    }
+    static func ballContact(_ play:MatchDetailedPlay,time:Double,leftIndex:Int?) -> (index:Int,offset:CGPoint)? {
+        if FieldMisplayAnimation.ballIsLoose(play,time:time) {return nil}
         let events=throwsIn(play)
         let catches=[(play.fielder,play.pickupAt)]+events.map {($0.receiver,$0.receivedAt)}
         let ball=FieldNode.sample(play.ball,at:time)
@@ -899,9 +1121,9 @@ enum FieldSpriteAnimation {
                 let hand=motion.throwingHand(left:left)
                 p=CGPoint(x:p.x+(hand.x-p.x)*motion.progress,y:p.y+(hand.y-p.y)*motion.progress)
             }
-            return CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y)
+            return (index,CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y))
         }
-        return .zero
+        return nil
     }
 }
 
@@ -1134,30 +1356,21 @@ enum InplayFieldProjection {
 
 @MainActor enum FieldBallPresentation {
     static func handOffset(_ play:MatchDetailedPlay,time:Double,size:CGSize,leftIndex:Int?) -> CGPoint {
+        guard let contact=FieldSpriteAnimation.ballContact(play,time:time,leftIndex:leftIndex) else {return .zero}
         let position=FieldNode.sample(play.ball,at:time)
-        let motionIndex=play.fielders.indices.first {FieldNode.sample(play.fielders[$0],at:time).distance(to:position)<0.9}
+        let index=contact.index
         let scale=InplayFieldProjection.actorScale(position,size:size)
-        var offset=FieldSpriteAnimation.ballOffset(play,time:time,leftIndex:leftIndex)
-        if let index=motionIndex {
-            let display=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:position,size:size)
-            // Preserve the gather interpolation while using the projected screen-facing pose.
-            let left=index == leftIndex
-            func anchor(_ motion:FieldSpriteMotion) -> CGPoint {
-                var p=motion.glove(left:left)
-                if motion.ballInThrowingHand {p=motion.throwingHand(left:left)}
-                else if motion.stage == .gather && motion.willThrow {
-                    let hand=motion.throwingHand(left:left)
-                    p=CGPoint(x:p.x+(hand.x-p.x)*motion.progress,y:p.y+(hand.y-p.y)*motion.progress)
-                }
-                if let raster=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:left,hand:motion.ballInThrowingHand) {p=raster}
-                return CGPoint(x:p.x+motion.bodyOffset.x,y:p.y+motion.bodyOffset.y)
-            }
-            if offset != .zero {
-                let b=anchor(display)
-                offset=b
-            }
+        let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:position,size:size)
+        let left=index == leftIndex
+        var offset=motion.glove(left:left)
+        if motion.ballInThrowingHand {offset=motion.throwingHand(left:left)}
+        else if motion.stage == .gather && motion.willThrow {
+            let hand=motion.throwingHand(left:left)
+            offset=CGPoint(x:offset.x+(hand.x-offset.x)*motion.progress,y:offset.y+(hand.y-offset.y)*motion.progress)
         }
-        return CGPoint(x:offset.x*scale,y:offset.y*scale)
+        // The saved ball handler owns the visual contact, even if a nearby teammate is closer to the ball.
+        if let raster=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:left,hand:motion.ballInThrowingHand) {offset=raster}
+        return CGPoint(x:(offset.x+motion.bodyOffset.x)*scale,y:(offset.y+motion.bodyOffset.y)*scale)
     }
     static func point(_ play:MatchDetailedPlay,time:Double,size:CGSize,leftIndex:Int?) -> CGPoint {
         let raw=InplayFieldProjection.point(FieldNode.sample(play.ball,at:time),size:size)
@@ -1176,6 +1389,97 @@ enum InplayFieldProjection {
 @MainActor enum InplayStadiumArt {
     static let size=CGSize(width:1024,height:1536)
     static let image=MatchArt.image("inplay-stadium-arcade-v1")
+
+    @MainActor final class UpperArt {
+        let image:UIImage
+        init(image:UIImage) {self.image=image}
+        lazy var texture:SKTexture = {
+            let value=SKTexture(image:image);value.filteringMode = .nearest;return value
+        }()
+    }
+    private static let upperArtCache:NSCache<NSString,UpperArt> = {
+        let cache=NSCache<NSString,UpperArt>()
+        cache.totalCostLimit=6*1024*1024
+        return cache
+    }()
+    static func upperArt(_ venue:StadiumBackdrop) -> UpperArt? {
+        let key=venue.imageName as NSString
+        if let cached=upperArtCache.object(forKey:key) {return cached}
+        guard let url=Bundle.main.url(forResource:venue.imageName,withExtension:"png",subdirectory:"MatchArt"),
+              let image=UIImage(contentsOfFile:url.path),image.size == venue.pixelSize else {return nil}
+        let art=UpperArt(image:image)
+        upperArtCache.setObject(art,forKey:key,cost:Int(venue.pixelSize.width*venue.pixelSize.height)*8)
+        return art
+    }
+    static func frame(for pixels:CGRect,in canvas:CGSize) -> CGRect {
+        let viewport=InplayFieldProjection.viewport(canvas),x=viewport.width/size.width,y=viewport.height/size.height
+        return CGRect(x:viewport.minX+pixels.minX*x,y:viewport.minY+pixels.minY*y,width:pixels.width*x,height:pixels.height*y)
+    }
+    static func upperFrame(_ venue:StadiumBackdrop,in canvas:CGSize) -> CGRect {
+        frame(for:CGRect(x:0,y:0,width:size.width,height:venue.height),in:canvas)
+    }
+    static func legacyScoreFrame(in canvas:CGSize,homeRun:Bool) -> CGRect {
+        if homeRun {return CGRect(x:canvas.width*0.38,y:canvas.height*0.14,width:canvas.width*0.24,height:canvas.height*0.04)}
+        let viewport=InplayFieldProjection.viewport(canvas)
+        return CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.123,width:viewport.width*0.22,height:viewport.height*0.039)
+    }
+
+    struct Scoreboard {
+        let venue:StadiumBackdrop
+        let frame:CGRect
+        var logoFrame:CGRect? {
+            guard venue.logoAsset != nil else {return nil}
+            let side=min(frame.height*0.80,frame.width*0.25)
+            return CGRect(x:frame.minX+frame.width*0.04,y:frame.midY-side/2,width:side,height:side)
+        }
+        private var textFrame:CGRect {
+            guard let logoFrame else {return frame}
+            let leading=logoFrame.maxX+frame.width*0.03
+            return CGRect(x:leading,y:frame.minY,width:frame.maxX-leading-frame.width*0.04,height:frame.height)
+        }
+        var namePosition:CGPoint {
+            CGPoint(x:venue.compact ? frame.minX+frame.width*0.27:textFrame.midX,
+                    y:venue.compact ? frame.midY:frame.minY+frame.height*0.27)
+        }
+        var scorePosition:CGPoint {
+            CGPoint(x:venue.compact ? frame.minX+frame.width*0.73:textFrame.midX,
+                    y:venue.compact ? frame.midY:frame.minY+frame.height*0.69)
+        }
+        var nameFontSize:CGFloat {
+            min(frame.height*(venue.compact ? 0.67:0.27),textFrame.width*(venue.compact ? 0.45:0.90)/CGFloat(venue.name.count))
+        }
+        func scoreFontSize(_ text:String) -> CGFloat {
+            min(frame.height*(venue.compact ? 0.75:0.45),textFrame.width*(venue.compact ? 0.45:0.90)/CGFloat(max(1,text.count))*1.5)
+        }
+        var fill:Color {Color(hex:venue.panel).opacity(0.9)}
+        var trim:Color {Color(hex:venue.trim)}
+    }
+    static func scoreboard(_ venue:StadiumBackdrop,in canvas:CGSize) -> Scoreboard {
+        Scoreboard(venue:venue,frame:frame(for:venue.board,in:canvas))
+    }
+    static func draw(in context:GraphicsContext,size:CGSize,stadium:StadiumIdentity) -> Scoreboard? {
+        if let image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
+        guard let venue=stadium.backdrop,let upper=upperArt(venue) else {return nil}
+        context.draw(Image(uiImage:upper.image).interpolation(.none),in:upperFrame(venue,in:size))
+        return scoreboard(venue,in:size)
+    }
+    static func drawScore(_ text:String,in context:GraphicsContext,size:CGSize,board:Scoreboard?,homeRun:Bool) {
+        if let board {
+            context.fill(Path(board.frame),with:.color(board.fill))
+            context.stroke(Path(board.frame),with:.color(board.trim),lineWidth:1)
+            if let logo=board.venue.logoAsset,let logoFrame=board.logoFrame {
+                context.draw(Image(logo).interpolation(.none),in:logoFrame)
+            }
+            context.draw(Text(board.venue.name).font(.system(size:board.nameFontSize,weight:.bold)).foregroundStyle(GameTheme.paper),at:board.namePosition)
+            context.draw(Text(text).font(.system(size:board.scoreFontSize(text),weight:.bold,design:.monospaced)).foregroundStyle(GameTheme.paper),at:board.scorePosition)
+        } else {
+            let frame=legacyScoreFrame(in:size,homeRun:homeRun)
+            context.fill(Path(frame),with:.color(homeRun ? GameTheme.navy:Color(hex:0x0b2030)))
+            if !homeRun {context.stroke(Path(frame),with:.color(GameTheme.gold),lineWidth:2)}
+            let font:Font = .system(size:max(12,size.width*(homeRun ? 0.027:0.028)),weight:homeRun ? .bold:.black,design:.monospaced)
+            context.draw(Text(text).font(font).foregroundStyle(GameTheme.paper),at:CGPoint(x:frame.midX,y:frame.midY))
+        }
+    }
 }
 
 @MainActor struct FieldReplaySprites {
@@ -1185,12 +1489,16 @@ enum InplayFieldProjection {
     let ownPosition:String?
     let throwingHand:String
     let ownTeamFielding:Bool?
-    func actors(_ play:MatchDetailedPlay,time:Double,reduced:Bool,finished:Bool) -> [Actor] {
+    func actors(_ play:MatchDetailedPlay,time:Double,reduced:Bool,finished:Bool,backupRoutes:[Int:FieldBackupRoutes.Route]? = nil) -> [Actor] {
         let defenseOwn=ownTeamFielding ?? !play.ownBatter
+        let routes = backupRoutes ?? FieldBackupRoutes.make(play)
         var actors:[Actor]=[]
         for index in play.fielders.indices {
             let own=defenseOwn && (ownPosition.map {DetailedFieldRules.names[index] == $0} ?? (play.ownDefense && index==play.fielder))
-            actors.append((FieldNode.sample(play.fielders[index],at:time),FieldSpriteAnimation.motion(play,index:index,time:time),own,defenseOwn,own ? jerseyNumber:index+1,false,index == 1 ? "catcher":"fielder"))
+            let backup = routes[index]
+            let point = FieldNode.sample(backup?.nodes ?? play.fielders[index], at: time)
+            let motion = backup?.motion(at: time) ?? FieldSpriteAnimation.motion(play,index:index,time:time)
+            actors.append((point,motion,own,defenseOwn,own ? jerseyNumber:index+1,false,index == 1 ? "catcher":"fielder"))
         }
         for runner in play.runners {
             let display=FieldSpriteAnimation.runner(runner,play:play,time:time,reduced:reduced)
@@ -1217,37 +1525,86 @@ enum InplayFieldProjection {
     private struct Selection:Hashable {
         let file:String
         let rect:[Double]
-        let own:Bool,teamOwn:Bool,back:Bool,mirrored:Bool
+        let own:Bool,teamOwn:Bool,back:Bool,mirrored:Bool,garmentBack:Bool,garmentMirrored:Bool
         let number:Int
     }
     func requests(duration:Double,reduced:Bool,actorsAt:(Double)->[Actor]) async -> [String:FieldRasterArt.Request]? {
         var result:[String:FieldRasterArt.Request]=[:],seen=Set<Selection>()
         let ownKit=appearance.uniformColor,opponent=appearance.opponentUniformColor
+        let ownStyle=appearance.uniformStyle,opponentStyle=appearance.opponentUniformStyle
         // Both field canvases use 2:3; perspective direction is independent of pixel resolution.
         let size=CGSize(width:400,height:600)
         let steps=Int(ceil(duration*120))
+        #if DEBUG
+        var chunkStart=MatchRenderMetrics.begin()
+        MatchRenderMetrics.mark("field.plan.begin")
+        #endif
         for index in 0...steps {
             guard !Task.isCancelled else {return nil}
-            if index%30 == 0 {await Task.yield()}
+            if index%32 == 0 {
+                #if DEBUG
+                MatchRenderMetrics.end("fieldPlanChunk",started:chunkStart)
+                #endif
+                // 약 2ms 분량씩 준비하고 실제 표시 큐가 실행될 틈을 둔다.
+                do {try await Task.sleep(for:.microseconds(250))} catch {return nil}
+                #if DEBUG
+                chunkStart=MatchRenderMetrics.begin()
+                #endif
+            }
             for actor in actorsAt(min(duration,Double(index)/120)) {
                 var motion=InplayFieldProjection.motion(actor.motion,at:actor.point,size:size)
+                let style=actor.teamOwn ? ownStyle:opponentStyle
                 // Include both sides of pose changes even when a short stage falls between samples.
-                for progress in [0.0,0.25,0.5,0.75,1.0] {
+                let poses = motion.stage == .run ? [0.0,1.0] : [0.0,0.25,0.5,0.75,1.0]
+                for progress in poses {
                     motion.progress=progress
+                    if motion.stage == .run {motion.gait=progress == 0 ? 0 : -.pi/2}
                     for sample in FieldRasterArt.samples(motion,kind:actor.kind,left:actor.own && throwingHand == "left") {
                         let back=motion.facing.back && actor.kind != "catcher"
-                        let selection=Selection(file:sample.frame.file,rect:sample.frame.rect,own:actor.own,teamOwn:actor.teamOwn,back:back,mirrored:back && sample.mirrored,number:back ? actor.number:0)
+                        let selection=Selection(file:sample.frame.file,rect:sample.frame.rect,own:actor.own,teamOwn:actor.teamOwn,
+                            back:back,mirrored:back && sample.mirrored,garmentBack:style?.pro != nil && back,
+                            garmentMirrored:style?.pro != nil && sample.mirrored,number:back ? actor.number:0)
                         guard seen.insert(selection).inserted else {continue}
                         let r=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:opponent,
                             skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
-                            hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,back:back,style:actor.teamOwn ? appearance.uniformStyle:appearance.opponentUniformStyle)
+                            hair:actor.own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:actor.number,back:back,style:style)
                         result[r.key]=r
                     }
                 }
             }
         }
+        #if DEBUG
+        MatchRenderMetrics.end("fieldPlanChunk",started:chunkStart)
+        MatchRenderMetrics.mark("field.plan.end")
+        #endif
         return result
     }
+}
+
+@MainActor final class FieldReplayPreparation {
+    let eventID:String
+    let backupRoutes: [Int: FieldBackupRoutes.Route]
+    private let task:Task<FieldRasterArt.Prepared?,Never>
+    private var cancelled=false
+    init(replay:InplayReplay,sprites:FieldReplaySprites) {
+        eventID=replay.eventID
+        let routes = replay.backupRoutes
+        backupRoutes = routes
+        task=Task(priority:.utility) {
+            // 확정 뒤 짧은 묶음으로 준비한다. 각 묶음의 suspension이 표시 작업에 틈을 준다.
+            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{
+                replay.actors(sprites,time:$0,reduced:false,finished:false,backupRoutes:routes)
+            }),!Task.isCancelled else {return nil}
+            return await FieldRasterArt.prepare(requests)
+        }
+    }
+    func images(for eventID:String) async -> FieldRasterArt.Prepared? {
+        guard self.eventID==eventID,!cancelled,!Task.isCancelled else {return nil}
+        let result=await task.value
+        return cancelled || Task.isCancelled ? nil:result
+    }
+    func cancel() {cancelled=true;task.cancel()}
+    deinit {task.cancel()}
 }
 
 struct DetailedFieldReplayBoard:View {
@@ -1266,6 +1623,7 @@ struct DetailedFieldReplayBoard:View {
     var showsContactPoints=false
     var playbackMode:FieldPlaybackMode = .system
     var preparesMotion=false
+    var preparation:FieldReplayPreparation?=nil
     var onResolved:@MainActor () -> Void = {}
     let complete:@MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var systemReduced
@@ -1276,6 +1634,7 @@ struct DetailedFieldReplayBoard:View {
     private var effectsReduced:Bool {dimFlashingLights || (reduceMotionOverride ?? (systemReduced || reduced))}
     @State private var scene:InplayFieldScene?
     @State private var prepared:FieldRasterArt.Prepared?
+    @State private var backupRoutes: [Int: FieldBackupRoutes.Route] = [:]
     @State private var preparationDelay=0.0
     @State private var start:Double?
     @State private var resolved=false
@@ -1303,19 +1662,27 @@ struct DetailedFieldReplayBoard:View {
         }
         .task(id:replay.eventID+(animated ? ":live":":still")) {
             let began=ProcessInfo.processInfo.systemUptime
+            let playback = replay
+            let matchingPreparation = preparation.flatMap { $0.eventID == playback.eventID ? $0 : nil }
+            let routes = matchingPreparation?.backupRoutes ?? playback.backupRoutes
             #if DEBUG
             MatchRenderMetrics.mark("requestBegin")
             #endif
-            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}) else {return}
+            let images:FieldRasterArt.Prepared?
+            if let matchingPreparation {images=await matchingPreparation.images(for:playback.eventID)}
+            else {
+                guard let requests=await sprites.requests(duration:playback.duration,reduced:false,actorsAt:{playback.actors(sprites,time:$0,reduced:false,finished:false,backupRoutes:routes)}) else {return}
+                images=await FieldRasterArt.prepare(requests)
+            }
             #if DEBUG
             MatchRenderMetrics.mark("requestsReady")
             #endif
-            guard let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+            guard let images,!Task.isCancelled else {return}
             #if DEBUG
             MatchRenderMetrics.mark("imagesReady")
             #endif
             if usesSpriteKit {
-                let next=InplayFieldScene(replay:replay,sprites:sprites,prepared:images,scoreText:scoreText,stadium:stadium)
+                let next=InplayFieldScene(replay:playback,sprites:sprites,prepared:images,scoreText:scoreText,stadium:stadium,backupRoutes:routes)
                 #if DEBUG
                 MatchRenderMetrics.mark("sceneCreated")
                 #endif
@@ -1334,7 +1701,7 @@ struct DetailedFieldReplayBoard:View {
                     guard await next.waitForStartup(),!Task.isCancelled else {return}
                 }
             }
-            prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
+            backupRoutes=routes;prepared=images;preparationDelay=ProcessInfo.processInfo.systemUptime-began
             #if DEBUG
             MatchRenderMetrics.motionPolicy=MatchRenderMetrics.MotionPolicy(effectiveReduced:reduced,effectsReduced:effectsReduced,swiftUIReduced:systemReduced,uiReduced:UIAccessibility.isReduceMotionEnabled,lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled)
             MatchRenderMetrics.prepared(seconds:preparationDelay,images:images)
@@ -1366,7 +1733,7 @@ struct DetailedFieldReplayBoard:View {
             GeometryReader {geometry in
                 if usesSpriteKit {
                     if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? play.duration:nil),preparing:animated && previewTime == nil && start == nil,showsContactPoints:showsContactPoints)}
-                    else {InplayPreparationView()}
+                    else {InplayPreparationView(stadium:stadium,scoreText:scoreText,homeRun:false)}
                 } else {
                     #if DEBUG
                     legacyFrame(geometry:geometry,now:now,time:time,finished:finished)
@@ -1387,7 +1754,8 @@ struct DetailedFieldReplayBoard:View {
                     defer {MatchRenderMetrics.end("field",started:measuredAt)}
                     #endif
                     if preparesMotion && prepared == nil && previewTime == nil {
-                        if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
+                        let board=InplayStadiumArt.draw(in:context,size:size,stadium:stadium)
+                        if let board {InplayStadiumArt.drawScore(scoreText,in:context,size:size,board:board,homeRun:false)}
                         context.draw(Text("선수 모션 준비 중").font(.headline.monospaced()).foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width/2,y:size.height/2));return
                     }
                     var context=context
@@ -1399,23 +1767,18 @@ struct DetailedFieldReplayBoard:View {
                         context.translateBy(x:offset.x,y:offset.y)
                     }
                     func point(_ p:FieldPoint) -> CGPoint {InplayFieldProjection.point(p,size:size)}
-                    if let image=InplayStadiumArt.image {
-                        context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))
-                    } else {
+                    let board=InplayStadiumArt.draw(in:context,size:size,stadium:stadium)
+                    if InplayStadiumArt.image == nil {
                         context.draw(Text("구장 이미지를 불러오지 못했습니다").foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width/2,y:size.height/4))
                     }
-                    let viewport=InplayFieldProjection.viewport(size)
-                    let scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.123,width:viewport.width*0.22,height:viewport.height*0.039)
-                    context.fill(Path(scoreFrame),with:.color(Color(hex:0x0b2030)))
-                    context.stroke(Path(scoreFrame),with:.color(GameTheme.gold),lineWidth:2)
-                    context.draw(Text(scoreText).font(.system(size:max(12,size.width*0.028),weight:.black,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:scoreFrame.midX,y:scoreFrame.midY))
-                    if time>=play.pickupAt {
+                    InplayStadiumArt.drawScore(scoreText,in:context,size:size,board:board,homeRun:false)
+                    if time>=play.pickupAt && play.releaseAt>play.pickupAt {
                         let b=point(DetailedFieldRules.bases[target]),w=max(7,size.width*0.025)
                         context.stroke(Path(ellipseIn:CGRect(x:b.x-w,y:b.y-w/2,width:w*2,height:w)),with:.color(GameTheme.gold.opacity(0.8)),lineWidth:1)
                     }
                     let ownKit=appearance.uniformColor,opponent=appearance.opponentUniformColor
                     let defenseOwn=ownTeamFielding ?? !play.ownBatter
-                    let actors=sprites.actors(play,time:time,reduced:reduced,finished:finished)
+                    let actors=sprites.actors(play,time:time,reduced:reduced,finished:finished,backupRoutes:backupRoutes)
                     for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
                         let raster=FieldRasterArt.draw(in:context,at:point(actor.point),scale:InplayFieldProjection.actorScale(actor.point,size:size),motion:InplayFieldProjection.motion(actor.motion,at:actor.point,size:size),kind:actor.kind,
                             kit:actor.teamOwn ? ownKit:opponent,skin:actor.own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
@@ -1438,9 +1801,9 @@ struct DetailedFieldReplayBoard:View {
                         context.fill(Path(CGRect(x:p.x,y:p.y,width:2,height:2)),with:.color(GameTheme.paper.opacity(0.4)))
                     }
                     if showsContactPoints {
-                        for index in play.fielders.indices {
-                            let at=FieldNode.sample(play.fielders[index],at:time)
-                            let motion=InplayFieldProjection.motion(FieldSpriteAnimation.motion(play,index:index,time:time),at:at,size:size)
+                        for (index,actor) in actors.prefix(play.fielders.count).enumerated() {
+                            let at=actor.point
+                            let motion=InplayFieldProjection.motion(actor.motion,at:at,size:size)
                             let hand=motion.ballInThrowingHand
                             if let contact=FieldRasterArt.contact(motion,kind:index == 1 ? "catcher":"fielder",left:index == leftIndex,hand:hand) {
                                 let scale=InplayFieldProjection.actorScale(at,size:size),base=point(at)
@@ -1672,6 +2035,7 @@ struct HomeRunReplayBoard:View {
     var reduceMotionOverride:Bool?=nil
     var playbackMode:FieldPlaybackMode = .system
     var preparesMotion=false
+    var preparation:FieldReplayPreparation?=nil
     var playsSound=false
     var onResolved:@MainActor () -> Void = {}
     var complete:@MainActor () -> Void = {}
@@ -1712,11 +2076,16 @@ struct HomeRunReplayBoard:View {
             #if DEBUG
             MatchRenderMetrics.mark("requestBegin")
             #endif
-            guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}) else {return}
+            let images:FieldRasterArt.Prepared?
+            if let preparation,preparation.eventID==replay.eventID {images=await preparation.images(for:replay.eventID)}
+            else {
+                guard let requests=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)}) else {return}
+                images=await FieldRasterArt.prepare(requests)
+            }
             #if DEBUG
             MatchRenderMetrics.mark("requestsReady")
             #endif
-            guard let images=await FieldRasterArt.prepare(requests),!Task.isCancelled else {return}
+            guard let images,!Task.isCancelled else {return}
             #if DEBUG
             MatchRenderMetrics.mark("imagesReady")
             #endif
@@ -1769,7 +2138,7 @@ struct HomeRunReplayBoard:View {
             GeometryReader {geometry in
                 if usesSpriteKit {
                     if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? event.duration:nil),preparing:animated && previewTime == nil && start == nil)}
-                    else {InplayPreparationView()}
+                    else {InplayPreparationView(stadium:stadium,scoreText:scoreText,homeRun:true)}
                 } else {
                     #if DEBUG
                     legacyFrame(geometry:geometry,now:now,time:time,finished:finished)
@@ -1790,7 +2159,8 @@ struct HomeRunReplayBoard:View {
                         defer {MatchRenderMetrics.end("homeRun",started:measuredAt)}
                         #endif
                         if preparesMotion && prepared == nil && previewTime == nil {
-                            if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
+                            let board=InplayStadiumArt.draw(in:context,size:size,stadium:stadium)
+                            if let board {InplayStadiumArt.drawScore(scoreText,in:context,size:size,board:board,homeRun:true)}
                         context.draw(Text("선수 모션 준비 중").font(.headline.monospaced()).foregroundStyle(GameTheme.paper),at:CGPoint(x:size.width/2,y:size.height/2));return
                         }
                         var context=context
@@ -1799,7 +2169,7 @@ struct HomeRunReplayBoard:View {
                             let offset=FieldContactPresentation.cameraOffset(handoff,fieldPoint:HomeRunPresentation.ballPoint(event,time:cut,size:size),canvas:geometry.frame(in:.global),now:now,reduced:effectsReduced)
                             context.clip(to:Path(CGRect(origin:.zero,size:size)));context.translateBy(x:offset.x,y:offset.y)
                         }
-                        if let image=InplayStadiumArt.image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
+                        let board=InplayStadiumArt.draw(in:context,size:size,stadium:stadium)
                         let ownKit=appearance.uniformColor,opponent=appearance.opponentUniformColor
                         let actors=sprites.actors(event,time:time,reduced:reduced)
                         for actor in actors.sorted(by:{$0.point.y>$1.point.y}) {
@@ -1808,9 +2178,7 @@ struct HomeRunReplayBoard:View {
                                 kit:teamOwn ? ownKit:opponent,skin:own ? PlayerAppearance.skinColors[appearance.skin]:0xefbe91,
                                 hair:own ? PlayerAppearance.hairColors[appearance.hair]:0x263b48,number:number,left:own && throwingHand == "left",selected:own,out:false,style:teamOwn ? appearance.uniformStyle:appearance.opponentUniformStyle,prepared:prepared)
                         }
-                        let scoreboard=CGRect(x:size.width*0.38,y:size.height*0.14,width:size.width*0.24,height:size.height*0.04)
-                        context.fill(Path(scoreboard),with:.color(GameTheme.navy))
-                        context.draw(Text(scoreText).font(.system(size:max(12,size.width*0.027),weight:.bold,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:scoreboard.midX,y:scoreboard.midY))
+                        InplayStadiumArt.drawScore(scoreText,in:context,size:size,board:board,homeRun:true)
                         if time<=event.flight {
                             let p=HomeRunPresentation.ballPoint(event,time:time,size:size)
                             for i in 1...3 where !effectsReduced {
@@ -1834,9 +2202,19 @@ struct HomeRunReplayBoard:View {
 }
 
 private struct InplayPreparationView:View {
+    let stadium:StadiumIdentity
+    let scoreText:String
+    let homeRun:Bool
     var body:some View {
         ZStack {
-            if let image=InplayStadiumArt.image {Image(uiImage:image).resizable().interpolation(.none).scaledToFit()}
+            if stadium.backdrop != nil {
+                Canvas {context,size in
+                    let board=InplayStadiumArt.draw(in:context,size:size,stadium:stadium)
+                    InplayStadiumArt.drawScore(scoreText,in:context,size:size,board:board,homeRun:homeRun)
+                }
+            } else if let image=InplayStadiumArt.image {
+                Image(uiImage:image).resizable().interpolation(.none).scaledToFit()
+            }
             Text("선수 모션 준비 중").font(.headline.monospaced()).foregroundStyle(GameTheme.paper).padding(8).background(GameTheme.navy)
         }.frame(maxWidth:.infinity,maxHeight:.infinity)
     }
@@ -1861,6 +2239,12 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     var snapshot:Snapshot {lock.withLock {Snapshot(hits:hits,misses:misses,entries:live.count,bytes:bytes,peakBytes:peak,generatedBytes:generated,evictions:evictions)}}
 }
 @MainActor enum MatchRenderMetrics {
+    struct Environment:Codable {
+        let thermalState:Int
+        let lowPower:Bool
+        init() {thermalState=ProcessInfo.processInfo.thermalState.rawValue;lowPower=ProcessInfo.processInfo.isLowPowerModeEnabled}
+    }
+    private static var environmentStart=Environment()
     struct Frame:Codable {let kind:String;let at:Double;let milliseconds:Double;var playbackTime:Double?=nil}
     struct Lifecycle:Codable {let name:String;let at:Double}
     static var lifecycle:[Lifecycle]=[]
@@ -1898,6 +2282,8 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     struct MotionPolicy:Codable {let effectiveReduced:Bool;let effectsReduced:Bool;let swiftUIReduced:Bool;let uiReduced:Bool;let lowPower:Bool}
     static var motionPolicy:MotionPolicy?
     static var enabled=false
+    static var bodyEvaluations:[String:Int]=[:]
+    static func bodyEvaluated(_ name:String) {if enabled {bodyEvaluations[name,default:0]+=1}}
     static func prepared(seconds:Double,images:FieldRasterArt.Prepared) {
         guard enabled else {return}
         preparations.append(Preparation(endedAt:ProcessInfo.processInfo.systemUptime,seconds:seconds,images:images.images.count,bytes:images.bytes))
@@ -1905,9 +2291,9 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     private static var exportIndex=0
     static func exportLive(role:String) {
         guard enabled else {return}
-        struct Report:Encodable {let role:String;let lifecycle:[Lifecycle];let motionPolicy:MotionPolicy?;let preparations:[Preparation];let frames:[Frame];let cadence:[Cadence];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int}
+        struct Report:Encodable {let role:String;let lifecycle:[Lifecycle];let motionPolicy:MotionPolicy?;let preparations:[Preparation];let frames:[Frame];let cadence:[Cadence];let memory:[Memory];let preparedHits:Int;let preparedMisses:Int;let spriteTextureCount:Int;let spriteTextureSwaps:Int;let spriteFallbacks:Int;let bodyEvaluations:[String:Int];let environmentStart:Environment;let environmentEnd:Environment;let drawable:MatchDrawableProbe.Snapshot}
         sampleMemory(force:true)
-        let report=Report(role:role,lifecycle:lifecycle,motionPolicy:motionPolicy,preparations:preparations,frames:frames,cadence:cadence,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks)
+        let report=Report(role:role,lifecycle:lifecycle,motionPolicy:motionPolicy,preparations:preparations,frames:frames,cadence:cadence,memory:memory,preparedHits:preparedHits,preparedMisses:preparedMisses,spriteTextureCount:spriteTextureCount,spriteTextureSwaps:spriteTextureSwaps,spriteFallbacks:spriteFallbacks,bodyEvaluations:bodyEvaluations,environmentStart:environmentStart,environmentEnd:Environment(),drawable:MatchDrawableProbe.shared.snapshot())
         exportIndex+=1
         if let data=try? JSONEncoder().encode(report) {
             try? data.write(to:FileManager.default.temporaryDirectory.appending(path:"match-live-\(role)-\(exportIndex).json"),options:.atomic)
@@ -1921,13 +2307,17 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         guard frames.count<12_000 else {return}
         frames.append(Frame(kind:kind,at:started,milliseconds:(ProcessInfo.processInfo.systemUptime-started)*1000,playbackTime:playbackTime))
     }
-    static func reset() {cadence=[];lifecycle=[];motionPolicy=nil;frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
+    static func reset() {MatchDrawableProbe.shared.reset();environmentStart=Environment();bodyEvaluations=[:];cadence=[];lifecycle=[];motionPolicy=nil;frames=[];preparations=[];preparedHits=0;preparedMisses=0;spriteTextureCount=0;spriteTextureSwaps=0;spriteFallbacks=0;memory=[];sampleMemory(force:true)}
 }
 #endif
 
 // Rendering input only. All positions/times/results belong to the saved simulation.
 @MainActor enum InplayReplay {
     case field(MatchDetailedPlay), homeRun(MatchHomeRun)
+    var backupRoutes: [Int: FieldBackupRoutes.Route] {
+        if case .field(let play) = self { return FieldBackupRoutes.make(play) }
+        return [:]
+    }
     var eventID:String {switch self {case .field(let p):p.eventID;case .homeRun(let h):h.eventID}}
     var duration:Double {switch self {case .field(let p):p.duration;case .homeRun(let h):h.duration}}
     var playbackSeconds:Double {switch self {case .field: max(3,duration);case .homeRun:duration}}
@@ -1943,9 +2333,9 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
         case .homeRun(let h):HomeRunPresentation.time(h,elapsed:elapsed,reduced:reduced)
         }
     }
-    func actors(_ sprites:FieldReplaySprites,time:Double,reduced:Bool,finished:Bool) -> [FieldReplaySprites.Actor] {
+    func actors(_ sprites:FieldReplaySprites,time:Double,reduced:Bool,finished:Bool,backupRoutes:[Int:FieldBackupRoutes.Route]? = nil) -> [FieldReplaySprites.Actor] {
         switch self {
-        case .field(let p):sprites.actors(p,time:time,reduced:reduced,finished:finished)
+        case .field(let p):sprites.actors(p,time:time,reduced:reduced,finished:finished,backupRoutes:backupRoutes)
         case .homeRun(let h):sprites.actors(h,time:time,reduced:reduced)
         }
     }
@@ -1998,12 +2388,14 @@ struct InplayStartupReadiness {
         }
     }
     private let replay:InplayReplay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared
+    private let backupRoutes: [Int: FieldBackupRoutes.Route]
     private let content=SKNode(),score=SKLabelNode(fontNamed:"Menlo-Bold")
     private let target=SKShapeNode(ellipseOf:CGSize(width:20,height:10))
     private let ball=SKSpriteNode(texture:PixelBaseball.texture),ballShadow=SKShapeNode(ellipseOf:CGSize(width:6,height:2))
     private let trail=(0..<3).map {_ in SKSpriteNode(color:UIColor(GameTheme.paper).withAlphaComponent(0.4),size:CGSize(width:2,height:2))}
     private let result=SKNode()
     private let stadium:StadiumIdentity
+    private var venueScoreboard:InplayStadiumArt.Scoreboard?
     private var stadiumDress:StadiumSceneDress?
     private var actors:[ActorNode]=[]
     private var textures:[String:SKTexture]=[:]
@@ -2042,7 +2434,10 @@ struct InplayStartupReadiness {
     #if DEBUG
     private var showsContactPoints=false
     private var diagnosticUpdates=0
-    override func didMove(to view:SKView) {MatchRenderMetrics.mark("sceneAttached")}
+    override func didMove(to view:SKView) {
+        MatchDrawableProbe.shared.register(view,surface:"field")
+        MatchRenderMetrics.mark("sceneAttached")
+    }
     func setContactPoints(_ value:Bool) {showsContactPoints=value;display(time:displayedTime,finished:finished)}
     #endif
     var canvasFrame:CGRect = .zero
@@ -2055,32 +2450,60 @@ struct InplayStartupReadiness {
     convenience init(event:MatchHomeRun,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String,stadium:StadiumIdentity = .legacy) {
         self.init(replay:.homeRun(event),sprites:sprites,prepared:prepared,scoreText:scoreText,stadium:stadium)
     }
-    init(replay:InplayReplay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String,stadium:StadiumIdentity = .legacy) {
+    init(replay:InplayReplay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String,stadium:StadiumIdentity = .legacy,
+         backupRoutes:[Int:FieldBackupRoutes.Route]? = nil) {
         self.replay=replay;self.sprites=sprites;self.prepared=prepared;self.stadium=stadium
+        self.backupRoutes=backupRoutes ?? replay.backupRoutes
         super.init(size:Self.fieldSize)
         scaleMode = .aspectFit;backgroundColor=UIColor(GameTheme.board);addChild(content)
         if let image=InplayStadiumArt.image {
-            let backdrop=SKSpriteNode(texture:SKTexture(image:image));backdrop.texture?.filteringMode = .nearest
-            let frame=InplayFieldProjection.viewport(size)
-            backdrop.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));backdrop.size=frame.size;backdrop.zPosition = -1000;content.addChild(backdrop)
+            let texture=SKTexture(image:image);texture.filteringMode = .nearest
+            addBackdrop(texture,frame:InplayFieldProjection.viewport(size),depth:-1000,name:"inplay-field-base")
         }
-        let dress=StadiumSceneDress(stadium:stadium,size:size,camera:.field);dress.zPosition = 10;content.addChild(dress);stadiumDress=dress
-        let scoreFrame:CGRect
-        switch replay {
-        case .field:
-            let viewport=InplayFieldProjection.viewport(size)
-            scoreFrame=CGRect(x:viewport.minX+viewport.width*0.39,y:viewport.minY+viewport.height*0.123,width:viewport.width*0.22,height:viewport.height*0.039)
-        case .homeRun:scoreFrame=CGRect(x:size.width*0.38,y:size.height*0.14,width:size.width*0.24,height:size.height*0.04)
+        if let venue=stadium.backdrop,let upper=InplayStadiumArt.upperArt(venue) {
+            addBackdrop(upper.texture,frame:InplayStadiumArt.upperFrame(venue,in:size),depth:-999,name:venue.imageName)
+            venueScoreboard=InplayStadiumArt.scoreboard(venue,in:size)
         }
-        let board=SKShapeNode(rectOf:scoreFrame.size);board.position=convertPoint(CGPoint(x:scoreFrame.midX,y:scoreFrame.midY));board.fillColor=UIColor(Color(hex:stadium.theme.panel));board.strokeColor=UIColor(Color(hex:stadium.theme.trim));board.lineWidth=2
-        content.addChild(board);score.fontSize=max(12,size.width*0.028);score.fontColor=UIColor(GameTheme.paper);score.verticalAlignmentMode = .center;score.position=board.position;score.zPosition=1;content.addChild(score);setScore(scoreText)
+        let dress=StadiumSceneDress(stadium:stadium,size:size,camera:.field,hasVenueBackdrop:venueScoreboard != nil);dress.zPosition = 10;content.addChild(dress);stadiumDress=dress
+        let isHomeRun:Bool
+        switch replay {case .field:isHomeRun=false;case .homeRun:isHomeRun=true}
+        let scoreFrame=venueScoreboard?.frame ?? InplayStadiumArt.legacyScoreFrame(in:size,homeRun:isHomeRun)
+        let board=SKShapeNode(rectOf:scoreFrame.size)
+        board.name="inplay-scoreboard"
+        board.position=convertPoint(CGPoint(x:scoreFrame.midX,y:scoreFrame.midY))
+        board.fillColor=UIColor(venueScoreboard?.fill ?? Color(hex:stadium.theme.panel))
+        board.strokeColor=UIColor(venueScoreboard?.trim ?? Color(hex:stadium.theme.trim))
+        board.lineWidth=venueScoreboard == nil ? 2:1
+        content.addChild(board)
+        if let venueScoreboard {
+            let name=SKLabelNode(fontNamed:"AppleSDGothicNeo-Bold")
+            name.name=venueScoreboard.venue.logoAsset == nil ? "inplay-school-name":"inplay-club-name"
+            name.text=venueScoreboard.venue.name
+            name.fontSize=venueScoreboard.nameFontSize;name.fontColor=UIColor(GameTheme.paper);name.verticalAlignmentMode = .center
+            name.position=convertPoint(venueScoreboard.namePosition);name.zPosition=1;content.addChild(name)
+            if let asset=venueScoreboard.venue.logoAsset,let frame=venueScoreboard.logoFrame {
+                let logo=SKSpriteNode(imageNamed:asset)
+                logo.name="inplay-club-logo";logo.size=frame.size
+                logo.texture?.filteringMode = .nearest
+                logo.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));logo.zPosition=1;content.addChild(logo)
+            }
+            score.position=convertPoint(venueScoreboard.scorePosition)
+        } else {
+            score.position=board.position
+        }
+        score.name="inplay-score";score.fontSize=max(12,size.width*0.028);score.fontColor=UIColor(GameTheme.paper);score.verticalAlignmentMode = .center;score.zPosition=1;content.addChild(score);setScore(scoreText)
         target.strokeColor=UIColor(GameTheme.gold).withAlphaComponent(0.8);target.lineWidth=1;target.zPosition=2;content.addChild(target)
-        for _ in replay.actors(sprites,time:0,reduced:false,finished:false) {let node=ActorNode();actors.append(node);content.addChild(node.root)}
+        for _ in replay.actors(sprites,time:0,reduced:false,finished:false,backupRoutes:self.backupRoutes) {let node=ActorNode();actors.append(node);content.addChild(node.root)}
         ballShadow.fillColor=UIColor.black.withAlphaComponent(0.4);ballShadow.strokeColor = .clear;ballShadow.zPosition=1900;content.addChild(ballShadow)
         for node in trail {node.zPosition=1999;content.addChild(node)}
         ball.zPosition=2000;content.addChild(ball);configureResult();result.name="finalPlayResult";result.zPosition=3000;result.isHidden=true;content.addChild(result)
     }
     required init?(coder:NSCoder) {fatalError("init(coder:) has not been implemented")}
+    private func addBackdrop(_ texture:SKTexture,frame:CGRect,depth:CGFloat,name:String) {
+        let backdrop=SKSpriteNode(texture:texture)
+        backdrop.name=name;backdrop.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY))
+        backdrop.size=frame.size;backdrop.zPosition=depth;content.addChild(backdrop)
+    }
     private func configureResult() {
         let frame:CGRect,title:String,detail:String?,home:Bool
         switch replay {
@@ -2093,7 +2516,7 @@ struct InplayStartupReadiness {
             frame=CGRect(x:size.width*0.08,y:size.height*0.24,width:size.width*0.84,height:size.height*0.12)
             title="HOME RUN · \(h.distance)m";detail="\(h.runs)점 · \(sprites.ownTeamFielding == true ? "상대 팀":"우리 팀") 홈 도착";home=true
         }
-        let panel=SKShapeNode(rectOf:frame.size);panel.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));panel.fillColor=UIColor(Color(hex:stadium.theme.panel));panel.strokeColor=UIColor(Color(hex:stadium.theme.trim));panel.lineWidth=home ? 3:2;result.addChild(panel)
+        let panel=SKShapeNode(rectOf:frame.size);panel.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));panel.fillColor=UIColor(Color(hex:stadium.panelColor));panel.strokeColor=UIColor(Color(hex:stadium.trimColor));panel.lineWidth=home ? 3:2;result.addChild(panel)
         let label=SKLabelNode(fontNamed:"Menlo-Bold");label.text=title;label.fontSize=home ? max(16,size.width*0.052):18;label.fontColor=UIColor(home ? GameTheme.gold:GameTheme.paper);label.verticalAlignmentMode = .center
         label.position=convertPoint(CGPoint(x:frame.midX,y:detail == nil ? frame.midY:frame.minY+(home ? frame.height*0.36:16)));label.zPosition=1;result.addChild(label)
         if let detail {
@@ -2123,7 +2546,10 @@ struct InplayStartupReadiness {
         if value {content.position = .zero;stadiumDress?.reduceEffects()}
         display(time:displayedTime,finished:finished)
     }
-    func setScore(_ text:String) {score.text=text}
+    func setScore(_ text:String) {
+        score.text=text
+        if let venueScoreboard {score.fontSize=venueScoreboard.scoreFontSize(text)}
+    }
     func setFinished(_ value:Bool) {finished=value;display(time:previewTime ?? (value ? replay.duration:displayedTime),finished:value)}
     func setPreviewTime(_ value:Double?) {
         previewTime=value
@@ -2161,13 +2587,14 @@ struct InplayStartupReadiness {
     }
     func display(time:Double,finished:Bool) {
         displayedTime=time
-        let samples=replay.actors(sprites,time:time,reduced:reduced,finished:finished)
+        let samples=replay.actors(sprites,time:time,reduced:reduced,finished:finished,backupRoutes:backupRoutes)
         updateActors(samples)
         let ballVisible:Bool,trailEnd:Double
         switch replay {
         case .field(let play):
             let targetBase=time >= (play.secondThrow?.releaseAt ?? .infinity) ? 1:play.targetBase
-            target.isHidden=time<play.pickupAt;target.position=convertPoint(InplayFieldProjection.point(DetailedFieldRules.bases[targetBase],size:size))
+            target.isHidden=time<play.pickupAt || play.releaseAt<=play.pickupAt
+            target.position=convertPoint(InplayFieldProjection.point(DetailedFieldRules.bases[targetBase],size:size))
             let ground=InplayFieldProjection.point(FieldNode.sample(play.ball,at:time),size:size)
             ballShadow.isHidden=false;ballShadow.position=convertPoint(ground)
             let diameter=max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size));ball.size=CGSize(width:diameter,height:diameter)
@@ -2193,6 +2620,8 @@ struct InplayStartupReadiness {
     }
     private func updateActors(_ samples:[FieldReplaySprites.Actor]) {
         let ownKit=sprites.appearance.uniformColor
+        let opponentKit=sprites.appearance.opponentUniformColor
+        let ownStyle=sprites.appearance.uniformStyle,opponentStyle=sprites.appearance.opponentUniformStyle
         for (index,node) in actors.enumerated() {node.root.isHidden = index >= samples.count}
         for (index,actor) in samples.enumerated() {
             let node=actors[index],scale=InplayFieldProjection.actorScale(actor.point,size:size)
@@ -2201,9 +2630,10 @@ struct InplayStartupReadiness {
             node.shadow.setScale(scale);node.selection.setScale(scale);node.selection.isHidden = !actor.own
             let left=actor.own && sprites.throwingHand == "left"
             if let sample=FieldRasterArt.samples(motion,kind:actor.kind,left:left).first {
-                let request=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:sprites.appearance.opponentUniformColor,skin:actor.own ? PlayerAppearance.skinColors[sprites.appearance.skin]:0xefbe91,hair:actor.own ? PlayerAppearance.hairColors[sprites.appearance.hair]:0x263b48,number:actor.number,back:motion.facing.back && actor.kind != "catcher",style:actor.teamOwn ? sprites.appearance.uniformStyle:sprites.appearance.opponentUniformStyle)
+                let back=motion.facing.back && actor.kind != "catcher"
+                let request=FieldRasterArt.Request(sample:sample,kit:actor.teamOwn ? ownKit:opponentKit,skin:actor.own ? PlayerAppearance.skinColors[sprites.appearance.skin]:0xefbe91,hair:actor.own ? PlayerAppearance.hairColors[sprites.appearance.hair]:0x263b48,number:actor.number,back:back,style:actor.teamOwn ? ownStyle:opponentStyle)
                 if node.textureKey != request.key {
-                    if textures[request.key] == nil,let image=FieldRasterArt.image(sample,kit:request.kit,skin:request.skin,hair:request.hair,number:request.number,back:request.back,style:request.style) {let texture=SKTexture(image:image);texture.filteringMode = .nearest;textures[request.key]=texture;fallbackTextures+=1}
+                    if textures[request.key] == nil,let image=FieldRasterArt.image(sample,kit:request.kit,skin:request.skin,hair:request.hair,number:actor.number,back:back,style:request.style) {let texture=SKTexture(image:image);texture.filteringMode = .nearest;textures[request.key]=texture;fallbackTextures+=1}
                     node.body.texture=textures[request.key];node.textureKey=request.key;textureChanges+=1
                     #if DEBUG
                     if MatchRenderMetrics.enabled {MatchRenderMetrics.spriteTextureSwaps+=1;MatchRenderMetrics.spriteFallbacks=fallbackTextures}
@@ -2317,6 +2747,9 @@ extension InplayReplay {
         if name == "opponent-pitcher-v52" {
             rects = [[0.32,0.42,0.35,0.20],[0.37,0.40,0.30,0.20],[0.40,0.40,0.30,0.23],[0.40,0.42,0.30,0.22],
                      [0.43,0.45,0.30,0.18],[0.46,0.48,0.26,0.14],[0.42,0.43,0.27,0.17],[0.37,0.40,0.30,0.20]]
+        } else if name == "opponent-batter-v116" {
+            rects = [[0.32,0.39,0.25,0.21],[0.31,0.40,0.25,0.20],[0.15,0.40,0.27,0.22],
+                     [0.36,0.39,0.27,0.23],[0.25,0.38,0.25,0.20],[0.19,0.37,0.27,0.22]]
         } else if name == "opponent-batter-v52" {
             rects = [[0.34,0.39,0.19,0.18],[0.32,0.41,0.20,0.18],[0.15,0.43,0.23,0.17],[0.42,0.33,0.26,0.19],[0.25,0.38,0.21,0.17],[0.15,0.37,0.24,0.17]]
         } else {
@@ -2325,7 +2758,14 @@ extension InplayReplay {
         let r=rects[min(frame,rects.count-1)]
         return CGRect(x:r[0],y:r[1],width:r[2],height:r[3])
     }
-    static func image(_ name:String, frame:Int, columns:Int, rows:Int, kit:Int, style:GameUniformStyle?) -> UIImage? {
+    // 헬멧과 어깨가 같은 높이에 있어도 상의를 모자 색으로 칠하지 않는다.
+    static func batterHelmet(frame: Int) -> CGRect {
+        let rects: [[Double]] = [[0.40,0.14,0.34,0.24],[0.33,0.14,0.34,0.24],[0.22,0.16,0.34,0.26],
+                                [0.40,0.10,0.35,0.26],[0.32,0.16,0.34,0.23],[0.23,0.16,0.34,0.23]]
+        let r=rects[min(frame,rects.count-1)]
+        return CGRect(x:r[0],y:r[1],width:r[2],height:r[3])
+    }
+    static func image(_ name:String, frame:Int, columns:Int, rows:Int, kit:Int, style:GameUniformStyle?, mirrored: Bool = false) -> UIImage? {
         guard let source=MatchArt.cell(name,column:frame%columns,row:frame/columns,columns:columns,rows:rows)?.cgImage else {return nil}
         let w=source.width,h=source.height,format=CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue
         var data=[UInt8](repeating:0,count:w*h*4),fabric=[Bool](repeating:false,count:w*h)
@@ -2334,7 +2774,11 @@ extension InplayReplay {
             c.draw(source,in:CGRect(x:0,y:0,width:w,height:h));return true
         }
         guard decoded else {return nil}
-        let shirt=torso(name,frame:frame), catcher=name == "catcher-parts"
+        let shirt=torso(name,frame:frame), catcher=name == "catcher-parts", batter=name.hasPrefix("opponent-batter-")
+        let helmet=batterHelmet(frame:frame)
+        let pro = style?.pro != nil
+        let garmentMirrored = pro && mirrored
+        let legs = shirt.insetBy(dx: -0.12, dy: 0)
         for y in 0..<h {for x in 0..<w {
             let index=(y*w+x)*4,a=Int(data[index+3]);guard a>16 else {continue}
             let r=Double(data[index])*255/Double(a),g=Double(data[index+1])*255/Double(a),b=Double(data[index+2])*255/Double(a)
@@ -2345,39 +2789,58 @@ extension InplayReplay {
             if blue {
                 fabric[y*w+x]=true
                 if let style {
-                    if catcher { color=style.sleeves }
+                    if batter {
+                        if helmet.contains(p) {color=p.y > helmet.maxY-0.035 ? style.brim:style.cap}
+                        else if shirt.contains(p) {color=style.shirt(x:(p.x-shirt.minX)/shirt.width,y:(p.y-shirt.minY)/shirt.height,mirrored:garmentMirrored)}
+                        else if p.y > shirt.maxY+0.035 && p.y < 0.81 {
+                            color = pro ? style.leg(base: style.pants, x: (p.x - legs.minX) / legs.width,
+                                                    y: (p.y - shirt.maxY) / 0.24, mirrored: garmentMirrored) : style.trim
+                        } else {color = p.y >= 0.81 ? style.gear ?? style.sleeves : style.sleeves}
+                    } else if catcher { color = style.gear ?? style.sleeves }
                     else if p.y < shirt.minY {color=p.y > shirt.minY-0.09 ? style.brim:style.cap}
                     else if shirt.contains(p) { color=style.shirt(x:(p.x-shirt.minX)/shirt.width,y:(p.y-shirt.minY)/shirt.height) }
-                    else {color=style.sleeves}
+                    else {color = p.y >= 0.81 ? style.gear ?? style.sleeves : style.sleeves}
                 } else {color=kit}
                 shade=max(0.25,min(1.45,b/135))
             } else if let style, white {
-                if catcher && frame < 2 && shirt.contains(p) {
+                if pro && catcher && frame < 2 {
+                    let sleeve = (0.47...0.66).contains(p.y) && ((0.22...0.33).contains(p.x) || (0.67...0.78).contains(p.x))
+                    if sleeve { color = style.sleeve(base: style.sleeves, y: (p.y - 0.47) / 0.19) }
+                    else if (0.78...0.86).contains(p.y) && (0.36...0.63).contains(p.x) { color = style.pants }
+                } else if pro && batter && shirt.contains(p) && !helmet.contains(p) {
+                    // The opponent atlas has a painted light band on each sleeve.
+                    color = style.sleeve(base: style.sleeves, y: 1)
+                } else if catcher && frame < 2 && shirt.contains(p) {
                     color=style.shirt(x:(p.x-shirt.minX)/shirt.width,y:(p.y-shirt.minY)/shirt.height)
-                } else if !catcher && p.y > shirt.maxY+0.035 && p.y < 0.81 { color=style.pants }
+                } else if !catcher && p.y > shirt.maxY+0.035 && p.y < 0.81 {
+                    color = pro ? style.leg(base: style.pants, x: (p.x - legs.minX) / legs.width,
+                                            y: (p.y - shirt.maxY) / 0.24, mirrored: garmentMirrored) : style.pants
+                }
                 shade=max(0.35,min(1.1,(r+g+b)/735))
             }
             if let color {for c in 0..<3 {data[index+c]=UInt8(min(255,Int(Double((color >> ((2-c)*8))&255)*shade))*a/255)}}
         }}
         if let style, !catcher {
             // Only paint onto original cloth pixels, never across the glove or exposed skin.
-            let chest=CGPoint(x:(shirt.midX+0.055)*Double(w),y:(shirt.minY+0.07)*Double(h))
-            style.drawMark(at:chest,unit:1,eligible:fabric,bytes:&data,width:w,height:h)
+            let chest=CGPoint(x:(shirt.midX+(garmentMirrored ? -0.055 : 0.055))*Double(w),y:(shirt.minY+0.07)*Double(h))
+            style.drawMark(at:chest,unit:1,mirrored:garmentMirrored,eligible:fabric,bytes:&data,width:w,height:h)
             let capCenters: [[Double]] = name == "opponent-pitcher-v52"
                 ? [[0.49,0.19],[0.51,0.17],[0.56,0.22],[0.59,0.20],[0.64,0.26],[0.68,0.36],[0.66,0.33],[0.52,0.15]]
                 : [[0.58,0.25],[0.51,0.26],[0.38,0.28],[0.60,0.20],[0.51,0.27],[0.40,0.27]]
             let cap=capCenters[frame]
-            style.drawMark(at:CGPoint(x:cap[0]*Double(w),y:cap[1]*Double(h)),unit:1,eligible:fabric,bytes:&data,width:w,height:h)
+            style.drawMark(at:CGPoint(x:cap[0]*Double(w),y:cap[1]*Double(h)),unit:1,mirrored:garmentMirrored,eligible:fabric,bytes:&data,width:w,height:h)
         }
         guard let provider=CGDataProvider(data:Data(data) as CFData),let image=CGImage(width:w,height:h,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:format),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else {return nil}
         return UIImage(cgImage:image)
     }
-    static func textures(_ name:String,columns:Int,rows:Int,ownKit:Int,opponent:Bool = true,teamColor:Int? = nil,style:GameUniformStyle? = nil) -> [SKTexture] {
+    static func textures(_ name:String,columns:Int,rows:Int,ownKit:Int,opponent:Bool = true,teamColor:Int? = nil,style:GameUniformStyle? = nil,mirrored: Bool = false) -> [SKTexture] {
         let kit=teamColor ?? (opponent ? FieldReplayPresentation.opponentKit(ownKit):ownKit)
-        let key="\(name):\(kit):\(style?.id ?? "legacy")" as NSString
+        let garmentMirrored = style?.pro != nil && mirrored
+        let orientation = garmentMirrored ? ":mirrored-garment" : ""
+        let key="\(name):\(kit):\(style?.id ?? "legacy")\(orientation)" as NSString
         if let result=cache.object(forKey:key) as? [SKTexture] {return result}
         let result=(0..<(columns*rows)).compactMap { frame -> SKTexture? in
-            guard let image=image(name,frame:frame,columns:columns,rows:rows,kit:kit,style:style) else {return nil}
+            guard let image=image(name,frame:frame,columns:columns,rows:rows,kit:kit,style:style,mirrored:garmentMirrored) else {return nil}
             let texture=SKTexture(image:image);texture.filteringMode = .nearest;return texture
         }
         cache.totalCostLimit=24*1024*1024

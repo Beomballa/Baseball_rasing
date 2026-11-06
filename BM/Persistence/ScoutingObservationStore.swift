@@ -561,10 +561,11 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         }
         if let service=value.overseasCareer?.faService {
             let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
-            let earned=try FASeasonEvidence.collect(owner:value,role:player.role,on:GameDate(player.gameDate),rows:rows)
+            let earned=try FASeasonEvidence.collect(owner:value,role:player.role,on:GameDate(player.gameDate),rows:rows,
+                expandedFrom:calendar.overseasExpansionYear)
             guard service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
         }
-        try value.validateSeasonGoals(today:GameDate(player.gameDate),offers:offers)
+        try value.validateSeasonGoals(today:GameDate(player.gameDate),offers:offers,expandedFrom:calendar.overseasExpansionYear)
         try value.validateDevelopment(today:GameDate(player.gameDate))
         if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil || value.specialTrainings != nil || value.specialAssessments != nil || value.specialReports != nil || value.seasonGoalReports != nil || value.seasonReviews != nil {
             var sources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
@@ -784,7 +785,9 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         let eligibility=try OverseasEligibilityStore.current(player:player,calendar:calendar,in:context)
         let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
         let policy=try player.lifecycle.development.map {OverseasGrowthPolicy(development:$0)}
-        let report=try OverseasScoutingReport.make(observation:observation,eligibility:eligibility,growthPolicy:policy)
+        let effectiveYear=try GameDate(date).year+1
+        let expandedMarket=effectiveYear <= 9998 ? try calendar.isExpandedOverseas(year:effectiveYear):false
+        let report=try OverseasScoutingReport.make(observation:observation,eligibility:eligibility,growthPolicy:policy,expandedMarket:expandedMarket)
         try report.validate(playerID:player.id,today:GameDate(date))
         journal.overseasReports=(journal.overseasReports ?? [])+[report]
         try CareerProjectStore.appendReview(owner:&journal,player:player,observation:observation,reportID:report.id,in:context)
@@ -1003,7 +1006,8 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
         var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),value=owner.overseasCareer ?? OverseasCareerJournal()
         try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
         let id=player.id,rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
-        let service=try FASeasonEvidence.collect(owner:owner,role:player.role,on:GameDate(date),rows:rows)
+        let service=try FASeasonEvidence.collect(owner:owner,role:player.role,on:GameDate(date),rows:rows,
+            expandedFrom:calendar.overseasExpansionYear)
         let international=try GameProSeasonEvidence.collect(owner:owner,role:player.role,today:GameDate(date),rows:rows)
         if value.faService == service && value.service == international {return}
         value.faService=service;value.service=international;owner.overseasCareer=value;owner.revision += 1
@@ -1328,7 +1332,9 @@ enum GoalSpecialError:LocalizedError {
         let fixtures=try calendar.fixtures(for:player,year:year).filter {$0.date.description >= date && !old.contains(CareerMatchRecord.key(player.id,$0.id))}
         let n=fixtures.filter {$0.isAppearance(for:player.role)}.count
         guard n > 0 else {throw ClubSeasonGoalError.noGames}
-        let goal=ClubSeasonGoal(id:key,year:year,started:date,role:role,playerRole:player.roleRaw,fixtureIDs:fixtures.map(\.id),excludedKeys:old,appearances:n,targets:ClubSeasonGoal.targets(role:role,playerRole:player.roleRaw,appearances:n))
+        let expanded=try ["npb-first-team","mlb-first-team"].contains(role.level) && calendar.isExpandedOverseas(year:year)
+        let goal=ClubSeasonGoal(id:key,year:year,started:date,role:role,playerRole:player.roleRaw,fixtureIDs:fixtures.map(\.id),excludedKeys:old,appearances:n,
+            targets:ClubSeasonGoal.targets(role:role,playerRole:player.roleRaw,appearances:n),expandedSchedule:expanded ? true:nil)
         owner.seasonGoals=(owner.seasonGoals ?? [])+[goal]
         try write(owner,player:player,calendar:calendar,in:context,save:save)
     }
@@ -1641,25 +1647,28 @@ enum GoalSpecialError:LocalizedError {
         let date=try GameDate(player.gameDate)
         guard let member=try owner.current(on:date) else {return nil}
         let from=max(try GameDate("\(date.year)-01-01"),try GameDate(member.since))
-        return try collect(player:player,owner:owner,membershipID:member.offerID,teamID:member.teamID,level:member.level,year:date.year,from:from.description,through:date.description,in:context)
+        let expanded=try ["npb-first-team","mlb-first-team"].contains(member.level) && calendar.isExpandedOverseas(year:date.year)
+        return try collect(player:player,owner:owner,membershipID:member.offerID,teamID:member.teamID,level:member.level,year:date.year,
+            from:from.description,through:date.description,expanded:expanded,in:context)
     }
     static func season(goal:ClubSeasonGoal,owner:CareerContractJournal,player:CareerPlayer,in context:ModelContext) throws -> ClubParticipationBasis {
         guard let through=goal.settledOn else {throw ClubSeasonGoalError.unfinished}
-        return try collect(player:player,owner:owner,membershipID:goal.role.membershipID,teamID:goal.role.teamID,level:goal.role.level,year:goal.year,from:goal.started,through:through,fixtureIDs:Set(goal.fixtureIDs),excluded:Set(goal.excludedKeys),in:context)
+        return try collect(player:player,owner:owner,membershipID:goal.role.membershipID,teamID:goal.role.teamID,level:goal.role.level,year:goal.year,
+            from:goal.started,through:through,fixtureIDs:Set(goal.fixtureIDs),excluded:Set(goal.excludedKeys),expanded:goal.expandedSchedule == true,in:context)
     }
     static func collect(player:CareerPlayer,owner:CareerContractJournal,membershipID:String,teamID:String,level:String,year:Int,from:String,through:String,
-                        fixtureIDs:Set<String>?=nil,excluded:Set<String>=[],in context:ModelContext) throws -> ClubParticipationBasis {
+                        fixtureIDs:Set<String>?=nil,excluded:Set<String>=[],expanded:Bool=false,in context:ModelContext) throws -> ClubParticipationBasis {
         let id=player.id
         let rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id && $0.gameDate >= from && $0.gameDate <= through}))
         var records:[String:CareerMatchRecord]=[:]
         for row in rows {guard records[row.fixtureID] == nil else {throw MatchError.invalidRecord};records[row.fixtureID]=row}
-        let schedule=try SeasonSchedule.fixtures(year:year,schoolIDs:CareerTeamDirectory.teams(level:level))
+        let schedule=try CareerTeamDirectory.fixtures(level:level,year:year,expanded:expanded)
         var games:[ClubParticipationGame]=[]
         for fixture in schedule where fixture.includes(teamID) && fixture.date.description>=from && fixture.date.description<=through && (fixtureIDs?.contains(fixture.id) ?? true) {
             let key=CareerMatchRecord.key(player.id,fixture.id)
             guard !excluded.contains(key) else {continue}
             guard let member=try owner.current(on:fixture.date),member.offerID == membershipID,member.teamID == teamID,member.level == level else {continue}
-            let rotation=fixture.isAppearance(for:player.role)
+            let rotation=fixture.forTeam(teamID).isAppearance(for:player.role)
             var kind:ClubParticipationKind = .missing,appearance:Bool?
             if let row=records[fixture.id],row.completed {
                 let match=try row.snapshot()
@@ -1672,7 +1681,8 @@ enum GoalSpecialError:LocalizedError {
             }
             games.append(ClubParticipationGame(key:key,fixtureID:fixture.id,date:fixture.date.description,rotationDay:rotation,appearance:appearance,kind:kind))
         }
-        let result=ClubParticipationBasis(playerID:player.id,membershipID:membershipID,teamID:teamID,level:level,playerRole:player.roleRaw,year:year,from:from,through:through,games:games)
+        let result=ClubParticipationBasis(playerID:player.id,membershipID:membershipID,teamID:teamID,level:level,playerRole:player.roleRaw,
+            year:year,from:from,through:through,games:games,expandedSchedule:expanded ? true:nil)
         try result.validate();return result
     }
 }

@@ -1,6 +1,63 @@
 import XCTest
 
 final class ClubCareerVisualFlowTests: XCTestCase {
+    @MainActor func testV146ProStadiumPreviewsInDirectoryPreserveCareerState() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        let before = status(app)
+        openGoals(app)
+        let directory = app.buttons["openClubDirectory"]
+        reveal(directory, app); directory.tap()
+        XCTAssertTrue(app.staticTexts["clubDirectorySummary"].waitForExistence(timeout: 5))
+
+        XCTAssertEqual(app.staticTexts["clubDirectorySummary"].label, "가상 구단 40개")
+        for (league, index, name, division) in [
+            ("kbo", 0, "인천 하버스", ""), ("npb", 10, "모리오카 아이언스", "동부"), ("mlb", 14, "라스베이거스 미라지스", "서부")
+        ] {
+            let tab = app.buttons["clubLeague-" + league]
+            reveal(tab, app); tab.tap()
+            let id = "\(league)-\(index)"
+            if !division.isEmpty {
+                let divisionID = division == "동부" ? "east" : "west"
+                XCTAssertEqual(app.staticTexts["clubDivision-\(league)-\(divisionID)"].label, division + " 8팀")
+                let entry = any("clubDirectory-" + id, app)
+                reveal(entry, app)
+                XCTAssertTrue(entry.label.contains(division))
+            }
+            let open = app.buttons["clubStadium-" + id]
+            reveal(open, app)
+            XCTAssertTrue(open.isHittable)
+            open.tap()
+            let title = app.staticTexts["clubStadiumPreview-" + id]
+            XCTAssertTrue(title.waitForExistence(timeout: 5))
+            XCTAssertEqual(title.label, name + " 홈구장")
+            XCTAssertTrue(any("clubStadiumArtwork-" + id, app).exists)
+            let image = XCTAttachment(screenshot: app.screenshot())
+            image.name = "V147 club stadium " + id
+            image.lifetime = .keepAlways
+            add(image)
+            for (side, label) in [("home", "홈 유니폼"), ("away", "원정 유니폼")] {
+                app.buttons["clubArtworkTab-" + side].tap()
+                XCTAssertEqual(title.label, name + " " + label)
+                XCTAssertTrue(any("clubUniformArtwork-\(id)-\(side)", app).exists)
+                let uniform = XCTAttachment(screenshot: app.screenshot())
+                uniform.name = "V148 club uniform " + id + " " + side
+                uniform.lifetime = .keepAlways
+                add(uniform)
+            }
+            app.buttons["clubStadiumClose"].tap()
+            XCTAssertTrue(app.staticTexts["clubDirectorySummary"].exists)
+        }
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
+        app.buttons["managementTab-home"].tap()
+        XCTAssertEqual(status(app), before)
+    }
+
     @MainActor func testDirectoryTargetPickerAndProjectPreserveBothCareerStates() {
         continueAfterFailure = false
         let app = launch()
@@ -19,11 +76,11 @@ final class ClubCareerVisualFlowTests: XCTestCase {
             for league in ["kbo", "npb", "mlb"] {
                 reveal(app.buttons["clubLeague-" + league], app); app.buttons["clubLeague-" + league].tap()
                 capture(app, role + "-directory-" + league)
-                let inactive = any("clubDirectory-" + league + "-9", app)
-                reveal(inactive, app)
-                XCTAssertTrue(inactive.label.contains("미참여"))
+                let club = any("clubDirectory-" + league + "-9", app)
+                reveal(club, app)
+                XCTAssertTrue(club.label.contains(league == "kbo" ? "미참여" : "서부"))
                 XCTAssertFalse(app.buttons["saveCareerTarget"].exists)
-                capture(app, role + "-directory-" + league + "-inactive")
+                capture(app, role + "-directory-" + league + "-club")
             }
             app.navigationBars.buttons.element(boundBy: 0).tap()
             let change = app.buttons["changeCareerTarget"]; reveal(change, app); change.tap()

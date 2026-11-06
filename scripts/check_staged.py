@@ -23,6 +23,18 @@ EXACT_PATHS = {
 }
 ART_HASHES = {'BM/Resources/MatchArt/opponent-avatar-v1.png': '7ce1e3b33f8d5a0ead0e9eab213876ecf62b84e2a1e1d04dee842807af679113', 'BM/Resources/MatchArt/catcher-run-v1.png': '523550cbfca1545bfcdd52ac317229f54038b07b16b7adfe05830b06f0ab1f33', 'BM/Resources/MatchArt/fielder-transfer-v1.png': '81fd4b58749b45974e660a7b81ae128011189342bee179b26a70d1cc44e85598', 'BM/Resources/MatchArt/fielder-misplay-v1.png': '3e46024ed110111963abf08300d55d7270a16e2865509c6146324c66c2b644f2', 'BM/Resources/MatchArt/catcher-misplay-v1.png': '9369db3e85c227baad45aff94b336f48a998e08125a28b61438e92559ab309ad', 'BM/Resources/MatchArt/runner-arrival-v1.png': '6c25784396f1b1dd4fe79d6793776f4af625519e0e4ad58de47c4eb83ba82eae', 'BM/Resources/MatchArt/fielder-arrival-v1.png': '3e604efcb3726d69b215a9eb4d70d2bd6f15b2a0cc87546b291b359dc954be2a', 'BM/Resources/MatchArt/catcher-arrival-v1.png': 'beca9b25f9db1fafc5e3813a3d3e6c4e54114d40f210bb4d52b3263a5956498b', 'BM/Resources/MatchArt/catcher-catch-v1.png': 'cd4b49984ae6d7cb1cae86b1c5681e2740f1b7276909a46334f0c21990506b78', 'BM/Resources/MatchArt/catcher-gather-v1.png': '99bdcfea6ae54835a3bad9124da8f9cd42558155e82327595e5ab63667b6e8d5', 'BM/Resources/MatchArt/catcher-ready-v1.png': '2bf3b0111abf716e750f97d4b14559234086bfab81ad3c8fc5de39994def8440', 'BM/Resources/MatchArt/catcher-release-v1.png': 'a7007f77c29a2276b7f78e66314a806faed69217e51c3d226db8a9216a6dc9e3', 'BM/Resources/MatchArt/catcher-windup-v1.png': 'eccba6f626664fb04c8379dd762048a29c54763c22fe4141a990df348934fdfc', 'BM/Resources/MatchArt/fielder-air-v1.png': '4630ddd3133c045909d2fe45835aa479423326165e2a03a27eae821b61394090', 'BM/Resources/MatchArt/runner-ready-v1.png': '433da2684d3c6b409a745144ef005abefbcc1c72dd424be42b79784d4c84ee51', 'BM/Resources/MatchArt/runner-run-a-v1.png': 'e330f547fb6287b308fc0afc86946e112ccde510ead42fdd33b9a6331009c7d5', 'BM/Resources/MatchArt/runner-run-b-v1.png': '1adc9660ed67bca1e1f03addb141266bb92ae82005cc34430ef16c8b8a83f914', 'BM/Resources/MatchArt/fielder-e-v1.png': '1d7cdf3c492e0105d6bd8a56e59273a428bbadd9452f1874f80da9bb725e51b8', 'BM/Resources/MatchArt/fielder-n-v1.png': 'ed369a4bf9541d0937b82a648535e71f0ace3b7856ddcfedfbac749ae881d453', 'BM/Resources/MatchArt/fielder-ne-v1.png': 'fb3b7c8d1a34d771b1192e3f79fe0c571bebed3d3c2a3219c7090357d004f1b0', 'BM/Resources/MatchArt/fielder-nw-v1.png': 'c619c4fb55175aa0f691a504abae54f90b34289bd530fea5251dc82167241aad', 'BM/Resources/MatchArt/fielder-s-v1.png': '63acd6d8099ce77c336a4d6c054070e21b7a864f5b0d1e51c0c923386e3ebe3f', 'BM/Resources/MatchArt/fielder-se-v1.png': '12bab5777ebc7aca5309a92049620901699f1235a24d357c93d166b4c6f60966', 'BM/Resources/MatchArt/fielder-sw-v1.png': 'df90ccad9a4712c74d6b8d2e2771cd38b96db5edd4ce1876689f727667fc8953', 'BM/Resources/MatchArt/fielder-w-v1.png': 'c3379d650728f5abeb4d1cb52fe40f4507faa9d6bdf4e21fabc37418dd00bdf0', 'BM/Resources/MatchArt/inplay-stadium-arcade-v1.png': '88f437ed3272eaf621d3cb58072c197c6d1b1e524e9817791f4ea33c21af73ef', 'BM/Resources/MatchArt/inplay-stadium-sunset-v1.png': '99729c4289b1dcf763cc1320713488041d4cedcb38de470b4160cb1bca82dec6', 'BM/Resources/MatchArt/scout-office-v1.png': '2a7fa75c3ee3f1196459eb424a89a3d18c0f1732d4ca49d002838c5ab1e351fa', 'BM/Resources/MatchArt/batter-actions.png': '0b354869384a10785639dda556adebf9f11a587b73b0be31d80456e5d57310cf', 'BM/Resources/MatchArt/batter-view-clean.png': 'b2fcd03304f72554e80c34510dc7d4b3920e70c389ef9c4c8a6cc145b6bcddff', 'BM/Resources/MatchArt/catcher-parts.png': '6692da8e7cce7aacad190d561c202216772e5b00eaabb3694e951d849e5f60b9', 'BM/Resources/MatchArt/grip-changeup.png': 'f5bbbe6e35cb8d2334faf6741e4d4a6481ce4b65c8e6a28475a44ea0dcdf8e31', 'BM/Resources/MatchArt/grip-fastball.png': '0bba0ab9e03bf7e9c692067a1300233c464f6dfc0acea063a4bbf6a382e2286c', 'BM/Resources/MatchArt/grip-slider.png': '96c9d030c8e829abdd27ed85a175f3ef4035d619340f518738c1f5e9dc72455f', 'BM/Resources/MatchArt/grips-extra.png': '951a93adcff9fc9ed2dbc11a77754957ee077745709f552b6001ca23f91ada7d', 'BM/Resources/MatchArt/pitcher-delivery-v2.png': '10d16f1abb936751dbcb3ddaf428331062547b7fad5e983273920219e49d67dc', 'BM/Resources/MatchArt/stadium-clean.png': '5c977592c6d8caa69a567ecdd86dffdaf1d56eef858bb49571adbb0e82a392fb'}
 
+# V120 선택한 전신 원화와 재질/접지 정보. 실제 렌더 회귀와 원본을 로컬 QA에 보존한다.
+ART_HASHES.update({'BM/Resources/MatchArt/pitcher-fullbody-v123.json': '7b5b3c34a90a647db6f323fbdb30c3d31957f619ceb97dd106788492f20a00d0'})
+ART_HASHES.update({
+    "BM/Resources/MatchArt/pitcher-fullbody-v124.json": "a181423d3e9f2df294fb159049e027858a56a538a7c9888446f5938d592ca23a",
+    "BM/Resources/MatchArt/pitcher-depth-back-v124.png": "e58bb01a7876dd1d3c6fea9cb9aee7ed004057d2d04f1c8673322119a6b559d5",
+})
+ART_HASHES.update({
+    'BM/Resources/MatchArt/pitcher-delivery-back-v143.json': '9cd75ed0a3307db8fc684ac9749132763a415d4dff5eb50131aa4c816bf67f25',
+    'BM/Resources/MatchArt/pitcher-delivery-back-v143.png': '9a9d64762b549e84bcbffb24a6f059d4d535677fffdac655a6b69669a0dbf1b3',
+})
+ART_HASHES.update({'BM/Resources/MatchArt/pitcher-fullbody-back-v120.png': 'e93eb19dec38889f77b63cc23042601964adb0205ce3b617b8a15f360d2489a3', 'BM/Resources/MatchArt/pitcher-fullbody-front-v120.png': '71c264acda0c3062e5923476c63968f96c1abdb9270a8ec646ebfc82ea6e086d', 'BM/Resources/MatchArt/pitcher-fullbody-v120.json': 'ae2eec9caa0a00b2d0a871950f78579bda03f26044c74257e76b5c49524ff294'})
+
 # Individually reviewed normal and QA application artwork.
 ART_HASHES.update({'BM/Resources/Assets.xcassets/AppIconQA.appiconset/AppIconQA.png': 'd7268e9dbf30d216574638782d616042b5f309b307c7225f8d1a581983a28f0f', 'BM/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png': 'ce3f1f1922c8b384d6c2170c7390b169bf9711b3e41db029e94d4edd11f52703'})
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/BullpenRoomV62.imageset/Contents.json', 'BM/Resources/Assets.xcassets/StadiumRoomV62.imageset/Contents.json', 'BM/Resources/Assets.xcassets/BattingRoomV62.imageset/Contents.json'})
@@ -42,7 +54,7 @@ EXACT_PATHS.update({'BM/Resources/Assets.xcassets/LockerV1.imageset/Contents.jso
 ART_HASHES.update({'BM/Resources/Assets.xcassets/LockerV1.imageset/bg-locker-v1.png': 'c108413ae9da738bbb65ffa980833db965f68927703649303b9f380f71d1b889', 'BM/Resources/Assets.xcassets/BattingRoomV1.imageset/bg-batting-room-v1.png': '0eb041bd665f475c6803861c20ba390751cb0243180202ca2ffc32bbc9477533', 'BM/Resources/Assets.xcassets/BullpenRoomV1.imageset/bg-bullpen-room-v1.png': '5600ff83371532b39af75c369f65a498a7081fc16431fa51466397489dfaeef9'})
 
 EXACT_PATHS.add("BM/Resources/Assets.xcassets/GameUniformStylesV104.dataset/Contents.json")
-ART_HASHES["BM/Resources/Assets.xcassets/GameUniformStylesV104.dataset/kits.json"] = "24f72aa958acc81114f95e14f48554c364fbdbee06bfb038dc080868f31381f0"
+ART_HASHES["BM/Resources/Assets.xcassets/GameUniformStylesV104.dataset/kits.json"] = "c5dc5e3b653712a0006bb69061889b340b3df34d11fa2a86717b4e0547984a0e"
 
 BLOCKED_PARTS = {"secrets", "credentials", ".ssh", ".aws", ".idea", ".vscode", "xcuserdata", "__pycache__", "generated"}
 # Reviewed V91 standalone, unlettered header portrait.
@@ -91,6 +103,7 @@ ART_HASHES['BM/Resources/Assets.xcassets/RestBenchV69.imageset/room.png'] = '24b
 
 # V75 reviewed training and player motion artwork.
 ART_HASHES.update({'BM/Resources/MatchArt/batter-actions-v75.png': '495d460d405eeea31419c1b6f3223c0a5ae3fa5d0265e2e74c5a1e5cb86eba5c', 'BM/Resources/MatchArt/pitcher-delivery-v75.png': '5c5d19bd692776c691ec47c9fad81e92571fe12a572a811c1de8c7034969cd3e', 'BM/Resources/MatchArt/batting-practice-v75.png': '4304ab31aaf4d7764a0d3d7341e5be09f7c6e0ad8c712aafa8745ae7e0d87068'})
+ART_HASHES['BM/Resources/MatchArt/opponent-batter-v116.png'] = '5ea509c981dc72727c577043a69cdfe2400914d6b699442b66a402b5aa4e0573'
 
 # V79 generated club logos reviewed in design_V79; no wildcard binary permission.
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/Club-kbo-0.imageset/Contents.json',
@@ -157,11 +170,117 @@ ART_HASHES.update({'BM/Resources/Assets.xcassets/Club-kbo-0.imageset/Club-kbo-0.
 # V102 contains only catalog IDs and reviewed hex colors, no roster/save data.
 EXACT_PATHS.update({"BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/Contents.json",
                     "BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/colors.json"})
+EXACT_PATHS.add("BM/Resources/Assets.xcassets/ProUniformDesignsV148.dataset/Contents.json")
+ART_HASHES["BM/Resources/Assets.xcassets/ProUniformDesignsV148.dataset/designs.json"] = "86d8ec2677eef60fc3820144d08bac96c2e57289b9c3383d875c1ff0ac8cbd91"
 
 # V110/V113 licensed recordings grouped by function in V114; asset names/bytes unchanged.
 EXACT_PATHS.add("BM/Resources/Assets.xcassets/Audio/Contents.json")
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/Audio/BaseballAudioCreditsV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/Audio/UmpireStrikeV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/Audio/BaseballContactV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/Audio/BaseballCatchV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/Audio/UmpireOutV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/Audio/UmpireBallV110.dataset/Contents.json', 'BM/Resources/Assets.xcassets/Audio/BaseballCrowdV110.dataset/Contents.json'})
 ART_HASHES.update({'BM/Resources/Assets.xcassets/Audio/UmpireOutV110.dataset/sound.wav': '6503419ac05ac8ee434b0bcbb549f5228b0adc44ff2f7e9f01c40130b4f8134c', 'BM/Resources/Assets.xcassets/Audio/BaseballContactV110.dataset/sound.wav': 'bee7c92c7262db4f74cd81a397e056e6634037a29b84669bb5e40ed9eea19804', 'BM/Resources/Assets.xcassets/Audio/BaseballCatchV110.dataset/sound.wav': 'ad44c17d9d486b2c075250e20783eb12c6ed79fcda200de316c5017ff0a2c34e', 'BM/Resources/Assets.xcassets/Audio/BaseballAudioCreditsV110.dataset/credits.txt': 'f1187cf93fef33f21058807a9e6f7f311b332dee3acc1be74896aefa11ccc350', 'BM/Resources/Assets.xcassets/Audio/BaseballCrowdV110.dataset/sound.wav': '5ffb19bcc8866f8b2ac93bf28ea3dd6c2f35aeb673c145029f5fdecaa052b9b9', 'BM/Resources/Assets.xcassets/Audio/UmpireStrikeV110.dataset/sound.wav': '31c9b0f118f4476544b42ac387c8e7d69ab7e97b7e8b6267a67e4f1c702607dd', 'BM/Resources/Assets.xcassets/Audio/UmpireBallV110.dataset/sound.wav': '3532951ef9af9cf599f5bd00c70b2966639900b14ad04e5a8eca377b5d947fc8'})
+
+ART_HASHES.update({
+    'BM/Resources/MatchArt/school-stadium-v144-backstop-crossbeam.png': 'bbdcbb550d3a18369a04ba2a35dea54370de53f32ab69cf30350288008beabd1',
+    'BM/Resources/MatchArt/school-stadium-v144-basalt-side.png': '6ae102df8e553b68b4529f3bd2bd435d6e3e2881886040da3b2d778457cb93f5',
+    'BM/Resources/MatchArt/school-stadium-v144-brick-arch.png': '5191eb46a041dc8766cd8bec7a56cb79bf568fc1c341fb27494f9dab141fdd34',
+    'BM/Resources/MatchArt/school-stadium-v144-canopy-fascia.png': '34f6aa9de73c601d6784613bb9df5167cd490acacc7c9d526d402793ed6cdedf',
+    'BM/Resources/MatchArt/school-stadium-v144-forest-timber.png': '40c1d76ae1056af944b2e8fa79ca00fad12f46c9d88a3cc02e7399e8c3a3174b',
+    'BM/Resources/MatchArt/school-stadium-v144-harbor-corner.png': 'de16dacd17d39ccee1bd014167f16a70e1c5d24388b58066f3a9f9eefe711904',
+    'BM/Resources/MatchArt/school-stadium-v144-manual-wall.png': '930a210a266bc35f5723c433fb34a6ff824b79db0a76ad449abfb05944cab490',
+    'BM/Resources/MatchArt/school-stadium-v144-school-wall.png': 'e856b7c1ea789256cec756403f9e6a932670efb3759145e47a895c0d06518d2f',
+    'BM/Resources/MatchArt/school-stadium-v144-steel-gantry.png': '935a037508998716084e4ee0f7b3bb9c956b0a6fed25474c524846515310e0f3',
+    'BM/Resources/MatchArt/school-stadium-v144-stone-terrace.png': 'b90afcb37ce169b887c4509d0c4bd28c4522fa2e73e6aac7963c62db5d50e11d',
+})
+
+ART_HASHES.update({
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-0.png': 'd0cbae1ba24ea5327ad63c29362b37c3211bdc406bae0183d051cf21679474aa',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-1.png': '897509d59d5155bdbe65eb8105492e9c22978f549c2d2efbe1451bb3b53d9fc2',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-2.png': '53a7efbf12d8775239e2cb4e3179b69b01749f330aaa3c882150abd7af024da4',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-3.png': 'd020aae6bfa8bfe5ad6b91c1a35c90a3028094ddad787dee0874d055b8fcfb19',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-4.png': '07cc192dceaa70a07c3c23595bbb5f69caaaf7d717b0fd4e480621dcff5c9526',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-5.png': '1a85672b51a2a43811dd3b028f3fbf0c1d9cccf4d0c7829c0bf3b8208af75850',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-6.png': '1b91b8aa7fbcee6eb0b47248b61874356ca2dd75c20395a050621c2939d880da',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-7.png': 'c4af39a4c9bf362d94eccab628279cd42907ebdc4a065a4a2f5a83ed029fd5df',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-8.png': '266491017a82fcf9de18eabcd61eda01df7284def7395f2c1d93717fbe11aaaf',
+    'BM/Resources/MatchArt/pro-stadium-v145-kbo-9.png': '572d67521c9adc7e2b6539e065185751a75f11afc18adc8363bdd0aabf1bc9da',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-0.png': '3192b6ab9fe0cfc532f6a2b295b086c2e57c5e8b8d8237937a81da661b2cac40',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-1.png': 'b201b2399a64c91908b78e90ad9cd8c4924f1c2eda9adadeba17c24bf6ca4673',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-2.png': '7d9a565564085d9b5d0995b1326930d167806d0d209bb5855e177bdd1477f20b',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-3.png': 'c67cd074feb45d0c7d0b5ee008f4b4eb7e10964f70637046e7e3537e1f8195f4',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-4.png': 'ae7b08a2f905866d23689571918584ba48d5078e76187205c8ada88254bd2335',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-5.png': '1a04d502d5ffda5d99e40029f2a3925006dc998aa73dcb8b0fb47a0f8f8916d1',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-6.png': '4a5f046e617ca9938b5c6d736bd2c945097d90119d9eafb465e17f680e9dac1a',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-7.png': '98d8a0e9a6b9cdab82db0c856a3b9ca1aa1519ed05ad85be9f9d02db728f3555',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-8.png': 'd72bdbff1c2e9999b8d0c2230c899c12b52240f7d2c214fc7ee908aff3bc528d',
+    'BM/Resources/MatchArt/pro-stadium-v145-npb-9.png': '3e0d4eee9ecb58b97bac26dac11352c5fc14d9f1f7b654ba2307b731ca8759a5',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-0.png': '8953601f012e2fa477411d703d08305ba19997be1cd6659af0923aab8e6156c6',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-1.png': '1045845b8d977aed05225adb08da6fd17c55fd11e0f936d9c0bde3b024d4d83f',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-2.png': '36d988b9b8e73143022e599ca811bb95d77f579d53b41d833e0f9e6488aa507b',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-3.png': '48dad4e2b5b9e25d4a08b9c0170c25b39a2e93545b2ea97c76b681bbcc4b37ce',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-4.png': 'e630399f6fa23b1f4ae94edc105bab4d1b6c53bcb95de1e21f06d6cd5c940d73',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-5.png': '73e18aaf7b8ecd0bd92d509050552a5efe1a1d02fd54aa323095e17a7664033d',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-6.png': '7ac5574ab3be84896396de56aac63fc2b10325662c64d6d6d8e52fd867d8f896',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-7.png': 'bc1026a1dde298ba26d7838a831c25bc143b037e24ae61c67322b089e95e56b3',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-8.png': 'e77574744d32fb8a813c2ab1cf3052526f3685d321da1d0439ec1af595fef448',
+    'BM/Resources/MatchArt/pro-stadium-v145-mlb-9.png': '795d94bee6936b148d5859359d4a0eae1c0bc2752bdf939c44b2fdc9b2ea1fdc',
+})
+
+
+# V147 approved club crests, home/away uniform artwork, and field strips.
+EXACT_PATHS.update({
+    'BM/Resources/Assets.xcassets/Club-mlb-10.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-mlb-11.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-mlb-12.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-mlb-13.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-mlb-14.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-npb-10.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-npb-11.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-npb-12.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-npb-13.imageset/Contents.json',
+    'BM/Resources/Assets.xcassets/Club-npb-14.imageset/Contents.json',
+})
+ART_HASHES.update({
+    'BM/Resources/Assets.xcassets/Club-mlb-10.imageset/Club-mlb-10.png': '61fb4347a85d974ff701b8e1d8dfc390b6f55e7574e1c09e664d2b1df1e4bff6',
+    'BM/Resources/Assets.xcassets/Club-mlb-11.imageset/Club-mlb-11.png': 'fc7fd224e5cfb4197fbea48457b3f8812d93569a95bc5be7b3ead7b956620451',
+    'BM/Resources/Assets.xcassets/Club-mlb-12.imageset/Club-mlb-12.png': 'e5feaa22730a2f5b8bcbf00eb3bc3dda264e494fdc803373d0a877d8fe5e0ac3',
+    'BM/Resources/Assets.xcassets/Club-mlb-13.imageset/Club-mlb-13.png': 'd39af3cc591f57a149ba4ca29381d87a7112c7cfc15d11557c268d646a13e7c3',
+    'BM/Resources/Assets.xcassets/Club-mlb-14.imageset/Club-mlb-14.png': '5072b018536c2d3b506b2e203bf0b1e45a987ddf989f269f8ba16f6ce91e2296',
+    'BM/Resources/Assets.xcassets/Club-npb-10.imageset/Club-npb-10.png': '4b5d4ec6a6fdda7d217414af6a3f70d8ff5d735ec2a8ac806b9de615f2ad00d1',
+    'BM/Resources/Assets.xcassets/Club-npb-11.imageset/Club-npb-11.png': '0fc03f38c92b0386d2dc63a1de3cc31a6b489bdee257f5dff33e476b5263d2e5',
+    'BM/Resources/Assets.xcassets/Club-npb-12.imageset/Club-npb-12.png': 'b5107a765777891143ffa8d77f4922b382868e87320f25aaa3fa4e947444d1b9',
+    'BM/Resources/Assets.xcassets/Club-npb-13.imageset/Club-npb-13.png': 'e7d9776021385f813dae409969285ed60e395499abd7acdd331a003a30814bb3',
+    'BM/Resources/Assets.xcassets/Club-npb-14.imageset/Club-npb-14.png': 'f4f50d1b4805510e12eb2ad13b20ffdce357c28ba110c492d583f4f4910336c3',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-10-away.png': '1112348d11d2e7a5057f1d413edf7d82af42ba8e50ddf3a4e4fceb83fe804a6b',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-10-home.png': '3a4974fe491321a57eb4f8bf6a6c22883718305f0b68a73b959b0c484697f645',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-11-away.png': 'aed6e4a4a3b265d7429b3762741cff51e9a845d07ead8a0c2f7d656013ac7bbc',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-11-home.png': 'fb383dc42c7f3f6596e8af7c83f634770e4e02665867080679d8a8a493f19718',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-12-away.png': '3f005211e4531e4d313220c6025764afd35df2504189f182b0b8ef399641d349',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-12-home.png': '2b450af16de8c683631e14e3cf4dad34d3942cb2c4bff51c7fadd9eb5a87a025',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-13-away.png': '2d0f54b392bffa952a3b5a9d58a9e51fa281b406239599ebd21c16e84ad3caf9',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-13-home.png': 'eb6f63ab3373536f5bc7c2303c405efceb1b4c8f62aa8ad20879e2c1a1d7318b',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-14-away.png': '9cc5d5e19bd6fd9b52b5a02571e5fb5c7175e942143b695895defbcc2518d835',
+    'BM/Resources/MatchArt/club-kit-v147-mlb-14-home.png': 'b349edbf56427ce4324a030b75c9d22f450e76b63fc3a22cb6f0b6240738c5e7',
+    'BM/Resources/MatchArt/club-kit-v147-npb-10-away.png': 'd38402ce6b397df59d60d0f1a26a130092e4839ae9f9875a74c08c350238842c',
+    'BM/Resources/MatchArt/club-kit-v147-npb-10-home.png': '3d65c2c8259d802b9b80bbfba887985db9bf2538c5148c0298ce299466cb84a7',
+    'BM/Resources/MatchArt/club-kit-v147-npb-11-away.png': '5963e54defd3b8c3a305807252c28a6560a0a096236beb62a1c1ca19098a93e7',
+    'BM/Resources/MatchArt/club-kit-v147-npb-11-home.png': '6b06d85417077340ae781ffda1775d8385759e1147dac0b29873b7963882c558',
+    'BM/Resources/MatchArt/club-kit-v147-npb-12-away.png': '783f53e3a96632b609bce7d6f592db0bd48cd97c31866ec3f70255119bfaa2f8',
+    'BM/Resources/MatchArt/club-kit-v147-npb-12-home.png': 'acc4d986f967b123a15662beab95a1c57df88dac3119c2c128af04f2938a161b',
+    'BM/Resources/MatchArt/club-kit-v147-npb-13-away.png': 'fb26e2073b4b53dc3410499c504bb06a6af83a22acb9ced43d046bdab219590c',
+    'BM/Resources/MatchArt/club-kit-v147-npb-13-home.png': 'b75604d9e7860ec94ba3758ec2ff0d02ed559adef9eb4a06deb8953d4b5c898c',
+    'BM/Resources/MatchArt/club-kit-v147-npb-14-away.png': 'f42186ae543f881bcca83309e9b424909b9e7472d5089cb6afc84d7de7e0e106',
+    'BM/Resources/MatchArt/club-kit-v147-npb-14-home.png': '64739d08b71041fa1e89deb95d7ef6da0e26d5e95e5c281ae81a8f755c1a859c',
+    'BM/Resources/MatchArt/pro-stadium-v147-mlb-10.png': '9202bff83e4c6f0701fa69e914a76212f4a838408e873a0b4c63cbe329e4d50f',
+    'BM/Resources/MatchArt/pro-stadium-v147-mlb-11.png': '0cfd4b7d6833209f58382f7a53165dfd437006ff9beb954f2218067f084e594e',
+    'BM/Resources/MatchArt/pro-stadium-v147-mlb-12.png': 'fea08ea3fc7a86ccf0678c6dbabf711a2916146a0433eff56abc72a9ef6447c8',
+    'BM/Resources/MatchArt/pro-stadium-v147-mlb-13.png': '65346e5e0990233057a5cdf158ff2f24575b08ae4f41cf49225c5094a426ab22',
+    'BM/Resources/MatchArt/pro-stadium-v147-mlb-14.png': '18750450b776b701bc4975c82fb97452b7e2b63b69a92cdcf5c364a1ab7b567e',
+    'BM/Resources/MatchArt/pro-stadium-v147-npb-10.png': '7e61d59439974589e5906af28908d82ea1e68560d41877bf5e155ba081eab2f6',
+    'BM/Resources/MatchArt/pro-stadium-v147-npb-11.png': '0a168b8f4e143c1ff531f90b61a5a6fa2c41b67bc1c02e94623b0e5582356fee',
+    'BM/Resources/MatchArt/pro-stadium-v147-npb-12.png': '9e9f11a9d7f08a59eae1cd9191bb8ecef937ee249cb7d553210aa60f1761049c',
+    'BM/Resources/MatchArt/pro-stadium-v147-npb-13.png': '24ab35011ecca7f96c3baa57f79a1b05904b3e8eb59fced774b3bd6e447af833',
+    'BM/Resources/MatchArt/pro-stadium-v147-npb-14.png': '934aa573e45e1e90f63b97d2a73ec5dc291ae78739e876ce6cff0ae95987add9',
+})
+
 
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts

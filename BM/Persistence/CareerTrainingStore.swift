@@ -260,6 +260,12 @@ typealias CareerTrainingRecord = CareerSchemaV4.TrainingRecord
         } else if player.pitches.count >= 5 { return nil }
         return last
     }
+    /// Default entry resumes learning; an explicit other drill or today's fixed record takes precedence.
+    static func continuationForPreparation(player: CareerPlayer, initialKind: TrainingKind?, in context: ModelContext) throws -> CareerTraining? {
+        guard initialKind == nil || initialKind == .pitch,
+              try CareerTrainingStore.record(player: player, in: context) == nil else { return nil }
+        return try continuation(player: player, in: context)
+    }
     static func preparation(player: CareerPlayer, code: String, replacing: String?, in context: ModelContext) throws -> PitchStudy {
         guard player.role == .pitcher, PitchType(rawValue: code) != nil,
               !player.pitches.contains(where: { $0.code == code }),

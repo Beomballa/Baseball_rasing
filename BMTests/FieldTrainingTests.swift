@@ -678,6 +678,126 @@ import SpriteKit
         }
     }
 
+    func testV149CornerPopupsShowOutfieldBackupWithoutChangingTheCatch() throws {
+        let runner = FieldRunnerProfile(speed: 60)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        for (x, primary, backup, opposite) in [(-13.0, 4, 6, 8), (13.0, 2, 8, 6)] {
+            let play = fly(x, 26, flight: 3.4, before: [nil, runner, nil])
+            let original = try encoder.encode(play)
+            try play.validate()
+            XCTAssertEqual(play.fly?.caught, true)
+            XCTAssertEqual(play.fielder, primary)
+            XCTAssertNil(play.targetRunner)
+            let routes = FieldBackupRoutes.make(play)
+            let outfielder = try XCTUnwrap(routes[backup])
+            let start = try XCTUnwrap(play.fielders[backup].first?.point)
+            let last = try XCTUnwrap(outfielder.nodes.last)
+            XCTAssertNil(routes[primary])
+            XCTAssertNil(routes[opposite])
+            XCTAssertEqual(outfielder.nodes.first?.point, start)
+            XCTAssertEqual(outfielder.motion(at: 0).stage, .ready)
+            XCTAssertEqual(outfielder.motion(at: play.flight * 0.45).stage, .run)
+            XCTAssertLessThan(last.point.distance(to: play.landing), start.distance(to: play.landing))
+            XCTAssertGreaterThan(last.point.y, play.landing.y, "Backup stays on the outfield side of the catch")
+            XCTAssertGreaterThan(last.point.distance(to: play.landing), 3, "Backup does not collide with the catching fielder")
+            XCTAssertLessThanOrEqual(last.at, play.duration)
+            let center = try XCTUnwrap(routes[7])
+            let centerStart = try XCTUnwrap(center.nodes.first?.point)
+            let centerFinish = try XCTUnwrap(center.nodes.last?.point)
+            XCTAssertGreaterThan((centerFinish.x - centerStart.x) * x, 0, "Center fielder fills behind the corner outfielder")
+            XCTAssertGreaterThan(centerFinish.y, last.point.y, "The two backup fielders stay at different depths")
+            let motion = FieldSpriteAnimation.motion(play, index: primary, time: play.flight)
+            XCTAssertEqual(motion.stage, .catchBall)
+            XCTAssertTrue(motion.airCatch)
+            XCTAssertEqual(FieldNode.sample(play.fielders[primary], at: play.flight), play.landing)
+            XCTAssertEqual(FieldNode.sample(play.ball, at: play.flight), play.landing)
+            XCTAssertEqual(play.outsAdded, 1)
+            XCTAssertEqual(try encoder.encode(play), original)
+        }
+        let thirdBase = fly(-13, 26, flight: 3.4, before: [nil, runner, nil])
+        let shortstop = try XCTUnwrap(FieldBackupRoutes.make(thirdBase)[5]?.nodes.last?.point)
+        XCTAssertLessThan(shortstop.distance(to: DetailedFieldRules.bases[3]), 3, "Shortstop covers beside the vacated bag")
+    }
+
+    func testV149BackupRespectsActiveThrowsAndExistingErrorRecovery() throws {
+        let relay = relayFly()
+        let cutoff = try XCTUnwrap(relay.relay)
+        XCTAssertEqual(relay.fielder, 7)
+        XCTAssertNotNil(relay.targetRunner)
+        let relayRoutes = FieldBackupRoutes.make(relay)
+        XCTAssertNil(relayRoutes[relay.fielder])
+        XCTAssertNil(relayRoutes[cutoff.fielder])
+        XCTAssertNil(relayRoutes[relay.receiver])
+        XCTAssertTrue(relayRoutes[6] != nil || relayRoutes[8] != nil)
+
+        let grounder = doublePlay()
+        let second = try XCTUnwrap(grounder.secondThrow)
+        let groundRoutes = FieldBackupRoutes.make(grounder)
+        for participant in [grounder.fielder, grounder.receiver, second.receiver] {
+            XCTAssertNil(groundRoutes[participant])
+        }
+
+        let error = misplay(relay, stage: 0, position: "CF")
+        XCTAssertNotNil(error.misplay)
+        XCTAssertTrue(FieldBackupRoutes.make(error).isEmpty)
+        let sprites = FieldReplaySprites(appearance: PlayerAppearance(), jerseyNumber: 27, ownPosition: "CF", throwingHand: "right", ownTeamFielding: true)
+        let recovery = try XCTUnwrap(error.misplay)
+        let actors = InplayReplay.field(error).actors(sprites, time: recovery.recoveredAt, reduced: false, finished: false)
+        XCTAssertEqual(actors[recovery.recoverer].point, FieldNode.sample(error.fielders[recovery.recoverer], at: recovery.recoveredAt))
+        XCTAssertEqual(FieldNode.sample(error.ball, at: recovery.recoveredAt), recovery.loosePoint)
+    }
+
+    func testV149ThirdBasePopupBackupAppearsInPreparedSpriteKitFrames() async throws {
+        let play = fly(-13, 26, flight: 3.4, before: [nil, FieldRunnerProfile(speed: 60), nil])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let original = try encoder.encode(play)
+        let replay = InplayReplay.field(play)
+        let backupRoutes = replay.backupRoutes
+        let appearance = PlayerAppearance(kit: 1).wearing(teamID: "kbo-3")
+        let sprites = FieldReplaySprites(appearance: appearance, jerseyNumber: 27, ownPosition: "3B", throwingHand: "right", ownTeamFielding: true)
+        let planned = await sprites.requests(duration: replay.duration, reduced: false, actorsAt: {
+            replay.actors(sprites, time: $0, reduced: false, finished: false, backupRoutes: backupRoutes)
+        })
+        let requests = try XCTUnwrap(planned)
+        let generated = await FieldRasterArt.prepare(requests)
+        let prepared = try XCTUnwrap(generated)
+        let scene = InplayFieldScene(replay: replay, sprites: sprites, prepared: prepared, scoreText: "H 0 : 0 A", stadium: .legacy)
+        await scene.preload()
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 400, height: 600))
+        view.presentScene(scene)
+        defer { view.presentScene(nil) }
+        let route = try XCTUnwrap(backupRoutes[6])
+        let actorIDs = scene.actorIDs
+        for (phase, time) in [("initial", 0.0), ("backup", play.flight * 0.45), ("catch", play.flight)] {
+            scene.display(time: time, finished: false)
+            XCTAssertEqual(scene.actorIDs, actorIDs)
+            let expected = InplayFieldProjection.point(FieldNode.sample(route.nodes, at: time), size: scene.size)
+            XCTAssertEqual(scene.actorPositions[6].x, expected.x, accuracy: 0.0001)
+            XCTAssertEqual(scene.actorPositions[6].y, scene.size.height - expected.y, accuracy: 0.0001)
+            let primary = InplayFieldProjection.point(FieldNode.sample(play.fielders[4], at: time), size: scene.size)
+            XCTAssertEqual(scene.actorPositions[4].x, primary.x, accuracy: 0.0001)
+            XCTAssertEqual(scene.actorPositions[4].y, scene.size.height - primary.y, accuracy: 0.0001)
+            let ball = FieldBallPresentation.point(play, time: time, size: scene.size, leftIndex: nil)
+            XCTAssertEqual(scene.ballPosition.x, ball.x, accuracy: 0.0001)
+            XCTAssertEqual(scene.ballPosition.y, scene.size.height - ball.y, accuracy: 0.0001)
+            XCTAssertFalse(scene.resultVisible)
+            let image = try XCTUnwrap(view.texture(from: scene)?.cgImage())
+            let attachment = XCTAttachment(image: UIImage(cgImage: image))
+            attachment.name = "v149-third-base-popup-\(phase)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        scene.setReduced(true)
+        scene.display(time: play.flight * 0.45, finished: false)
+        let reduced = InplayFieldProjection.point(FieldNode.sample(route.nodes, at: play.flight * 0.45), size: scene.size)
+        XCTAssertEqual(scene.actorPositions[6].x, reduced.x, accuracy: 0.0001)
+        XCTAssertEqual(scene.actorPositions[6].y, scene.size.height - reduced.y, accuracy: 0.0001)
+        XCTAssertEqual(scene.fallbackTextures, 0)
+        XCTAssertEqual(try encoder.encode(play), original)
+    }
+
     private func relayFly(_ x:Double=0,_ y:Double=100,outs:Int=0,speed:Double=100,defense:Double=60,arm:Double=60,
                           position:String="2B",enabled:Bool=true,before:[FieldRunnerProfile?]?=nil) -> MatchDetailedPlay {
         DetailedFieldRules.resolveFly(half:0,order:0,landing:FieldPoint(x:x,y:y),flight:7,
@@ -2334,6 +2454,25 @@ import SpriteKit
 }
 
 @MainActor final class MatchMotionPreparationTests:XCTestCase {
+    func testV122EarlyPreparationReusesExactEventImagesAndRejectsCancellation() async throws {
+        let play=try FieldVerificationScenario.groundOut.make(),replay=InplayReplay.field(play)
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        let before=try encoder.encode(play)
+        let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:"P",throwingHand:"left",ownTeamFielding:true)
+        let preparation=FieldReplayPreparation(replay:replay,sprites:sprites)
+        let mismatch=await preparation.images(for:"unrelated-event");XCTAssertNil(mismatch)
+        let backupRoutes=replay.backupRoutes
+        let planned=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false,backupRoutes:backupRoutes)})
+        let requests=try XCTUnwrap(planned),images=await preparation.images(for:play.eventID)
+        let ready=try XCTUnwrap(images)
+        XCTAssertEqual(Set(ready.images.keys),Set(requests.keys))
+        let again=await preparation.images(for:play.eventID)
+        for key in requests.keys {XCTAssertTrue(ready.images[key] === again?.images[key])}
+        XCTAssertEqual(try encoder.encode(play),before)
+        preparation.cancel();let cancelled=await preparation.images(for:play.eventID);XCTAssertNil(cancelled)
+        let aborted=FieldReplayPreparation(replay:replay,sprites:sprites);aborted.cancel()
+        let stopped=await aborted.images(for:play.eventID);XCTAssertNil(stopped)
+    }
     func testPreparationCoversActualPosesAndPreservesReplayData() async throws {
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
         for pitcher in [false,true] {
@@ -2341,8 +2480,9 @@ import SpriteKit
             let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:pitcher ? "left":"right",ownTeamFielding:pitcher)
             for fixture in [fixtures[0],fixtures[fixtures.count-2],fixtures.last!] {
                 let before=try fixture.field.map {try encoder.encode($0)} ?? fixture.homeRun.map {try encoder.encode($0)}
+                let backupRoutes=fixture.field.map(FieldBackupRoutes.make) ?? [:]
                 let actors:(Double)->[FieldReplaySprites.Actor] = {time in
-                    if let play=fixture.field {return sprites.actors(play,time:time,reduced:false,finished:time>=play.duration)}
+                    if let play=fixture.field {return sprites.actors(play,time:time,reduced:false,finished:time>=play.duration,backupRoutes:backupRoutes)}
                     return sprites.actors(fixture.homeRun!,time:time,reduced:false)
                 }
                 let planned=await sprites.requests(duration:fixture.duration,reduced:false,actorsAt:actors)
@@ -2398,7 +2538,8 @@ import SpriteKit
     func testPreparationCancellationAndHandoffDelayPreserveCut() async throws {
         let fixture=try MatchReplayFixture.make(pitcher:false)[0]
         let sprites=FieldReplaySprites(appearance:PlayerAppearance(),jerseyNumber:1,ownPosition:"CF",throwingHand:"right",ownTeamFielding:false)
-        let task=Task {await sprites.requests(duration:fixture.duration,reduced:false,actorsAt:{sprites.actors(fixture.field!,time:$0,reduced:false,finished:false)})}
+        let play=try XCTUnwrap(fixture.field),backupRoutes=FieldBackupRoutes.make(play)
+        let task=Task {await sprites.requests(duration:fixture.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false,backupRoutes:backupRoutes)})}
         task.cancel();let cancelled=await task.value;XCTAssertNil(cancelled)
         let handoff=FieldContactHandoff(startedAt:10,cutAt:10.28,sourcePoint:CGPoint(x:0.3,y:0.4),sourceFrame:CGRect(x:1,y:2,width:3,height:4))
         let shifted=handoff.delayed(by:0.7)
@@ -2425,7 +2566,8 @@ import SpriteKit
             for scenario in FieldVerificationScenario.allCases {
                 let play=try scenario.make(ownBatter:!pitcher),before=try encoder.encode(play)
                 let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:pitcher ? "left":"right",ownTeamFielding:pitcher)
-                let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false)})
+                let backupRoutes=FieldBackupRoutes.make(play)
+                let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false,backupRoutes:backupRoutes)})
                 let requests=try XCTUnwrap(planned),generated=await FieldRasterArt.prepare(requests)
                 let prepared=try XCTUnwrap(generated)
                 let scene=InplayFieldScene(play:play,sprites:sprites,prepared:prepared,scoreText:"H 0 : 0 A")
@@ -2436,7 +2578,7 @@ import SpriteKit
                 scene.setReduced(reduced)
                 for time in times {
                     scene.display(time:time,finished:time>=play.duration)
-                    let expected=sprites.actors(play,time:time,reduced:reduced,finished:time>=play.duration)
+                    let expected=sprites.actors(play,time:time,reduced:reduced,finished:time>=play.duration,backupRoutes:backupRoutes)
                     XCTAssertEqual(scene.actorIDs,ids)
                     XCTAssertEqual(scene.actorPositions.count,expected.count)
                     for (position,actor) in zip(scene.actorPositions,expected) {
@@ -2495,7 +2637,8 @@ import SpriteKit
     func testEffectsReductionPreservesFieldMotionAndSecondThrowTarget() async throws {
         let play=try FieldVerificationScenario.doublePlay.make(ownBatter:true)
         let sprites=FieldReplaySprites(appearance:PlayerAppearance(),jerseyNumber:1,ownPosition:"CF",throwingHand:"right",ownTeamFielding:false)
-        let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false)})
+        let backupRoutes=FieldBackupRoutes.make(play)
+        let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false,backupRoutes:backupRoutes)})
         let requests=try XCTUnwrap(planned)
         let generated=await FieldRasterArt.prepare(requests)
         let prepared=try XCTUnwrap(generated)
@@ -2555,7 +2698,8 @@ import SpriteKit
     func testCancellingAnUnmountedSceneReleasesStartupWaitWithoutAClockOrResult() async throws {
         let play=try FieldVerificationScenario.single.make(ownBatter:true)
         let sprites=FieldReplaySprites(appearance:PlayerAppearance(),jerseyNumber:1,ownPosition:"CF",throwingHand:"right",ownTeamFielding:false)
-        let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false)})
+        let backupRoutes=FieldBackupRoutes.make(play)
+        let planned=await sprites.requests(duration:play.duration,reduced:false,actorsAt:{sprites.actors(play,time:$0,reduced:false,finished:false,backupRoutes:backupRoutes)})
         let requests=try XCTUnwrap(planned),generated=await FieldRasterArt.prepare(requests)
         let images=try XCTUnwrap(generated),scene=InplayFieldScene(play:play,sprites:sprites,prepared:images,scoreText:"H 0 : 0 A")
         await scene.preload();scene.display(time:0.28,finished:false)
@@ -2626,6 +2770,210 @@ import SpriteKit
 }
 
 extension FieldTrainingTests {
+    func testV144EverySchoolGetsItsBundledStructureAndOwnPalette() throws {
+        let catalog=try SchoolCatalog.load()
+        let stadiums=try catalog.map { school in
+            let stadium=try XCTUnwrap(StadiumIdentity(homeTeamID:school.id).school,school.id)
+            XCTAssertEqual(stadium.name,school.name)
+            XCTAssertEqual(stadium.primary,try XCTUnwrap(GameUniformPalette.color(teamID:school.id)))
+            return stadium
+        }
+        let groups=Dictionary(grouping:stadiums,by:\.structure)
+        XCTAssertEqual(groups.count,10)
+        XCTAssertEqual(Set(groups.values.map(\.count)),[5])
+        let reviewed:[(String,SchoolStadium.Structure)] = [
+            ("001",.manualWall),("002",.steelGantry),("023",.stoneTerrace),("024",.harborCorner),
+            ("029",.forestTimber),("031",.canopyFascia),("037",.brickArch),("042",.schoolWall),
+            ("043",.backstopCrossbeam),("050",.basaltSide)
+        ]
+        for (suffix,structure) in reviewed {
+            let identity=StadiumIdentity(homeTeamID:"hs-ref-"+suffix)
+            XCTAssertEqual(identity.school?.structure,structure)
+            let venue=try XCTUnwrap(identity.backdrop)
+            let art=try XCTUnwrap(InplayStadiumArt.upperArt(venue))
+            XCTAssertEqual(art.image.cgImage?.width,1024)
+            XCTAssertEqual(art.image.cgImage?.height,416)
+            XCTAssertEqual(art.texture.filteringMode,.nearest)
+            XCTAssertTrue(CGRect(x:0,y:0,width:1024,height:416).contains(structure.board))
+        }
+    }
+
+    func testV144NativeFieldAndHomeRunPlaceTheScoreInTheSchoolArtAndKeepTheBase() throws {
+        let play=doublePlay()
+        let homeRun=try XCTUnwrap(MatchReplayFixture.make(pitcher:false).last?.homeRun)
+        let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:1),jerseyNumber:27,ownPosition:"P",throwingHand:"left",ownTeamFielding:true)
+        let stadium=StadiumIdentity(homeTeamID:"hs-ref-024")
+        let school=try XCTUnwrap(stadium.school)
+        let venue=try XCTUnwrap(stadium.backdrop)
+        let prepared=FieldRasterArt.Prepared(images:[:])
+        for (replay,isHomeRun) in [(InplayReplay.field(play),false),(.homeRun(homeRun),true)] {
+            let scene=InplayFieldScene(replay:replay,sprites:sprites,prepared:prepared,scoreText:"H 3 : 2 A",stadium:stadium)
+            let base=try XCTUnwrap(scene.childNode(withName:"//inplay-field-base") as? SKSpriteNode)
+            let upper=try XCTUnwrap(scene.childNode(withName:"//"+school.structure.imageName) as? SKSpriteNode)
+            let schoolName=try XCTUnwrap(scene.childNode(withName:"//inplay-school-name") as? SKLabelNode)
+            let score=try XCTUnwrap(scene.childNode(withName:"//inplay-score") as? SKLabelNode)
+            let scoreboard=try XCTUnwrap(scene.childNode(withName:"//inplay-scoreboard") as? SKShapeNode)
+            let layout=InplayStadiumArt.scoreboard(venue,in:scene.size)
+            XCTAssertEqual(base.size,InplayFieldProjection.viewport(scene.size).size)
+            XCTAssertEqual(upper.size,InplayStadiumArt.upperFrame(venue,in:scene.size).size)
+            XCTAssertGreaterThan(upper.zPosition,base.zPosition)
+            XCTAssertLessThan(InplayStadiumArt.upperFrame(venue,in:scene.size).maxY,InplayFieldProjection.point(DetailedFieldRules.bases[2],size:scene.size).y)
+            XCTAssertEqual(schoolName.text,school.name)
+            XCTAssertGreaterThan(scoreboard.position.x,scene.size.width*0.70)
+            XCTAssertEqual(score.position.x,layout.scorePosition.x,accuracy:0.001)
+            XCTAssertEqual(score.position.y,scene.size.height-layout.scorePosition.y,accuracy:0.001)
+            scene.setScore("H 10 : 12 A")
+            XCTAssertEqual(score.text,"H 10 : 12 A")
+            let view=SKView(frame:CGRect(origin:.zero,size:scene.size))
+            view.presentScene(scene)
+            let rendered=try XCTUnwrap(view.texture(from:scene)?.cgImage())
+            let attachment=XCTAttachment(image:UIImage(cgImage:rendered))
+            attachment.name=isHomeRun ? "V144 native harbor home run scoreboard":"V144 native harbor field scoreboard"
+            attachment.lifetime = .keepAlways;add(attachment)
+            view.presentScene(nil)
+            for fallback in [StadiumIdentity.legacy,StadiumIdentity(homeTeamID:"college-0"),StadiumIdentity(homeTeamID:"hs-ref-016")] {
+                XCTAssertNil(fallback.backdrop)
+                let other=InplayFieldScene(replay:replay,sprites:sprites,prepared:prepared,scoreText:"H 3 : 2 A",stadium:fallback)
+                let otherBase=try XCTUnwrap(other.childNode(withName:"//inplay-field-base") as? SKSpriteNode)
+                XCTAssertEqual(otherBase.frame,base.frame)
+                XCTAssertNil(other.childNode(withName:"//school-stadium-v144-*"))
+                XCTAssertNil(other.childNode(withName:"//inplay-school-name"))
+                let fallbackScore=try XCTUnwrap(other.childNode(withName:"//inplay-score"))
+                XCTAssertEqual(fallbackScore.position.x,InplayStadiumArt.legacyScoreFrame(in:other.size,homeRun:isHomeRun).midX,accuracy:0.001)
+            }
+        }
+    }
+
+    func testV145AllClubVenuesAreBundledAndCalendarAliasesResolve() throws {
+        var names=Set<String>()
+        for club in ClubIdentity.all {
+            let identity=StadiumIdentity(homeTeamID:club.id)
+            let stadium=try XCTUnwrap(identity.pro,club.id)
+            let venue=stadium.backdrop
+            let art=try XCTUnwrap(InplayStadiumArt.upperArt(venue),club.id)
+            let layout=InplayStadiumArt.scoreboard(venue,in:InplayFieldScene.fieldSize)
+            XCTAssertTrue(names.insert(venue.imageName).inserted)
+            XCTAssertEqual(stadium.club,club)
+            XCTAssertEqual(stadium.primary,GameUniformPalette.color(teamID:club.id))
+            XCTAssertEqual(venue.logoAsset,club.asset)
+            XCTAssertNotNil(UIImage(named:club.asset),club.id)
+            XCTAssertEqual(art.image.cgImage?.width,768)
+            XCTAssertEqual(art.image.cgImage?.height,348)
+            XCTAssertEqual(art.texture.filteringMode,.nearest)
+            XCTAssertTrue(CGRect(x:0,y:0,width:1024,height:464).contains(venue.board))
+            let logo=try XCTUnwrap(layout.logoFrame)
+            XCTAssertTrue(layout.frame.contains(logo))
+            XCTAssertLessThan(logo.maxX,layout.namePosition.x)
+            XCTAssertLessThan(logo.maxX,layout.scorePosition.x)
+            XCTAssertLessThan(InplayStadiumArt.upperFrame(venue,in:InplayFieldScene.fieldSize).maxY,
+                              InplayFieldProjection.point(DetailedFieldRules.bases[2],size:InplayFieldScene.fieldSize).y)
+        }
+        XCTAssertEqual(names.count,40)
+        let leagues:[(ClubIdentity.League,[String],Int)] = [
+            (.kbo,CareerTeamDirectory.domesticFirstIDs,6),
+            (.npb,CareerTeamDirectory.japaneseExpandedFirstIDs,15),
+            (.mlb,CareerTeamDirectory.americanExpandedFirstIDs,15)
+        ]
+        for (league,ids,count) in leagues {
+            XCTAssertEqual(ids.count,count)
+            for (index,id) in ids.enumerated() {
+                XCTAssertEqual(StadiumIdentity(homeTeamID:id).pro?.club.id,"\(league.id)-\(index)")
+            }
+        }
+        XCTAssertNil(StadiumIdentity(homeTeamID:"dev-harbors").pro)
+        XCTAssertNil(StadiumIdentity(homeTeamID:"us-dev-0").pro)
+    }
+
+    func testV147ExpansionClubsShareTheApprovedVenueAndHomeAwayKitsWithMatchPresentation() throws {
+        let leagues: [(ClubIdentity.League, [String], Int)] = [
+            (.npb, CareerTeamDirectory.japaneseExpandedFirstIDs, 8),
+            (.mlb, CareerTeamDirectory.americanExpandedFirstIDs, 7)
+        ]
+        let base = PlayerAppearance(kit: 1)
+        for (league, aliases, eastCount) in leagues {
+            let clubs = ClubIdentity.all.filter { $0.league == league }
+            XCTAssertEqual(clubs.filter { $0.division == .east }.count, eastCount)
+            XCTAssertEqual(clubs.filter { $0.division == .west }.count, 15 - eastCount)
+            let expansion = clubs.filter(\.isExpansionClub)
+            XCTAssertEqual(expansion.count, 5)
+            for club in expansion {
+                let alias = try XCTUnwrap(aliases.dropFirst(club.index).first)
+                XCTAssertEqual(CareerTeamDirectory.name(alias), club.name)
+                XCTAssertFalse(try XCTUnwrap(club.city).isEmpty)
+                let venue = try XCTUnwrap(StadiumIdentity(homeTeamID: alias).backdrop)
+                XCTAssertEqual(venue.imageName, "pro-stadium-v147-" + club.id)
+                XCTAssertEqual(venue.logoAsset, club.asset)
+                let home = try XCTUnwrap(base.wearing(teamID: alias).uniformStyle)
+                let away = try XCTUnwrap(base.wearing(teamID: alias, away: true).uniformStyle)
+                XCTAssertEqual(home.id, club.id + ":home")
+                XCTAssertEqual(away.id, club.id + ":away")
+                XCTAssertNotEqual(home.body, away.body)
+                XCTAssertEqual(home.mark, away.mark)
+                XCTAssertTrue(home.mark.enumerated().contains { $0.offset % 4 == 3 && $0.element > 160 })
+                XCTAssertEqual(GameUniformPalette.color(teamID: alias), GameUniformPalette.color(teamID: club.id))
+                for isAway in [false, true] {
+                    let kit = try XCTUnwrap(ClubUniformArtwork.image(club: club, away: isAway)?.cgImage)
+                    XCTAssertEqual(kit.width, 768)
+                    XCTAssertEqual(kit.height, 512)
+                }
+            }
+        }
+    }
+
+    func testV145ProVenueInFieldHomeRunAndCloseUp() throws {
+        let play=doublePlay()
+        let homeRun=try XCTUnwrap(MatchReplayFixture.make(pitcher:false).last?.homeRun)
+        let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:1),jerseyNumber:27,ownPosition:"P",throwingHand:"left",ownTeamFielding:true)
+        let prepared=FieldRasterArt.Prepared(images:[:])
+        let examples:[(String,InplayReplay)] = [("pro-stars",.field(play)),("jp-pro-3",.field(play)),("us-pro-0",.homeRun(homeRun))]
+        for (id,replay) in examples {
+            let identity=StadiumIdentity(homeTeamID:id)
+            let stadium=try XCTUnwrap(identity.pro)
+            let venue=stadium.backdrop
+            let scene=InplayFieldScene(replay:replay,sprites:sprites,prepared:prepared,scoreText:"H 3 : 2 A",stadium:identity)
+            let base=try XCTUnwrap(scene.childNode(withName:"//inplay-field-base") as? SKSpriteNode)
+            let upper=try XCTUnwrap(scene.childNode(withName:"//"+venue.imageName) as? SKSpriteNode)
+            let name=try XCTUnwrap(scene.childNode(withName:"//inplay-club-name") as? SKLabelNode)
+            let logo=try XCTUnwrap(scene.childNode(withName:"//inplay-club-logo") as? SKSpriteNode)
+            let score=try XCTUnwrap(scene.childNode(withName:"//inplay-score") as? SKLabelNode)
+            let board=try XCTUnwrap(scene.childNode(withName:"//inplay-scoreboard") as? SKShapeNode)
+            let layout=InplayStadiumArt.scoreboard(venue,in:scene.size)
+            XCTAssertEqual(base.size,InplayFieldProjection.viewport(scene.size).size)
+            XCTAssertEqual(upper.size,InplayStadiumArt.upperFrame(venue,in:scene.size).size)
+            XCTAssertGreaterThan(upper.zPosition,base.zPosition)
+            XCTAssertEqual(name.text,stadium.club.name)
+            XCTAssertEqual(score.position.x,layout.scorePosition.x,accuracy:0.001)
+            XCTAssertEqual(score.position.y,scene.size.height-layout.scorePosition.y,accuracy:0.001)
+            XCTAssertEqual(logo.texture?.filteringMode,.nearest)
+            XCTAssertTrue(board.frame.contains(logo.frame))
+            XCTAssertEqual(board.strokeColor,UIColor(Color(hex:stadium.accent)))
+            scene.setScore("H 10 : 12 A")
+            XCTAssertEqual(score.text,"H 10 : 12 A")
+
+            scene.display(time:0,finished:false)
+            let view=SKView(frame:CGRect(origin:.zero,size:scene.size))
+            view.presentScene(scene)
+            let rendered=try XCTUnwrap(view.texture(from:scene)?.cgImage())
+            let capture=XCTAttachment(image:UIImage(cgImage:rendered))
+            capture.name="V145 pro stadium "+stadium.club.id
+            capture.lifetime = .keepAlways;add(capture)
+            view.presentScene(nil)
+        }
+        let stadium=StadiumIdentity(homeTeamID:"pro-harbors")
+        for role:PlayerRole in [.batter,.pitcher] {
+            let scene=BallparkScene(size:CGSize(width:320,height:340))
+            scene.configure(hand:role == .pitcher ? "left":"right",kit:2,role:role)
+            let background=try XCTUnwrap(scene.childNode(withName:"fixedStadiumBackground") as? SKSpriteNode)
+            let originalTexture=background.texture,originalFrame=background.frame
+            scene.setStadium(stadium)
+            XCTAssertNotNil(scene.childNode(withName:"//match-club-logo-kbo-0"))
+            XCTAssertTrue(background.texture === originalTexture)
+            XCTAssertEqual(background.frame,originalFrame)
+            scene.usePracticeSetting()
+            XCTAssertNil(scene.childNode(withName:"//match-club-logo-kbo-0"))
+        }
+    }
+
     func testV52CustomDoublePlayAlertWaitsForFinishedAndLeavesSavedNodesUnchanged() throws {
         let play=doublePlay(),original=play
         let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:1),jerseyNumber:27,ownPosition:"P",throwingHand:"right",ownTeamFielding:true)
@@ -2654,7 +3002,8 @@ extension FieldTrainingTests {
             let dp=doublePlay(),sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:pitcher ? "left":"right",ownTeamFielding:pitcher)
             for ground in 0..<4 {for replay in [InplayReplay.homeRun(homeRun),.field(dp)] {
                 let original=replay
-                let planned=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false)})
+                let backupRoutes=replay.backupRoutes
+                let planned=await sprites.requests(duration:replay.duration,reduced:false,actorsAt:{replay.actors(sprites,time:$0,reduced:false,finished:false,backupRoutes:backupRoutes)})
                 let requests=try XCTUnwrap(planned),images=await FieldRasterArt.prepare(requests),prepared=try XCTUnwrap(images)
                 let stadium=StadiumIdentity(homeTeamID:"ground-\(ground)")
                 let scene=InplayFieldScene(replay:replay,sprites:sprites,prepared:prepared,scoreText:"H 3 : 2 A",stadium:stadium)
@@ -2722,7 +3071,8 @@ extension FieldTrainingTests {
         for pitcher in [false, true] {
             let sprites = FieldReplaySprites(appearance: PlayerAppearance(kit: 1), jerseyNumber: 27, ownPosition: pitcher ? "P" : "SS", throwingHand: pitcher ? "left" : "right", ownTeamFielding: pitcher)
             let replay = InplayReplay.field(play)
-            let planned = await sprites.requests(duration: replay.duration, reduced: false, actorsAt: { replay.actors(sprites, time: $0, reduced: false, finished: false) })
+            let backupRoutes = replay.backupRoutes
+            let planned = await sprites.requests(duration: replay.duration, reduced: false, actorsAt: { replay.actors(sprites, time: $0, reduced: false, finished: false, backupRoutes: backupRoutes) })
             let requests = try XCTUnwrap(planned)
             let images = await FieldRasterArt.prepare(requests)
             let prepared = try XCTUnwrap(images)

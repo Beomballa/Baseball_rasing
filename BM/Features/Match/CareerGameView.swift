@@ -10,6 +10,7 @@ struct CareerGameView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.careerCompletionNavigation) private var completionNavigation
+    @Environment(\.careerMatchVisibility) private var matchVisibility
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var battingSwipe: MatchBattingSwipe?
@@ -32,12 +33,23 @@ struct CareerGameView: View {
     @State private var clock = MatchInputClock()
     @State private var attempt: Attempt?
     @State private var retrySave: PendingSave?
+    @State private var commitID:UUID?
+    @State private var commitTask:Task<Void,Never>?
+    private var committing:Bool {commitID != nil}
+    private var usesAsyncCommit:Bool {
+        #if DEBUG
+        !(livePerformanceQA && ProcessInfo.processInfo.arguments.contains("-qa-sync-commit"))
+        #else
+        true
+        #endif
+    }
     @State private var battingAction = MatchInput.swing
     @State private var aimX = 0.5
     @State private var aimY = 0.5
     @State private var pitchTarget: PitchTarget?
     @State private var record: CareerMatchRecord?
     @State private var displaySnapshot = MatchDisplaySnapshot()
+    @State private var presentationTeamID:String?
     @AppStorage("bm.fieldPlaybackMode.v1") private var fieldPlaybackRaw = FieldPlaybackMode.system.rawValue
     private var fieldPlaybackMode: FieldPlaybackMode { FieldPlaybackMode(rawValue:fieldPlaybackRaw) ?? .system }
     @State private var error: String?
@@ -54,6 +66,7 @@ struct CareerGameView: View {
     @State private var animateResultReplay=false
     @State private var fieldResolved = false
     @State private var fieldHandoff:FieldContactHandoff?
+    @State private var fieldPreparation:FieldReplayPreparation?
     @State private var arenaFrame:CGRect = .zero
     @State private var replay: MatchDetailedPlay?
     @State private var homeRunReplay:MatchHomeRun?
@@ -63,12 +76,21 @@ struct CareerGameView: View {
 
     #if DEBUG
     private var livePerformanceQA:Bool {ProcessInfo.processInfo.arguments.contains("-live-career-performance")}
+    // 이전 전체 화면 갱신 경로만 재현하는 대조군. 일반 빌드의 시계 관찰에는 쓰지 않는다.
+    private var legacyClockQA:Double {ProcessInfo.processInfo.arguments.contains("-qa-legacy-full-view-clock") ? clock.phase:0}
     @MainActor private var liveQAWindowActive:Bool {
         UIApplication.shared.applicationState == .active && UIApplication.shared.connectedScenes.contains {$0.activationState == .foregroundActive}
     }
+    @MainActor private func resolveQA(phase:Double) {
+        guard let attempt else {return}
+        let control=player.role == .pitcher ? ManualMatchInput(release:phase,pitchTarget:attempt.pitchTarget)
+            : ManualMatchInput(x:aimX,y:aimY,timing:attempt.input == .watch ? nil:phase)
+        self.attempt=nil;clock.stop()
+        commit(PendingSave(attempt:attempt,control:control))
+    }
     @MainActor private func runLiveCareerQA() async {
         guard assessmentID == nil,ProcessInfo.processInfo.arguments.contains("-live-career-autoplay"),livePerformanceQA else {return}
-        let holdsScreen=ProcessInfo.processInfo.arguments.contains("-qa-endurance-seconds")
+        let holdsScreen=ProcessInfo.processInfo.arguments.contains("-qa-endurance-seconds") || ProcessInfo.processInfo.arguments.contains("-qa-keep-awake")
         let idleBefore=UIApplication.shared.isIdleTimerDisabled
         if holdsScreen {UIApplication.shared.isIdleTimerDisabled=true}
         defer {if holdsScreen {UIApplication.shared.isIdleTimerDisabled=idleBefore}}
@@ -80,6 +102,7 @@ struct CareerGameView: View {
                        "foregroundScene":UIApplication.shared.connectedScenes.contains {$0.activationState == .foregroundActive}]
             try JSONEncoder().encode(phase).write(to:FileManager.default.temporaryDirectory.appendingPathComponent("actual-career-phase-"+player.role.rawValue+".json"),options:.atomic)
             guard active else {return}
+            let initialRecordCount=try context.fetch(FetchDescriptor<CareerMatchRecord>()).filter {$0.playerID==player.id}.count
             var replayedEventID:String?
             if ProcessInfo.processInfo.arguments.contains("-qa-replay-saved-play") {
                 guard let record,record.completed else {throw NSError(domain:"BM.QA",code:4,userInfo:[NSLocalizedDescriptionKey:"완료된 별도 QA 경기가 필요합니다."])}
@@ -90,7 +113,7 @@ struct CareerGameView: View {
                 }
                 replayedEventID=play.eventID
                 visualSnapshot=saved;presenting=true;fieldResolved=false;replay=play
-                while presenting {try await Task.sleep(for:.milliseconds(50))}
+                while presenting || committing {try await Task.sleep(for:.milliseconds(50))}
                 guard record.payload==savedPayload,record.revision==savedRevision,player.fatigue==savedFatigue,player.gameDate==savedDate else {
                     throw NSError(domain:"BM.QA",code:6,userInfo:[NSLocalizedDescriptionKey:"읽기 전용 QA 저장 불일치"])
                 }
@@ -104,9 +127,9 @@ struct CareerGameView: View {
                     begin()
                     let target=player.role == .pitcher ? ManualMatchRules.releaseCenter:MatchDelivery.contactPhase
                     while clock.running && clock.phase<target {try await Task.sleep(for:.milliseconds(10))}
-                    if clock.running {resolve()}
-                    while presenting {try await Task.sleep(for:.milliseconds(50))}
-                    if MatchRenderMetrics.lifecycle.contains(where:{$0.name=="career.inplay.exit"}) {break}
+                    if clock.running {resolveQA(phase:target)}
+                    while presenting || committing {try await Task.sleep(for:.milliseconds(50))}
+                    if MatchRenderMetrics.lifecycle.contains(where:{$0.name=="career.inplay.resolved"}) {break}
                 }
             }
             guard !Task.isCancelled,let record,error == nil else {return}
@@ -114,12 +137,14 @@ struct CareerGameView: View {
             try await Task.sleep(for:.seconds(2))
             let snapshot=try record.snapshot(),before=record.payload,beforeFatigue=player.fatigue
             let reopened=try CareerMatchStore.start(player:player,state:calendar,in:context)
-            struct Audit:Encodable {let replayedEventID:String?;let sessionStore:String;let active:Bool;let completed:Bool;let inplay:Bool;let sameRecord:Bool;let samePayload:Bool;let sameFatigue:Bool;let recordCount:Int}
-            let audit=Audit(replayedEventID:replayedEventID,sessionStore:try LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier).lastPathComponent,active:liveQAWindowActive,completed:snapshot.completed,inplay:MatchRenderMetrics.lifecycle.contains {$0.name=="career.inplay.exit"},sameRecord:reopened.id==record.id,samePayload:reopened.payload==before,sameFatigue:player.fatigue==beforeFatigue,recordCount:try context.fetch(FetchDescriptor<CareerMatchRecord>()).filter {$0.playerID==player.id}.count)
+            struct Audit:Encodable {let replayedEventID:String?;let sessionStore:String;let active:Bool;let completed:Bool;let inplay:Bool;let sameRecord:Bool;let samePayload:Bool;let sameFatigue:Bool;let recordCountBefore:Int;let recordCount:Int;let canonicalMatch:Data}
+            let canonicalEncoder=JSONEncoder();canonicalEncoder.outputFormatting = .sortedKeys
+            let audit=Audit(replayedEventID:replayedEventID,sessionStore:try LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier).lastPathComponent,active:liveQAWindowActive,completed:snapshot.completed,inplay:MatchRenderMetrics.lifecycle.contains {$0.name=="career.inplay.exit"},sameRecord:reopened.id==record.id,samePayload:reopened.payload==before,sameFatigue:player.fatigue==beforeFatigue,recordCountBefore:initialRecordCount,recordCount:try context.fetch(FetchDescriptor<CareerMatchRecord>()).filter {$0.playerID==player.id}.count,canonicalMatch:try canonicalEncoder.encode(snapshot))
             let data=try JSONEncoder().encode(audit)
             try data.write(to:FileManager.default.temporaryDirectory.appendingPathComponent("actual-career-audit-"+player.role.rawValue+".json"),options:.atomic)
             MatchRenderMetrics.mark("career.qa.completed")
             MatchRenderMetrics.exportLive(role:player.role.rawValue+"-actual-session-\(Int(ProcessInfo.processInfo.systemUptime*1000))")
+            if ProcessInfo.processInfo.arguments.contains("-qa-keep-awake") {try? await Task.sleep(for:.seconds(300))}
             let args=ProcessInfo.processInfo.arguments
             if let index=args.firstIndex(of:"-qa-endurance-seconds") {
                 guard args.indices.contains(index+1),let seconds=Int(args[index+1]),(60...3600).contains(seconds) else {
@@ -176,18 +201,21 @@ struct CareerGameView: View {
         #endif
     }
     private var fieldCoversArena:Bool {replay != nil || homeRunReplay != nil}
-    private var inputLocked: Bool { clock.running || presenting || retrySave != nil }
+    private var inputLocked: Bool { clock.running || presenting || committing || retrySave != nil }
     private var opponentSide: OpponentBatterSide { (visualSnapshot ?? displaySnapshot.match)?.opponentBatterSide ?? .right }
+    private var displayedBatterTurn: String? {
+        guard let match=visualSnapshot ?? displaySnapshot.match else {return nil}
+        return "\(match.half):\(match.half%2 == 0 ? match.awayOrder:match.homeOrder)"
+    }
     private var stadium: StadiumIdentity {
         let snapshot = displaySnapshot.match
-        let ownID = record.flatMap {try? calendar.teamID(for: player,on: GameDate($0.gameDate))} ?? player.schoolID
+        let ownID = presentationTeamID ?? player.schoolID
         return StadiumIdentity(homeTeamID: snapshot?.playerRecords?.home.teamID ?? (snapshot?.isHome == true ? ownID : record?.opponentID ?? ownID))
     }
     private var renderAppearance: PlayerAppearance {
         let match = displaySnapshot.match
         let fixedTeam = match.flatMap { $0.isHome ? $0.playerRecords?.home.teamID : $0.playerRecords?.away.teamID }
-        let historicalTeam = record.flatMap { try? calendar.teamID(for: player, on: GameDate($0.gameDate)) }
-        var appearance = player.appearance.wearing(teamID: fixedTeam ?? historicalTeam ?? player.schoolID, away: match?.isHome == false)
+        var appearance = player.appearance.wearing(teamID: fixedTeam ?? presentationTeamID ?? player.schoolID, away: match?.isHome == false)
         appearance.opponentUniformTeamID = match.flatMap { $0.isHome ? $0.playerRecords?.away.teamID : $0.playerRecords?.home.teamID } ?? record?.opponentID
         return appearance
     }
@@ -200,7 +228,10 @@ struct CareerGameView: View {
         do {
             let saved = try assessmentID.map {try GoalSpecialStore.displayRecord(player:player,calendar:calendar,id:$0,in:context)} ?? CareerMatchStore.start(player: player, state: calendar, in: context)
             record = saved
-            try displaySnapshot.refresh(saved)
+            let match=try displaySnapshot.refresh(saved)
+            // 같은 경기의 소속은 공마다 바뀌지 않는다. 옛 원장만 입장 시 과거 소속을 조회한다.
+            presentationTeamID=(match.isHome ? match.playerRecords?.home.teamID:match.playerRecords?.away.teamID)
+                ?? (try? calendar.teamID(for:player,on:GameDate(saved.gameDate))) ?? player.schoolID
             if pitchCode.isEmpty {
                 pitchCode = try PitchSelectionStore.resolve(player: player, available: Set(try saved.snapshot().mastery.keys))
             }
@@ -217,7 +248,7 @@ struct CareerGameView: View {
         #if DEBUG
         if livePerformanceQA {MatchRenderMetrics.mark(player.role == .pitcher ? "career.input.pitch":"career.input."+battingAction.rawValue)}
         #endif
-        guard !presenting, attempt == nil, retrySave == nil, let record, let match = try? record.snapshot(), !match.completed, player.role != .pitcher || match.ownPitcherActive else { return }
+        guard !presenting, !committing, attempt == nil, retrySave == nil, let record, let match = try? displaySnapshot.refresh(record), !match.completed, player.role != .pitcher || match.ownPitcherActive else { return }
         let input: MatchInput = player.role == .pitcher ? .pitch : battingAction
         let actualCode=match.deliveryPitchCode(requested:pitchCode)
         let delivery = match.delivery(pitchCode: actualCode)
@@ -230,6 +261,8 @@ struct CareerGameView: View {
             battingGuideSeen = true
             scene.cancelDelivery()
             _ = scene.demonstrate(reduceMotion: reduced, flightDuration: flight.flightDuration, x: delivery.x, y: delivery.y, pitchCode: actualCode, inputTimeline: timeline)
+        } else {
+            scene.preparePitch(timeline: timeline)
         }
         if player.role == .pitcher { scene.preparePitch(phase: 0, reduced: reduced) }
         clock.start(timeline: timeline) { resolve(timeout: true) }
@@ -242,62 +275,91 @@ struct CareerGameView: View {
         commit(PendingSave(attempt: attempt, control: control))
     }
     private func commit(_ pending: PendingSave) {
-        guard let record else { return }
+        guard !committing,let record else { return }
         guard !record.completed, record.revision == pending.attempt.revision else { retrySave = nil; return }
-        do {
-            #if DEBUG
-            if livePerformanceQA {MatchRenderMetrics.mark("career.commitBegin")}
-            #endif
-            let previous = try record.snapshot()
-            try persist(record,revision:pending.attempt.revision,input:pending.attempt.input,pitchCode:pending.attempt.pitchCode,control:pending.control)
-            retrySave = nil
-            let updated=try displaySnapshot.refresh(record)
-            #if DEBUG
-            if livePerformanceQA {MatchRenderMetrics.mark("career.commitEnd")}
-            #endif
-            let added=Array((updated.fieldPlays ?? []).dropFirst(previous.fieldPlays?.count ?? 0))
-            let homeRun=Array((updated.homeRuns ?? []).dropFirst(previous.homeRuns?.count ?? 0)).first {
-                $0.half == previous.half && $0.order == (previous.half%2 == 1 ? previous.homeOrder:previous.awayOrder) && pending.attempt.input != .watch
-            }
-            let fieldPlay=homeRun == nil ? added.first { $0.ownBatter || $0.ownParticipation || (player.role == .pitcher && $0.half == previous.half) } : nil
-            if let result = updated.lastManual {
-                visualSnapshot = previous; presenting = true; judgment = nil; arrivedSnapshot = nil
-                let showCall: @MainActor () -> Void = {
-                    #if DEBUG
-                    if livePerformanceQA {MatchRenderMetrics.mark("career.ballArrival")}
-                    #endif
-                    if let homeRun {
-                        var handoff=scene.fieldHandoff;handoff?.sourceFrame=arenaFrame;fieldHandoff=handoff
-                        fieldResolved=false;homeRunReplay=homeRun
-                    } else if let fieldPlay {
-                        fieldResolved=false
-                        var handoff=scene.fieldHandoff;handoff?.sourceFrame=arenaFrame;fieldHandoff=handoff
-                        replay=fieldPlay
+        let id=UUID();commitID=id
+        if player.role == .batter {scene.awaitBatDecision()}
+        commitTask=Task { @MainActor in
+            defer {if commitID == id {commitID=nil;commitTask=nil}}
+            do {
+                #if DEBUG
+                if livePerformanceQA {MatchRenderMetrics.mark("career.commitBegin")}
+                #endif
+                let previous:CareerMatch,updated:CareerMatch
+                if assessmentID == nil && usesAsyncCommit {
+                    let prepared=try await CareerMatchStore.prepareManual(player:player,state:calendar,record:record,
+                        revision:pending.attempt.revision,input:pending.attempt.input,pitchCode:pending.attempt.pitchCode,control:pending.control)
+                    try Task.checkCancellation()
+                    guard commitID == id else {throw CancellationError()}
+                    let committed=try CareerMatchStore.commitManual(prepared,player:player,state:calendar,record:record,in:context)
+                    previous=committed.previous;updated=try displaySnapshot.refresh(record,committed:committed)
+                } else {
+                    previous=try record.snapshot()
+                    try persist(record,revision:pending.attempt.revision,input:pending.attempt.input,pitchCode:pending.attempt.pitchCode,control:pending.control)
+                    updated=try displaySnapshot.refresh(record)
+                }
+                retrySave=nil
+                #if DEBUG
+                if livePerformanceQA {MatchRenderMetrics.mark("career.commitEnd")}
+                #endif
+                let added=Array((updated.fieldPlays ?? []).dropFirst(previous.fieldPlays?.count ?? 0))
+                let homeRun=Array((updated.homeRuns ?? []).dropFirst(previous.homeRuns?.count ?? 0)).first {
+                    $0.half == previous.half && $0.order == (previous.half%2 == 1 ? previous.homeOrder:previous.awayOrder) && pending.attempt.input != .watch
+                }
+                let fieldPlay=homeRun == nil ? added.first { $0.ownBatter || $0.ownParticipation || (player.role == .pitcher && $0.half == previous.half) } : nil
+                fieldPreparation?.cancel();fieldPreparation=nil
+                let inplay=homeRun.map {InplayReplay.homeRun($0)} ?? fieldPlay.map {InplayReplay.field($0)}
+                if let inplay {
+                    let fielding:Bool
+                    switch inplay {case .field(let p):fielding=(p.half%2 == 0) == previous.isHome
+                    case .homeRun(let h):fielding=(h.half%2 == 0) == previous.isHome}
+                    fieldPreparation=FieldReplayPreparation(replay:inplay,sprites:FieldReplaySprites(appearance:renderAppearance,
+                        jerseyNumber:player.jerseyNumber,ownPosition:player.role == .pitcher ? "P":player.positionRaw,
+                        throwingHand:player.throwingHandRaw,ownTeamFielding:fielding))
+                }
+                if let result = updated.lastManual {
+                    visualSnapshot = previous; presenting = true; judgment = nil; arrivedSnapshot = nil
+                    let showCall: @MainActor () -> Void = {
+                        #if DEBUG
+                        if livePerformanceQA {MatchRenderMetrics.mark("career.ballArrival")}
+                        #endif
+                        if let homeRun {
+                            var handoff=scene.fieldHandoff;handoff?.sourceFrame=arenaFrame;fieldHandoff=handoff
+                            fieldResolved=false;homeRunReplay=homeRun
+                        } else if let fieldPlay {
+                            fieldResolved=false
+                            var handoff=scene.fieldHandoff;handoff?.sourceFrame=arenaFrame;fieldHandoff=handoff
+                            replay=fieldPlay
+                        } else {
+                            judgment = result; arrivedSnapshot = updated
+                            pulse = MatchPresentation.countPulse(result.outcome); pulseAt = Date()
+                            GameSound.shared.announce(outcome: result.outcome)
+                        }
+                    }
+                    let showResult: @MainActor () -> Void = {
+                        guard fieldPlay == nil && homeRun == nil else {return}
+                        judgment = nil;presenting = false; visualSnapshot = nil; arrivedSnapshot = nil
+                    }
+                    let contact=fieldPlay.flatMap {FieldContactPresentation.matches($0,previous:previous,action:result.action) ? $0:nil}
+                    if player.role == .pitcher {
+                        let started = scene.demonstrate(reduceMotion: reduced, flightDuration: PitchFlightPresentation(delivery: previous.delivery(pitchCode: result.pitchCode)).flightDuration,
+                                              x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
+                                              outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, onArrival: showCall, completion: showResult)
+                        if !started { showCall(); showResult() }
                     } else {
-                        judgment = result; arrivedSnapshot = updated
-                        pulse = MatchPresentation.countPulse(result.outcome); pulseAt = Date()
-                        GameSound.shared.announce(outcome: result.outcome)
+                        // Saved fair contact drives the barrel motion; localized multi-base labels are not contact flags.
+                        scene.finishBat(action: result.action, outcome: added.contains(where: \.ownBatter) ? "안타" : result.outcome,
+                                        reduced: reduced, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, onArrival: showCall, completion: showResult)
                     }
                 }
-                let showResult: @MainActor () -> Void = {
-                    guard fieldPlay == nil && homeRun == nil else {return}
-                    judgment = nil;presenting = false; visualSnapshot = nil; arrivedSnapshot = nil
-                }
-                let contact=fieldPlay.flatMap {FieldContactPresentation.matches($0,previous:previous,action:result.action) ? $0:nil}
-                if player.role == .pitcher {
-                    let started = scene.demonstrate(reduceMotion: reduced, flightDuration: PitchFlightPresentation(delivery: previous.delivery(pitchCode: result.pitchCode)).flightDuration,
-                                          x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
-                                          outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, onArrival: showCall, completion: showResult)
-                    if !started { showCall(); showResult() }
-                } else {
-                    // Saved fair contact drives the barrel motion; localized multi-base labels are not contact flags.
-                    scene.finishBat(action: result.action, outcome: added.contains(where: \.ownBatter) ? "안타" : result.outcome,
-                                    reduced: reduced, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, onArrival: showCall, completion: showResult)
-                }
-            }
-        } catch { retrySave = pending; self.error = error.localizedDescription; scene.cancelDelivery() }
+            } catch is CancellationError {
+                // 떠난 화면의 계산 결과는 저장하거나 표시하지 않는다.
+            } catch {retrySave=pending;self.error=error.localizedDescription;scene.cancelDelivery()}
+        }
     }
     private func cancelInput() {
+        fieldPreparation?.cancel();fieldPreparation=nil
+        commitTask?.cancel();commitTask=nil;commitID=nil
         clock.stop(); pitchTarget = nil; battingSwipe = nil; battingGestureRevision = nil; attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;homeRunReplay=nil;homeRunResultPlaying=false;fieldHandoff=nil;fieldResolved=false;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
     }
     private func persist(_ record:CareerMatchRecord,revision:Int,input:MatchInput,pitchCode:String?,control:ManualMatchInput?) throws {
@@ -320,7 +382,7 @@ struct CareerGameView: View {
         }
     }
     private func advance(_ input: MatchInput) {
-        guard !presenting, attempt == nil, retrySave == nil, let record else { return }
+        guard !presenting, !committing, attempt == nil, retrySave == nil, let record else { return }
         do {
             try persist(record,revision:record.revision,input:input,pitchCode:pitchCode,control:nil)
             _ = try displaySnapshot.refresh(record)
@@ -339,29 +401,34 @@ struct CareerGameView: View {
         } else if record?.appearance == true {
             if player.role == .pitcher {
                 let mastery = match.mastery[pitchCode] ?? 60
-                MatchTimingGauge(phase: clock.phase, center: ManualMatchRules.releaseCenter,
+                CareerMatchClockGauge(clock: clock, center: ManualMatchRules.releaseCenter,
                                  good: match.releaseGoodWidth(mastery: mastery),
                                  perfect: match.releasePerfectWidth(mastery: mastery), label: (replay != nil || homeRunReplay != nil) ? "수비·주루 진행 중" : presenting ? (judgment == nil ? "릴리스 확정 · 공 비행 중" : "포구 완료 · 판정 확인") : clock.running ? "팔 준비 중 · 노란 구간에 릴리스" : "릴리스 · 숙련도 \(mastery.formatted(.number.precision(.fractionLength(1))))")
                     .accessibilityIdentifier("releaseGauge")
                 Button((replay != nil || homeRunReplay != nil) ? "수비·주루 진행 중…" : presenting ? (judgment == nil ? "공 비행·포구 중…" : "판정 확인 중…") : clock.running ? "지금 릴리스" : "투구 준비") {
                     if clock.running { resolve() } else { begin() }
-                }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(presenting).accessibilityIdentifier(clock.running ? "gameRelease" : "gamePitch")
+                }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(presenting || committing).accessibilityIdentifier(clock.running ? "gameRelease" : "gamePitch")
             } else {
-                MatchTimingGauge(phase: clock.phase, center: MatchDelivery.contactPhase,
+                CareerMatchClockGauge(clock: clock, center: MatchDelivery.contactPhase,
                                  good: ManualMatchRules.timingWidth(contact: match.contact) * match.executionFactor,
-                                 perfect: 0.025, label: presenting ? "공·수비 진행 중" : clock.running ? (battingAction == .watch ? "공을 지켜보는 중" : "화면 탭 · 지금 " + battingAction.label) : battingGuideSeen ? "화면 탭 · 투구 요청" : "스와이프 조준 · 투구 후 탭하여 타격", batting: true)
+                                 perfect: 0.025, label: presenting ? "공·수비 진행 중" : clock.running ? (battingAction == .watch ? "공을 지켜보는 중" : "화면 탭 · 지금 " + battingAction.label) : typeSize.isAccessibilitySize ? "방향 버튼 조준 · 투구 요청" : battingGuideSeen ? "화면 탭 · 투구 요청" : "스와이프 조준 · 투구 후 탭하여 타격", batting: true)
                     .accessibilityIdentifier("battingTimingGauge")
-
+                if typeSize.isAccessibilitySize {
+                    Button(clock.running ? (battingAction == .watch ? "공 지켜보기" : "지금 " + battingAction.label) : "투구 요청") {
+                        tapBattingField()
+                    }.buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(battingTouchLocked)
+                        .accessibilityIdentifier("accessibleBattingInput")
+                }
             }
         }
     }
     private func broadcast(_ match: CareerMatch, record: CareerMatchRecord) -> some View {
-        let ownID = (try? calendar.teamID(for: player, on: GameDate(record.gameDate))) ?? player.schoolID
+        let ownID = presentationTeamID ?? player.schoolID
         let ownName = assessmentID == nil ? CareerTeamDirectory.name(ownID, schools: schools) : "내 평가팀"
         let opponent = CareerTeamDirectory.name(record.opponentID, schools: schools)
         let home = match.playerRecords.map {CareerTeamDirectory.name($0.home.teamID, schools: schools)} ?? (match.isHome ? ownName : opponent)
         let away = match.playerRecords.map {CareerTeamDirectory.name($0.away.teamID, schools: schools)} ?? (match.isHome ? opponent : ownName)
-        return MatchBroadcastBoard(match: match, homeName: home, awayName: away, date: record.gameDate, pulse: pulse, pulseAt: pulseAt, stadium: stadium)
+        return MatchBroadcastBoard(match: match, homeName: home, awayName: away, date: record.gameDate, pulse: pulse, pulseAt: pulseAt, stadium: stadium).equatable()
     }
     private var battingTouchLocked: Bool { retrySave != nil || presenting || record?.completed != false || record?.appearance != true }
     private func tapBattingField() {
@@ -371,7 +438,12 @@ struct CareerGameView: View {
         } else { begin() }
     }
     private func battingSurface(_ field: CGSize) -> some View {
-        Color.clear.contentShape(Rectangle())
+        Group {
+            if typeSize.isAccessibilitySize {
+                // 큰 글자 화면의 세로 스크롤과 조준 드래그가 경쟁하지 않게 한다.
+                Color.clear.contentShape(Rectangle()).onTapGesture { tapBattingField() }
+            } else {
+                Color.clear.contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                 guard !battingTouchLocked else { battingSwipe = nil; return }
                 if battingGestureRevision == nil { battingGestureRevision = record?.revision }
@@ -386,10 +458,12 @@ struct CareerGameView: View {
                 aimX = aim.x; aimY = aim.y
                 if swipe.isTap { tapBattingField() }
             })
+            }
+        }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(clock.running ? (battingAction == .watch ? "공 지켜보기" : "지금 " + battingAction.label) : "경기장 · 투구 요청")
             .accessibilityValue("타격 포인트 가로 \(Int(aimX * 100)), 세로 \(Int(aimY * 100))")
-            .accessibilityHint("쓸어서 조준하고 탭하여 타격. 공 대기 중 탭하면 투구를 요청합니다.")
+            .accessibilityHint(typeSize.isAccessibilitySize ? "화면을 위아래로 쓸어 조작부로 이동합니다. 방향 버튼으로 조준하고 경기장이나 타격 버튼을 탭합니다." : "쓸어서 조준하고 탭하여 타격. 공 대기 중 탭하면 투구를 요청합니다.")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { tapBattingField() }
             .accessibilityAction(named: "왼쪽 조준") { if !battingTouchLocked { aimX = max(0, aimX - 0.1) } }
@@ -397,6 +471,25 @@ struct CareerGameView: View {
             .accessibilityAction(named: "위 조준") { if !battingTouchLocked { aimY = max(0, aimY - 0.1) } }
             .accessibilityAction(named: "아래 조준") { if !battingTouchLocked { aimY = min(1, aimY + 0.1) } }
             .accessibilityIdentifier("battingTouchSurface")
+    }
+    private var accessibleBattingAim: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("타격 포인트 가로 \(Int(aimX * 100)), 세로 \(Int(aimY * 100))")
+                .font(.headline).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("accessibleBattingAimValue")
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                battingAimButton("왼쪽 조준", id: "left") { aimX = max(0, aimX - 0.1) }
+                battingAimButton("오른쪽 조준", id: "right") { aimX = min(1, aimX + 0.1) }
+                battingAimButton("위 조준", id: "up") { aimY = max(0, aimY - 0.1) }
+                battingAimButton("아래 조준", id: "down") { aimY = min(1, aimY + 0.1) }
+            }
+        }
+    }
+    private func battingAimButton(_ title: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, minHeight: 44)
+        }.buttonStyle(MatchPixelButtonStyle()).disabled(battingTouchLocked)
+            .accessibilityIdentifier("accessibleBattingAim-" + id)
     }
     private var batterChoices: some View {
         VStack(spacing: 6) {
@@ -431,19 +524,20 @@ struct CareerGameView: View {
         }
     }
     private func liveGame(_ match: CareerMatch, record: CareerMatchRecord, available: CGSize) -> some View {
-        let field = CGSize(width: available.width, height: available.width * (player.role == .batter ? 1 : 1290 / 1219))
+        let field = MatchPitchProjection(role: player.role).size(width: available.width)
         return Group {
             if typeSize.isAccessibilitySize {
                 ScrollView {
                     VStack(spacing: 10) {
                         broadcast(arrivedSnapshot ?? match, record: record)
-                        arena(match, field: CGSize(width: max(1, available.width - 16), height: max(1, available.width - 16) * (player.role == .batter ? 1 : 1290 / 1219)))
+                        arena(match, field: MatchPitchProjection(role: player.role).size(width: max(1, available.width - 16)))
                         if player.role == .pitcher, match.ownPitcherActive, !match.completed {
                             pitchCourse(match).frame(maxWidth: 280)
                         }
                         if record.appearance && match.ownPitcherChange == nil {
                             if player.role == .batter { batterChoices } else { pitcherChoices(match) }
                         }
+                        if player.role == .batter, record.appearance { accessibleBattingAim }
                         controls(match)
                     }.padding(8)
                 }
@@ -488,7 +582,7 @@ struct CareerGameView: View {
                     DetailedFieldReplayBoard(play:play,appearance:renderAppearance,jerseyNumber:player.jerseyNumber,
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(play.half%2 == 0) == match.isHome,stadium:stadium,
-                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,onResolved:{
+                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,preparation:fieldPreparation,onResolved:{
                             #if DEBUG
                             if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
                             #endif
@@ -519,7 +613,7 @@ struct CareerGameView: View {
                         ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
                         ownTeamFielding:(event.half%2 == 0) == match.isHome,stadium:stadium,
                         scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,
-                        playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,playsSound:true,onResolved:{
+                        playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,preparation:fieldPreparation,playsSound:true,onResolved:{
                             #if DEBUG
                             if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
                             #endif
@@ -542,7 +636,7 @@ struct CareerGameView: View {
     private func arena(_ match: CareerMatch, field: CGSize) -> some View {
         VStack(spacing: 0) {
             ZStack {
-                MatchArenaSurface(scene:scene,covered:fieldCoversArena && preparesFieldMotion)
+                MatchArenaSurface(scene:scene,covered:fieldCoversArena && preparesFieldMotion).equatable()
                 if let opponentID = liveOpponentID(match) {
                     OpponentStarCallout(id: opponentID, name: liveOpponentName(match), honors: match.preparation?.season?.honors?.filter { $0.playerID == opponentID } ?? [])
                         .frame(maxWidth: min(200, field.width * 0.55), alignment: .trailing)
@@ -564,7 +658,7 @@ struct CareerGameView: View {
                     if player.role == .pitcher, match.ownPitcherActive, !match.completed, replay == nil && homeRunReplay == nil, !typeSize.isAccessibilitySize {
                         pitchCourse(match)
                             .frame(width: 140)
-                            .position(x: field.width * (match.opponentBatterSide.mapOnRight ? 0.80 : 0.20), y: field.height * 0.31)
+                            .position(x: field.width * (match.opponentBatterSide.mapOnRight ? 0.80 : 0.20), y: field.height * 0.26)
                     }
                     if let judgment, replay == nil && homeRunReplay == nil, !typeSize.isAccessibilitySize {
                         PitchJudgmentToast(title: DeliveryPresentation.call(judgment.outcome),
@@ -582,9 +676,8 @@ struct CareerGameView: View {
                     } else if judgment == nil && player.role == .pitcher && !match.completed {
                         let delivery = match.delivery(pitchCode: pitchCode)
                         let target = retrySave?.control.pitchTarget ?? attempt?.pitchTarget ?? pitchTarget ?? PitchTarget(x: delivery.x, y: delivery.y)
-                        BattingAimZone(x: .constant(target.x), y: .constant(target.y), locked: true, showsGrid:false)
-                            .frame(width: field.width * 0.22, height: field.height * 0.24)
-                            .position(x: field.width * 0.54, y: field.height * 0.43)
+                        PitchingTargetMarker(target: target)
+                            .frame(width: field.width, height: field.height)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                             .accessibilityIdentifier("pitchingTargetZone")
@@ -761,6 +854,9 @@ struct CareerGameView: View {
         }.accessibilityElement(children: .contain)
     }
     var body: some View {
+        #if DEBUG
+        let _ = MatchRenderMetrics.bodyEvaluated("career")
+        #endif
         GeometryReader { geometry in
             if let record, let savedMatch = displaySnapshot.match {
                 let match = visualSnapshot ?? savedMatch
@@ -825,8 +921,8 @@ struct CareerGameView: View {
             NavigationStack {
                 ScrollView {
                     VStack(alignment:.leading,spacing:18) {
-                        GamePanel(title:"타격 · 쓸어서 조준하고 탭",onBoard:true) {
-                            Text("공 대기 중 탭하면 투구를 요청합니다. 화면을 쓸어 방망이 위치를 옮기고, 공이 도착할 때 탭하여 스윙·번트합니다.")
+                        GamePanel(title:typeSize.isAccessibilitySize ? "타격 · 방향 버튼으로 조준":"타격 · 쓸어서 조준하고 탭",onBoard:true) {
+                            Text(typeSize.isAccessibilitySize ? "위아래로 스크롤하여 조작부로 이동합니다. 방향 버튼으로 방망이 위치를 옮기고 투구를 요청한 뒤, 공이 도착할 때 타격 버튼이나 경기장을 탭하여 스윙·번트합니다.":"공 대기 중 탭하면 투구를 요청합니다. 화면을 쓸어 방망이 위치를 옮기고, 공이 도착할 때 탭하여 스윙·번트합니다.")
                             Text("입력하지 않으면 지켜보기로 판정합니다. 파랑은 빠름, 금색 중앙은 정타, 주황은 늦음입니다.")
                         }
                         GamePanel(title:"투구 · 구종과 코스를 먼저",onBoard:true) {
@@ -861,9 +957,19 @@ struct CareerGameView: View {
             }
         }
         .onAppear {
+            matchVisibility?(true)
             #if DEBUG
             if livePerformanceQA {MatchRenderMetrics.reset();MatchRenderMetrics.enabled=true;MatchRenderMetrics.mark("career.enter")}
+            if livePerformanceQA,ProcessInfo.processInfo.arguments.contains("-qa-full-career-root") {
+                let identity:[String:String]=["pid":String(ProcessInfo.processInfo.processIdentifier),"role":player.role.rawValue,
+                    "bundle":Bundle.main.bundleIdentifier ?? "","session":(try? LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier).lastPathComponent) ?? ""]
+                if let data=try? JSONEncoder().encode(identity) {
+                    try? data.write(to:FileManager.default.temporaryDirectory.appendingPathComponent("qa-v121-root-identity.json"),options:.atomic)
+                }
+            }
             #endif
+            // 첫 투구 중 수비 원화 명세를 동기 해석하지 않도록 경기 입장 때 준비한다.
+            _ = FieldRasterArt.manifest
             load(); configureScene()
         }
         .onChange(of: record.map(MatchDisplaySnapshot.Token.init)) { _, _ in
@@ -872,6 +978,7 @@ struct CareerGameView: View {
         }
         #if DEBUG
         .task {await runLiveCareerQA()}
+        .onChange(of:legacyClockQA) {_,_ in }
         .onChange(of:fieldCoversArena) {_,covered in
             guard ProcessInfo.processInfo.arguments.contains("-match-render-performance") else {return}
             if livePerformanceQA {
@@ -884,6 +991,10 @@ struct CareerGameView: View {
         }
         #endif
         .onChange(of: opponentSide) { _, _ in configureScene() }
+        .onChange(of: displayedBatterTurn) { old, new in
+            // 같은 타석의 파울 자세는 유지하고, 새 타자가 표시될 때만 준비 자세로 돌아간다.
+            if old != nil, new != nil, !presenting { scene.cancelDelivery() }
+        }
         .onChange(of: presenting) { previous, current in
             if previous && !current { pitchTarget = nil }
         }
@@ -897,9 +1008,7 @@ struct CareerGameView: View {
             if livePerformanceQA {MatchRenderMetrics.mark("career.exit");MatchRenderMetrics.exportLive(role:player.role.rawValue+"-actual-career-\(Int(ProcessInfo.processInfo.systemUptime*1000))");MatchRenderMetrics.enabled=false}
             #endif
             cancelInput()
-        }
-        .onChange(of: clock.phase) { _, phase in
-            if player.role == .pitcher && clock.running { scene.preparePitch(phase: phase, reduced: reduced) }
+            matchVisibility?(false)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
@@ -915,6 +1024,22 @@ struct CareerGameView: View {
         .alert("경기를 저장하지 못했습니다", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("확인") { error = nil }
         } message: { Text(error ?? "") }
+    }
+}
+
+/// 게이지만 프레임마다 갱신한다. 경기 정보·소속/연간 일정은 입력 시계의 관찰 대상에서 분리한다.
+struct CareerMatchClockGauge: View {
+    let clock: MatchInputClock
+    let center: Double
+    let good: Double
+    let perfect: Double
+    let label: String
+    var batting = false
+    var body: some View {
+        #if DEBUG
+        let _ = MatchRenderMetrics.bodyEvaluated("gauge")
+        #endif
+        MatchTimingGauge(phase: clock.phase, center: center, good: good, perfect: perfect, label: label, batting: batting)
     }
 }
 
@@ -1007,6 +1132,11 @@ private struct MatchArenaFrameKey:PreferenceKey {
     #if DEBUG
     private(set) var decodeCount=0
     #endif
+    @discardableResult mutating func refresh(_ record:CareerMatchRecord,committed:CareerCommittedManualInput) throws -> CareerMatch {
+        guard committed.matches(record) else {return try refresh(record)}
+        token=Token(record);result = .success(committed.updated)
+        return committed.updated
+    }
     @discardableResult mutating func refresh(_ record: CareerMatchRecord) throws -> CareerMatch {
         let next=Token(record)
         if token != next {
@@ -1034,9 +1164,10 @@ enum FieldPlaybackMode: String, CaseIterable {
 }
 
 /// Match the render lifecycle to the SKView's actual window, including its first attachment.
-private struct MatchArenaSurface:UIViewRepresentable {
+private struct MatchArenaSurface:UIViewRepresentable, @MainActor Equatable {
     let scene:BallparkScene
     let covered:Bool
+    static func ==(lhs:Self,rhs:Self)->Bool {lhs.scene === rhs.scene && lhs.covered == rhs.covered}
     func makeUIView(context:Context)->MatchArenaSKView {
         let view=MatchArenaSKView(frame:.zero)
         view.ignoresSiblingOrder=true
@@ -1067,9 +1198,16 @@ final class MatchArenaSKView:SKView {
         super.didMoveToWindow()
         refreshPause()
     }
-    func setCovered(_ value:Bool) {covered=value;refreshPause()}
+    func setCovered(_ value:Bool) {
+        guard covered != value else {return}
+        covered=value;refreshPause()
+    }
     private func refreshPause() {
-        isPaused=covered || window?.windowScene?.activationState != .foregroundActive
+        #if DEBUG
+        MatchDrawableProbe.shared.register(self)
+        #endif
+        let shouldPause=covered || window?.windowScene?.activationState != .foregroundActive
+        if isPaused != shouldPause {isPaused=shouldPause}
     }
     @objc private func activated(_ notification:Notification) {
         guard let ownScene=window?.windowScene,notification.object as? UIScene === ownScene else {return}
@@ -1131,10 +1269,13 @@ final class MatchArenaSKView:SKView {
 #endif
 
 
-struct CareerGameEntryView:View {
+struct CareerGameEntryView:View, @MainActor Equatable {
     let player:CareerPlayer
     let calendar:CareerCalendarState
     let schools:[School]
+    static func ==(lhs:Self,rhs:Self)->Bool {
+        lhs.player === rhs.player && lhs.calendar === rhs.calendar && lhs.schools == rhs.schools
+    }
     @Environment(\.modelContext) private var context
     @State private var season: MatchOpponentSeason?
     @State private var analysis:MatchOppositionAnalysis?

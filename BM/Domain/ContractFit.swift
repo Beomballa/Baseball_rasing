@@ -700,8 +700,36 @@ enum CareerTeamDirectory {
     static let domesticFirstIDs=domesticIDs.map {$0.replacingOccurrences(of:"dev-",with:"pro-")}
     static let japaneseFirstIDs=(0..<6).map {"jp-pro-\($0)"}
     static let americanFirstIDs=(0..<6).map {"us-pro-\($0)"}
-    static func teams(level:String) -> [String] {
-        switch level {case "mlb-development":americanDevelopmentIDs;case "domestic-first-team":domesticFirstIDs;case "npb-first-team":japaneseFirstIDs;case "mlb-first-team":americanFirstIDs;case "college":collegeIDs;default:domesticIDs}
+    static let japaneseExpandedFirstIDs=(0..<15).map {"jp-pro-\($0)"}
+    static let americanExpandedFirstIDs=(0..<15).map {"us-pro-\($0)"}
+
+    static func teams(level:String,expanded:Bool=false) -> [String] {
+        switch level {
+        case "mlb-development": americanDevelopmentIDs
+        case "domestic-first-team": domesticFirstIDs
+        case "npb-first-team": expanded ? japaneseExpandedFirstIDs:japaneseFirstIDs
+        case "mlb-first-team": expanded ? americanExpandedFirstIDs:americanFirstIDs
+        case "college": collegeIDs
+        default: domesticIDs
+        }
+    }
+    static func fixtures(level:String,year:Int,expanded:Bool) throws -> [SeasonFixture] {
+        let ids=teams(level:level,expanded:expanded)
+        if ids.count == 15 {
+            let east=ids.filter {division(for:$0) == .east}
+            let west=ids.filter {division(for:$0) == .west}
+            return try SeasonSchedule.expandedFixtures(year:year,east:east,west:west)
+        }
+        return try SeasonSchedule.fixtures(year:year,schoolIDs:ids)
+    }
+    static func division(for id:String) -> ClubIdentity.Division? {
+        if let index=japaneseExpandedFirstIDs.firstIndex(of:id) {
+            return ClubIdentity.resolve(id:"npb-\(index)")?.division
+        }
+        if let index=americanExpandedFirstIDs.firstIndex(of:id) {
+            return ClubIdentity.resolve(id:"mlb-\(index)")?.division
+        }
+        return nil
     }
     static let domesticNames=["인천 하버스 육성","대전 코멧츠 육성","부산 타이즈 육성","서울 스타즈 육성","광주 폭시스 육성","대구 팔콘스 육성"]
     static let collegeNames=["해솔대","한빛대","푸른대","다온대","누리대","가온대"]
@@ -712,6 +740,8 @@ enum CareerTeamDirectory {
         if let i=japaneseFirstIDs.firstIndex(of:id) {return OverseasMarket.japaneseNames[i]}
         if let i=americanFirstIDs.firstIndex(of:id) {return OverseasMarket.americanNames[i]}
         if let i=americanDevelopmentIDs.firstIndex(of:id) {return OverseasMarket.americanNames[i]}
+        if let i=japaneseExpandedFirstIDs.firstIndex(of:id),let club=ClubIdentity.resolve(id:"npb-\(i)") {return club.name}
+        if let i=americanExpandedFirstIDs.firstIndex(of:id),let club=ClubIdentity.resolve(id:"mlb-\(i)") {return club.name}
         return schools.first {$0.id == id}?.name ?? SchoolCatalog.displayName(id: id, fallback: id)
     }
 }
@@ -789,7 +819,6 @@ struct CareerContractJournal:Codable,Equatable {
     func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer],reviews:[String:DomesticRenewalReview]=[:]) throws {
         let today=try GameDate(player.gameDate),origin=try GameDate(calendar.originDate)
         if let retiredOn {guard try player.lifecycle.retirement?.date == retiredOn,try GameDate(retiredOn)<=today else {throw ContractRegistrationError.invalid}}
-        try overseasCareer?.validate(owner:self,today:today)
         guard version == 1,playerID == player.id,revision >= 0,
               Set(decisions.map(\.offerID)).count == decisions.count,Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractRegistrationError.invalid}
         var selections: [String: ClubSelectionReview] = [:]
@@ -821,7 +850,12 @@ struct CareerContractJournal:Codable,Equatable {
         for report in reports {
             guard report.observation.origin == calendar.originDate else {throw ContractRegistrationError.invalid}
             try report.validate(playerID:player.id,today:today)
+            if report.version == 4 {
+                let effectiveYear=try GameDate(report.observation.observedDate).year+1
+                guard try calendar.isExpandedOverseas(year:effectiveYear) else {throw ContractRegistrationError.invalid}
+            }
         }
+        try overseasCareer?.validate(owner:self,today:today)
         for decision in decisions {
             guard let offer=offers.first(where:{$0.id == decision.offerID}) else {throw ContractRegistrationError.invalid}
             let date=try GameDate(decision.date)
@@ -1402,7 +1436,7 @@ struct OverseasScoutingReport:Codable {
     var growthPolicy:OverseasGrowthPolicy?
     var id:String {observation.playerID.uuidString+":overseas-report-v1:"+String(period)}
     var selected:ScoutingPerformanceComparison? {ScoutingContractFit.selected(comparisons,role:observation.role)}
-    @MainActor static func make(observation:ScoutingObservation,eligibility:OverseasEligibilitySnapshot,growthPolicy:OverseasGrowthPolicy?=nil) throws -> Self {
+    @MainActor static func make(observation:ScoutingObservation,eligibility:OverseasEligibilitySnapshot,growthPolicy:OverseasGrowthPolicy?=nil,expandedMarket:Bool=false) throws -> Self {
         let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
         let groups=observation.groups.filter {$0.id.hasPrefix(level+"/")}
         let comparisons=try groups.map {group -> ScoutingPerformanceComparison in
@@ -1412,17 +1446,17 @@ struct OverseasScoutingReport:Codable {
             let p=verified ? ScoutingContractFit.correction(value:value!,reference:ref!.value!,n:group.performance!.sample(group.totals.line,role:observation.role)):0
             return ScoutingPerformanceComparison(id:group.id,totals:group.totals,performance:group.performance,reference:ref,value:value,correction:p,verified:verified,reason:verified ? "성인 표준 NPC 기준 · 원소속 수준/입력 환경 분리":"지원 환경/성적 비교 미검증 · P=0")
         }
-        var result=Self(version:3,period:observation.period,eligibility:eligibility,observation:observation,comparisons:comparisons,projections:try OverseasGrowthProjection.make(observation:observation,policy:growthPolicy))
+        var result=Self(version:expandedMarket ? 4:3,period:observation.period,eligibility:eligibility,observation:observation,comparisons:comparisons,projections:try OverseasGrowthProjection.make(observation:observation,policy:growthPolicy))
         result.growthPolicy=growthPolicy
-        result.market=OverseasMarket.make(report:result,version:2);return result
+        result.market=OverseasMarket.make(report:result,version:expandedMarket ? 3:2);return result
     }
     func validate(playerID:UUID,today:GameDate) throws {
         try eligibility.validate(playerID:playerID,today:today);try observation.validate()
         try growthPolicy?.validate(observation:observation)
-        guard [1,2,3].contains(version),observation.playerID == playerID,period == observation.period,eligibility.evidence.date == observation.observedDate,
+        guard [1,2,3,4].contains(version),observation.playerID == playerID,period == observation.period,eligibility.evidence.date == observation.observedDate,
               comparisons.count <= observation.groups.count,Set(comparisons.map(\.id)).count == comparisons.count,
               projections == (try OverseasGrowthProjection.make(observation:observation,policy:growthPolicy)) else {throw ContractEvaluationError.invalid}
-        guard version == 1 ? market == nil:market == OverseasMarket.make(report:self,version:version == 3 ? 2:1) else {throw ContractEvaluationError.invalid}
+        guard version == 1 ? market == nil:market == OverseasMarket.make(report:self,version:version-1) else {throw ContractEvaluationError.invalid}
         let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
         guard comparisons.map(\.id) == observation.groups.filter({$0.id.hasPrefix(level+"/")}).map(\.id) else {throw ContractEvaluationError.invalid}
         for row in comparisons {
@@ -1462,6 +1496,19 @@ struct OverseasMarket:Codable,Equatable {
     let clubs:[OverseasClubEvaluation]
     static let americanNames=["퍼시픽 웨이브스","캐니언 호크스","레이크 베어스","메트로 나이츠","애틀랜틱 세일러스","프레리 버팔로스"]
     static let japaneseNames=["동도 스카이스","항남 마리너즈","서경 피닉스","북해 스노우스","중앙 레일즈","남양 선즈"]
+    // Frozen display names for V3 market reconstruction.
+    private static let americanExpansionNames=["텍사스 아르마딜로스","마이애미 코럴스","볼티모어 라이트하우스","덴버 서밋츠",
+        "보스턴 브라스","롤리 오크스","포틀랜드 에버그린스","샌디에이고 선레이스","라스베이거스 미라지스"]
+    private static let japaneseExpansionNames=["센다이 스피릿츠","치바 라군스","사이타마 실버울브스","고베 오리온즈",
+        "모리오카 아이언스","니가타 리드스","히로시마 메이플스","후쿠오카 게일스","마쓰야마 시트러스"]
+
+    private static func names(for route:OverseasRoute,version:Int) -> [String] {
+        switch route {
+        case .mlbDevelopment: americanNames
+        case .npbFirstTeam: version == 3 ? japaneseNames+japaneseExpansionNames:japaneseNames
+        case .mlbFirstTeam: version == 3 ? americanNames+americanExpansionNames:americanNames
+        }
+    }
     static func minimum(_ route:OverseasRoute,_ role:String) -> Double {
         let rows:[OverseasRoute:[String:Double]]=[.mlbDevelopment:["slugger":68,"onBase":65,"field":62,"starter":65],.npbFirstTeam:["slugger":80,"onBase":77,"field":73,"starter":76],.mlbFirstTeam:["slugger":88,"onBase":85,"field":81,"starter":84]]
         return rows[route]![role]!
@@ -1473,13 +1520,13 @@ struct OverseasMarket:Codable,Equatable {
         let p=enough ? source?.correction ?? 0:0
         var rows:[OverseasClubEvaluation]=[]
         for route in OverseasRoute.allCases {
-            let names=route == .npbFirstTeam ? japaneseNames:americanNames
+            let names=names(for:route,version:version)
             for index in names.indices {for grade in report.observation.grades {
                 let id=route.id+"/\(index)/"+grade.id,bits=DomesticSelection.hash(seed+id)
                 let demand:RecruitmentDemand=bits%5 == 0 ? .none:bits%3 == 0 ? .vacancy:.depth
                 let minimum=minimum(route,grade.id),competitor=demand == .vacancy ? nil:minimum+Double((bits/11)%9)
                 let c=max(minimum,competitor ?? minimum),f=grade.score.map {ScoutingContractFit.round($0-c+p)}
-                let budget=(version == 2 && route != .mlbDevelopment ? 800:300)+Int((bits/23)%401),seats=demand == .none ? 0:1
+                let budget=((2...3).contains(version) && route != .mlbDevelopment ? 800:300)+Int((bits/23)%401),seats=demand == .none ? 0:1
                 let projected=report.projections.first {$0.roleID == grade.id}?.baseline
                 var blockers:[String]=[]
                 if !enough {blockers.append("동일 환경 관찰40타석/15이닝 필요")}
@@ -1962,13 +2009,14 @@ struct FASeasonEvidence:Codable,Equatable {
     let sourceID:String
     let level:String
     let matchKeys:[String]
-    static func collect(owner:CareerContractJournal,role:PlayerRole,on date:GameDate,rows:[CareerMatchRecord]) throws -> [Self] {
+    static func collect(owner:CareerContractJournal,role:PlayerRole,on date:GameDate,rows:[CareerMatchRecord],expandedFrom:Int?=nil) throws -> [Self] {
         var result:[Self]=[]
         for year in Set(try rows.map {try GameDate($0.gameDate).year}).sorted() {
             let first=try GameDate("\(year)-04-01"),last=first.adding(days:174)
             guard last < date,let start=try owner.current(on:first),let end=try owner.current(on:last),
                   start.offerID == end.offerID,start.level == end.level,["npb-first-team","mlb-first-team"].contains(start.level) else {continue}
-            let fixtures=try SeasonSchedule.fixtures(year:year,schoolIDs:CareerTeamDirectory.teams(level:start.level)).filter {$0.includes(start.teamID)}
+            let expanded=expandedFrom.map {year >= $0} ?? false
+            let fixtures=try CareerTeamDirectory.fixtures(level:start.level,year:year,expanded:expanded).filter {$0.includes(start.teamID)}
             var keys:[String]=[],totals=PersonalSeasonTotals()
             for row in rows where row.completed && row.appearance && row.gameDate >= first.description && row.gameDate <= last.description {
                 guard row.playerID == owner.playerID,let fixture=fixtures.first(where:{$0.id == row.fixtureID}),fixture.date.description == row.gameDate,
@@ -2473,8 +2521,9 @@ extension CareerTargetClub {
         let parts=id.components(separatedBy:"/")
         guard parts.count == 3 else {return nil}
         if route == nil {let team="dev-"+parts[1];return CareerTeamDirectory.domesticIDs.contains(team) ? team:nil}
-        guard let index=Int(parts[1]),(0..<6).contains(index) else {return nil}
-        return (route == .npbFirstTeam ? CareerTeamDirectory.japaneseFirstIDs:route == .mlbFirstTeam ? CareerTeamDirectory.americanFirstIDs:CareerTeamDirectory.americanDevelopmentIDs)[index]
+        let teams=CareerTeamDirectory.teams(level:assessmentLevel,expanded:true)
+        guard let index=Int(parts[1]),teams.indices.contains(index) else {return nil}
+        return teams[index]
     }
 }
 
@@ -2730,6 +2779,7 @@ struct ClubSeasonGoal:Codable,Equatable,Identifiable {
     let targets:[ClubSeasonTarget]
     var settledOn:String? = nil
     var result:ClubSeasonProgress? = nil
+    var expandedSchedule:Bool? = nil
     static func key(_ role:CareerClubRole,year:Int) -> String {"club-season-v1/\(role.membershipID)/\(role.teamID)/\(role.level)/\(year)"}
     static func targets(role:CareerClubRole,playerRole:String,appearances:Int) -> [ClubSeasonTarget] {
         // Deterministic game balance: team emphasis and level, never a real club promise.
@@ -2762,12 +2812,15 @@ struct ClubSeasonGoal:Codable,Equatable,Identifiable {
     }
 }
 extension CareerContractJournal {
-    func validateSeasonGoals(today:GameDate,offers:[DomesticContractOffer]) throws {
+    func validateSeasonGoals(today:GameDate,offers:[DomesticContractOffer],expandedFrom:Int?) throws {
         let goals=seasonGoals ?? []
         guard Set(goals.map(\.id)).count == goals.count else {throw ContractRegistrationError.invalid}
         for goal in goals {
             let date=try GameDate(goal.started)
+            let expanded=["npb-first-team","mlb-first-team"].contains(goal.role.level)
+                && (expandedFrom.map {goal.year >= $0} ?? false)
             guard goal.version == 1,goal.year == date.year,date <= today,
+                  goal.expandedSchedule == (expanded ? true:nil),
                   let member=try current(on:date),member.teamID == goal.role.teamID,member.level == goal.role.level,
                   CareerClubRole.make(member:member,owner:self,offers:offers,on:goal.started) == goal.role,
                   goal.role.roleID != nil,goal.appearances > 0,goal.appearances <= 30,
@@ -2775,7 +2828,8 @@ extension CareerContractJournal {
                   goal.id == ClubSeasonGoal.key(goal.role,year:goal.year),
                   goal.targets == ClubSeasonGoal.targets(role:goal.role,playerRole:goal.playerRole,appearances:goal.appearances),
                   Set(goal.fixtureIDs).count == goal.fixtureIDs.count,Set(goal.excludedKeys).count == goal.excludedKeys.count else {throw ContractRegistrationError.invalid}
-            let eligible=try SeasonSchedule.fixtures(year:goal.year,schoolIDs:CareerTeamDirectory.teams(level:goal.role.level)).filter {$0.includes(goal.role.teamID) && $0.date >= date}
+            let eligible=try CareerTeamDirectory.fixtures(level:goal.role.level,year:goal.year,expanded:expanded)
+                .filter {$0.includes(goal.role.teamID) && $0.date >= date}.map {$0.forTeam(goal.role.teamID)}
             let remaining=eligible.filter {!goal.excludedKeys.contains(CareerMatchRecord.key(playerID,$0.id))}
             guard goal.fixtureIDs == remaining.map(\.id),goal.appearances == remaining.filter({$0.isAppearance(for:goal.playerRole == "batter" ? .batter:.pitcher)}).count else {throw ContractRegistrationError.invalid}
             if let result=goal.result,let settled=goal.settledOn {
@@ -2954,6 +3008,7 @@ struct ClubParticipationBasis:Codable,Equatable {
     let from:String
     let through:String
     let games:[ClubParticipationGame]
+    var expandedSchedule:Bool? = nil
     var starts:Int {games.filter {$0.appearance == true}.count}
     var bench:Int {games.filter {$0.kind == .bench}.count}
     var rotationRest:Int {games.filter {$0.kind == .rotationRest}.count}
@@ -2961,13 +3016,16 @@ struct ClubParticipationBasis:Codable,Equatable {
     var unknownTurns:Int {games.filter {$0.rotationDay && [.legacy,.missing].contains($0.kind)}.count}
     func matching(_ member:CareerMembership) -> Self? {membershipID == member.offerID && teamID == member.teamID && level == member.level ? self:nil}
     func validate() throws {
+        let expanded=expandedSchedule == true
         guard version == 1,!membershipID.isEmpty,!teamID.isEmpty,["batter","pitcher"].contains(playerRole),
+              expandedSchedule != false,(!expanded || ["npb-first-team","mlb-first-team"].contains(level)),
               ["college","domestic-development","domestic-first-team","mlb-development","npb-first-team","mlb-first-team"].contains(level),
-              CareerTeamDirectory.teams(level:level).contains(teamID),try GameDate(from).year == year,try GameDate(from)<=GameDate(through),games.count<=30,
+              CareerTeamDirectory.teams(level:level,expanded:expanded).contains(teamID),try GameDate(from).year == year,try GameDate(from)<=GameDate(through),games.count<=30,
               Set(games.map(\.fixtureID)).count == games.count,games.map(\.date) == games.map(\.date).sorted() else {throw ContractRegistrationError.invalid}
-        let schedule=try SeasonSchedule.fixtures(year:year,schoolIDs:CareerTeamDirectory.teams(level:level))
+        let schedule=try CareerTeamDirectory.fixtures(level:level,year:year,expanded:expanded)
+            .filter {$0.includes(teamID)}.map {$0.forTeam(teamID)}
         for game in games {
-            guard let fixture=schedule.first(where:{$0.id == game.fixtureID}),fixture.includes(teamID),game.date == fixture.date.description,
+            guard let fixture=schedule.first(where:{$0.id == game.fixtureID}),game.date == fixture.date.description,
                   game.key == CareerMatchRecord.key(playerID,game.fixtureID),game.date>=from,game.date<=through,
                   game.rotationDay == fixture.isAppearance(for:playerRole == "batter" ? .batter:.pitcher) else {throw ContractRegistrationError.invalid}
             switch game.kind {
@@ -2982,6 +3040,7 @@ struct ClubParticipationBasis:Codable,Equatable {
     func validate(goal:ClubSeasonGoal) throws {
         try validate()
         guard membershipID == goal.role.membershipID,teamID == goal.role.teamID,level == goal.role.level,
+              expandedSchedule == goal.expandedSchedule,
               playerRole == goal.playerRole,year == goal.year,from == goal.started,through == goal.settledOn,
               games.allSatisfy({goal.fixtureIDs.contains($0.fixtureID) && !goal.excludedKeys.contains($0.key)}) else {throw ContractRegistrationError.invalid}
     }

@@ -50,6 +50,27 @@ enum CareerSchemaV3: VersionedSchema {
         #endif
         static func key(_ playerID: UUID, _ fixtureID: String) -> String { "\(playerID.uuidString):\(fixtureID)" }
         func snapshot() throws -> CareerMatch {
+            try CareerMatchReadSnapshot(self).validated()
+        }
+    }
+}
+
+typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
+
+// 원장 원문과 메타데이터의 값 복사본만 다른 실행기로 전달하고 SwiftData 모델은 기존 컨텍스트에 둔다.
+struct CareerMatchReadSnapshot: Sendable, Equatable {
+    let key:String,fixtureID:String,gameDate:String,opponentID:String,rulesVersion:String
+    let playerID:UUID
+    let appearance:Bool,completed:Bool
+    let payload:Data
+    let revision:Int,fatigueBefore:Int,fatigueAfter:Int
+    init(_ record:CareerMatchRecord) {
+        key=record.key;fixtureID=record.fixtureID;gameDate=record.gameDate;opponentID=record.opponentID
+        rulesVersion=record.rulesVersion;playerID=record.playerID;appearance=record.appearance
+        completed=record.completed;payload=record.payload;revision=record.revision
+        fatigueBefore=record.fatigueBefore;fatigueAfter=record.fatigueAfter
+    }
+    func validated() throws -> CareerMatch {
             guard ["native-match-v1", "native-match-v2"].contains(rulesVersion), let match = try? JSONDecoder().decode(CareerMatch.self, from: payload),
                   match.completed == completed, match.appearance == appearance else { throw MatchError.invalidRecord }
             if let stats = match.fieldStats, [2, 3].contains(stats.version) {
@@ -89,7 +110,7 @@ enum CareerSchemaV3: VersionedSchema {
             if let records=match.playerRecords {
                 guard records.careerID == playerID,records.fixtureID == fixtureID,
                       records.year == (try GameDate(gameDate)).year,
-                      key == Self.key(playerID,fixtureID) else {throw MatchError.invalidRecord}
+                      key == CareerMatchRecord.key(playerID,fixtureID) else {throw MatchError.invalidRecord}
             }
             try match.validateDetailedField()
             if let roster=match.npcFielders {
@@ -101,11 +122,24 @@ enum CareerSchemaV3: VersionedSchema {
                 guard growth.year == (try GameDate(gameDate)).year else { throw MatchError.invalidRecord }
             }
             return match
-        }
     }
 }
 
-typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
+struct CareerPreparedManualInput: Sendable {
+    fileprivate let source:CareerMatchReadSnapshot
+    fileprivate let calendarRevision:Int,playerDate:String,playerFatigue:Int
+    fileprivate let input:MatchInput,pitchCode:String?,control:ManualMatchInput
+    fileprivate let previous:CareerMatch,updated:CareerMatch,payload:Data
+    #if DEBUG
+    var preparedOnMainThread=Thread.isMainThread
+    #endif
+}
+
+struct CareerCommittedManualInput {
+    let previous:CareerMatch,updated:CareerMatch
+    fileprivate let saved:CareerMatchReadSnapshot
+    func matches(_ record:CareerMatchRecord) -> Bool { saved == CareerMatchReadSnapshot(record) }
+}
 
 @MainActor enum CareerMatchStore {
     static func record(player: CareerPlayer, fixture: SeasonFixture, in context: ModelContext) throws -> CareerMatchRecord? {
@@ -211,13 +245,81 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
     static func advance(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
                         revision: Int, input: MatchInput, pitchCode: String? = nil, control: ManualMatchInput? = nil, in context: ModelContext,
                         save: CalendarProgression.Save = { try $0.save() }) throws {
+        _ = try applyInput(player:player,state:state,record:record,revision:revision,input:input,pitchCode:pitchCode,control:control,prepared:nil,in:context,save:save)
+    }
+
+    static func prepareManual(player:CareerPlayer,state:CareerCalendarState,record:CareerMatchRecord,revision:Int,
+                              input:MatchInput,pitchCode:String?,control:ManualMatchInput) async throws -> CareerPreparedManualInput {
+        try Task.checkCancellation()
+        guard input != .automatic,record.revision == revision,!record.completed else {throw MatchError.stale}
+        let source=CareerMatchReadSnapshot(record),calendarRevision=state.revision,date=player.gameDate,fatigue=player.fatigue
+        #if DEBUG
+        MatchRenderMetrics.mark("career.prepare.begin")
+        #endif
+        let job=Task.detached(priority:.userInitiated) {
+            try Task.checkCancellation()
+            let previous=try source.validated()
+            var updated=previous
+            try updated.advance(input,pitchCode:pitchCode,control:control)
+            try validateAdvanced(updated)
+            let payload=try JSONEncoder().encode(updated)
+            try Task.checkCancellation()
+            return CareerPreparedManualInput(source:source,calendarRevision:calendarRevision,playerDate:date,
+                playerFatigue:fatigue,input:input,pitchCode:pitchCode,control:control,previous:previous,updated:updated,payload:payload)
+        }
+        let prepared=try await withTaskCancellationHandler(operation:{try await job.value},onCancel:{job.cancel()})
+        try Task.checkCancellation()
+        #if DEBUG
+        MatchRenderMetrics.mark("career.prepare.ready")
+        #endif
+        return prepared
+    }
+
+    static func commitManual(_ prepared:CareerPreparedManualInput,player:CareerPlayer,state:CareerCalendarState,
+                             record:CareerMatchRecord,in context:ModelContext,
+                             save:CalendarProgression.Save = {try $0.save()}) throws -> CareerCommittedManualInput {
+        try Task.checkCancellation()
+        return try applyInput(player:player,state:state,record:record,revision:prepared.source.revision,input:prepared.input,
+            pitchCode:prepared.pitchCode,control:prepared.control,prepared:prepared,in:context,save:save)
+    }
+
+    nonisolated private static func validateAdvanced(_ match:CareerMatch) throws {
+        try match.validatePitching()
+        try match.inningScores?.validate(match:match)
+        try match.playerRecords?.validate(match:match)
+        try match.validateDetailedField()
+        try match.positionExperience?.validate(match:match)
+        try match.abilityExperience?.validate(match:match)
+    }
+
+    private static func applyInput(player:CareerPlayer,state:CareerCalendarState,record:CareerMatchRecord,
+                                   revision:Int,input:MatchInput,pitchCode:String?,control:ManualMatchInput?,
+                                   prepared:CareerPreparedManualInput?,in context:ModelContext,
+                                   save:CalendarProgression.Save) throws -> CareerCommittedManualInput {
+        #if DEBUG
+        MatchRenderMetrics.mark("career.store.begin")
+        #endif
+        if prepared != nil {
+            guard player.modelContext === context,state.modelContext === context,record.modelContext === context else {throw MatchError.stale}
+        }
         try CareerLifecycleStore.requireActive(player)
         let fixture = try today(player: player, state: state)
         guard record.playerID == player.id, record.key == CareerMatchRecord.key(player.id, fixture.id),
               record.revision == revision, state.hasAction(on: player.gameDate) else { throw MatchError.stale }
         guard !record.completed else { throw MatchError.finished }
-        var match = try record.snapshot()
-        try match.advance(input, pitchCode: pitchCode, control: control)
+        if let prepared {
+            guard prepared.source == CareerMatchReadSnapshot(record),prepared.calendarRevision == state.revision,
+                  prepared.playerDate == player.gameDate,prepared.playerFatigue == player.fatigue else {throw MatchError.stale}
+        }
+        let previous=try prepared?.previous ?? record.snapshot()
+        var match=prepared?.updated ?? previous
+        #if DEBUG
+        MatchRenderMetrics.mark("career.store.snapshotReady")
+        #endif
+        if prepared == nil {try match.advance(input,pitchCode:pitchCode,control:control)}
+        #if DEBUG
+        MatchRenderMetrics.mark("career.store.simulated")
+        #endif
         // Validate all reward recipients before mutating any persistent object.
         var positionReward: (PlayerPositions, PositionLoadout)?
         if match.completed, let experience = match.positionExperience {
@@ -229,12 +331,7 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             try loadout.validate()
             if experience.after != experience.before { positionReward = (profile, loadout) }
         }
-        try match.validatePitching()
-        try match.inningScores?.validate(match: match)
-        try match.playerRecords?.validate(match:match)
-        try match.validateDetailedField()
-        try match.positionExperience?.validate(match: match)
-        try match.abilityExperience?.validate(match: match)
+        if prepared == nil {try validateAdvanced(match)}
         var abilityReward: (PlayerAbilities, MatchAbilityGrowth)?
         if match.completed, let experience = match.abilityExperience, let result = experience.result {
             guard player.fatigue == experience.fatigue,
@@ -246,8 +343,15 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
             abilityReward = (profile, result)
         }
         if match.completed {match.projectFeedback = try completionFeedback(match,player:player,state:state,record:record,fixture:fixture,in:context)}
-        let payload = try JSONEncoder().encode(match)
+        #if DEBUG
+        MatchRenderMetrics.mark("career.store.validated")
+        #endif
+        let payload:Data
+        if let prepared,!match.completed {payload=prepared.payload} else {payload=try JSONEncoder().encode(match)}
         let positionPayload = try positionReward.map { try JSONEncoder().encode($0.1) }
+        #if DEBUG
+        MatchRenderMetrics.mark("career.store.encoded")
+        #endif
         record.payload = payload
         if match.controlVersion == 2 { record.rulesVersion = "native-match-v2" }
         record.revision += 1
@@ -272,7 +376,15 @@ typealias CareerMatchRecord = CareerSchemaV3.MatchRecord
         }
         state.revision += 1
         // Result, ability growth, position XP, fatigue and completion share one explicit save.
+        #if DEBUG
+        MatchRenderMetrics.mark("career.store.saveBegin")
+        #endif
+        let saved=CareerMatchReadSnapshot(record)
         do { try save(context) } catch { context.rollback(); throw error }
+        #if DEBUG
+        MatchRenderMetrics.mark("career.store.saved")
+        #endif
+        return CareerCommittedManualInput(previous:previous,updated:match,saved:saved)
     }
 
     private static func completionFeedback(_ match:CareerMatch,player:CareerPlayer,state:CareerCalendarState,record:CareerMatchRecord,fixture:SeasonFixture,in context:ModelContext) throws -> MatchProjectFeedback {
@@ -515,7 +627,7 @@ extension CareerMatchStore {
             through: cutoff.description, uncollectedGames: ledger.uncollectedGames, players: rows)
         let plan = try state.competition(for: player, year: fixture.date.year)
         let required = Set(plan.fixtures.filter { $0.date <= cutoff }.map(\.id))
-        snapshot.honors = LeagueHonorRules.leaders(ledger, requiredFixtureIDs: required).filter { $0.teamID == analysis.teamID }
+        snapshot.honors = LeagueHonorRules.leaders(ledger, requiredFixtureIDs: required, teamCount: plan.teamIDs.count).filter { $0.teamID == analysis.teamID }
         snapshot.pitchHistory=try opponentPitchHistory(playerID:player.id,year:fixture.date.year,competition:attack.competition,teamID:analysis.teamID,through:cutoff,in:context)
         try snapshot.validate(analysis: analysis, date: fixture.date)
         return snapshot

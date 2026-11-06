@@ -3,6 +3,50 @@ import SwiftData
 @testable import BM
 
 @MainActor final class CareerTrainingTests: XCTestCase {
+    func testV124DefaultTrainingEntryResumesStudyAfterDayAndDiskReopen() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("training-entry.store")
+        var playerID: UUID!, progress = 0.0, originalPayload = Data()
+        try autoreleasepool {
+            let db = try CareerStore.makeContainer(url: url), context = db.mainContext
+            let (player, calendar) = try setup(context, role: .pitcher, date: "2026-04-02")
+            playerID = player.id
+            try PitchSelectionStore.select("slider", player: player, in: context)
+            let record = try PitchStudyStore.start(player: player, state: calendar, code: "sweeper", replacing: "slider", in: context)
+            for _ in 0..<5 { try attempt(player, calendar, record, context) }
+            progress = try record.snapshot().after; originalPayload = record.payload
+            XCTAssertNil(try PitchStudyStore.continuationForPreparation(player: player, initialKind: nil, in: context))
+            try CalendarProgression.advanceDay(player: player, state: calendar, revision: calendar.revision, in: context)
+        }
+        try autoreleasepool {
+            let db = try CareerStore.makeContainer(url: url), context = db.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == playerID })
+            let calendar = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == playerID })
+            let revision = calendar.revision, fatigue = player.fatigue
+            let previous = try XCTUnwrap(context.fetch(FetchDescriptor<CareerTrainingRecord>()).first)
+            let continuation = try XCTUnwrap(PitchStudyStore.continuationForPreparation(player: player, initialKind: nil, in: context))
+            XCTAssertEqual(continuation.pitchStudy?.code, "sweeper")
+            XCTAssertEqual(continuation.pitchStudy?.replacing, "slider")
+            XCTAssertEqual(continuation.after, progress)
+            XCTAssertEqual(try PitchStudyStore.continuationForPreparation(player: player, initialKind: .pitch, in: context)?.pitchCode, "sweeper")
+            XCTAssertNil(try PitchStudyStore.continuationForPreparation(player: player, initialKind: .control, in: context))
+            XCTAssertNil(try PitchStudyStore.continuationForPreparation(player: player, initialKind: .velocity, in: context))
+            XCTAssertEqual(try PitchSelectionStore.resolve(player: player), "slider")
+            XCTAssertEqual(previous.payload, originalPayload)
+            XCTAssertEqual(calendar.revision, revision); XCTAssertEqual(player.fatigue, fatigue)
+            XCTAssertFalse(context.hasChanges); XCTAssertFalse(calendar.hasAction(on: player.gameDate))
+            let study = try XCTUnwrap(continuation.pitchStudy)
+            let resumed = try PitchStudyStore.start(player: player, state: calendar, code: study.code, replacing: study.replacing, in: context)
+            XCTAssertEqual(try resumed.snapshot().before, progress)
+            XCTAssertEqual(try resumed.snapshot().pitchStudy?.replacing, "slider")
+            XCTAssertNil(try PitchStudyStore.continuationForPreparation(player: player, initialKind: nil, in: context))
+            XCTAssertEqual(previous.payload, originalPayload)
+            XCTAssertFalse(player.pitches.contains { $0.code == "sweeper" })
+        }
+    }
+
     func testV99StudyContinuationSurvivesDayAndDiskReopenWithoutWrites() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

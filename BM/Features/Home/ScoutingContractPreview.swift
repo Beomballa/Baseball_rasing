@@ -347,21 +347,22 @@ struct ScoutDossier<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: sectionGap) {
             (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:6)) : AnyLayout(HStackLayout(alignment:.top))) {
-                Text(code).font(.caption2.monospaced().bold()).foregroundStyle(ScoutDossierInk.muted)
+                Text(code).font(.caption2.monospaced().bold()).foregroundStyle(ScoutDossierInk.muted).fixedSize(horizontal: false, vertical: true)
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
                 Text(stamp).font(.caption.monospaced().bold()).foregroundStyle(ScoutDossierInk.green)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal,8).padding(.vertical,4).overlay(Rectangle().strokeBorder(ScoutDossierInk.green,lineWidth:2))
             }
             Text(title).font(ManagementPixelFont.readable(.sectionTitle)).foregroundStyle(ScoutDossierInk.ink)
                 .frame(maxWidth: .infinity, minHeight: 36).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             Rectangle().fill(ScoutDossierInk.ink).frame(height: 2).accessibilityHidden(true)
             content
-            HStack {
-                Text("BM  /  SCOUTING DEPARTMENT").font(.caption2.monospaced()).foregroundStyle(ScoutDossierInk.muted)
-                Spacer(minLength: 0)
-                Text(isPreview ? "시안" : "실제 선수 자료").font(.caption2.bold()).foregroundStyle(ScoutDossierInk.muted)
+            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .top))) {
+                Text("BM  /  SCOUTING DEPARTMENT").font(.caption2.monospaced()).foregroundStyle(ScoutDossierInk.muted).fixedSize(horizontal: false, vertical: true)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                Text(isPreview ? "시안" : "실제 선수 자료").font(.caption2.bold()).foregroundStyle(ScoutDossierInk.muted).fixedSize(horizontal: false, vertical: true)
             }.padding(.top,4)
-        }.padding(18).frame(maxWidth:.infinity,alignment:.leading)
+        }.padding(18).frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal: false, vertical: true).lineLimit(nil)
             .foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
             .overlay(Rectangle().strokeBorder(ScoutDossierInk.rule,lineWidth:2))
             .padding(.bottom,4).background(alignment:.bottom) { Rectangle().fill(ScoutDossierInk.rule).padding(.horizontal,4) }

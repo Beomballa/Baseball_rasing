@@ -96,6 +96,9 @@ struct LocationDrillReplay: Equatable {
     private var appearance = PlayerAppearance()
     private var number = 1, hand = "right"
     private var frames: [SKTexture] = [], catchFrames: [SKTexture] = []
+    private var fullBodyPitcher: FullBodyPitcherNode?
+    private var pitchRelease = CGPoint.zero
+    private var drillPreparation = 0.0
     private var actorKey = "", receiverKey = ""
     private var target = TrainingTarget(x: 0.5, y: 0.5), selected = TrainingTarget(x: 0.5, y: 0.5)
     private var playback: (replay: LocationDrillReplay, started: Double, flight: Double, curve: Double, completion: @MainActor () -> Void)?
@@ -122,15 +125,32 @@ struct LocationDrillReplay: Equatable {
     }
     func configure(kind: TrainingKind, appearance: PlayerAppearance, number: Int, hand: String) {
         cancel(); removeAllChildren(); self.kind = kind; self.appearance = appearance; self.number = number; self.hand = hand; actorKey = ""; receiverKey = ""; goal.isHidden = false; aim.isHidden = false
+        fullBodyPitcher?.removeFromParent()
+        fullBodyPitcher = nil
         actor.name = "locationActor"; ball.name = "locationBall"; goal.name = "locationGoal"; aim.name = "locationAim"
         backgroundColor = UIColor(Color(hex: 0x163b32))
         if kind == .control {
             backdrop(TrainingEnvironmentArt.texture(.bullpen), rect: CGRect(origin: .zero, size: TrainingStageLayout.size))
             children.last?.xScale = hand == "left" ? -1 : 1
             let plate = SKSpriteNode(color: .white, size: CGSize(width: 18, height: 3)); plate.position = point(CGPoint(x: 150, y: 118)); addChild(plate)
-            frames = PlayerMotionArt.textures(role: .pitcher, appearance: appearance, number: number, hand: hand)
-            catchFrames = (0..<4).compactMap { i in
-                cropped("catcher-parts", rect: CGRect(x: Double(i % 2) / 2, y: 1 - Double(i / 2 + 1) / 2, width: 0.5, height: 0.5))
+            if let pitcher = FullBodyPitcherNode(role: .pitcher, appearance: appearance, number: number, hand: hand),
+               pitcher.usesRefinedDelivery {
+                fullBodyPitcher = pitcher
+                actor.texture = nil
+                actor.addChild(pitcher)
+                frames = []
+            } else {
+                frames = PlayerMotionArt.textures(role: .pitcher, appearance: appearance, number: number, hand: hand)
+            }
+            let uniform = appearance.uniformStyle
+            let proCatchFrames = uniform?.pro == nil ? [] : OpponentMotionArt.textures(
+                "catcher-parts", columns: 2, rows: 2, ownKit: appearance.uniformColor, opponent: false, style: uniform)
+            if proCatchFrames.count == 4 {
+                catchFrames = proCatchFrames
+            } else {
+                catchFrames = (0..<4).compactMap { i in
+                    cropped("catcher-parts", rect: CGRect(x: Double(i % 2) / 2, y: 1 - Double(i / 2 + 1) / 2, width: 0.5, height: 0.5))
+                }
             }
             actor.size = CGSize(width: 128, height: 128); actor.xScale = hand == "left" ? -1 : 1
             receiver.xScale = 1; receiver.anchorPoint = CGPoint(x: 0.5, y: 0.5)
@@ -180,7 +200,19 @@ struct LocationDrillReplay: Equatable {
     func play(_ replay: LocationDrillReplay, at now: Double = ProcessInfo.processInfo.systemUptime, preparedRelease: Bool = false, flightDuration: Double = 1, curve: Double = 0, completion: @escaping @MainActor () -> Void) {
         movement = nil
         preview(target: replay.target, input: replay.input, animated: false)
-        playback = (replay, now - (preparedRelease ? LocationDrillReplay.windup : 0), flightDuration, curve, completion); playing = true; finished = false; advance(at: now)
+        if kind == .control {
+            pitchingPose(3, progress: 1)
+            pitchRelease = pitchingHand(3)
+        }
+        let performedPreparation: Double
+        if preparedRelease {
+            // A deliberately early rhythm input continues from the last visible pose.
+            performedPreparation = drillPreparation > 0 && drillPreparation < 0.995 ? drillPreparation : 1
+        } else {
+            performedPreparation = 0
+        }
+        playback = (replay, now - performedPreparation * LocationDrillReplay.windup, flightDuration, curve, completion)
+        playing = true; finished = false; advance(at: now)
     }
     override func update(_ currentTime: TimeInterval) { advance(at: ProcessInfo.processInfo.systemUptime) }
     func advance(at now: Double) {
@@ -195,10 +227,14 @@ struct LocationDrillReplay: Equatable {
         let elapsed = max(0, now - playback.started), p = min(1, max(0, (elapsed - LocationDrillReplay.windup) / playback.flight))
         let destination = point(LocationDrillReplay.point(kind == .control ? playback.replay.input : playback.replay.target, kind: kind))
         if kind == .control {
+            let preparing = elapsed + 0.000001 < LocationDrillReplay.windup
             let frame = elapsed < 0.2 ? 1 : elapsed < LocationDrillReplay.windup ? 2 : p < 0.3 ? 3 : p < 1 ? 4 : 5
-            pitchingPose(frame)
-            let release = pitchingHand(3)
-            ball.position = elapsed < LocationDrillReplay.windup ? pitchingHand(frame) : CGPoint(x: release.x + (destination.x - release.x) * p + sin(p * .pi) * playback.curve, y: release.y + (destination.y - release.y) * p)
+            pitchingPose(frame, progress: preparing ? elapsed / LocationDrillReplay.windup : 1 + p)
+            ball.position = preparing ? pitchingHand(frame) : CGPoint(
+                x: pitchRelease.x + (destination.x - pitchRelease.x) * p + sin(p * .pi) * playback.curve,
+                y: pitchRelease.y + (destination.y - pitchRelease.y) * p
+            )
+            ball.isHidden = preparing && fullBodyPitcher?.hasVisibleHand == false
             mitt.position = CGPoint(x: goal.position.x + (destination.x - goal.position.x) * p, y: goal.position.y + (destination.y - goal.position.y) * p)
             if p == 1, catchFrames.count == 4 { receiver.texture = catchFrames[1]; mitt.texture = catchFrames[3] }
         } else {
@@ -212,7 +248,7 @@ struct LocationDrillReplay: Equatable {
             ball.position = CGPoint(x: origin.x + (end.x - origin.x) * p, y: origin.y + (end.y - origin.y) * p + abs(sin(p * .pi * 3)) * 5 * (1-p))
             setFieldActor(actor, motion: FieldSpriteMotion(facing: facing(from: actor.position, to: receiver.position), stage: p < 0.8 ? .ready : .catchBall, progress: max(0, (p - 0.8) / 0.2), chestCatch: false), number: number)
         }
-        ball.isHidden = elapsed < LocationDrillReplay.windup && kind == .defense
+        if kind == .defense { ball.isHidden = elapsed < LocationDrillReplay.windup }
         if elapsed >= LocationDrillReplay.windup + playback.flight + LocationDrillReplay.receive {
             self.playback = nil; playing = false; finished = true; playback.completion()
         }
@@ -220,12 +256,22 @@ struct LocationDrillReplay: Equatable {
     func prepareDrill(phase: Double) {
         guard !playing else { return }
         goal.isHidden = true; aim.isHidden = true
+        if phase == 0 { drillPreparation = 0 }
+        let releaseBeat = (SkillDrillRules.beats.last ?? SkillDrillRules.rhythmDuration) / SkillDrillRules.rhythmDuration
+        drillPreparation = max(drillPreparation, min(0.999, phase / releaseBeat))
         let frame = phase < 0.27 ? 0 : phase < 0.56 ? 1 : 2
-        pitchingPose(frame)
-        ball.isHidden = false
+        pitchingPose(frame, progress: drillPreparation)
+        ball.isHidden = fullBodyPitcher?.hasVisibleHand == false
         ball.position = pitchingHand(frame)
     }
-    private func pitchingPose(_ frame: Int) {
+    private func pitchingPose(_ frame: Int, progress: Double = 0) {
+        if let fullBodyPitcher {
+            actor.position = pitchingFoot(0)
+            // Match the bullpen camera scale while keeping the same registered support foot.
+            let canvas = fullBodyPitcher.authoredCanvas.map { $0 * 128 / 164.6666666667 } ?? 128
+            fullBodyPitcher.apply(progress: progress, canvas: canvas, anchor: fullBodyPitcher.registrationAnchor)
+            return
+        }
         guard frames.indices.contains(frame) else { return }
         let source = PitcherPresentationPose(role: .pitcher, frame: frame, hand: "right")
         actor.texture = frames[frame]
@@ -238,12 +284,17 @@ struct LocationDrillReplay: Equatable {
         return point(CGPoint(x: hand == "left" ? 320 - x : x, y: frame < 3 ? 194 : 187))
     }
     private func pitchingHand(_ frame: Int) -> CGPoint {
+        if let fullBodyPitcher { return fullBodyPitcher.convert(fullBodyPitcher.handPoint, to: self) }
         let pose = PitcherPresentationPose(role: .pitcher, frame: frame, hand: hand)
         let foot = pitchingFoot(frame)
         return CGPoint(x: foot.x+(pose.hand.x-pose.pivot.x)*actor.size.width,
                        y: foot.y-(pose.hand.y-pose.pivot.y)*actor.size.height)
     }
-    func cancel() { playback = nil; movement = nil; playing = false; removeAllActions(); actor.removeAllActions(); ball.isHidden = true }
+    func cancel() {
+        playback = nil; movement = nil; playing = false; drillPreparation = 0
+        removeAllActions(); actor.removeAllActions(); ball.isHidden = true
+        if kind == .control { pitchingPose(0) }
+    }
 }
 
 struct LocationPracticeBoard: View {

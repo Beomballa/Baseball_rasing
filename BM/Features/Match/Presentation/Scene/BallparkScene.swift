@@ -20,13 +20,17 @@ import SwiftUI
     private var batterSide = OpponentBatterSide.left
     private var lastPitcherFrame = -1
     private var preparationPhase = 0.0
-    private var pitchWindup: (started: Double, launch: (Double) -> Void)?
+    private var preparationTimeline: MatchInputTimeline?
+    private var pitcherRecoveryAt: Double?
+    private var fullBodyPitcher: FullBodyPitcherNode?
+    private var pitchWindup: (started: Double, duration: Double, from: Double, launch: (Double) -> Void)?
     private var batRecovery: Double?
     private(set) var stadium = StadiumIdentity.legacy
     private var dress: StadiumSceneDress?
     enum PitchStage { case idle, preparing, flight, received }
     private(set) var pitchStage = PitchStage.idle
     private var contactAt = 0.0
+    private var awaitingBatDecision = false
     private var destination = CGPoint.zero
     private struct PitchFlight {
         let start: CGPoint, end: CGPoint
@@ -87,6 +91,7 @@ import SwiftUI
     /// 한 프레임의 준비→비행→접촉→완료를 순서대로 갱신한다.
     /// 앞 단계가 만든 상태를 같은 프레임의 뒤 단계에서 사용하므로 호출 순서를 유지한다.
     func advanceDelivery(at now: Double) {
+        if let timeline = preparationTimeline { preparePitch(phase: timeline.phase(at: now), reduced: false) }
         advanceWindup(at: now)
         advanceBatRecovery(at: now)
         advanceBatterFlight(at: now)
@@ -94,13 +99,18 @@ import SwiftUI
         advanceBatFinish(at: now)
         advanceContactFlight(at: now)
         completeReceipt(at: now)
+        if let started = pitcherRecoveryAt {
+            applyContinuousPitcher(progress: PitcherMotionPlayback.progress(elapsed:now-started))
+            if now - started >= PitcherMotionPlayback.duration { pitcherRecoveryAt = nil }
+        }
     }
 
     /// 투구 준비 동작을 진행하고 릴리스 시점에 비행을 시작한다.
     private func advanceWindup(at now: Double) {
         if let windup = pitchWindup {
-            let phase = min(1, max(0, (now - windup.started) / MatchDelivery.windup))
-            pitcherMotion(phase * 3)
+            let phase = min(1, max(0, (now - windup.started) / windup.duration))
+            preparationPhase = (windup.from + (1 - windup.from) * phase) * 3
+            pitcherMotion(preparationPhase)
             showHeldBall()
             if phase >= 1 {
                 pitchWindup = nil
@@ -128,6 +138,7 @@ import SwiftUI
                 let windupPhase = (now - timeline.startedAt) / max(0.001, timeline.windup)
                 pitcherMotion(min(3.99, max(0, windupPhase) * 4))
             } else {
+                pitcherRecoveryAt = pitcherRecoveryAt ?? timeline.releaseAt
                 let t = min(1, max(0, (now - timeline.releaseAt) / (timeline.duration * MatchDelivery.contactPhase)))
                 let depth = t / (2.4 - 1.4 * t)
                 pitchStage = .flight
@@ -136,15 +147,14 @@ import SwiftUI
                     from: flight.start, to: flight.end, size: size, role: .batter, hand: hand, code: flight.code,
                     progress: t)
                 ball.setScale(0.35 + depth * 0.9)
-                pitcherMotion(4 + min(2, max(0, now - timeline.releaseAt) / 0.10))
                 if batFinish == nil && batRecovery == nil { batterMotion(min(1.7, max(0, (t - 0.48) / 0.52) * 1.7)) }
                 if now >= timeline.contactAt {
                     batterFlight = nil
                     pitchStage = .received
                     ball.position = flight.end
                     ball.isHidden = true
-                    pitcherPose(7)
-                    markArrival()
+                    // 타격 확정은 뒤 단계가 접촉/포구를 구분한다. 같은 프레임에 미트 공을 먼저 표시하지 않는다.
+                    if batFinish == nil && !awaitingBatDecision { markArrival() }
                     if flight.completion != nil { pitchReceipt = (now + flight.receipt, flight.completion) }
                     flight.arrival?()
                 }
@@ -156,7 +166,7 @@ import SwiftUI
     private func advancePitcherFlight(at now: Double) {
         if let flight = pitchFlight {
             let t = min(1, max(0, (now - flight.started) / flight.duration))
-            pitcherMotion(3 + min(1.99, max(0, now - flight.started) / 0.10))
+            if fullBodyPitcher?.usesRefinedDelivery == true { applyContinuousPitcher(progress: 1 + t) }
             if batRecovery == nil { batterMotion(min(1.7, max(0, (t - 0.55) / 0.45) * 1.7)) }
             ball.position = MatchBallPath.point(
                 from: flight.start, to: flight.end, size: size, role: .pitcher, hand: hand, code: flight.code,
@@ -165,7 +175,6 @@ import SwiftUI
             if t >= 1 {
                 pitchFlight = nil
                 ball.position = flight.end
-                pitcherPose(5)
                 if flight.fieldPlay != nil || flight.homeRun != nil
                     || ["헛스윙", "파울", "안타", "홈런", "범타"].contains(flight.outcome ?? "")
                 {
@@ -212,6 +221,7 @@ import SwiftUI
                 markArrival()
                 if ["안타", "홈런", "범타", "파울"].contains(finish.outcome) {
                     GameSound.shared.contact()
+                    receivedBall.isHidden = true
                 } else {
                     GameSound.shared.play(.catchBall)
                 }
@@ -270,6 +280,9 @@ import SwiftUI
     private func completeReceipt(at now: Double) {
         if let receipt = pitchReceipt, now >= receipt.deadline {
             pitchReceipt = nil
+            // 판정 확인 뒤 투수는 세트 자세로 복귀한다. 같은 타석의 타격 마무리는 따로 유지한다.
+            preparationPhase = 0
+            if pitcherRecoveryAt == nil && fullBodyPitcher?.usesRefinedDelivery != true {pitcherPose(0)}
             receipt.completion?()
         }
 
@@ -293,7 +306,9 @@ import SwiftUI
         self.role = role
         self.batterSide = batterSide
         lastPitcherFrame = -1
-        size = CGSize(width: 320, height: role == .batter ? 320 : 320 * 1290 / 1219)
+        fullBodyPitcher?.removeFromParent()
+        fullBodyPitcher = nil
+        size = MatchPitchProjection(role: role).size(width: 320)
         removeAllChildren()
         guard let image = MatchArt.image(role == .batter ? "batter-field-v52" : "pitcher-field-v52") else {
             ready = false
@@ -310,9 +325,10 @@ import SwiftUI
         let style = appearance ?? PlayerAppearance(kit: kit)
         if role == .batter {
             addBackgroundFielders(appearance: style)
-            _ = BatterPlantMotion.geometry(progress: 0)
         }
-        pitcherFrames =
+        _ = BatterPlantMotion.geometry(progress: 0)
+        let nativePitcher = FullBodyPitcherNode(role:role,appearance:style,number:jerseyNumber,hand:hand)
+        pitcherFrames = nativePitcher != nil ? [] :
             role == .pitcher
             ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand)
             : OpponentMotionArt.textures(
@@ -322,14 +338,14 @@ import SwiftUI
             role == .batter
             ? PlayerMotionArt.textures(role: role, appearance: style, number: jerseyNumber, hand: hand)
             : OpponentMotionArt.textures(
-                "opponent-batter-v52", columns: 3, rows: 2, ownKit: style.uniformColor,
-                teamColor: style.opponentUniformColor, style: style.opponentUniformStyle)
+                "opponent-batter-v116", columns: 3, rows: 2, ownKit: style.uniformColor,
+                teamColor: style.opponentUniformColor, style: style.opponentUniformStyle, mirrored: batterSide == .right)
         catcherFrames = OpponentMotionArt.textures(
             "catcher-parts", columns: 2, rows: 2, ownKit: style.uniformColor, opponent: false,
             teamColor: role == .pitcher ? style.uniformColor : style.opponentUniformColor,
             style: role == .pitcher ? style.uniformStyle : style.opponentUniformStyle)
         mittFrames = Array(catcherFrames.suffix(2))
-        guard pitcherFrames.count == (role == .pitcher ? 6 : 8), batterFrames.count == 6, catcherFrames.count == 4
+        guard (nativePitcher != nil || pitcherFrames.count == (role == .pitcher ? 6 : 8)), batterFrames.count == 6, catcherFrames.count == 4
         else {
             ready = false
             return
@@ -338,6 +354,16 @@ import SwiftUI
         pitcher.zPosition = 4
         pitcher.xScale = hand == "left" ? -1 : 1
         addChild(pitcher)
+        if let rig = nativePitcher {
+            pitcher.addChild(rig)
+            fullBodyPitcher = rig
+            pitcher.texture = nil
+            pitcher.color = .clear
+            pitcher.colorBlendFactor = 1
+        } else {
+            pitcher.color = .white
+            pitcher.colorBlendFactor = 0
+        }
         pitcherPose(0)
         batter.name = "animatedBatter"
         batter.zPosition = 3
@@ -434,9 +460,7 @@ import SwiftUI
     }
     /// 조준 좌표를 현재 투타 시점의 화면 도착 좌표로 변환한다.
     func arrivalPoint(x: Double, y: Double) -> CGPoint {
-        role == .batter
-            ? point(0.5 + (x - 0.5) * 0.16, 0.68 + (y - 0.5) * 0.22)
-            : point((hand == "left" ? 0.46 : 0.54) + (x - 0.5) * 0.22, 0.43 + (y - 0.5) * 0.24)
+        MatchPitchProjection(role: role).scenePoint(x: x, y: y, size: size)
     }
     private func markArrival() {
         receivedBall.position = destination
@@ -445,31 +469,40 @@ import SwiftUI
     /// 위쪽이 0인 정규화 좌표를 아래쪽이 0인 SpriteKit 좌표로 변환한다.
     private func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * size.width, y: (1 - y) * size.height) }
     private func pitcherPose(_ frame: Int) {
-        guard pitcherFrames.indices.contains(frame) else { return }
+        guard fullBodyPitcher != nil || pitcherFrames.indices.contains(frame) else { return }
         if frame != lastPitcherFrame {
-            pitcher.texture = pitcherFrames[frame]
+            if fullBodyPitcher == nil { pitcher.texture = pitcherFrames[frame] }
             lastPitcherFrame = frame
         }
-        let pose = PitcherPresentationPose(role: role, frame: frame, hand: hand)
-        let source = PitcherPresentationPose(role: role, frame: frame, hand: "right")
-        pitcher.size = CGSize(width: size.width * pose.width, height: size.width * pose.width)
+        let pose = PitcherPresentationPose(role: role, frame: 0, hand: hand)
+        let source = PitcherPresentationPose(role: role, frame: 0, hand: "right")
+        let width = fullBodyPitcher?.authoredCanvas.map { $0 / 320 }
+            ?? (fullBodyPitcher == nil ? pose.width : (role == .pitcher ? 0.44 : 0.19))
+        pitcher.size = CGSize(width: size.width * width, height: size.width * width)
         // 좌우 배율(xScale)이 이미 반전하므로 기준점까지 다시 뒤집으면 축발이 마운드를 벗어난다.
-        pitcher.anchorPoint = CGPoint(x: source.pivot.x, y: 1 - source.pivot.y)
+        pitcher.anchorPoint = fullBodyPitcher?.registrationAnchor ?? CGPoint(x: source.pivot.x, y: 1 - source.pivot.y)
         pitcher.position = point(pose.foot.x, pose.foot.y)
+        applyContinuousPitcher(progress: frame == 0 ? 0 : Double(frame) / (role == .pitcher ? 3 : 4))
     }
-    // 원화의 관절 자세를 유지하면서 몸통 이동을 보간한다. 공은 변환된 손 좌표를 따른다.
+    // 전신 원화를 공유 시간축으로 선택하고 공은 해당 원화의 실제 손 위치를 따른다.
     private func pitcherMotion(_ phase: Double) {
         let last = role == .pitcher ? 5.0 : 7.0
         let p = min(last, max(0, phase))
         let frame = Int(p)
-        pitcherPose(frame)
-        let travel = PitcherPresentationPose.travel(role: role, phase: p, hand: hand)
-        pitcher.position.x += travel.x * size.width
-        pitcher.position.y -= travel.y * size.height
+        if fullBodyPitcher != nil {
+            // 전신의 접지·크기는 구성 때 고정했다. 정수 자세를 거치지 않고 현재 시각을 한 번 적용한다.
+            lastPitcherFrame = frame
+            applyContinuousPitcher(progress: p / (role == .pitcher ? 3 : 4))
+        } else {
+            pitcherPose(frame)
+        }
+    }
+    private func applyContinuousPitcher(progress: Double) {
+        fullBodyPitcher?.apply(progress:progress,canvas:pitcher.size.width,anchor:pitcher.anchorPoint)
     }
     private func showHeldBall() {
         // 양손을 모은 동안 공은 글러브 안에 숨기고 손을 분리한 뒤 표시한다.
-        let separated = role == .pitcher && lastPitcherFrame >= 2
+        let separated = role == .pitcher && preparationPhase / 3 >= 0.40 && fullBodyPitcher?.hasVisibleHand != false
         ball.isHidden = !separated
         if separated {
             ball.position = displayedHandPoint()
@@ -478,6 +511,7 @@ import SwiftUI
     }
     /// 반전·크기·자세 이동을 모두 반영한 실제 손 위치에서 공을 출발시킨다.
     private func displayedHandPoint() -> CGPoint {
+        if let fullBodyPitcher { return fullBodyPitcher.convert(fullBodyPitcher.handPoint, to:self) }
         let pose = PitcherPresentationPose(role: role, frame: max(0, lastPitcherFrame), hand: "right")
         let local = CGPoint(
             x: (pose.hand.x - pitcher.anchorPoint.x) * pitcher.size.width,
@@ -485,14 +519,12 @@ import SwiftUI
         return pitcher.convert(local, to: self)
     }
     private func batterMotion(_ phase: Double) {
-        let p = min(3, max(0, phase))
-        let frame = p < 0.55 ? 0 : p < 2 ? 1 : p < 2.25 ? 2 : 3
-        batterPose(frame)
-        if role == .batter && frame == 1 { batter.warpGeometry = BatterPlantMotion.geometry(progress: max(0, p - 1)) }
+        let pose = BatterSequencePose(phase: phase)
+        batterPose(pose.frame)
+        if pose.frame == 1 { batter.warpGeometry = BatterPlantMotion.geometry(progress: pose.plant) }
         // 뒷다리 준비→앞발 착지 순서로 이동하며 접촉 순간의 배트 기준점은 유지한다.
-        let shift: Double = p < 1 ? -0.012 * p : p < 2 ? -0.012 * (2 - p) : 0.012 * (p - 2)
         let direction: Double = role == .pitcher && batterSide == .right ? -1 : 1
-        batter.position.x += shift * size.width * direction
+        batter.position.x += pose.travel * size.width * direction
     }
     private func batterPose(_ frame: Int) {
         guard batterFrames.indices.contains(frame) else { return }
@@ -519,10 +551,13 @@ import SwiftUI
         pitchFlight = nil
         batterFlight = nil
         batFinish = nil
+        awaitingBatDecision = false
         pitchReceipt = nil
         contactAt = 0
         preparationPhase = 0
         pitchWindup = nil
+        preparationTimeline = nil
+        pitcherRecoveryAt = nil
         batRecovery = nil
         removeAllActions()
         ball.removeAllActions()
@@ -552,6 +587,12 @@ import SwiftUI
         pitcherMotion(preparationPhase)
         showHeldBall()
     }
+    func preparePitch(timeline: MatchInputTimeline) {
+        guard ready, role == .pitcher else { return }
+        cancelDelivery()
+        preparationTimeline = timeline
+        preparePitch(phase: 0, reduced: false)
+    }
     /// 준비된 장면에 투구를 등록한다. 타자 입력 시간표과 도착 시점을 공유한다.
     @discardableResult func demonstrate(
         reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5,
@@ -561,6 +602,8 @@ import SwiftUI
         inputTimeline: MatchInputTimeline? = nil
     ) -> Bool {
         guard ready else { return false }
+        let preparedProgress = preparationPhase / 3
+        let manualPreparation = preparationTimeline != nil
         cancelDelivery()
         destination = arrivalPoint(x: x, y: y)
         let releaseFrame = role == .batter ? 4 : 3
@@ -583,13 +626,15 @@ import SwiftUI
             return true
         }
         let duration = DeliveryPresentation.flight(flightDuration ?? 1.1, reduced: reduceMotion, role: role)
-        contactAt = ProcessInfo.processInfo.systemUptime + MatchDelivery.windup + duration
+        let remainingWindup = preparedRelease ? (manualPreparation ? max(0.04, 0.24 * (1-preparedProgress)) : 0) : MatchDelivery.windup
+        contactAt = ProcessInfo.processInfo.systemUptime + remainingWindup + duration
         ball.position = displayedHandPoint()
         ball.isHidden = true
         let launch: (Double) -> Void = { [weak self] now in
             guard let self else { return }
             self.pitchStage = .flight
             self.pitcherMotion(3)
+            if self.fullBodyPitcher?.usesRefinedDelivery != true { self.pitcherRecoveryAt = now }
             self.ball.position = release
             self.ball.isHidden = false
             if self.role == .pitcher && !["안타", "홈런", "범타"].contains(outcome ?? "") {
@@ -606,11 +651,15 @@ import SwiftUI
                 receipt: DeliveryPresentation.receipt(reduced: reduceMotion, match: matchJudgment), outcome: outcome,
                 fieldPlay: fieldPlay, homeRun: homeRun, arrival: onArrival, completion: completion)
         }
-        if preparedRelease && role == .pitcher {
+        if remainingWindup == 0 {
             launch(ProcessInfo.processInfo.systemUptime)
         } else {
             pitchStage = .preparing
-            pitchWindup = (ProcessInfo.processInfo.systemUptime, launch)
+            let initial = preparedRelease ? preparedProgress : 0
+            preparationPhase = initial * 3
+            pitcherMotion(preparationPhase)
+            showHeldBall()
+            pitchWindup = (ProcessInfo.processInfo.systemUptime, remainingWindup, initial, launch)
         }
         return true
     }
@@ -648,11 +697,17 @@ import SwiftUI
             reduced: reduced, arrival: arrival, completion: completion)
     }
     /// 확정 입력의 연출을 공 접촉 시점 이후로 예약한다. 점수 계산은 호출자에서 끝난 상태다.
+    func awaitBatDecision() {
+        awaitingBatDecision = true
+        receivedBall.isHidden = true
+    }
+
     func finishBat(
         action: String, outcome: String, reduced: Bool, matchJudgment: Bool = false,
         fieldPlay: MatchDetailedPlay? = nil, homeRun: MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil,
         completion: @escaping @MainActor () -> Void
     ) {
+        awaitingBatDecision = false
         if action != "watch" { batterPose(action == "bunt" ? 4 : 1) }
         batFinish = BatFinish(
             at: max(contactAt, ProcessInfo.processInfo.systemUptime), action: action, outcome: outcome,

@@ -93,6 +93,7 @@
 
 !/BM/Resources/MatchArt/batter-actions.png
 !/BM/Resources/MatchArt/batter-actions-v75.png
+!/BM/Resources/MatchArt/opponent-batter-v116.png
 !/BM/Resources/MatchArt/pitcher-delivery-v75.png
 !/BM/Resources/MatchArt/batting-practice-v75.png
 !/BM/Resources/MatchArt/grip-fastball.png
@@ -109,6 +110,102 @@
 !/BM/Resources/MatchArt/inplay-stadium-sunset-v1.png
 
 !/BM/Resources/MatchArt/inplay-stadium-arcade-v1.png
+
+# Reviewed V144 school stadium upper-field art.
+!/BM/Resources/MatchArt/school-stadium-v144-backstop-crossbeam.png
+!/BM/Resources/MatchArt/school-stadium-v144-basalt-side.png
+!/BM/Resources/MatchArt/school-stadium-v144-brick-arch.png
+!/BM/Resources/MatchArt/school-stadium-v144-canopy-fascia.png
+!/BM/Resources/MatchArt/school-stadium-v144-forest-timber.png
+!/BM/Resources/MatchArt/school-stadium-v144-harbor-corner.png
+!/BM/Resources/MatchArt/school-stadium-v144-manual-wall.png
+!/BM/Resources/MatchArt/school-stadium-v144-school-wall.png
+!/BM/Resources/MatchArt/school-stadium-v144-steel-gantry.png
+!/BM/Resources/MatchArt/school-stadium-v144-stone-terrace.png
+
+# Reviewed V145 professional stadium upper-field art.
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-0.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-1.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-2.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-3.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-4.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-5.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-6.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-7.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-8.png
+!/BM/Resources/MatchArt/pro-stadium-v145-kbo-9.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-0.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-1.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-2.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-3.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-4.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-5.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-6.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-7.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-8.png
+!/BM/Resources/MatchArt/pro-stadium-v145-npb-9.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-0.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-1.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-2.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-3.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-4.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-5.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-6.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-7.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-8.png
+!/BM/Resources/MatchArt/pro-stadium-v145-mlb-9.png
+
+# Reviewed V147 Japanese and American expansion club artwork.
+!/BM/Resources/Assets.xcassets/Club-mlb-10.imageset/Club-mlb-10.png
+!/BM/Resources/Assets.xcassets/Club-mlb-10.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-mlb-11.imageset/Club-mlb-11.png
+!/BM/Resources/Assets.xcassets/Club-mlb-11.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-mlb-12.imageset/Club-mlb-12.png
+!/BM/Resources/Assets.xcassets/Club-mlb-12.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-mlb-13.imageset/Club-mlb-13.png
+!/BM/Resources/Assets.xcassets/Club-mlb-13.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-mlb-14.imageset/Club-mlb-14.png
+!/BM/Resources/Assets.xcassets/Club-mlb-14.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-npb-10.imageset/Club-npb-10.png
+!/BM/Resources/Assets.xcassets/Club-npb-10.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-npb-11.imageset/Club-npb-11.png
+!/BM/Resources/Assets.xcassets/Club-npb-11.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-npb-12.imageset/Club-npb-12.png
+!/BM/Resources/Assets.xcassets/Club-npb-12.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-npb-13.imageset/Club-npb-13.png
+!/BM/Resources/Assets.xcassets/Club-npb-13.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/Club-npb-14.imageset/Club-npb-14.png
+!/BM/Resources/Assets.xcassets/Club-npb-14.imageset/Contents.json
+!/BM/Resources/MatchArt/club-kit-v147-mlb-10-away.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-10-home.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-11-away.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-11-home.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-12-away.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-12-home.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-13-away.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-13-home.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-14-away.png
+!/BM/Resources/MatchArt/club-kit-v147-mlb-14-home.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-10-away.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-10-home.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-11-away.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-11-home.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-12-away.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-12-home.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-13-away.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-13-home.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-14-away.png
+!/BM/Resources/MatchArt/club-kit-v147-npb-14-home.png
+!/BM/Resources/MatchArt/pro-stadium-v147-mlb-10.png
+!/BM/Resources/MatchArt/pro-stadium-v147-mlb-11.png
+!/BM/Resources/MatchArt/pro-stadium-v147-mlb-12.png
+!/BM/Resources/MatchArt/pro-stadium-v147-mlb-13.png
+!/BM/Resources/MatchArt/pro-stadium-v147-mlb-14.png
+!/BM/Resources/MatchArt/pro-stadium-v147-npb-10.png
+!/BM/Resources/MatchArt/pro-stadium-v147-npb-11.png
+!/BM/Resources/MatchArt/pro-stadium-v147-npb-12.png
+!/BM/Resources/MatchArt/pro-stadium-v147-npb-13.png
+!/BM/Resources/MatchArt/pro-stadium-v147-npb-14.png
 
 # Reviewed fielder source atlas and read-only preview tooling.
 !/scripts/preview_field_sprites.html
@@ -483,6 +580,8 @@
 # V102 reviewed school/club presentation colors
 !/BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/Contents.json
 !/BM/Resources/Assets.xcassets/GameUniformColorsV102.dataset/colors.json
+!/BM/Resources/Assets.xcassets/ProUniformDesignsV148.dataset/Contents.json
+!/BM/Resources/Assets.xcassets/ProUniformDesignsV148.dataset/designs.json
 
 # V110 licensed recordings and attribution; grouped under Audio in V114
 !/BM/Resources/Assets.xcassets/Audio/Contents.json
@@ -500,3 +599,13 @@
 !/BM/Resources/Assets.xcassets/Audio/UmpireOutV110.dataset/sound.wav
 !/BM/Resources/Assets.xcassets/Audio/UmpireStrikeV110.dataset/Contents.json
 !/BM/Resources/Assets.xcassets/Audio/UmpireStrikeV110.dataset/sound.wav
+
+# V123 runtime coverage metadata; original source sprites are preserved.
+!/BM/Resources/MatchArt/pitcher-fullbody-v123.json
+!/BM/Resources/MatchArt/pitcher-fullbody-v124.json
+!/BM/Resources/MatchArt/pitcher-depth-back-v124.png
+!/BM/Resources/MatchArt/pitcher-delivery-back-v143.json
+!/BM/Resources/MatchArt/pitcher-delivery-back-v143.png
+!/BM/Resources/MatchArt/pitcher-fullbody-back-v120.png
+!/BM/Resources/MatchArt/pitcher-fullbody-front-v120.png
+!/BM/Resources/MatchArt/pitcher-fullbody-v120.json

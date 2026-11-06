@@ -48,6 +48,7 @@ struct PlayerHomeView: View {
     }
 
     private var affiliationLabel:String {
+        if let presentedMatchLobby {return presentedMatchLobby.affiliation}
         do {
             if let calendar,let member=try calendar.registration(for:player) {return member.name+" · 출신 "+player.displaySchoolName}
             let age=(try? calendar?.age(of:player)) ?? player.startAge
@@ -73,7 +74,28 @@ struct PlayerHomeView: View {
     @State private var roomCalendarLines = ["자료", "없음"]
     @State private var roomGrowthLines = ["기록 없음"]
     @State private var roomContractLines = ["자료 확인"]
+    private struct PresentedMatchLobby {
+        let day: CalendarDayPresentation?
+        let action: GameLobbyAction
+        let schedule:(title:String,date:String,teams:[String],number:Int?)
+        let affiliation:String
+        let uniformTeamID:String?
+        let calendarStatus:CalendarScheduleStatus
+        let teamIDs:[String:String]
+    }
+    @State private var presentedMatchLobby: PresentedMatchLobby?
+    private func gameScheduleStatus(_ calendar:CareerCalendarState)->CalendarScheduleStatus {
+        presentedMatchLobby?.calendarStatus ?? CalendarScheduleStatus(player:player,state:calendar)
+    }
+    private func gameTeamID(_ calendar:CareerCalendarState,on date:GameDate)->String {
+        presentedMatchLobby?.teamIDs[date.description]
+            ?? (try? calendar.teamID(for:player,on:date)) ?? player.schoolID
+    }
+    #if DEBUG
+    @State private var autoQAStarted=false
+    #endif
     private var gameLobbyDay: CalendarDayPresentation? {
+        if let presentedMatchLobby { return presentedMatchLobby.day }
         guard let calendar else { return nil }
         let fixture = CalendarScheduleStatus(player: player, state: calendar).schedule?.today
         let saved = fixture.flatMap { f in gameRecords.first { $0.playerID == player.id && $0.fixtureID == f.id } }
@@ -82,6 +104,7 @@ struct PlayerHomeView: View {
             actionUsed: calendar.hasAction(on: player.gameDate), trainingPending: todayTraining?.completed == false)
     }
     private var gameLobbyAction: GameLobbyAction {
+        if let presentedMatchLobby { return presentedMatchLobby.action }
         guard let calendar else { return .unavailable }
         let status = CalendarScheduleStatus(player: player, state: calendar)
         let saved = status.schedule?.today.flatMap { f in gameRecords.first { $0.playerID == player.id && $0.fixtureID == f.id } }
@@ -101,6 +124,7 @@ struct PlayerHomeView: View {
         }
     }
     private var stadiumSchedule: (title: String, date: String, teams: [String], number: Int?) {
+        if let presentedMatchLobby {return presentedMatchLobby.schedule}
         guard let calendar else { return ("일정 확인", "", ["선수 일정 확인 필요"], nil) }
         let status = CalendarScheduleStatus(player: player, state: calendar)
         guard let schedule = status.schedule else { return ("일정 확인", "", ["조회 오류 · 다시 확인"], nil) }
@@ -120,11 +144,15 @@ struct PlayerHomeView: View {
         }
     }
     private var roomRefreshKey: String {
-        "\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)-\(roomReports.first(where: { $0.playerID == player.id })?.payload.hashValue ?? 0)"
+        "\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)-\(roomReports.first(where: { $0.playerID == player.id })?.payload.hashValue ?? 0)-\(presentedMatchLobby != nil)"
+    }
+    private var headerUniformTeamID:String? {
+        if let presentedMatchLobby {return presentedMatchLobby.uniformTeamID}
+        return try? calendar?.teamID(for:player,on:GameDate(player.gameDate))
     }
     @ViewBuilder private var navigationHeader: some View {
         ManagementSpatialHeader(player: player, affiliation: affiliationLabel,
-                                uniformTeamID: try? calendar?.teamID(for: player, on: GameDate(player.gameDate)), age: age,
+                                uniformTeamID: headerUniformTeamID, age: age,
                                 used: calendar?.hasAction(on: player.gameDate) == true,
                                 pending: todayTraining?.completed == false) { roomDetail = .profile }
         if let clubSelectionFailure {
@@ -136,7 +164,10 @@ struct PlayerHomeView: View {
     }
     var body: some View {
         Group {
-            if selectedTab == .game {
+            if presentedMatchLobby != nil {
+                // 경기 sheet 뒤의 구장·헤더가 매 공의 원장 변경으로 다시 배치되지 않게 한다.
+                GameTheme.board.ignoresSafeArea().accessibilityHidden(true)
+            } else if selectedTab == .game {
                 let schedule = stadiumSchedule
                 ManagementStadiumRoom(selection: $selectedTab, scheduleTitle: schedule.title, date: schedule.date,
                                       teams: schedule.teams, fixtureNumber: schedule.number, schools: schools, entryTitle: stadiumEntryTitle, entryStatus: gameLobbyAction.title,
@@ -147,10 +178,18 @@ struct PlayerHomeView: View {
                     .spatialAbilities(HomeAbilitySummary(player: player, abilities: abilities).originals)
             }
         }
-        .task(id: "selection-\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)") {
-            refreshSelection()
+        .task(id: "selection-\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)-\(presentedMatchLobby != nil)") {
+            if presentedMatchLobby == nil { refreshSelection() }
         }
-        .task(id: roomRefreshKey) { refreshRoomProjection() }
+        .task(id: roomRefreshKey) { if presentedMatchLobby == nil { refreshRoomProjection() } }
+        #if DEBUG
+        .task {
+            let args=ProcessInfo.processInfo.arguments
+            if !autoQAStarted,args.contains("-live-career-performance"),args.contains("-qa-full-career-root"),args.contains("-qa-auto-enter-game"),player.name=="ProfileQA" {
+                autoQAStarted=true;selectedTab = .game;roomDetail = .gameEntry
+            }
+        }
+        #endif
         .id(player.id)
         .preferredColorScheme(.dark)
         .sheet(item: $roomDetail, onDismiss: performRootAction) { detail in
@@ -162,7 +201,7 @@ struct PlayerHomeView: View {
                     } else if detail == .trainingEntry, let calendar {
                         CareerTrainingDestination(player: player, calendar: calendar)
                     } else if detail == .gameEntry, let calendar {
-                        CareerGameEntryView(player: player, calendar: calendar, schools: schools)
+                        CareerGameEntryView(player: player, calendar: calendar, schools: schools).equatable()
                     } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 24) {
@@ -219,6 +258,24 @@ struct PlayerHomeView: View {
                 }
                 recentSnapshots = next
             }
+            .environment(\.careerMatchVisibility, { visible in
+                if visible {
+                    #if DEBUG
+                    if ProcessInfo.processInfo.arguments.contains("-qa-home-live-projection") {return}
+                    #endif
+                    guard presentedMatchLobby == nil,let calendar else { return }
+                    let status=CalendarScheduleStatus(player:player,state:calendar)
+                    var fixtures=Array((status.schedule?.upcoming ?? []).prefix(3))
+                    if let today=status.schedule?.today {fixtures.append(today)}
+                    var teamIDs:[String:String]=[:]
+                    for fixture in fixtures {
+                        teamIDs[fixture.date.description]=(try? calendar.teamID(for:player,on:fixture.date)) ?? player.schoolID
+                    }
+                    presentedMatchLobby = PresentedMatchLobby(day:gameLobbyDay,action:gameLobbyAction,
+                        schedule:stadiumSchedule,affiliation:affiliationLabel,uniformTeamID:headerUniformTeamID,
+                        calendarStatus:status,teamIDs:teamIDs)
+                } else { presentedMatchLobby = nil }
+            })
     }
 
 
@@ -627,24 +684,24 @@ struct PlayerHomeView: View {
                              note: section == .records ? "완료된 내 경기와 시즌 합계" : section == .standings ? "팀 순위 · 개인 성적과 구분" : "입장 전 준비 · 진행 경기는 저장된 상태로 이어갑니다")
         ManagementSectionTabs(options: ManagementGameSection.allCases, selection: Binding(get: { section }, set: { gameSection = $0; roomDetail = .game($0) }), title: { $0.title }, identifier: "gameSection", horizontal: true)
         if let calendar {
-            let status = CalendarScheduleStatus(player: player, state: calendar)
+            let status = gameScheduleStatus(calendar)
             switch section {
             case .schedule:
-                ClubSelectionHomePanel(player:player,calendar:calendar)
+                if presentedMatchLobby == nil {ClubSelectionHomePanel(player:player,calendar:calendar)}
                 ManagementPanel("오늘 경기 · 출전") {
                     if let message = status.errorMessage { Text(message).managementFont(.body).accessibilityIdentifier("gameHubScheduleError") }
                     else if let fixture = status.schedule?.today {
-                        Text("\(fixture.number)/30차전 · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools))").managementFont(.label)
+                        Text("\(fixture.number)/30차전 · \(CareerTeamDirectory.name(fixture.opponent(of: gameTeamID(calendar,on:fixture.date)), schools: schools))").managementFont(.label)
                         playActions(calendar, training: false)
                     } else { Text("오늘은 비경기일입니다.").managementFont(.body) }
                     NavigationLink { ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }.background(GameTheme.board).navigationTitle("일정 · 날짜 관리").navigationBarTitleDisplayMode(.inline) } label: { Text("연간 일정 · 날짜 진행") }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
                     ForEach(Array((status.schedule?.upcoming ?? []).prefix(3)), id: \.id) { fixture in
-                        Text("\(fixture.date.description) · \(CareerTeamDirectory.name(fixture.opponent(of: (try? calendar.teamID(for: player, on: fixture.date)) ?? player.schoolID), schools: schools)) · \(fixture.isAppearance(for: player.role) ? "기본 출전 차례 · 기용 별도" : "순번 휴식 · 팀 경기")").managementFont(.helper)
+                        Text("\(fixture.date.description) · \(CareerTeamDirectory.name(fixture.opponent(of: gameTeamID(calendar,on:fixture.date)), schools: schools)) · \(fixture.isAppearance(for: player.role) ? "기본 출전 차례 · 기용 별도" : "순번 휴식 · 팀 경기")").managementFont(.helper)
                     }
                 }
             case .analysis:
                 if status.schedule?.today != nil {
-                    NavigationLink { CareerGameEntryView(player: player, calendar: calendar, schools: schools) } label: { Text("상대 투수 · 타선 · 경기 준비") }
+                    NavigationLink { CareerGameEntryView(player: player, calendar: calendar, schools: schools).equatable() } label: { Text("상대 투수 · 타선 · 경기 준비") }
                         .buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("hubOpponentAnalysis")
                     Text("완료 원장의 시즌 성적과 구종·능력을 확인합니다. 저장된 경기는 해당 경기 자료를 유지합니다.").managementFont(.helper)
                 } else { Text("상대 분석은 경기일에 열립니다. 홈에서 다음 일정까지 진행하세요.").managementFont(.body) }
@@ -706,7 +763,7 @@ struct PlayerHomeView: View {
     }
 
     @ViewBuilder private func playActions(_ calendar: CareerCalendarState, training: Bool = true) -> some View {
-        let status = CalendarScheduleStatus(player: player, state: calendar)
+        let status = gameScheduleStatus(calendar)
         let saved = status.schedule?.today.flatMap { fixture in gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id } }
         let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
         layout {
@@ -718,7 +775,7 @@ struct PlayerHomeView: View {
                 .disabled(status.schedule == nil || calendar.hasAction(on: player.gameDate) && todayTraining == nil)
             }
             if status.schedule?.today != nil {
-                NavigationLink { CareerGameEntryView(player: player, calendar: calendar, schools: schools) } label: {
+                NavigationLink { CareerGameEntryView(player: player, calendar: calendar, schools: schools).equatable() } label: {
                     Text(saved?.completed == true ? "오늘 경기 결과" : (saved == nil ? "오늘 경기 시작" : "오늘 경기 이어하기"))
                 }.buttonStyle(GameButtonStyle(onBoard: true)).accessibilityIdentifier("openCareerGame")
                     .disabled(!calendar.hasAction(on: player.gameDate) && saved == nil)
@@ -903,13 +960,20 @@ struct CareerSeasonScreen: View {
                                 .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
                             Text(summary.champions.map { name($0.id) }.joined(separator: " · "))
                                 .font(.title2.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("seasonChampion")
+                            if league.hasGeographicDivisions {
+                                ForEach([ClubIdentity.Division.east, .west], id: \.self) { division in
+                                    let leaders = league.geographicStandings(division).filter { $0.rank == 1 }.map { name($0.id) }
+                                    Text((division == .east ? "동부 1위 · " : "서부 1위 · ") + leaders.joined(separator: " · "))
+                                        .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                                }
+                            }
                         }
                         Text("SEASON SCOREBOOK").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                        Text(summary.finalized ? "모든 팀 30경기 종료 · 전체 90경기 확정" : "완료 \(league.results.count) / 대상 \(league.fixtures.count)경기")
+                        Text(summary.finalized ? "모든 팀 30경기 종료 · 전체 \(league.fixtures.count)경기 확정" : "완료 \(league.results.count) / 대상 \(league.fixtures.count)경기")
                             .font(.title3.monospacedDigit().bold()).accessibilityIdentifier("seasonProgress")
                         ManagementProgress(title: "시즌 진행", value: ManagementProgressValue(current: Double(league.results.count), target: Double(league.fixtures.count)))
                         if !summary.finalized {
-                            Text(league.fixtures.count == 90 ? "전체 일정이 끝나면 최종 순위와 우승팀을 확정합니다. 마지막 날 다른 팀 경기는 다음 날 처리됩니다." : "경력 시작 전/출전 연령 밖 일정을 제외한 부분 시즌입니다. 30경기 결산으로 확정하지 않습니다.")
+                            Text(league.hasFullSchedule ? "전체 일정이 끝나면 최종 순위와 우승팀을 확정합니다. 마지막 날 다른 팀 경기는 다음 날 처리됩니다." : "경력 시작 전/출전 연령 밖 일정을 제외한 부분 시즌입니다. 30경기 결산으로 확정하지 않습니다.")
                                 .font(.caption).foregroundStyle(GameTheme.boardMuted)
                         }
                         Text("\(player.name) · \(name(ownTeamID)) · \(player.role.label)").font(.caption).accessibilityIdentifier("seasonPlayer")
@@ -1679,38 +1743,52 @@ struct OverseasScoutingReportView:View {
     @State private var report:OverseasScoutingReport?
     @State private var failure:String?
     @State private var working=false
+    @State private var section: OverseasScoutSection = .summary
     var body:some View {
-        ScrollView {
-            VStack(alignment:.leading,spacing:16) {
-                GamePanel(title:"해외 스카우트 · 고정 자료",onBoard:true,contentSpacing:12) {
-                    Text(player.name+" · "+player.role.label).font(.title3.bold()).foregroundStyle(GameTheme.gold)
-                    if let report {
-                        Text(report.observation.observedDate+" 기준 · 28일 주기 \(report.period) 자료 고정").font(.caption).accessibilityIdentifier("overseasReportDate")
-                        Text("현재 능력과 평가일의 자료는 다를 수 있습니다. 같은 주기에서는 재평가하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    } else {Text("현재 주기의 고정 보고서가 없습니다.").font(.caption)}
-                    Button(working ? "자료 준비 중":"이번 주기 보고서 기록/확인") {capture()}
-                        .buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(working).accessibilityIdentifier("captureOverseasReport")
-                    if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasReportError")}
-                }
-                if let report {
-                    NavigationLink {ObservationReviewView(player:player,calendar:calendar)} label: {Text("이전 보고서 비교 · 다음 행동")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("reportObservationReview")
-                    CareerProjectReportEvidence(playerID:player.id,period:report.period)
-                    OverseasMarketPanel(report:report)
-                    GamePanel(title:"동일 환경 · 성적 비교",onBoard:true,contentSpacing:12) {
-                        ForEach(report.comparisons) {row in
-                            VStack(alignment:.leading,spacing:7) {
-                                Text(row.id.hasPrefix("college/") ? "대학 공식 표본":"국내 육성 공식 표본").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
-                                Text("\(row.totals.games)경기 · \(report.observation.role == .batter ? String(row.totals.line.plateAppearances)+"타석":row.totals.innings+"이닝") · "+(row.performance?.inputs?.mode.label ?? "환경 미확인")).font(.caption)
-                                Text("P "+String(format:"%+.2f",row.correction)+" · "+row.reason).font(.caption).accessibilityIdentifier("overseasComparison")
-                            }
-                        }
-                        if report.comparisons.isEmpty {Text("현재 수준의 성적 표본 없음 · 과거 다른 수준 성적을 합치지 않습니다.").font(.caption)}
-                        Text("NPC 기준은 게임 엔진의 표준 비교 자료이며 실제 선수 평균/실사용자 분포가 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+        VStack(spacing: 0) {
+            if report != nil {
+                ManagementSectionTabs(options: OverseasScoutSection.allCases, selection: $section, title: { $0.title }, identifier: "overseasScoutSection")
+                    .padding(16).background(GameTheme.board)
+                    .fixedSize(horizontal: false, vertical: true).layoutPriority(1)
+            }
+            ScrollView {
+                VStack(alignment:.leading,spacing:16) {
+                    GamePanel(title:"해외 스카우트 · 고정 자료",onBoard:true,contentSpacing:12) {
+                        Text(player.name+" · "+player.role.label).font(.title3.bold()).foregroundStyle(GameTheme.gold)
+                        if let report {
+                            Text(report.observation.observedDate+" 기준 · 28일 주기 \(report.period) 자료 고정").font(.caption).accessibilityIdentifier("overseasReportDate")
+                            Text("현재 능력과 평가일의 자료는 다를 수 있습니다. 같은 주기에서는 재평가하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        } else {Text("현재 주기의 고정 보고서가 없습니다.").font(.caption)}
+                        Button(working ? "자료 준비 중":"이번 주기 보고서 기록/확인") {capture()}
+                            .buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(working).accessibilityIdentifier("captureOverseasReport")
+                        if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasReportError")}
                     }
-                    OverseasGrowthPanel(projections:report.projections,policy:report.growthPolicy,date:report.observation.observedDate)
-                }
-            }.padding(12)
-        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
+                    if let report {
+                        if section == .summary {
+                        NavigationLink {ObservationReviewView(player:player,calendar:calendar)} label: {Text("이전 보고서 비교 · 다음 행동")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("reportObservationReview")
+                        CareerProjectReportEvidence(playerID:player.id,period:report.period)
+                        }
+                        if section == .clubs { OverseasMarketPanel(report:report) }
+                        if section == .records {
+                        GamePanel(title:"동일 환경 · 성적 비교",onBoard:true,contentSpacing:12) {
+                            ForEach(report.comparisons) {row in
+                                VStack(alignment:.leading,spacing:7) {
+                                    Text(row.id.hasPrefix("college/") ? "대학 공식 표본":"국내 육성 공식 표본").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                                    Text("\(row.totals.games)경기 · \(report.observation.role == .batter ? String(row.totals.line.plateAppearances)+"타석":row.totals.innings+"이닝") · "+(row.performance?.inputs?.mode.label ?? "환경 미확인")).font(.caption)
+                                    Text("P "+String(format:"%+.2f",row.correction)+" · "+row.reason).font(.caption).accessibilityIdentifier("overseasComparison")
+                                }
+                            }
+                            if report.comparisons.isEmpty {Text("현재 수준의 성적 표본 없음 · 과거 다른 수준 성적을 합치지 않습니다.").font(.caption)}
+                            Text("NPC 기준은 게임 엔진의 표준 비교 자료이며 실제 선수 평균/실사용자 분포가 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        }
+                        }
+                        if section == .growth { OverseasGrowthPanel(projections:report.projections,policy:report.growthPolicy,date:report.observation.observedDate) }
+                    }
+                }.padding(12).fixedSize(horizontal: false, vertical: true)
+            }.id(section).accessibilityIdentifier("overseasScoutScroll")
+                .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+        }
+            .lineLimit(nil).lineSpacing(4).background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
             .navigationTitle("해외 스카우트 보고서").navigationBarTitleDisplayMode(.inline)
             .task {load()}
     }
@@ -2102,7 +2180,7 @@ struct CareerObjectivesView:View {
                             choosing.toggle()
                         }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("changeCareerTarget")
                     }
-                    NavigationLink {ClubDirectoryView()} label: {Text("30개 가상 구단 · 로고 도감")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubDirectory")
+                    NavigationLink {ClubDirectoryView()} label: {Text("\(ClubIdentity.all.count)개 가상 구단 · 도감")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("openClubDirectory")
                     NavigationLink {OverseasScoutingReportView(player:player,calendar:calendar)} label: {Text("28일 관찰 보고서 기록/확인")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("objectivesReport")
                     NavigationLink {ContractMarketView(player:player,calendar:calendar)} label: {Text("실제 제의 · 계약 시장")}.buttonStyle(MatchPixelButtonStyle())
                     if let failure {Text(failure).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("objectivesError")}
@@ -2354,12 +2432,14 @@ struct CareerObjectivesHomeLabel:View {
 struct CareerProjectReportEvidence:View {
     let playerID:UUID
     let period:Int
+    var showEmptyState=false
     @Environment(\.modelContext) private var context
     @State private var reviews:[CareerProjectReview]=[]
     @State private var assignments:[String:CareerProjectAssignment]=[:]
     @State private var plans:[MatchPlanObservation]=[]
     @State private var special:[GoalSpecialReport]=[]
     @State private var failure:String?
+    @State private var loaded=false
     var body:some View {
         VStack(alignment:.leading,spacing:16) {
             ClubSeasonReportEvidence(playerID:playerID,period:period)
@@ -2394,8 +2474,16 @@ struct CareerProjectReportEvidence:View {
                     Text("특별 훈련은 기존 훈련 기록,평가전은 별도 진단 자료입니다. 공식 표본/인증 자격·H/P/F 보너스를 추가하지 않습니다.").font(.caption)
                 }
             }
+            if showEmptyState, loaded, failure == nil, reviews.isEmpty, plans.isEmpty, special.isEmpty {
+                GamePanel(title:"선수 프로젝트 · 관찰 근거",onBoard:true) {
+                    Text("이번 관찰 기간에 연결된 프로젝트 근거가 없습니다.")
+                        .font(.subheadline).fixedSize(horizontal:false,vertical:true)
+                        .accessibilityIdentifier("reportProjectEvidenceEmpty")
+                }
+            }
             if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold)}
         }.task(id:"\(playerID)-\(period)") {
+            loaded=false
             do {
                 let id=playerID
                 guard let player=try context.fetch(FetchDescriptor<CareerPlayer>(predicate:#Predicate {$0.id == id})).first,
@@ -2406,6 +2494,7 @@ struct CareerProjectReportEvidence:View {
                 plans=owner.gamePlanReports?.filter {$0.period == period} ?? []
                 special=owner.specialReports?.filter {$0.period == period} ?? [];failure=nil
             } catch {failure=error.localizedDescription}
+            loaded=true
         }
     }
 }
@@ -2519,79 +2608,98 @@ struct ObservationReviewView:View {
     @Environment(\.modelContext) private var context
     @State private var review:ObservationPeriodReview?
     @State private var failure:String?
+    @State private var section: ObservationReviewSection = .summary
     var body:some View {
-        ScrollView {
-            VStack(alignment:.leading,spacing:16) {
-                if let review {
-                    GamePanel(title:"SCOUT REVIEW · 28일 관찰 결산",onBoard:true,contentSpacing:12) {
-                        Text(ManagementDisplay.date(review.current.observedDate, includeYear: true)+" 확정 · \(review.current.period+1)차 관찰").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewCurrentDate")
-                        if let previous=review.previous {
-                            Text(ManagementDisplay.date(previous.observedDate, includeYear: true)+" → "+ManagementDisplay.date(review.current.observedDate, includeYear: true)).font(.subheadline).accessibilityIdentifier("reviewPreviousDate")
-                            Text("위의 실제 관찰일 사이 변화이며,정확히28일 간격이 아닐 수 있습니다.").font(.caption)
-                            if review.current.period-previous.period>1 {Text("중간 보고서가 없어 최근 저장 자료와 비교합니다. 연속28일의 변화가 아닙니다.").font(.caption)}
-                        } else {Text("첫 관찰 자료 · 이전 보고서가 없어 변화량을 계산하지 않습니다.").font(.subheadline).accessibilityIdentifier("reviewNoPrevious")}
-                        if review.stale {Text("지난 주기 자료입니다. 이번 주기 보고서를 먼저 확인하세요.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewStale")}
-                        Text("저장된 관찰일 기준입니다. 현재 능력·제의 상태는 각 화면에서 다시 확인합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                    }
-                    if review.previous != nil {
-                        GamePanel(title:"GROWTH · 관찰일 사이의 변화",onBoard:true,contentSpacing:12) {
-                            let changes = review.abilities + review.pitches
-                            let changed = changes.filter { $0.difference != 0 }
-                            let unchanged = changes.filter { $0.difference == 0 }
-                            if changed.isEmpty { Text("관찰한 능력·구종 변화 없음").managementFont(.label) }
-                            ForEach(changed) { row in
-                                ManagementObservationChange(title: row.label, before: row.before, after: row.after, identifier: "reviewAbility-" + row.id)
+        VStack(spacing: 0) {
+            if review != nil {
+                ManagementSectionTabs(options: ObservationReviewSection.allCases, selection: $section, title: { $0.title }, identifier: "observationReviewSection")
+                    .padding(16).background(GameTheme.board)
+                    .fixedSize(horizontal: false, vertical: true).layoutPriority(1)
+            }
+            ScrollView {
+                VStack(alignment:.leading,spacing:16) {
+                    if let review {
+                        GamePanel(title:"SCOUT REVIEW · 28일 관찰 결산",onBoard:true,contentSpacing:12) {
+                            Text(ManagementDisplay.date(review.current.observedDate, includeYear: true)+" 확정 · \(review.current.period+1)차 관찰").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewCurrentDate")
+                            if let previous=review.previous {
+                                Text(ManagementDisplay.date(previous.observedDate, includeYear: true)+" → "+ManagementDisplay.date(review.current.observedDate, includeYear: true)).font(.subheadline).accessibilityIdentifier("reviewPreviousDate")
+                                Text("위의 실제 관찰일 사이 변화이며,정확히28일 간격이 아닐 수 있습니다.").font(.caption)
+                                if review.current.period-previous.period>1 {Text("중간 보고서가 없어 최근 저장 자료와 비교합니다. 연속28일의 변화가 아닙니다.").font(.caption)}
+                            } else {Text("첫 관찰 자료 · 이전 보고서가 없어 변화량을 계산하지 않습니다.").font(.subheadline).accessibilityIdentifier("reviewNoPrevious")}
+                            if review.stale {Text("지난 주기 자료입니다. 이번 주기 보고서를 먼저 확인하세요.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewStale")}
+                            Text("저장된 관찰일 기준입니다. 현재 능력·제의 상태는 각 화면에서 다시 확인합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                        }
+                        if section == .growth {
+                        if review.previous != nil {
+                            GamePanel(title:"GROWTH · 관찰일 사이의 변화",onBoard:true,contentSpacing:12) {
+                                let changes = review.abilities + review.pitches
+                                let changed = changes.filter { $0.difference != 0 }
+                                let unchanged = changes.filter { $0.difference == 0 }
+                                if changed.isEmpty { Text("관찰한 능력·구종 변화 없음").managementFont(.label) }
+                                ForEach(changed) { row in
+                                    ManagementObservationChange(title: row.label, before: row.before, after: row.after, identifier: "reviewAbility-" + row.id)
+                                }
+                                if !unchanged.isEmpty {
+                                    DisclosureGroup("변화 없는 능력·구종 \(unchanged.count)개") {
+                                        ForEach(unchanged) { row in
+                                            ManagementObservationChange(title: row.label, before: row.before, after: row.after, identifier: "reviewAbility-" + row.id)
+                                        }
+                                    }.tint(GameTheme.gold)
+                                }
+                                Text("양쪽 보고서에 있는 같은 능력·구종만 비교합니다. 훈련·경기·그 외 변화를 포함하며 특정 활동의 효과로 단정하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                             }
-                            if !unchanged.isEmpty {
-                                DisclosureGroup("변화 없는 능력·구종 \(unchanged.count)개") {
-                                    ForEach(unchanged) { row in
-                                        ManagementObservationChange(title: row.label, before: row.before, after: row.after, identifier: "reviewAbility-" + row.id)
-                                    }
-                                }.tint(GameTheme.gold)
+                        } else { Text("첫 관찰 자료여서 능력 변화 비교는 다음 보고서부터 확인합니다.").font(.body).accessibilityIdentifier("reviewGrowthWaiting") }
+                        }
+                        if section == .records {
+                        if review.previous != nil {
+                            GamePanel(title:"PERFORMANCE · 동일 환경 기록",onBoard:true,contentSpacing:12) {
+                                if review.samples.isEmpty {Text("비교 자료 부족 · 리그·조작 환경·평가 방식·포지션이 같고 양쪽에 표본이 있어야 비교합니다.").font(.subheadline).accessibilityIdentifier("reviewNoSampleComparison")}
+                                ForEach(review.samples) {row in
+                                    VStack(alignment:.leading,spacing:8) {
+                                        Text(row.label).font(.caption.monospaced()).foregroundStyle(GameTheme.gold)
+                                        Text(String(format:"표본 %.0f → %.0f  (%+.0f)",row.before,row.after,row.difference)+(review.current.role == .batter ? "타석":"아웃")).font(.subheadline).accessibilityIdentifier("reviewSample-"+row.id)
+                                        if let rate=review.performance.first(where:{$0.id == row.id}) {Text(rate.label+String(format:" %.3f → %.3f",rate.before,rate.after)).font(.subheadline)}
+                                    }.fixedSize(horizontal:false,vertical:true)
+                                }
+                                Text("각 관찰일의 최근365일 기록입니다. 차이는 이번28일 신규 경기 수가 아니며,관찰 기간에서 빠진 과거 경기도 영향을 줍니다. 다른 리그/직접·자동·혼합 성적은 합산하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                             }
-                            Text("양쪽 보고서에 있는 같은 능력·구종만 비교합니다. 훈련·경기·그 외 변화를 포함하며 특정 활동의 효과로 단정하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         }
-                        GamePanel(title:"PERFORMANCE · 동일 환경 기록",onBoard:true,contentSpacing:12) {
-                            if review.samples.isEmpty {Text("비교 자료 부족 · 리그·조작 환경·평가 방식·포지션이 같고 양쪽에 표본이 있어야 비교합니다.").font(.subheadline).accessibilityIdentifier("reviewNoSampleComparison")}
-                            ForEach(review.samples) {row in
-                                VStack(alignment:.leading,spacing:8) {
-                                    Text(row.label).font(.caption.monospaced()).foregroundStyle(GameTheme.gold)
-                                    Text(String(format:"표본 %.0f → %.0f  (%+.0f)",row.before,row.after,row.difference)+(review.current.role == .batter ? "타석":"아웃")).font(.subheadline).accessibilityIdentifier("reviewSample-"+row.id)
-                                    if let rate=review.performance.first(where:{$0.id == row.id}) {Text(rate.label+String(format:" %.3f → %.3f",rate.before,rate.after)).font(.subheadline)}
-                                }.fixedSize(horizontal:false,vertical:true)
+                        else { Text("첫 관찰 자료여서 성적 변화 비교는 다음 보고서부터 확인합니다.").font(.body).accessibilityIdentifier("reviewRecordsWaiting") }
+                        }
+                        if section == .summary {
+                        GamePanel(title:"TARGET FILE · 목표 구단 부족 조건",onBoard:true,contentSpacing:12) {
+                            if let club=review.club {
+                                Text(club.name+" · "+DomesticContractOffer.roleName(club.roleID)).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewTarget")
+                                Text("관심 · "+review.interestBefore+" → "+review.interestNow).font(.subheadline).accessibilityIdentifier("reviewInterest")
+                                Text("역할 기량 "+number(review.readiness?.currentH)+" / 이번 관찰 기준 "+number(club.criterion)).font(.subheadline)
+                                if let change=review.roleChange {Text(String(format:"역할 기량 변화 %.1f → %.1f (%+.1f)",change.before,change.after,change.difference)).font(.subheadline).accessibilityIdentifier("reviewRoleChange")}
+                                Text("관찰 적합도 "+number(club.fit)+" · 모집 상태 "+club.demand).font(.subheadline)
+                                if let old=review.previousClub {Text("이전 관찰 기준 "+number(old.criterion)+" · 모집 "+old.demand).font(.caption)}
+                                Text("관심·적합도는 성장뿐 아니라 당시 모집·예산·경쟁·자격의 영향을 받습니다. 관심 없음과 미확인 자료를 구분하며 계약을 보장하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                             }
-                            Text("각 관찰일의 최근365일 기록입니다. 차이는 이번28일 신규 경기 수가 아니며,관찰 기간에서 빠진 과거 경기도 영향을 줍니다. 다른 리그/직접·자동·혼합 성적은 합산하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
+                            ForEach(Array(review.missing.enumerated()),id:\.offset) {_,text in Text(text).font(.subheadline).accessibilityIdentifier("reviewMissing")}
+                            if review.missing.isEmpty {Text("표시 가능한 부족 조건 없음 · 정식 심사의 자리·예산·경쟁·권리는 별도 확인합니다.").font(.subheadline)}
+                        }.fixedSize(horizontal:false,vertical:true)
+                        GamePanel(title:"NEXT STEP · 다음 행동",onBoard:true,contentSpacing:12) {
+                            Text("관찰일의 부족 조건에 따른 추천 순서입니다. 날짜·피로·진행 중 활동과 실제 지원 자격은 이동한 화면에서 확인합니다.").font(.caption)
+                            ForEach(review.actions) {action in
+                                VStack(alignment:.leading,spacing:8) {Text(action.reason).font(.caption);actionLink(action)}.fixedSize(horizontal:false,vertical:true)
+                            }
+                        }
+                        }
+                        if section == .projects { CareerProjectReportEvidence(playerID:player.id,period:review.current.period,showEmptyState:true) }
+                    } else if failure == nil {
+                        GamePanel(title:"아직 관찰 결산이 없습니다",onBoard:true) {
+                            Text("보고서를 먼저 기록하면 고정된 자료를 비교할 수 있습니다.")
+                            actionLink(.report)
                         }
                     }
-                    GamePanel(title:"TARGET FILE · 목표 구단 부족 조건",onBoard:true,contentSpacing:12) {
-                        if let club=review.club {
-                            Text(club.name+" · "+DomesticContractOffer.roleName(club.roleID)).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewTarget")
-                            Text("관심 · "+review.interestBefore+" → "+review.interestNow).font(.subheadline).accessibilityIdentifier("reviewInterest")
-                            Text("역할 기량 "+number(review.readiness?.currentH)+" / 이번 관찰 기준 "+number(club.criterion)).font(.subheadline)
-                            if let change=review.roleChange {Text(String(format:"역할 기량 변화 %.1f → %.1f (%+.1f)",change.before,change.after,change.difference)).font(.subheadline).accessibilityIdentifier("reviewRoleChange")}
-                            Text("관찰 적합도 "+number(club.fit)+" · 모집 상태 "+club.demand).font(.subheadline)
-                            if let old=review.previousClub {Text("이전 관찰 기준 "+number(old.criterion)+" · 모집 "+old.demand).font(.caption)}
-                            Text("관심·적합도는 성장뿐 아니라 당시 모집·예산·경쟁·자격의 영향을 받습니다. 관심 없음과 미확인 자료를 구분하며 계약을 보장하지 않습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        }
-                        ForEach(Array(review.missing.enumerated()),id:\.offset) {_,text in Text(text).font(.subheadline).accessibilityIdentifier("reviewMissing")}
-                        if review.missing.isEmpty {Text("표시 가능한 부족 조건 없음 · 정식 심사의 자리·예산·경쟁·권리는 별도 확인합니다.").font(.subheadline)}
-                    }.fixedSize(horizontal:false,vertical:true)
-                    GamePanel(title:"NEXT STEP · 다음 행동",onBoard:true,contentSpacing:12) {
-                        Text("관찰일의 부족 조건에 따른 추천 순서입니다. 날짜·피로·진행 중 활동과 실제 지원 자격은 이동한 화면에서 확인합니다.").font(.caption)
-                        ForEach(review.actions) {action in
-                            VStack(alignment:.leading,spacing:8) {Text(action.reason).font(.caption);actionLink(action)}.fixedSize(horizontal:false,vertical:true)
-                        }
-                    }
-                    CareerProjectReportEvidence(playerID:player.id,period:review.current.period)
-                } else if failure == nil {
-                    GamePanel(title:"아직 관찰 결산이 없습니다",onBoard:true) {
-                        Text("보고서를 먼저 기록하면 고정된 자료를 비교할 수 있습니다.")
-                        actionLink(.report)
-                    }
-                }
-                if let failure {Text(failure).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewError")}
-            }.padding(12)
-        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("관찰 결산 · 다음 행동").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
+                    if let failure {Text(failure).foregroundStyle(GameTheme.gold).accessibilityIdentifier("reviewError")}
+                }.padding(12).fixedSize(horizontal: false, vertical: true)
+            }.id(section).accessibilityIdentifier("observationReviewScroll")
+                .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+        }
+            .lineLimit(nil).lineSpacing(4).background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("관찰 결산 · 다음 행동").navigationBarTitleDisplayMode(.inline).toolbarColorScheme(.dark,for:.navigationBar)
             .task(id:calendar.revision) {do {review=try ObservationReviewStore.load(player:player,calendar:calendar,in:context);failure=nil}catch{failure=error.localizedDescription}}
     }
     private func number(_ value:Double?) -> String {value.map {String(format:"%.1f",$0)} ?? "자료 부족"}
@@ -2625,7 +2733,7 @@ struct ObservationScheduleView:View {
                         Text(fixture.date.description+" · "+CareerTeamDirectory.name(fixture.homeID,schools:schools)+" / "+CareerTeamDirectory.name(fixture.awayID,schools:schools)).font(.subheadline)
                     }
                     if fixtures.contains(where:{$0.date.description == player.gameDate}) {
-                        NavigationLink {CareerGameEntryView(player:player,calendar:calendar,schools:schools)} label: {Text("오늘 경기 · 이어하기 / 결과")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("reviewTodayGame")
+                        NavigationLink {CareerGameEntryView(player:player,calendar:calendar,schools:schools).equatable()} label: {Text("오늘 경기 · 이어하기 / 결과")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("reviewTodayGame")
                     } else {Text("오늘 공식 경기가 없습니다. 투수는 예정 선발일에 개인 표본이 쌓입니다. 홈에서 하루 행동과 다음 일정을 진행하세요.").font(.subheadline)}
                 }
             }.padding(12)

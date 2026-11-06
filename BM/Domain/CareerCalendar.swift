@@ -44,10 +44,18 @@ struct SeasonFixture: Identifiable, Equatable, Sendable {
     let date: GameDate
     let homeID: String
     let awayID: String
+    var homeNumber: Int? = nil
+    var awayNumber: Int? = nil
     var id: String { "\(date)-\(homeID)-\(awayID)" }
     func includes(_ schoolID: String) -> Bool { homeID == schoolID || awayID == schoolID }
     func opponent(of schoolID: String) -> String { homeID == schoolID ? awayID : homeID }
     func isAppearance(for role: PlayerRole) -> Bool { role == .batter || (number - 1).isMultiple(of: 5) }
+    func forTeam(_ teamID: String) -> Self {
+        let teamNumber = teamID == homeID ? homeNumber : teamID == awayID ? awayNumber : nil
+        guard let teamNumber, teamNumber != number else { return self }
+        return SeasonFixture(number: teamNumber, date: date, homeID: homeID, awayID: awayID,
+                             homeNumber: homeNumber, awayNumber: awayNumber)
+    }
 }
 
 enum SeasonSchedule {
@@ -84,6 +92,82 @@ enum SeasonSchedule {
         return result
     }
 
+    static func expandedFixtures(year: Int, east: [String], west: [String]) throws -> [SeasonFixture] {
+        guard [east.count, west.count].sorted() == [7, 8], Set(east + west).count == 15 else {
+            throw CalendarError.invalidGroup
+        }
+        let opening = try GameDate(String(format: "%04d-04-01", year))
+        let large = east.count == 8 ? east : west
+        let small = east.count == 7 ? east : west
+        typealias Game = (home: String, away: String)
+
+        let cross: [[Game]] = (0..<8).map { round in
+            small.indices.map { smallIndex in
+                let largeIndex = (smallIndex + round) % large.count
+                let largeAtHome = (smallIndex + largeIndex / 4).isMultiple(of: 2)
+                return largeAtHome ? (large[largeIndex], small[smallIndex]) : (small[smallIndex], large[largeIndex])
+            }
+        }
+
+        func divisionRounds(_ teams: [String]) -> [[Game]] {
+            var ring = (0..<8).map { teams.indices.contains($0) ? $0 : -1 }
+            var rounds: [[(Int, Int)]] = []
+            for _ in 0..<7 {
+                rounds.append((0..<4).compactMap { index in
+                    let a = ring[index], b = ring[7 - index]
+                    return a >= 0 && b >= 0 ? (a, b) : nil
+                })
+                ring.insert(ring.removeLast(), at: 1)
+            }
+            return (0..<3).flatMap { leg in
+                rounds.map { round in
+                    round.map { a, b in
+                        let distance = (b - a + teams.count) % teams.count
+                        // The extra home date in the eight-team division offsets its cross-division split.
+                        let thirdLegHome = distance < 4 || (teams.count == 8 && distance == 4 && a >= 4)
+                        let aAtHome = leg == 0 || (leg == 2 && thirdLegHome)
+                        return aAtHome ? (teams[a], teams[b]) : (teams[b], teams[a])
+                    }
+                }
+            }
+        }
+
+        func divisionRivalries(_ teams: [String], offset: Int) -> [[Game]] {
+            let ring = teams.indices.map { teams[($0 * offset) % teams.count] }
+            var rounds = Array(repeating: [Game](), count: 3)
+            for index in ring.indices {
+                let round = index == 6 && ring.count == 7 ? 2 : index % 2
+                rounds[round].append((ring[index], ring[(index + 1) % ring.count]))
+            }
+            return rounds
+        }
+
+        let series = zip(divisionRounds(large), divisionRounds(small)).map { $0 + $1 }
+        let rivalries = zip(divisionRivalries(large, offset: 1), divisionRivalries(small, offset: 1)).map { $0 + $1 }
+        var rounds: [[Game]] = []
+        var crossIndex = 0
+        for (index, round) in (series + rivalries + divisionRivalries(small, offset: 2)).enumerated() {
+            rounds.append(round)
+            if index % 3 == 1, crossIndex < cross.count {
+                rounds.append(cross[crossIndex])
+                crossIndex += 1
+            }
+        }
+
+        var played: [String: Int] = [:]
+        return rounds.enumerated().flatMap { index, games in
+            let date = opening.adding(days: index * 174 / (rounds.count - 1))
+            return games.map { game in
+                let home = played[game.home, default: 0] + 1
+                let away = played[game.away, default: 0] + 1
+                played[game.home] = home
+                played[game.away] = away
+                return SeasonFixture(number: home, date: date, homeID: game.home, awayID: game.away,
+                                     homeNumber: home, awayNumber: away)
+            }
+        }
+    }
+
     static func academicStatus(age: Int) -> String {
         switch age {
         case ...16: "고1"
@@ -100,7 +184,7 @@ enum CalendarError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidDate: "저장된 날짜를 확인할 수 없습니다. 저장 데이터를 유지한 채 진행을 중단합니다."
-        case .invalidGroup: "6팀 일정 정보를 확인할 수 없습니다."
+        case .invalidGroup: "리그 편성과 일정 정보를 확인할 수 없습니다."
         case .actionUsed: "오늘 행동을 이미 사용했습니다."
         case .preparationRequired: "오늘 훈련 또는 휴식 1회를 먼저 마쳐 주세요. 진행 중인 훈련은 이어서 완료해 주세요."
         case .fixturePending: "오늘 경기를 먼저 완료하고 결과를 저장해 주세요."
@@ -159,6 +243,11 @@ struct AnnualLeague: Equatable {
         guard today >= origin,(origin.year...today.year).contains(year) else {throw LeagueError.invalidRecord}
         let fixtures=try competitionFixtures ?? SeasonSchedule.fixtures(year:year,schoolIDs:schoolIDs).filter {
             $0.date >= origin && origin.age(startingAt:startAge,on:$0.date) <= 18
+        }
+        let teamIDs = Set(schoolIDs)
+        guard teamIDs.count == schoolIDs.count, Set(fixtures.map(\.id)).count == fixtures.count,
+              fixtures.allSatisfy({ $0.homeID != $0.awayID && teamIDs.contains($0.homeID) && teamIDs.contains($0.awayID) }) else {
+            throw LeagueError.invalidRecord
         }
         let eligible=Dictionary(uniqueKeysWithValues:fixtures.map {($0.id,$0)})
         guard Set(official.map(\.fixtureID)).count == official.count,official.allSatisfy({
@@ -835,10 +924,20 @@ struct PersonalSeasonCoverage: Equatable {
 }
 
 extension AnnualLeague {
-    var isComplete:Bool {fixtures.count == 90 && results.count == 90 && pendingIDs.isEmpty && standings.count == 6 && standings.allSatisfy {$0.games == 30}}
+    var hasFullSchedule: Bool {
+        guard [6, 15].contains(standings.count), fixtures.count == standings.count * 15 else { return false }
+        let scheduled = Dictionary(grouping: fixtures.flatMap { [$0.homeID, $0.awayID] }, by: { $0 })
+        return standings.allSatisfy { scheduled[$0.id]?.count == 30 }
+    }
+    var isComplete:Bool {hasFullSchedule && results.count == fixtures.count && pendingIDs.isEmpty && standings.allSatisfy {$0.games == 30}}
     var displayStandings:[LeagueStanding] {
         guard isComplete,standings.allSatisfy({$0.decided == 0}) else {return standings}
         return standings.map {var row=$0;row.rank=1;return row}
+    }
+    func displayStandings(for teamIDs: Set<String>) -> [LeagueStanding] {
+        let rows = Self.ordered(standings.filter { teamIDs.contains($0.id) })
+        guard isComplete, rows.allSatisfy({ $0.decided == 0 }) else { return rows }
+        return rows.map { var row = $0; row.rank = 1; return row }
     }
 }
 enum LeagueRecordSource {

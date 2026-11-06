@@ -26,6 +26,7 @@ struct CareerTrainingView: View {
     var initialPitchStudyCode: String? = nil
     var replacingPitchCode: String? = nil
     @State private var initialSelectionApplied = false
+    @State private var continuedPitchStudy: PitchStudy?
     @State private var record: CareerTrainingRecord?
     @State private var training: CareerTraining?
     @State private var code = ""
@@ -80,7 +81,8 @@ struct CareerTrainingView: View {
     private var inputLocked: Bool { retryInput != nil || replay != nil }
     private var isPitcher: Bool { player.role == .pitcher }
     private var selectedKind: TrainingKind { training?.selectedKind ?? (category == 0 && isPitcher ? .pitch : kind) }
-    private var studying: Bool { training?.pitchStudy != nil || initialPitchStudyCode != nil }
+    private var studyCode: String? { training?.pitchStudy?.code ?? initialPitchStudyCode ?? continuedPitchStudy?.code }
+    private var studying: Bool { studyCode != nil }
     private var isLocationDrill: Bool { [.control, .defense].contains(selectedKind) && training?.position == nil && training?.trait == nil }
     private var isSkillDrill: Bool { displayTraining?.isSkillDrill ?? (SkillDrillRules.kinds.contains(selectedKind) && !studying) }
     private var skillHint: String {
@@ -91,12 +93,17 @@ struct CareerTrainingView: View {
         }
     }
     private var locationTarget: TrainingTarget? { displayTraining.flatMap { $0.completed ? nil : $0.targets[$0.scores.count] } }
-    private var title: String { training?.title ?? (studying ? (initialPitchStudyCode.flatMap { PitchType(rawValue: $0)?.label } ?? "구종") + " 습득 훈련" : selectedKind.label + " 훈련") }
+    private var title: String { training?.title ?? (studying ? (studyCode.flatMap { PitchType(rawValue: $0)?.label } ?? "구종") + " 습득 훈련" : selectedKind.label + " 훈련") }
     private var pitchName: String { selectedKind == .pitch ? (player.pitches.first { $0.code == (training?.pitchCode ?? code) }?.name ?? PitchType(rawValue: training?.pitchCode ?? code)?.label ?? "구종") : selectedKind.label }
     private func load() {
         do {
             if !initialSelectionApplied, let initialPitchStudyCode {
                 code = initialPitchStudyCode; category = 0; kind = .pitch; initialSelectionApplied = true
+            }
+            if !initialSelectionApplied, !practice,
+               let previous = try PitchStudyStore.continuationForPreparation(player: player, initialKind: initialKind, in: context),
+               let study = previous.pitchStudy {
+                continuedPitchStudy = study; code = study.code; category = 0; kind = .pitch; initialSelectionApplied = true
             }
             if !initialSelectionApplied, let initialKind, initialKind.allows(player.roleRaw) {
                 kind = initialKind
@@ -112,6 +119,7 @@ struct CareerTrainingView: View {
             angle = selectedKind.initialDirection
             if let fixed = training?.pitchCode { code = fixed }
             else if code.isEmpty { code = try PitchSelectionStore.resolve(player: player) }
+            initialSelectionApplied = true
             loadPreparation()
         } catch { errorMessage = error.localizedDescription }
     }
@@ -125,7 +133,7 @@ struct CareerTrainingView: View {
     private var preparationKey: String { "\(category):\(kind.rawValue):\(code)" }
     private func loadPreparation() {
         do {
-            if let studyCode = training?.pitchStudy?.code ?? initialPitchStudyCode {
+            if let studyCode {
                 preparationValue = try PitchStudyStore.progress(player: player, code: studyCode, in: context)
             } else {
                 preparationValue = try CareerTrainingStore.value(player: player, code: selectedKind == .pitch ? code : nil, kind: selectedKind, in: context)
@@ -137,8 +145,8 @@ struct CareerTrainingView: View {
     }
     private func start() {
         do {
-            if let initialPitchStudyCode, !practice {
-                record = try PitchStudyStore.start(player: player, state: calendar, code: initialPitchStudyCode, replacing: replacingPitchCode, in: context)
+            if let studyCode, !practice {
+                record = try PitchStudyStore.start(player: player, state: calendar, code: studyCode, replacing: initialPitchStudyCode == nil ? continuedPitchStudy?.replacing : replacingPitchCode, in: context)
                 training = try record?.snapshot()
             } else if practice {
                 training = try TrainingPractice.round(player: player, calendar: calendar, kind: selectedKind, code: code, in: context)
@@ -169,7 +177,7 @@ struct CareerTrainingView: View {
         scene.configure(hand: player.throwingHandRaw, kit: player.appearance.kit, role: player.role, appearance: renderAppearance, jerseyNumber: player.jerseyNumber)
             scene.usePracticeSetting()
         let timeline = MatchInputTimeline(windup: selectedKind == .pitch ? 0 : MatchDelivery.windup, duration: 1.6)
-        if selectedKind == .pitch { scene.preparePitch(phase: 0, reduced: reduced) }
+        if selectedKind == .pitch { scene.preparePitch(timeline: timeline) }
         else { scene.demonstrate(reduceMotion: reduced, flightDuration: 1.6, x: training.targets[training.scores.count].x,
                           y: training.targets[training.scores.count].y, pitchCode: training.pitchCode ?? "four-seam", inputTimeline: timeline) }
         clock.start(timeline: timeline) {
@@ -205,7 +213,7 @@ struct CareerTrainingView: View {
                     let point = TrainingTarget(x: 0.5, y: 0.5)
                     let flight = PitchFlightPresentation(delivery: delivery(code: "four-seam")).flightDuration
                     let bend = selectedKind == .stuff ? (SkillDrillRules.curve(previous.targets[previous.scores.count])[12].x - 0.5) * 100 : 0
-                    locationScene.play(LocationDrillReplay(kind: .control, target: point, input: point, score: score), preparedRelease: selectedKind == .velocity,
+                    locationScene.play(LocationDrillReplay(kind: .control, target: point, input: point, score: score), preparedRelease: selectedKind == .velocity && !buttonInput,
                                        flightDuration: flight, curve: bend, completion: skillAnimationFinished)
                 }
             } else if isLocationDrill, let previous = replay, let score = replayScore {
@@ -326,6 +334,17 @@ struct CareerTrainingView: View {
                                 }
                                 if training == nil {
                                     if !studying { selection }
+                                    if continuedPitchStudy != nil {
+                                        Text("지난 습득 진척을 이어서 훈련합니다.").font(.subheadline)
+                                            .accessibilityIdentifier("trainingContinuedStudy")
+                                        Button("보유 구종·다른 훈련 선택") {
+                                            do {
+                                                let preferred = try PitchSelectionStore.resolve(player: player)
+                                                continuedPitchStudy = nil; code = preferred; loadPreparation()
+                                            } catch { errorMessage = error.localizedDescription }
+                                        }.buttonStyle(MatchPixelButtonStyle())
+                                            .accessibilityIdentifier("trainingChooseOtherDrill")
+                                    }
                                     TrainingScenePreview(player: player, kind: selectedKind, pitchCode: code, appearanceOverride: renderAppearance)
                                     preparationBoard
                                 }
@@ -370,7 +389,6 @@ struct CareerTrainingView: View {
                 if selectedKind == .power { tireScene.prepare(phase) }
                 else { locationScene.prepareDrill(phase: phase) }
             }
-            if selectedKind == .pitch && clock.running { scene.preparePitch(phase: phase, reduced: reduced) }
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { cancelUncommitted() } }
     }
@@ -525,6 +543,7 @@ struct CareerTrainingView: View {
     private func beginRhythm() {
         guard !clock.running, !inputLocked, training?.completed == false else { return }
         rhythmTaps = Array(repeating: nil, count: 3)
+        locationScene.prepareDrill(phase: 0)
         clock.start(windup: 0, duration: SkillDrillRules.rhythmDuration) {
             submit(TrainingInput(drill: SkillDrillInput(beats: rhythmTaps)))
         }

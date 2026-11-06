@@ -318,5 +318,45 @@
   {
     "id": "mlb-9",
     "primary": "#51498c"
+  },
+  {
+    "id": "npb-10",
+    "primary": "#384a5d"
+  },
+  {
+    "id": "npb-11",
+    "primary": "#346751"
+  },
+  {
+    "id": "npb-12",
+    "primary": "#8a2d35"
+  },
+  {
+    "id": "npb-13",
+    "primary": "#20676b"
+  },
+  {
+    "id": "npb-14",
+    "primary": "#bb571f"
+  },
+  {
+    "id": "mlb-10",
+    "primary": "#31565a"
+  },
+  {
+    "id": "mlb-11",
+    "primary": "#4c6236"
+  },
+  {
+    "id": "mlb-12",
+    "primary": "#275848"
+  },
+  {
+    "id": "mlb-13",
+    "primary": "#214c76"
+  },
+  {
+    "id": "mlb-14",
+    "primary": "#58387a"
   }
 ]

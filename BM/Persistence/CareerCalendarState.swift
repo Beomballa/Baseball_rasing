@@ -15,6 +15,8 @@ enum CareerSchemaV2: VersionedSchema {
         var revision: Int
         var legacySave: Bool
         var rulesVersion: String
+        private static let baseRules = "career-core-v1"
+        private static let overseasRulesPrefix = "career-core-v1+overseas-v147:"
 
         init(player: CareerPlayer, schools: [School], legacySave: Bool) {
             playerID = player.id
@@ -23,8 +25,34 @@ enum CareerSchemaV2: VersionedSchema {
             actionDate = nil
             revision = 0
             self.legacySave = legacySave
-            rulesVersion = "career-core-v1"
+            rulesVersion = Self.baseRules
         }
+
+        var overseasExpansionYear: Int? {
+            get throws {
+                if rulesVersion == Self.baseRules { return nil }
+                guard rulesVersion.hasPrefix(Self.overseasRulesPrefix) else { throw CalendarError.invalidGroup }
+                let suffix = rulesVersion.dropFirst(Self.overseasRulesPrefix.count)
+                guard let year = Int(suffix), (1...9998).contains(year), String(year) == suffix else {
+                    throw CalendarError.invalidGroup
+                }
+                return year
+            }
+        }
+
+        func isExpandedOverseas(year: Int) throws -> Bool {
+            try overseasExpansionYear.map { year >= $0 } ?? false
+        }
+
+        /// First successful day advancement fixes the next season's rules without changing any earlier fixtures.
+        func adoptOverseasExpansion(after date: GameDate) throws {
+            guard try overseasExpansionYear == nil else { return }
+            let april = try GameDate(String(format: "%04d-04-01", date.year))
+            let firstExpandedYear = date < april ? date.year : date.year + 1
+            guard firstExpandedYear <= 9998 else { return }
+            rulesVersion = Self.overseasRulesPrefix + String(firstExpandedYear)
+        }
+
         func age(of player: CareerPlayer) throws -> Int {
             try GameDate(originDate).age(startingAt: player.startAge, on: GameDate(player.gameDate))
         }
@@ -34,6 +62,7 @@ enum CareerSchemaV2: VersionedSchema {
         }
         @MainActor func competition(for player:CareerPlayer,year:Int) throws -> CareerCompetitionPlan {
             guard playerID == player.id,schoolIDs.contains(player.schoolID) else {throw CalendarError.invalidGroup}
+            let expanded = try isExpandedOverseas(year: year)
             if let context=modelContext {
                 let journal=try ContractRegistrationStore.journal(player:player,calendar:self,in:context)
                 let first=try GameDate(String(format:"%04d-04-01",year)),last=first.adding(days:174)
@@ -43,8 +72,10 @@ enum CareerSchemaV2: VersionedSchema {
                 guard members.count <= 1 else {throw ContractRegistrationError.invalid}
                 if let original=members.first {
                     let member=try journal.projected(original,on:first)
-                    let ids=CareerTeamDirectory.teams(level:member.level)
-                    return CareerCompetitionPlan(teamID:member.teamID,teamIDs:ids,fixtures:try SeasonSchedule.fixtures(year:year,schoolIDs:ids),membership:member)
+                    let ids = CareerTeamDirectory.teams(level: member.level, expanded: expanded)
+                    guard ids.contains(member.teamID) else { throw CalendarError.invalidGroup }
+                    let fixtures = try CareerTeamDirectory.fixtures(level: member.level, year: year, expanded: expanded)
+                    return CareerCompetitionPlan(teamID: member.teamID, teamIDs: ids, fixtures: fixtures, membership: member)
                 }
             }
             let origin=try GameDate(originDate)
@@ -59,7 +90,7 @@ enum CareerSchemaV2: VersionedSchema {
             return try plan.fixtures.filter {fixture in
                 guard fixture.includes(plan.teamID) else {return false}
                 return try plan.membership?.contains(fixture.date) ?? true
-            }
+            }.map { $0.forTeam(plan.teamID) }
         }
         @MainActor func upcoming(for player: CareerPlayer) throws -> [SeasonFixture] {
             let today = try GameDate(player.gameDate)
@@ -104,7 +135,7 @@ typealias CareerCalendarState = CareerSchemaV2.CalendarState
         return try snapshot(player:player,state:state,year:year,records:records)
     }
     static func snapshot(player:CareerPlayer,state:CareerCalendarState,year:Int,records:[CareerMatchRecord]) throws -> AnnualLeague {
-        guard state.playerID == player.id,state.schoolIDs.contains(player.schoolID),state.rulesVersion == "career-core-v1" else {throw LeagueError.invalidRecord}
+        guard state.playerID == player.id,state.schoolIDs.contains(player.schoolID) else {throw LeagueError.invalidRecord}
         let today=try GameDate(player.gameDate),origin=try GameDate(state.originDate)
         let plan=try state.competition(for:player,year:year),fixtures=plan.fixtures
         let byID=Dictionary(uniqueKeysWithValues:fixtures.map {($0.id,$0)})

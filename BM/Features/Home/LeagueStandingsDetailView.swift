@@ -24,9 +24,9 @@ struct AnnualLeagueHomePanel: View {
             if let league {
                 LeagueSeasonMasthead(league: league, date: player.gameDate)
                 if let own = league.displayStandings.first(where: { $0.id == ownTeamID }) {
-                    LeagueOwnScorecard(row: own, name: CareerTeamDirectory.name(own.id, schools: schools))
+                    LeagueOwnScorecard(row: own, name: CareerTeamDirectory.name(own.id, schools: schools), leagueWide: league.hasGeographicDivisions)
                 }
-                LeagueStandingsBoard(rows: league.displayStandings, ownTeamID: ownTeamID, schools: schools)
+                LeagueStandingsTables(league: league, ownTeamID: ownTeamID, schools: schools)
             } else if let error {
                 GamePanel(title: "리그 기록 확인 필요", onBoard: true) {
                     Text(error).font(.body).accessibilityIdentifier("homeLeagueError")
@@ -100,9 +100,9 @@ struct AnnualLeagueScreen: View {
                     yearControls(league)
                     LeagueSeasonMasthead(league: league, date: player.gameDate)
                     if let own = league.displayStandings.first(where: { $0.id == ownTeamID }) {
-                        LeagueOwnScorecard(row: own, name: name(own.id))
+                        LeagueOwnScorecard(row: own, name: name(own.id), leagueWide: league.hasGeographicDivisions)
                     }
-                    LeagueStandingsBoard(rows: league.displayStandings, ownTeamID: ownTeamID, schools: schools)
+                    LeagueStandingsTables(league: league, ownTeamID: ownTeamID, schools: schools)
                     let today = league.fixtures.filter { $0.date.description == player.gameDate }
                     if !today.isEmpty {
                         matchSection("TODAY", title: "오늘 대진") {
@@ -125,7 +125,7 @@ struct AnnualLeagueScreen: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("승률 = 승 ÷ (승+패) · 무승부 제외")
                             Text("같은 승률은 공동 순위 · 승패가 없으면 순위와 승률은 —")
-                            if league.fixtures.count < 90 { Text("경력 시작 전이거나 현재 진로에서 출전 대상이 아닌 일정은 집계하지 않습니다.") }
+                            if !league.hasFullSchedule { Text("경력 시작 전이거나 현재 진로에서 출전 대상이 아닌 일정은 집계하지 않습니다.") }
                             Text("실제 완료 점수 우선 · 지난 날짜의 남은 경기만 자동 처리")
                             Text("다른 팀 자동 결과는 내 개인 성적·피로·XP에 반영되지 않습니다.")
                         }.font(.subheadline).foregroundStyle(GameTheme.boardMuted).padding(.top, 10)
@@ -173,10 +173,11 @@ private struct LeagueSeasonMasthead: View {
                 Image("NavGameV1").resizable().interpolation(.none).scaledToFit().frame(width: 42, height: 42).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(String(league.year)) SEASON").font(.title2.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                    Text("6팀 조별리그 · 팀당 연 30경기").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    Text(league.hasGeographicDivisions ? "동부·서부 15구단 · 팀당 연 30경기" : "6팀 조별리그 · 팀당 연 30경기")
+                        .font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("leagueSeasonFormat")
                 }
             }
-            Text(league.isComplete ? "FINAL · 최종 기록 보존" : league.fixtures.count<90 ? "PARTIAL · 부분 시즌":"LIVE · 연간 리그")
+            Text(league.isComplete ? "FINAL · 최종 기록 보존" : league.hasFullSchedule ? "LIVE · 연간 리그" : "PARTIAL · 부분 시즌")
                 .font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("leagueSeasonState")
             Text("팀 순위는 전체 팀 결과 · 개인 성적은 내 출전 원장만")
                 .font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("leagueRecordScope")
@@ -198,13 +199,14 @@ private struct LeagueSeasonMasthead: View {
 private struct LeagueOwnScorecard: View {
     let row: LeagueStanding
     let name: String
+    let leagueWide: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(spacing: 0) {
                     Text(row.rank.map(String.init) ?? "—").font(.system(.largeTitle, design: .monospaced, weight: .black))
-                    Text(row.rank == nil ? "집계 전" : "위").font(.caption.bold())
+                    Text(row.rank == nil ? "집계 전" : leagueWide ? "전체 순위" : "위").font(.caption.bold())
                 }.foregroundStyle(GameTheme.gold).frame(minWidth: 56)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("MY TEAM").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
@@ -255,17 +257,45 @@ private struct LeagueRecordComposition: View {
     }
 }
 
+extension AnnualLeague {
+    var hasGeographicDivisions: Bool {
+        standings.count == 15 && standings.allSatisfy { CareerTeamDirectory.division(for: $0.id) != nil }
+    }
+    func geographicStandings(_ division: ClubIdentity.Division) -> [LeagueStanding] {
+        let ids = Set(standings.filter { CareerTeamDirectory.division(for: $0.id) == division }.map(\.id))
+        return displayStandings(for: ids)
+    }
+}
+
+struct LeagueStandingsTables: View {
+    let league: AnnualLeague
+    let ownTeamID: String
+    let schools: [School]
+    var body: some View {
+        if league.hasGeographicDivisions {
+            LeagueStandingsBoard(rows: league.geographicStandings(.east), ownTeamID: ownTeamID, schools: schools,
+                                 title: "동부 순위", identifier: "leagueDivision-east")
+            LeagueStandingsBoard(rows: league.geographicStandings(.west), ownTeamID: ownTeamID, schools: schools,
+                                 title: "서부 순위", identifier: "leagueDivision-west")
+        } else {
+            LeagueStandingsBoard(rows: league.displayStandings, ownTeamID: ownTeamID, schools: schools)
+        }
+    }
+}
+
 private struct LeagueStandingsBoard: View {
     let rows: [LeagueStanding]
     let ownTeamID: String
     let schools: [School]
+    var title = "순위 전광판"
+    var identifier = "leagueStandingsTitle"
     @Environment(\.dynamicTypeSize) private var typeSize
     private var expanded: Bool { typeSize >= .xxxLarge }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Text("LEAGUE").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                Text("순위 전광판").font(.headline)
+                Text(title).font(.headline).accessibilityAddTraits(.isHeader).accessibilityIdentifier(identifier)
                 Spacer()
             }.padding(12)
             if !expanded { tableHeader }
@@ -439,7 +469,7 @@ struct LeaguePlayersScreen: View {
                         }
                     }
                     DisclosureGroup("선두·최종 타이틀 기준") {
-                        Text("게임의 30경기 단축 시즌 기준입니다. 타율은 팀 경기×3.1(올림)과 최소15타석, ERA는 팀 경기×3아웃과 최소9아웃을 모두 충족해야 합니다. 홈런/탈삼진은 양수 기록을 비교하며 동률은 공동 선두입니다. 리그6팀 기록이 확인되고 누락 경기가 없을 때만 표시합니다. 팀당30경기 완료 뒤에만 최종1위로 표시합니다. 다승은 승패 채점을 시작한 경기만 집계하며, 과거 승패 미채점 경기가 있으면 선두를 보류합니다. 선발은 5이닝을 충족해야 하고, 미충족 시 현재 규칙의 유일한 구원투수에게 승리를 기록합니다.")
+                        Text("게임의 30경기 단축 시즌 기준입니다. 타율은 팀 경기×3.1(올림)과 최소15타석, ERA는 팀 경기×3아웃과 최소9아웃을 모두 충족해야 합니다. 홈런/탈삼진은 양수 기록을 비교하며 동률은 공동 선두입니다. 모든 팀의 기록이 확인되고 누락 경기가 없을 때만 표시합니다. 팀당30경기 완료 뒤에만 최종1위로 표시합니다. 다승은 승패 채점을 시작한 경기만 집계하며, 과거 승패 미채점 경기가 있으면 선두를 보류합니다. 선발은 5이닝을 충족해야 하고, 미충족 시 현재 규칙의 유일한 구원투수에게 승리를 기록합니다.")
                             .font(.subheadline).padding(.top, 8)
                     }.tint(GameTheme.gold)
                 }
@@ -481,8 +511,8 @@ struct LeaguePlayersScreen: View {
             let value = try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: year, competition: level, through: GameDate(player.gameDate), in: context)
             let today = try GameDate(player.gameDate)
             let required = Set(plan.fixtures.filter { $0.date < today }.map(\.id))
-            ledger = value; honors = LeagueHonorRules.leaders(value, requiredFixtureIDs: required)
-            honorsPending = LeagueHonorRules.pendingReason(value, requiredFixtureIDs: required); failure = nil
+            ledger = value; honors = LeagueHonorRules.leaders(value, requiredFixtureIDs: required, teamCount: ids.count)
+            honorsPending = LeagueHonorRules.pendingReason(value, requiredFixtureIDs: required, teamCount: ids.count); failure = nil
         } catch { failure = error.localizedDescription }
     }
 }
