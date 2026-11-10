@@ -13,19 +13,18 @@ struct DetailGamePortrait: View {
         let cache = NSCache<NSString, UIImage>(); cache.countLimit = 8
         return cache
     }()
-    private var key: String {
-        let look = appearance
-        return "\(role.rawValue):\(hand):\(number):\(look.skin):\(look.hair):\(look.kit):\(look.hairStyle):\(look.expression)"
+    var renderingKey: String {
+        PlayerMotionArt.cacheKey(role: role, appearance: appearance, number: number, hand: hand)
     }
     var body: some View {
         Group {
             if let portrait { Image(uiImage: portrait).resizable().interpolation(.none).scaledToFit() }
             else { PixelPlayer(appearance: appearance) }
         }.accessibilityLabel(label + " · 등번호 \(number)")
-            .task(id: key) {
-                if let cached = Self.images.object(forKey: key as NSString) { portrait = cached; return }
+            .task(id: renderingKey) {
+                if let cached = Self.images.object(forKey: renderingKey as NSString) { portrait = cached; return }
                 if let image = PlayerMotionArt.image(role: role, frame: 0, appearance: appearance, number: number, hand: hand) {
-                    Self.images.setObject(image, forKey: key as NSString); portrait = image
+                    Self.images.setObject(image, forKey: renderingKey as NSString); portrait = image
                 }
             }
     }

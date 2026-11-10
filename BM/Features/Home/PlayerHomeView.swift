@@ -2202,7 +2202,7 @@ struct CareerObjectivesView:View {
                                     Button {
                                         run {try OverseasContractStore.selectTarget(player:player,calendar:calendar,reportID:latest.id,clubID:clubID,date:player.gameDate,revision:calendar.revision,in:context);choosing=false}
                                     } label: {
-                                        Text("목표 확정 · 저장").fixedSize(horizontal:false,vertical:true).multilineTextAlignment(.center).padding(12)
+                                        Text("목표 확정 · 저장").fixedSize(horizontal:false,vertical:true).multilineTextAlignment(.center).padding(.vertical,4)
                                     }.buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(selected == nil).accessibilityIdentifier("saveCareerTarget")
                                 }.padding(12).foregroundStyle(GameTheme.boardInk).background(GameTheme.navy)
                             }

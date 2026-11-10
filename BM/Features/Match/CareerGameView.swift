@@ -487,7 +487,7 @@ struct CareerGameView: View {
     }
     private func battingAimButton(_ title: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, minHeight: 44)
+            Text(title).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity)
         }.buttonStyle(MatchPixelButtonStyle()).disabled(battingTouchLocked)
             .accessibilityIdentifier("accessibleBattingAim-" + id)
     }
@@ -1647,7 +1647,7 @@ struct MatchOpponentCenter:View {
                                 Text(plan.criteria).font(.caption).multilineTextAlignment(.leading)
                             }.frame(maxWidth:.infinity,alignment:.leading)
                             Rectangle().fill(choice == plan ? GameTheme.gold:GameTheme.boardLine.opacity(0.3)).frame(width:12,height:12)
-                        }.padding(12)
+                        }.padding(.vertical, 4)
                     }.buttonStyle(MatchPixelButtonStyle(selected:choice == plan)).disabled(locked)
                         .accessibilityIdentifier("planChoice-"+plan.rawValue).accessibilityValue(choice == plan ? "선택됨":"선택 안 됨")
                 }

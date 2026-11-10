@@ -229,6 +229,7 @@ struct ManagementToolbarButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(ManagementPixelFont.readable(.label))
+            .lineLimit(1).fixedSize(horizontal: true, vertical: true)
             .padding(.horizontal, 10).frame(minWidth: 44, minHeight: 44)
             .foregroundStyle(enabled ? GameTheme.gold : GameTheme.boardMuted)
             .background(configuration.isPressed ? GameTheme.navy : GameTheme.boardPanel, in: ManagementStepFrame())

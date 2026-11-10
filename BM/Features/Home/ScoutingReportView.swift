@@ -54,7 +54,7 @@ struct ScoutingObservationHomePanel: View {
             } else if let row = own.first, let value = try? row.snapshot() {
                 ScoutingInterestList(value: value, compact: true)
                 NavigationLink { SavedScoutingObservationView(value: value, schoolID: player.schoolID, legacySchoolName: player.schoolName) } label: {
-                    HStack { Text("확정 보고서 펼치기"); Spacer(); Text("›") }
+                    HStack { Text("확정 보고서 펼치기").accessibilityIdentifier("openSavedScoutingReportTitle"); Spacer(); Text("›") }
                 }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("openSavedScoutingReport")
                 DisclosureGroup("관찰 날짜 · 집계 범위 · 보고서 이력") {
                     ScoutPeriodRibbon(value: value, count: own.count)

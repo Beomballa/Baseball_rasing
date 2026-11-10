@@ -114,7 +114,7 @@ struct ClubDirectoryView: View {
                     }.accessibilityElement(children: .combine).accessibilityIdentifier("clubDirectory-" + club.id)
                     Button { venueClub = club } label: {
                         Text(showsUniform ? "홈구장·유니폼" : "홈구장")
-                            .font(.subheadline.bold()).frame(maxWidth: .infinity, minHeight: 44)
+                            .font(.subheadline.bold()).frame(maxWidth: .infinity)
                     }.buttonStyle(MatchPixelButtonStyle())
                         .accessibilityLabel(club.name + (showsUniform ? " 홈구장과 유니폼" : " 홈구장"))
                         .accessibilityIdentifier("clubStadium-" + club.id)
@@ -126,7 +126,7 @@ struct ClubDirectoryView: View {
     private var leagueTabs: some View {
         HStack(spacing: 8) {
             ForEach(ClubIdentity.League.allCases) { value in
-                Button { league = value } label: { Text((league == value ? "◆ " : "") + value.label).font(.subheadline.bold()).frame(maxWidth: .infinity, minHeight: 44) }
+                Button { league = value } label: { Text((league == value ? "◆ " : "") + value.label).font(.subheadline.bold()).frame(maxWidth: .infinity) }
                     .buttonStyle(MatchPixelButtonStyle(primary: league == value)).accessibilityIdentifier("clubLeague-" + value.id)
                     .accessibilityAddTraits(league == value ? .isSelected : [])
             }
@@ -257,7 +257,7 @@ private struct ClubStadiumPreview: View {
             ForEach(Artwork.allCases, id: \.self) { option in
                 Button { artwork = option } label: {
                     Text(option.label).font(.subheadline.bold())
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .frame(maxWidth: .infinity)
                 }.buttonStyle(MatchPixelButtonStyle(primary: artwork == option))
                     .accessibilityAddTraits(artwork == option ? .isSelected : [])
                     .accessibilityIdentifier("clubArtworkTab-" + option.rawValue)
@@ -283,7 +283,7 @@ struct CareerTargetClubPicker: View {
             Text(ManagementDisplay.date(reportDate) + " 고정 보고서의 모집 역할").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             LazyVGrid(columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 140))], spacing: 8) {
                 ForEach(["국내 프로 관찰"] + OverseasRoute.allCases.map(\.label), id: \.self) { value in
-                    Button { if path != value { selectedID = "" }; path = value } label: { Text((path == value ? "◆ " : "") + value).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true).padding(10).frame(maxWidth: .infinity, minHeight: 44) }
+                    Button { if path != value { selectedID = "" }; path = value } label: { Text((path == value ? "◆ " : "") + value).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity) }
                         .buttonStyle(MatchPixelButtonStyle(primary: path == value)).accessibilityIdentifier("targetRoute-" + value)
                         .accessibilityAddTraits(path == value ? .isSelected : [])
                 }

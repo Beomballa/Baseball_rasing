@@ -5,6 +5,34 @@ import UIKit
 @testable import BM
 
 @MainActor final class CareerStoreTests: XCTestCase {
+    func testV166DetailPortraitRefreshesAcrossTeamUniformAndArtVersionWithoutChangingAppearance() throws {
+        var look = PlayerAppearance()
+        look.creationVersion = 1
+        look.schoolKitID = "hs-ref-001"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let original = try encoder.encode(look)
+        for role in PlayerRole.allCases {
+            func key(_ appearance: PlayerAppearance, number: Int = 18, hand: String = "left") -> String {
+                DetailGamePortrait(role: role, appearance: appearance, number: number, hand: hand).renderingKey
+            }
+            let home = look.wearing(teamID: "kbo-0")
+            let away = look.wearing(teamID: "kbo-0", away: true)
+            let other = look.wearing(teamID: "npb-10")
+            var legacy = home
+            legacy.creationVersion = nil
+            XCTAssertNotEqual(key(home), key(away), "Home and away uniforms must not reuse the same detail portrait.")
+            XCTAssertNotEqual(key(home), key(other), "A changed affiliation must refresh the detail portrait.")
+            XCTAssertNotEqual(key(home), key(legacy), "Legacy and current art must not share a cached portrait.")
+            XCTAssertNotEqual(key(home), key(home, number: 27))
+            XCTAssertNotEqual(key(home), key(home, hand: "right"))
+            XCTAssertEqual(try encoder.encode(home), original, "Uniform render context must not rewrite the saved appearance.")
+            XCTAssertEqual(try encoder.encode(away), original)
+            XCTAssertEqual(try encoder.encode(other), original)
+        }
+        XCTAssertEqual(try encoder.encode(look), original)
+    }
+
     func testV107VisibleHairAndCacheIsolationPreserveAppearance() throws {
         var look = PlayerAppearance(); look.creationVersion = 1; look.schoolKitID = "hs-ref-001"
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys

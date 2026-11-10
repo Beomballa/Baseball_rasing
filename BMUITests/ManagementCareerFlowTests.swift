@@ -698,6 +698,235 @@ final class ManagementCareerFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["managementTab-home"].waitForExistence(timeout: 6))
     }
 
+    @MainActor func testV166ControlsKeepContentInsetsAndCreationCloseRegular() {
+        v166CheckReadability(large: false)
+    }
+
+    @MainActor func testV166ControlsKeepContentInsetsAndCreationCloseLargestText() {
+        v166CheckReadability(large: true)
+    }
+
+    @MainActor private func v166CheckReadability(large: Bool) {
+        continueAfterFailure = false
+        let prefix = large ? "V166-largest" : "V166-regular"
+        let app = XCUIApplication(bundleIdentifier: "dev.bm.career.performanceqa")
+        defer { app.terminate() }
+
+        v166Launch(app, large: large, singleRole: false)
+        capture(app, prefix + "-home")
+        app.buttons["roomProfile"].tap()
+        XCTAssertTrue(app.buttons["homeRole-batter"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["homeRole-pitcher"].exists)
+        capture(app, prefix + "-player-list")
+        app.terminate()
+
+        v166Launch(app, large: large, singleRole: true)
+        let before = labels(app)
+        v99Menu("player", title: "선수", app: app)
+        v166Tap("facility-abilities", app)
+        v166Tap("createOtherRole", app)
+        XCTAssertTrue(app.buttons["createPlayer"].waitForExistence(timeout: 8))
+        let availableRole = app.buttons["role-pitcher"]
+        v166RevealCreationRole(availableRole, app: app)
+        XCTAssertTrue(availableRole.waitForExistence(timeout: 5))
+        XCTAssertTrue(availableRole.isHittable)
+        XCTAssertTrue(availableRole.isSelected)
+        XCTAssertFalse(app.buttons["role-batter"].exists)
+        let close = app.buttons["closePlayerCreation"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        XCTAssertTrue(close.isHittable)
+        XCTAssertTrue(close.label.contains("닫기"), close.label)
+        let closeLabel = close.label
+        v166CheckBounds(close, app: app)
+        XCTAssertGreaterThanOrEqual(close.frame.width, close.frame.height - 1)
+        capture(app, prefix + "-creation-close-and-current-avatar")
+        close.tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.textFields["playerName"].exists)
+        v99Menu("home", title: "홈", app: app)
+        XCTAssertEqual(labels(app), before)
+
+        v99Menu("player", title: "선수", app: app)
+        v166Tap("facility-abilities", app)
+        XCTAssertTrue(app.buttons["createOtherRole"].exists, "취소만으로 미생성 역할 슬롯이 소비되면 안 됩니다.")
+        v166CloseRoom(app)
+        v99Menu("home", title: "홈", app: app)
+        XCTAssertEqual(labels(app), before)
+
+        v99Menu("career", title: "커리어", app: app)
+        v166Tap("facility-observation", app)
+        let report = app.buttons["openSavedScoutingReport"]
+        XCTAssertTrue(report.waitForExistence(timeout: 8))
+        reveal(report, app)
+        XCTAssertTrue(report.isHittable)
+        let title = app.staticTexts["openSavedScoutingReportTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertTrue(title.isHittable)
+        v166CheckBounds(report, app: app)
+        let leftInset = title.frame.minX - report.frame.minX
+        let trailingSpace = report.frame.maxX - title.frame.maxX
+        let reportHeight = report.frame.height
+        XCTAssertGreaterThanOrEqual(leftInset, 10, "확정 보고서 제목이 버튼 테두리에 붙으면 안 됩니다.")
+        XCTAssertGreaterThanOrEqual(trailingSpace, 10, "제목의 마지막 글자가 버튼 테두리에 붙으면 안 됩니다.")
+        XCTAssertGreaterThanOrEqual(report.frame.height, title.frame.height + 14)
+        capture(app, prefix + "-scout-desk-content-insets")
+        report.tap()
+        let frozenDate = app.staticTexts["scoutFrozenDate"]
+        XCTAssertTrue(frozenDate.waitForExistence(timeout: 8))
+        let originalDate = frozenDate.label
+        v166Tap("frozenScoutSection-abilities", app)
+        XCTAssertEqual(frozenDate.label, originalDate)
+        v166Tap("frozenScoutSection-summary", app)
+        XCTAssertEqual(frozenDate.label, originalDate)
+        v166CheckVisibleTextBounds(app)
+        capture(app, prefix + "-frozen-report-summary")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        v166CloseRoom(app)
+        v99Menu("home", title: "홈", app: app)
+        XCTAssertEqual(labels(app), before)
+
+        v99Menu("training", title: "훈련", app: app)
+        v166Tap("facility-training", app)
+        capture(app, prefix + "-training-hub-no-start")
+        v166CloseRoom(app)
+        v99Menu("home", title: "홈", app: app)
+        XCTAssertEqual(labels(app), before)
+        v166Tap("clubhouse-rest", app)
+        XCTAssertTrue(app.buttons["confirmRest"].waitForExistence(timeout: 8))
+        capture(app, prefix + "-rest-confirmation-no-save")
+        let cancel = app.buttons["취소 · 돌아가기"]
+        reveal(cancel, app)
+        XCTAssertTrue(cancel.isHittable)
+        cancel.tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 8))
+        XCTAssertEqual(labels(app), before)
+        XCTAssertFalse(app.staticTexts["restSaved"].exists)
+
+        let audit: [String: Any] = [
+            "fontMode": large ? "accessibilityXXXL" : "regular",
+            "bundle": "dev.bm.career.performanceqa",
+            "storage": "management in-memory verification; fresh fixtures after relaunch",
+            "homeStateBefore": before,
+            "homeStateAfter": labels(app),
+            "scoutTitleLeftInset": Double(leftInset),
+            "scoutTitleTrailingSpace": Double(trailingSpace),
+            "scoutButtonHeight": Double(reportHeight),
+            "creationCloseLabel": closeLabel,
+            "frozenObservedDate": originalDate,
+            "trainingStartCommands": 0,
+            "restSaveCommands": 0,
+            "playerRegistrationCommands": 0,
+            "humanInputs": 0,
+            "limits": "Representative navigation/geometry assertions and still captures. Not all 204 button call sites, actual VoiceOver, full glyph/animation quality, physical-device performance or approved screen redesign."
+        ]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: audit, options: [.prettyPrinted, .sortedKeys])
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = prefix + "-readability-audit"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        } catch { XCTFail("V166 QA audit could not be encoded: " + error.localizedDescription) }
+    }
+
+    @MainActor private func v166Launch(_ app: XCUIApplication, large: Bool, singleRole: Bool) {
+        app.launchArguments = ["-management-career-verification"]
+        if singleRole { app.launchArguments += ["-management-single-role-verification"] }
+        if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launchEnvironment = [:]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 20))
+    }
+
+    @MainActor private func v166Tap(_ identifier: String, _ app: XCUIApplication) {
+        if identifier.hasPrefix("frozenScoutSection-"), app.buttons["frozenScoutSectionMenu"].exists {
+            app.buttons["frozenScoutSectionMenu"].tap()
+        }
+        let button = app.buttons[identifier]
+        XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
+        if !button.isHittable { reveal(button, app) }
+        XCTAssertTrue(button.isHittable, identifier)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001, identifier)
+        button.tap()
+    }
+
+    @MainActor private func v166RevealCreationRole(_ role: XCUIElement, app: XCUIApplication) {
+        let scroll = app.scrollViews["creationScroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 8))
+        for attempt in 0..<8 {
+            let shortcuts = ["information", "abilities", "appearance", "review"]
+                .map { app.buttons["creationSection-" + $0] }.filter(\.exists)
+            let window = app.windows.firstMatch.frame
+            let scrollFrame = scroll.frame
+            let appFrame = app.frame
+            let top = max(scrollFrame.minY, shortcuts.map(\.frame.maxY).max() ?? scrollFrame.minY) + 8
+            let bottom = min(scrollFrame.maxY, window.maxY) - 8
+            XCTAssertGreaterThan(bottom - top, 20, "생성 모달의 스크롤 가시 영역이 유효해야 합니다.")
+            let visibleMidY = (top + bottom) / 2
+            let exists = role.exists
+            let hittable = exists && role.isHittable
+            let frame = exists ? role.frame : .zero
+            let visible = hittable && frame.midY > top && frame.midY < bottom
+            let travelLimit = min(CGFloat(80), (bottom - top) / 2 - 8)
+            let delta = visible ? 0 : min(travelLimit, max(-travelLimit, exists ? frame.midY - visibleMidY : 80))
+            let audit: [String: Any] = [
+                "attempt": attempt + 1,
+                "scrollIdentifier": "creationScroll",
+                "roleExists": exists,
+                "roleHittable": hittable,
+                "roleFrame": [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)],
+                "scrollFrame": [Double(scrollFrame.minX), Double(scrollFrame.minY), Double(scrollFrame.width), Double(scrollFrame.height)],
+                "windowFrame": [Double(window.minX), Double(window.minY), Double(window.width), Double(window.height)],
+                "appOrigin": [Double(appFrame.minX), Double(appFrame.minY)],
+                "visibleTop": Double(top),
+                "visibleBottom": Double(bottom),
+                "visibleMidY": Double(visibleMidY),
+                "contentDelta": Double(delta),
+                "roleVisible": visible,
+                "maximumDragDistance": 80,
+                "velocity": 100
+            ]
+            do {
+                let data = try JSONSerialization.data(withJSONObject: audit, options: [.prettyPrinted, .sortedKeys])
+                let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                attachment.name = "V166-creation-role-scroll-\(attempt + 1)-geometry"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            } catch { XCTFail("V166 생성 모달 스크롤 근거를 기록하지 못했습니다: " + error.localizedDescription) }
+            if visible { return }
+            let start = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: window.midX - appFrame.minX, dy: visibleMidY - appFrame.minY))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -delta)),
+                        withVelocity: 100, thenHoldForDuration: 0.2)
+        }
+        XCTAssertTrue(role.exists && role.isHittable, "생성 모달의 역할 선택을 8회 이내 미세 스크롤로 찾지 못했습니다.")
+    }
+
+    @MainActor private func v166CheckVisibleTextBounds(_ app: XCUIApplication) {
+        for text in app.staticTexts.allElementsBoundByIndex where text.isHittable && !text.label.isEmpty {
+            XCTAssertGreaterThanOrEqual(text.frame.minX, app.frame.minX - 1, text.label)
+            XCTAssertLessThanOrEqual(text.frame.maxX, app.frame.maxX + 1, text.label)
+            XCTAssertFalse(text.label.contains("�"), text.label)
+        }
+    }
+
+    @MainActor private func v166CheckBounds(_ element: XCUIElement, app: XCUIApplication) {
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(element.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(element.frame.minX, window.minX - 1)
+        XCTAssertLessThanOrEqual(element.frame.maxX, window.maxX + 1)
+        XCTAssertGreaterThanOrEqual(element.frame.minY, window.minY - 1)
+        XCTAssertLessThanOrEqual(element.frame.maxY, window.maxY + 1)
+    }
+
+    @MainActor private func v166CloseRoom(_ app: XCUIApplication) {
+        closeDetail(app)
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !app.buttons["closeRoomDetail"].exists
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 8), .completed)
+    }
+
     @MainActor private func expand(_ id: String, _ app: XCUIApplication) {
         let group = app.descendants(matching: .any).matching(identifier: id).firstMatch
         reveal(group, app)

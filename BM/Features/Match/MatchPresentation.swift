@@ -467,6 +467,9 @@ struct MatchPixelButtonStyle: ButtonStyle {
     var primary = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(.subheadline, design: .monospaced, weight: .bold))
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, minHeight: primary ? 48 : 44)
             .foregroundStyle(enabled ? Color(hex: 0xf3edcf) : Color(hex: 0x9aacb7))
             .background(selected || primary ? Color(hex: 0x307855) : Color(hex: 0x203e57))

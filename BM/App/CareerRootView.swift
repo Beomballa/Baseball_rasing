@@ -51,7 +51,10 @@ struct CareerRootView: View {
                     PlayerCreationView(schools: schools, availableRoles: PlayerRole.allCases.filter { role in
                         !players.contains(where: { $0.role == role && !$0.isRetired })
                     }, onSaving: { sheetRegistering = $0 }) { id in selectedID = id; showCreation = false }
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { showCreation = false }.disabled(sheetRegistering) } }
+                    .toolbar {
+                        ManagementToolbarAction(title: "닫기", identifier: "closePlayerCreation", placement: .cancellationAction,
+                                                disabled: sheetRegistering) { showCreation = false }
+                    }
                 }
             }
         }

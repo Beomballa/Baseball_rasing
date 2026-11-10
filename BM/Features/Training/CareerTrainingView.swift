@@ -418,7 +418,7 @@ struct CareerTrainingView: View {
     }
     private func option(_ label: String, selected: Bool, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text((selected ? "■ " : "□ ") + label).fixedSize(horizontal: false, vertical: true).padding(.vertical, 4)
+            Text((selected ? "■ " : "□ ") + label).fixedSize(horizontal: false, vertical: true)
         }.buttonStyle(MatchPixelButtonStyle(selected: selected))
             .accessibilityLabel(label).accessibilityIdentifier(id)
             .accessibilityAddTraits(selected ? .isSelected : [])
@@ -826,7 +826,7 @@ struct CareerTrainingView: View {
         Button {
             guard !inputLocked else { return }
             x = min(1, max(0, x + dx)); y = min(1, max(0, y + dy))
-        } label: { Text(title).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+        } label: { Text(title).frame(maxWidth: .infinity).contentShape(Rectangle()) }
             .buttonStyle(MatchPixelButtonStyle()).disabled(inputLocked)
             .accessibilityLabel((selectedKind == .control ? "조준 " : "선수 ") + label + " 1 이동")
             .accessibilityIdentifier("locationMove-" + label)
@@ -1408,7 +1408,7 @@ struct PitchStudyContinuationCard: View {
                         .font(.subheadline).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
                     NavigationLink {
                         CareerTrainingView(player: player, calendar: calendar, initialKind: .pitch, initialPitchStudyCode: study.code, replacingPitchCode: study.replacing)
-                    } label: { Text((PitchType(rawValue: study.code)?.label ?? study.code) + " 이어서 학습").multilineTextAlignment(.center).padding(8) }
+                    } label: { Text((PitchType(rawValue: study.code)?.label ?? study.code) + " 이어서 학습").multilineTextAlignment(.center) }
                         .buttonStyle(MatchPixelButtonStyle(primary: true)).disabled(locked).accessibilityIdentifier("pitchStudyContinue")
                     if locked { Text("오늘 행동 완료 · 다음 훈련일에 이어서 진행하세요.").font(.caption).foregroundStyle(GameTheme.boardMuted) }
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.board)

@@ -36,7 +36,9 @@ struct PlayerCreationView: View {
         ScrollView {
             VStack(spacing: ManagementTheme.Space.screen) {
                 HStack(alignment: .center, spacing: 12) {
-                    PixelPlayer(appearance: draft.appearance).frame(width: 48, height: 64)
+                    CreationAvatarImage(appearance: draft.appearance, role: draft.role,
+                                        number: Int(draft.jerseyNumber) ?? 0, cap: true, mode: .full)
+                        .frame(width: 48, height: 64)
                     VStack(alignment: .leading, spacing: 5) {
                         Text("새 커리어 · 16세 고1").font(ManagementPixelFont.readable(.label)).foregroundStyle(GameTheme.gold)
                         Text(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "나의 첫 시즌" : draft.name)
@@ -169,6 +171,7 @@ struct PlayerCreationView: View {
                     .font(.caption).foregroundStyle(GameTheme.boardMuted).multilineTextAlignment(.center)
             }.padding(16)
         }
+        .accessibilityIdentifier("creationScroll")
         .scrollDismissesKeyboard(.interactively)
         .task(id: section) {
             await Task.yield()
@@ -199,7 +202,10 @@ struct PlayerCreationView: View {
         .onChange(of: draft.role) { _, role in draft.archetype = .initial(for: role); draft.isCustom = false; draft.allocation = nil; draft.pitchCodes = nil }
         .disabled(registeredID != nil).accessibilityHidden(registeredID != nil)
         .overlay {
-            if registeredID != nil { CreationRegistrationOverlay(appearance: draft.appearance, name: draft.name, reduced: reduced) }
+            if registeredID != nil {
+                CreationRegistrationOverlay(appearance: draft.appearance, role: draft.role,
+                                            number: Int(draft.jerseyNumber) ?? 0, name: draft.name, reduced: reduced)
+            }
         }
         .navigationBarBackButtonHidden(registeredID != nil)
         .interactiveDismissDisabled(registeredID != nil)
@@ -498,6 +504,8 @@ private struct CreationStatRow: View {
 
 private struct CreationRegistrationOverlay: View {
     let appearance: PlayerAppearance
+    let role: PlayerRole
+    let number: Int
     let name: String
     let reduced: Bool
     private let started = Date()
@@ -507,7 +515,8 @@ private struct CreationRegistrationOverlay: View {
                 GameTheme.board.opacity(0.97).ignoresSafeArea()
                 ScrollView {
                     GamePanel(title: "선수 등록", onBoard: true) {
-                        PixelPlayer(appearance: appearance).frame(width: 48, height: 64).accessibilityHidden(true)
+                        CreationAvatarImage(appearance: appearance, role: role, number: number, cap: true, mode: .full)
+                            .frame(width: 48, height: 64)
                         Text(name).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
                         Text("선수 정보 저장 완료").font(.headline).foregroundStyle(GameTheme.growth)
                             .fixedSize(horizontal: false, vertical: true)
