@@ -345,14 +345,15 @@ struct CareerTrainingView: View {
                                         }.buttonStyle(MatchPixelButtonStyle())
                                             .accessibilityIdentifier("trainingChooseOtherDrill")
                                     }
-                                    TrainingScenePreview(player: player, kind: selectedKind, pitchCode: code, appearanceOverride: renderAppearance)
+                                    TrainingScenePreview(player: player, kind: selectedKind, pitchCode: code, appearanceOverride: renderAppearance, studying: studying)
                                     preparationBoard
                                 }
                                 if dynamicTypeSize.isAccessibilitySize {
                                     Button("훈련 버튼으로 이동") { scroll.scrollTo("trainingControls", anchor: .bottom) }
                                         .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("trainingJumpControls")
                                 }
-                            }.background(chromeMeasurement("top"))
+                            }.fixedSize(horizontal: false, vertical: true)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chromeHeights["top"] = $0 }
                             if training != nil {
                                 arena(height: fieldHeight(in: geometry.size))
                                 if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 4) }
@@ -360,12 +361,12 @@ struct CareerTrainingView: View {
                             VStack(spacing: 8) {
                                 if reviewReady { reviewControls } else { playControls.disabled(replay != nil) }
                                 errorControls
-                            }.id("trainingControls").background(chromeMeasurement("bottom"))
+                            }.fixedSize(horizontal: false, vertical: true).id("trainingControls")
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chromeHeights["bottom"] = $0 }
                         }.padding(12).frame(minHeight: max(0, geometry.size.height), alignment: .top)
                     }
                 }
                 .accessibilityIdentifier("careerTrainingScroll")
-                .onPreferenceChange(TrainingChromeHeightKey.self) { chromeHeights = $0 }
             }
         }
         .background(GameTheme.board).foregroundStyle(GameTheme.boardInk).tint(GameTheme.gold)
@@ -399,19 +400,16 @@ struct CareerTrainingView: View {
         x = 0.5; y = 0.5; force = 70; angle = selectedKind.initialDirection
     }
     private func fieldHeight(in size: CGSize) -> CGFloat {
-        let available = size.height - chromeHeights.values.reduce(0, +) - 40
+        let measured = chromeHeights.values.reduce(0, +)
+        let maximumWidth = max(0, size.width - 24)
+        let available = size.height - measured - 40
         if isLocationDrill || isSkillDrill && selectedKind != .power {
-            return min(size.width - 24, max(150 * 320 / 340, available * 320 / 340))
+            return min(maximumWidth, max(150 * 320 / 340, available * 320 / 340))
         }
         if isSkillDrill || [.speed,.arm,.stamina,.mental].contains(selectedKind) {
-            return min(size.width-24,max(150*320/220,available*320/220))
+            return min(maximumWidth,max(150*320/220,available*320/220))
         }
-        return max(150,min(size.width-24,available))
-    }
-    private func chromeMeasurement(_ section: String) -> some View {
-        GeometryReader { geometry in
-            Color.clear.preference(key: TrainingChromeHeightKey.self, value: [section: geometry.size.height])
-        }
+        return min(maximumWidth, max(150, available))
     }
     private var choiceColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 6), count: dynamicTypeSize.isAccessibilitySize ? 1 : 3)
@@ -938,7 +936,7 @@ private struct TrainingPreparationBoard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(name + " 훈련").font(.headline).foregroundStyle(GameTheme.gold)
+                Text(studying ? "습득 목표" : "성장 목표").font(.headline).foregroundStyle(GameTheme.gold)
                 Spacer(minLength: 4)
                 if let value {
                     Text("현재 \(value, specifier: "%.1f")").font(.headline.monospacedDigit())
@@ -954,6 +952,8 @@ private struct TrainingPreparationBoard: View {
                 }.accessibilityElement(children: .combine).accessibilityIdentifier("trainingNextTarget")
                 TrainingSegmentTrack(value: studying ? value / 100 : value >= 100 ? 1 : value - floor(value), color: GameTheme.growth)
             }
+            TrainingAttemptStrip(scores: [], expanded: false)
+                .accessibilityLabel("훈련 시작 전, 5회 모두 대기")
             let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
             layout {
                 TrainingRuleStamp(title: "시도", value: "5회")
@@ -1116,13 +1116,6 @@ private struct ContactTrainingFeedback: View {
             Spacer(minLength: 0)
         }.padding(8).background(Color(hex: 0x203e57))
             .accessibilityElement(children: .contain).accessibilityIdentifier("contactFeedback")
-    }
-}
-
-private struct TrainingChromeHeightKey: PreferenceKey {
-    static var defaultValue: [String: CGFloat] { [:] }
-    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
@@ -1294,15 +1287,8 @@ struct TrainingScenePreview: View {
     let kind: TrainingKind
     var pitchCode: String = ""
     var appearanceOverride: PlayerAppearance? = nil
-    private var appearance: PlayerAppearance { appearanceOverride ?? player.appearance }
-    private var room: TrainingEnvironmentArt.Room {
-        switch kind {
-        case .pitch, .control, .velocity, .stuff: .bullpen
-        case .speed, .stamina: .running
-        case .mental: .dugout
-        default: .field
-        }
-    }
+    var studying = false
+    @Environment(\.dynamicTypeSize) private var typeSize
     private var place: String {
         switch kind {
         case .pitch, .control, .velocity, .stuff: "BULLPEN · 불펜"
@@ -1312,44 +1298,164 @@ struct TrainingScenePreview: View {
         default: "BATTING · 타격 연습장"
         }
     }
-    private var pitcher: Bool { [.pitch, .control, .velocity, .stuff].contains(kind) }
-    private var actorImage: UIImage? {
-        if [.speed, .stamina, .defense, .arm, .mental].contains(kind) {
-            let motion = FieldSpriteMotion(facing: .southWest, stage: .ready)
-            guard let sample = FieldRasterArt.samples(motion, kind: "fielder", left: player.throwingHandRaw == "left").first else { return nil }
-            return FieldRasterArt.image(sample, kit: appearance.uniformColor, skin: PlayerAppearance.skinColors[appearance.skin], hair: PlayerAppearance.hairColors[appearance.hair], number: player.jerseyNumber, back: false, style: appearance.uniformStyle)
+    private var name: String {
+        kind == .pitch ? (PitchType(rawValue: pitchCode)?.label ?? "구종") + (studying ? " 습득" : " 숙련") : kind.label + " 훈련"
+    }
+    private var instruction: String {
+        switch kind {
+        case .pitch: "그립을 확인하고 릴리스와 포구 위치를 맞춥니다."
+        case .contact: "다가오는 공을 보고 조준과 스윙 타이밍을 맞춥니다."
+        case .power: "힘을 모은 뒤 중앙 타이밍에 배트를 놓습니다."
+        case .discipline: "존 안과 밖을 구별하고 스윙할 공을 고릅니다."
+        case .control: "목표 존을 확인하고 투구 위치를 조준합니다."
+        case .velocity: "준비 → 회전 → 릴리스의 세 박자를 맞춥니다."
+        case .stuff: "궤적을 따라 회전의 방향과 강도를 조절합니다."
+        case .speed, .stamina: "좌우 발을 번갈아 누르며 달리는 리듬을 유지합니다."
+        case .defense: "낙하 지점으로 이동하고 포구 위치를 맞춥니다."
+        case .arm: "목표 베이스를 보고 송구 방향과 힘을 조절합니다."
+        case .mental: "주자와 아웃 상황을 읽고 다음 플레이를 고릅니다."
         }
-        return PlayerMotionArt.image(role: pitcher ? .pitcher : .batter, frame: 0, appearance: appearance, number: player.jerseyNumber, hand: player.throwingHandRaw)
     }
     var body: some View {
-        GeometryReader { g in
-            ZStack(alignment: .topLeading) {
-                if let image = TrainingEnvironmentArt.image(room) {
-                    Image(uiImage: image).resizable().interpolation(.none).scaledToFill()
-                        .frame(width: g.size.width, height: g.size.height).clipped()
-                        .scaleEffect(x: pitcher && player.throwingHandRaw == "left" ? -1 : 1, y: 1)
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
+            HStack(alignment: .center, spacing: ManagementTheme.Space.compact) {
+                TrainingEquipmentIcon(kind: kind)
+                    .frame(width: 36, height: 36)
+                    .padding(8).background(TrainingPreparationDiagram.accent(kind).opacity(0.12))
+                VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                    Text(place).font(.caption.monospaced().bold()).foregroundStyle(GameTheme.boardMuted)
+                    Text(name).font(ManagementPixelFont.readable(.sectionTitle))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                if let image = actorImage {
-                    Image(uiImage: image).resizable().interpolation(.none).scaledToFit()
-                        .scaleEffect(x: pitcher && player.throwingHandRaw == "left" ? -1 : 1, y: 1)
-                        .frame(width: 148, height: 148)
-                        .position(x: g.size.width * (pitcher && player.throwingHandRaw == "left" ? 0.27 : 0.73), y: g.size.height * 0.60)
-                }
-                Text(place).font(.caption.monospaced().bold()).foregroundStyle(GameTheme.paper)
-                    .padding(7).background(GameTheme.board).padding(8)
-                if kind == .pitch {
+                Spacer(minLength: 0)
+            }
+            ZStack(alignment: .bottomLeading) {
+                TrainingPreparationDiagram(kind: kind, pitchCode: pitchCode, left: player.throwingHandRaw == "left")
+                    .frame(height: typeSize.isAccessibilitySize ? 136 : 144)
+                if kind == .pitch && !typeSize.isAccessibilitySize {
                     MatchGrip(code: pitchCode, hand: player.throwingHandRaw)
-                        .frame(width: 90, height: 90).padding(6).background(GameTheme.board)
-                        .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
-                        .position(x: player.throwingHandRaw == "left" ? g.size.width - 65 : 65, y: g.size.height - 58)
+                        .frame(width: 54, height: 54).padding(6).background(GameTheme.boardPanel)
+                        .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1)).padding(8)
                 }
             }
-        }.frame(height: 188).clipped()
+            Text(instruction).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }.padding(ManagementTheme.Space.compact)
+            .background(GameTheme.boardPanel)
             .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 2))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(place + ", " + player.name + "의 " + kind.label + " 훈련 준비")
-            .accessibilityValue(kind == .pitch ? (PitchType(rawValue: pitchCode)?.label ?? "구종 미선택") : "")
+            .accessibilityLabel(place + ", " + player.name + "의 " + name + " 준비")
+            .accessibilityValue(instruction)
             .accessibilityIdentifier("trainingScenePreview")
+    }
+}
+
+/// Equipment diagrams explain the task without constructing an extra player or running the game scene.
+private struct TrainingPreparationDiagram: View {
+    let kind: TrainingKind
+    let pitchCode: String
+    let left: Bool
+    static func accent(_ kind: TrainingKind) -> Color {
+        switch kind {
+        case .pitch, .stuff: Color(hex: 0xbba5df)
+        case .control, .defense, .discipline: Color(hex: 0x83c5d9)
+        case .velocity, .power: Color(hex: 0xefaa7d)
+        case .arm, .mental: GameTheme.growth
+        default: GameTheme.gold
+        }
+    }
+    var body: some View {
+        Canvas { original, size in
+            var context = original
+            let scale = min(size.width / 320, size.height / 150)
+            context.translateBy(x: (size.width - 320 * scale) / 2, y: (size.height - 150 * scale) / 2)
+            context.scaleBy(x: scale, y: scale)
+            let color = Self.accent(kind)
+            func line(_ points: [CGPoint], color: Color = GameTheme.boardLine, width: CGFloat = 2, dashed: Bool = false) {
+                let path = Path { p in
+                    guard let first = points.first else { return }
+                    p.move(to: first); p.addLines(Array(points.dropFirst()))
+                }
+                context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: width, dash: dashed ? [6, 6] : []))
+            }
+            func box(_ rect: CGRect, fill: Color, stroke: Color? = nil) {
+                context.fill(Path(rect), with: .color(fill))
+                if let stroke { context.stroke(Path(rect), with: .color(stroke), lineWidth: 2) }
+            }
+            func ball(_ point: CGPoint) {
+                let r = CGRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12)
+                box(r, fill: GameTheme.boardInk)
+                box(CGRect(x: point.x - 3, y: point.y - 3, width: 2, height: 6), fill: Color(hex: 0xb65d53))
+            }
+            func zone(_ rect: CGRect) {
+                box(rect, fill: GameTheme.board, stroke: GameTheme.boardLine)
+                for n in 1...2 {
+                    line([CGPoint(x: rect.minX + rect.width * CGFloat(n) / 3, y: rect.minY), CGPoint(x: rect.minX + rect.width * CGFloat(n) / 3, y: rect.maxY)], width: 1)
+                    line([CGPoint(x: rect.minX, y: rect.minY + rect.height * CGFloat(n) / 3), CGPoint(x: rect.maxX, y: rect.minY + rect.height * CGFloat(n) / 3)], width: 1)
+                }
+            }
+            switch kind {
+            case .pitch, .stuff:
+                zone(CGRect(x: 192, y: 35, width: 92, height: 92))
+                let family = PitchType(rawValue: pitchCode)?.family ?? "fast"
+                let bend: CGFloat = kind == .stuff || family == "glove" ? (left ? -34 : 34) : family == "vertical" ? 12 : 0
+                var curve = Path()
+                curve.move(to: CGPoint(x: 48, y: 40))
+                curve.addCurve(to: CGPoint(x: 245, y: 109), control1: CGPoint(x: 134, y: 21 + bend), control2: CGPoint(x: 238 + bend, y: 28))
+                context.stroke(curve, with: .color(color), style: StrokeStyle(lineWidth: 4, dash: [6, 5]))
+                box(CGRect(x: 224, y: 96, width: 40, height: 27), fill: color.opacity(0.2))
+                ball(CGPoint(x: 245, y: 109))
+            case .control, .contact, .discipline:
+                zone(CGRect(x: 115, y: 25, width: 92, height: 100))
+                box(CGRect(x: 146, y: 59, width: 30, height: 33), fill: color.opacity(0.35), stroke: color)
+                line([CGPoint(x: 161, y: 49), CGPoint(x: 161, y: 102)], color: color)
+                line([CGPoint(x: 134, y: 76), CGPoint(x: 188, y: 76)], color: color)
+                if kind == .discipline {
+                    ball(CGPoint(x: 252, y: 82))
+                    line([CGPoint(x: 236, y: 108), CGPoint(x: 268, y: 108)], color: GameTheme.gold, dashed: true)
+                } else { ball(CGPoint(x: 161, y: 76)) }
+            case .velocity:
+                line([CGPoint(x: 52, y: 75), CGPoint(x: 268, y: 75)], color: color, dashed: true)
+                for (i, height) in [CGFloat(44), 75, 104].enumerated() {
+                    let x = CGFloat(60 + i * 100)
+                    box(CGRect(x: x - 21, y: 126 - height, width: 42, height: height), fill: color.opacity(0.2), stroke: color)
+                    for j in 0...2 { box(CGRect(x: x - 12, y: 111 - CGFloat(j * 11), width: 24, height: 4), fill: color) }
+                }
+            case .power:
+                box(CGRect(x: 80, y: 100, width: 40, height: 8), fill: GameTheme.boardLine)
+                box(CGRect(x: 96, y: 63, width: 8, height: 40), fill: GameTheme.boardLine)
+                ball(CGPoint(x: 100, y: 57))
+                var arc = Path(); arc.move(to: CGPoint(x: 112, y: 53))
+                arc.addQuadCurve(to: CGPoint(x: 271, y: 30), control: CGPoint(x: 191, y: 3))
+                context.stroke(arc, with: .color(color), style: StrokeStyle(lineWidth: 4, dash: [6, 5]))
+                line([CGPoint(x: 148, y: 132), CGPoint(x: 185, y: 90), CGPoint(x: 232, y: 58)], color: GameTheme.gold, width: 13)
+            case .speed, .stamina:
+                for y in [CGFloat(35), 75, 115] { line([CGPoint(x: 28, y: y), CGPoint(x: 292, y: y)], color: GameTheme.boardLine) }
+                for i in 0..<6 {
+                    let x = CGFloat(42 + i * 42), y: CGFloat = i.isMultiple(of: 2) ? 49 : 83
+                    box(CGRect(x: x, y: y, width: 22, height: 12), fill: color.opacity(i < 3 ? 0.95 : 0.35))
+                }
+                line([CGPoint(x: 278, y: 61), CGPoint(x: 292, y: 75), CGPoint(x: 278, y: 89)], color: color, width: 4)
+            case .defense, .arm, .mental:
+                line([CGPoint(x: 160, y: 127), CGPoint(x: 257, y: 63), CGPoint(x: 160, y: 13), CGPoint(x: 63, y: 63), CGPoint(x: 160, y: 127)], color: GameTheme.boardLine)
+                for point in [CGPoint(x: 160, y: 127), CGPoint(x: 257, y: 63), CGPoint(x: 160, y: 13), CGPoint(x: 63, y: 63)] {
+                    box(CGRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12), fill: GameTheme.boardInk)
+                }
+                if kind == .defense {
+                    box(CGRect(x: 193, y: 25, width: 26, height: 26), fill: color.opacity(0.3), stroke: color)
+                    line([CGPoint(x: 136, y: 86), CGPoint(x: 206, y: 38)], color: color, width: 4, dashed: true)
+                    ball(CGPoint(x: 206, y: 38))
+                } else if kind == .arm {
+                    line([CGPoint(x: 138, y: 91), CGPoint(x: 251, y: 65)], color: color, width: 4, dashed: true)
+                    ball(CGPoint(x: 203, y: 76))
+                } else {
+                    box(CGRect(x: 246, y: 52, width: 22, height: 22), fill: color)
+                    for i in 0..<3 { box(CGRect(x: 25 + CGFloat(i * 20), y: 124, width: 12, height: 12), fill: i == 0 ? GameTheme.gold : GameTheme.boardLine) }
+                }
+            }
+        }.background(GameTheme.board)
+            .overlay(Rectangle().strokeBorder(GameTheme.boardLine.opacity(0.65), lineWidth: 1))
+            .accessibilityHidden(true)
     }
 }
 

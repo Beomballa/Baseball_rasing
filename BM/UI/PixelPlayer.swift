@@ -81,15 +81,10 @@ struct PixelPlayer: View {
 /// The shared header portrait reads appearance only and caches its tinted raster.
 struct ManagementPlayerPortrait: View {
     let appearance: PlayerAppearance
-    @State private var image: UIImage?
-    private var key: String { "\(appearance.skin):\(appearance.hair):\(appearance.kit):\(appearance.uniformStyle?.id ?? "legacy")" }
+    var role: PlayerRole = .batter
+    var number: Int = 10
     var body: some View {
-        Group {
-            if appearance.creationVersion == 1 { CreationAvatarImage(appearance: appearance, cap: true, mode: .portrait) }
-            else if let image { Image(uiImage: image).resizable().interpolation(.none).scaledToFill().clipped() }
-            else { PixelPlayer(appearance: appearance) }
-        }.accessibilityHidden(true)
-            .task(id: key) { if appearance.creationVersion != 1 { image = ManagementPortraitRaster.image(appearance) } }
+        ManagementPortrait(appearance: appearance, role: role, number: number).accessibilityHidden(true)
     }
 }
 

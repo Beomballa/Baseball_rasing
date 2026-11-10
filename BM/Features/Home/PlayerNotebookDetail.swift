@@ -1,6 +1,37 @@
 import SwiftUI
 import UIKit
 
+/// Validates affiliation without writing a player; callers cache the result for their refresh cycle.
+@MainActor struct ManagementPlayerAffiliation {
+    let name: String
+    let appearance: PlayerAppearance
+    let age: Int
+    let actionAvailable: Bool
+
+    static func read(player: CareerPlayer, calendar: CareerCalendarState?) -> Self {
+        guard let calendar else {
+            let schoolAge = player.startAge <= 18
+            var look = player.appearance.wearing(teamID: schoolAge ? player.schoolID : nil)
+            if !schoolAge { look.schoolKitID = nil }
+            return Self(name: schoolAge ? player.displaySchoolName : "무소속", appearance: look,
+                        age: player.startAge, actionAvailable: true)
+        }
+        do {
+            let age = try calendar.age(of: player)
+            let member = try calendar.registration(for: player)
+            let team = member?.teamID ?? (age <= 18 ? player.schoolID : nil)
+            var look = player.appearance.wearing(teamID: team)
+            if team == nil { look.schoolKitID = nil }
+            return Self(name: member?.name ?? (age <= 18 ? player.displaySchoolName : "무소속"),
+                        appearance: look, age: age, actionAvailable: !calendar.hasAction(on: player.gameDate))
+        } catch {
+            var look = player.appearance.wearing(teamID: nil); look.schoolKitID = nil
+            return Self(name: "소속 조회 오류", appearance: look, age: player.startAge,
+                        actionAvailable: !calendar.hasAction(on: player.gameDate))
+        }
+    }
+}
+
 /// A single existing gameplay pose, cached for reading screens; no animation clock or saved state.
 struct DetailGamePortrait: View {
     let role: PlayerRole
@@ -34,29 +65,41 @@ struct PlayerNotebookIdentity: View {
     let player: CareerPlayer
     let affiliation: String
     let age: Int
+    var appearanceOverride: PlayerAppearance? = nil
+    var actionAvailable: Bool? = nil
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 8))
+        VStack(alignment: .leading, spacing: 16) {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .center, spacing: 14))
         layout {
+            ManagementPortrait(appearance: appearanceOverride ?? player.appearance, role: player.role, number: player.jerseyNumber)
+                .frame(width: typeSize.isAccessibilitySize ? 90 : 100, height: 108)
+                .background(GameTheme.navy.opacity(0.7))
+                .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
             VStack(alignment: .leading, spacing: 8) {
-                Text("선수 수첩  /  #\(player.jerseyNumber)").font(ManagementPixelFont.readable(.label)).foregroundStyle(GameTheme.gold)
+                Text("PLAYER FILE  /  #\(player.jerseyNumber)").font(ManagementPixelFont.readable(.label)).foregroundStyle(GameTheme.gold)
                 Text(player.name).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
                 Text(affiliation).font(.subheadline)
                 Text("\(age)세 · \(player.role.label) · \(player.roleDetail)").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-                Text(ManagementDisplay.date(player.gameDate)).font(.caption.monospaced())
             }.frame(maxWidth: .infinity, alignment: .leading)
-            DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw, label: player.name + "의 경기 도트").frame(width: typeSize.isAccessibilitySize ? 96 : 116, height: 138)
+        }
+        Rectangle().fill(GameTheme.boardLine).frame(height: 1).accessibilityHidden(true)
+        let metrics = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+        metrics {
+            metric("피로", "\(player.fatigue) / 100")
+            if let actionAvailable { metric("오늘 행동", actionAvailable ? "1 / 1" : "0 / 1") }
+            metric("현재 일자", ManagementDisplay.date(player.gameDate))
+        }
         }.padding(16).foregroundStyle(GameTheme.boardInk)
-            .background {
-                GeometryReader { size in
-                    Image("StadiumRoomV2").resizable().interpolation(.none).scaledToFill()
-                        .frame(width: size.size.width, height: size.size.height).clipped()
-                        .overlay(GameTheme.navy.opacity(0.85))
-                }
-                .allowsHitTesting(false).accessibilityHidden(true)
-            }
+            .background(GameTheme.boardPanel)
             .overlay(ManagementStepFrame().stroke(GameTheme.gold, lineWidth: 2).allowsHitTesting(false))
             .accessibilityIdentifier("notebookIdentity")
+    }
+    private func metric(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Text(value).font(.subheadline.monospacedDigit().bold()).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

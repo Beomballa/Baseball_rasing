@@ -11,14 +11,16 @@ struct CreationGamePreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("경기장에서는 이렇게 보여요").managementFont(.sectionTitle)
-            let layout = type.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 16)) : AnyLayout(HStackLayout(alignment: .bottom, spacing: 16))
+            let layout = type.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 16)) : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
             layout {
                 VStack(spacing: 8) {
-                    CreationAvatarImage(appearance: draft.appearance, role: draft.role,
-                        number: Int(draft.jerseyNumber) ?? 10, cap: true, mode: .portrait)
+                    ManagementPortrait(appearance: appearance, role: draft.role,
+                        number: Int(draft.jerseyNumber) ?? 10)
                         .frame(maxWidth: .infinity).frame(height: 170)
                     Text("선택한 얼굴").managementFont(.label)
-                }
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("creationSelectedFaceCaption")
+                }.frame(maxWidth: .infinity)
                 VStack(spacing: 8) {
                     if let picture {
                         Image(uiImage: picture).resizable().interpolation(.none).scaledToFit()
@@ -27,7 +29,9 @@ struct CreationGamePreview: View {
                             .accessibilityLabel("실제 경기 \(draft.role.label) 자세 \(frame+1), 등번호 \(draft.jerseyNumber)")
                     }
                     Text(draft.role == .pitcher ? "포수를 향한 뒷모습" : "타석의 옆모습").managementFont(.label)
-                }
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("creationGamePoseCaption")
+                }.frame(maxWidth: .infinity)
             }.padding(12).background(GameTheme.navy)
             HStack {
                 Text("자세 \(frame+1) / 6").managementFont(.label)

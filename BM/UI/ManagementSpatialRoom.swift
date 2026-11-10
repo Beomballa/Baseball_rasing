@@ -357,6 +357,7 @@ struct ManagementSpatialHeader: View {
     let player: CareerPlayer
     let affiliation: String
     var uniformTeamID: String? = nil
+    var appearanceOverride: PlayerAppearance? = nil
     let age: Int
     let used: Bool
     let pending: Bool
@@ -409,7 +410,7 @@ struct ManagementSpatialHeader: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
                 Button(action: profile) {
-                    ManagementPlayerPortrait(appearance: player.appearance.wearing(teamID: uniformTeamID ?? player.schoolID))
+                    ManagementPlayerPortrait(appearance: appearanceOverride ?? player.appearance.wearing(teamID: uniformTeamID ?? player.schoolID), role: player.role, number: player.jerseyNumber)
                         .frame(width: 50, height: 64)
                         .background(GameTheme.boardPanel)
                         .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
@@ -498,6 +499,7 @@ struct ManagementStadiumRoom<Header: View>: View {
     let schools: [School]
     let entryTitle: String
     let entryStatus: String
+    var stadium: StadiumIdentity? = nil
     let choose: (String) -> Void
     @ViewBuilder let header: Header
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -510,6 +512,7 @@ struct ManagementStadiumRoom<Header: View>: View {
                         VStack(spacing: 16) {
                             header
                             toolbar
+                            venueHeader
                             scoreboard.padding(.horizontal, 16)
                             ForEach([("facility-analysis", "더그아웃 · 상대 분석"), ("facility-gameRecords", "기록석 · 경기 기록")], id: \.0) { id, title in
                                 Button { choose(id) } label: {
@@ -614,14 +617,20 @@ struct ManagementStadiumRoom<Header: View>: View {
         Text(value).modifier(StadiumLEDLettering(color: color, textured: !typeSize.isAccessibilitySize))
     }
     private func stadium(width: CGFloat) -> some View {
-        let height = width * 1.5
-        return ZStack(alignment: .top) {
-            Image("StadiumInteriorV86").resizable().interpolation(.none)
-                .frame(width: width, height: height).accessibilityHidden(true)
-            scoreboard.frame(width: width * 0.80).offset(y: height * 0.073)
-            structure("facility-analysis", "상대 분석 ›", x: 0.184, y: 0.660, width: width * 0.29, size: 14, scene: .init(width: width, height: height))
-            structure("facility-gameRecords", "경기 기록 ›", x: 0.830, y: 0.696, width: width * 0.27, size: 14, scene: .init(width: width, height: height))
-        }.frame(width: width, height: height).clipped()
+        VStack(spacing: 16) {
+            venueHeader
+            scoreboard.padding(.horizontal, 16)
+            VStack(spacing: 10) {
+                ForEach([("facility-analysis", "더그아웃 · 상대 분석"), ("facility-gameRecords", "기록석 · 경기 기록")], id: \.0) { id, title in
+                    Button { choose(id) } label: {
+                        HStack { Text(title); Spacer(); Text("›") }.frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier(id)
+                }
+            }.padding(.horizontal, 16)
+        }.padding(.bottom, 20).frame(width: width)
+    }
+    @ViewBuilder private var venueHeader: some View {
+        if let stadium { ManagementVenueBanner(stadium: stadium, compact: false) }
     }
     private func structure(_ id: String, _ title: String, x: CGFloat, y: CGFloat, width: CGFloat, size: CGFloat, scene: CGSize) -> some View {
         Button { choose(id) } label: {
@@ -631,6 +640,31 @@ struct ManagementStadiumRoom<Header: View>: View {
             .accessibilityLabel(id == "facility-standings" ? "리그 순위" : title.replacingOccurrences(of: " ›", with: ""))
             .accessibilityHint("상세 열기").accessibilityIdentifier(id)
             .position(x: scene.width * x, y: scene.height * y)
+    }
+}
+
+/// Current-team identity for menus; actual games keep their saved home-team venue.
+struct ManagementVenueBanner: View {
+    let stadium: StadiumIdentity
+    var compact = true
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        if let venue = stadium.backdrop, let art = InplayStadiumArt.upperArt(venue) {
+            VStack(alignment: .leading, spacing: 0) {
+                Image(uiImage: art.image).resizable().interpolation(.none).scaledToFill()
+                    .frame(maxWidth: .infinity).frame(height: compact ? 54 : 152).clipped().accessibilityHidden(true)
+                HStack(spacing: 8) {
+                    if let logo = venue.logoAsset {
+                        Image(logo).resizable().interpolation(.none).scaledToFit().frame(width: 22, height: 22).accessibilityHidden(true)
+                    }
+                    Text(venue.name + " · 홈 구장").font(compact ? .caption.bold() : .headline)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }.padding(.horizontal, 12).padding(.vertical, compact ? 6 : 12)
+                    .foregroundStyle(GameTheme.boardInk).background(GameTheme.boardPanel)
+            }.accessibilityElement(children: .combine)
+                .accessibilityIdentifier("managementVenue-" + stadium.key)
+        }
     }
 }
 

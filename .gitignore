@@ -609,3 +609,11 @@
 !/BM/Resources/MatchArt/pitcher-fullbody-back-v120.png
 !/BM/Resources/MatchArt/pitcher-fullbody-front-v120.png
 !/BM/Resources/MatchArt/pitcher-fullbody-v120.json
+
+# V166 approved management portrait layers and independent umpire.
+!/docs/management-ui-v166.md
+!/BM/Resources/Assets.xcassets/ManagementHeadsV166.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/ManagementHeadsV166.imageset/image.png
+!/BM/Resources/Assets.xcassets/ManagementFeaturesV166.imageset/Contents.json
+!/BM/Resources/Assets.xcassets/ManagementFeaturesV166.imageset/image.png
+!/BM/Resources/MatchArt/umpire-isolated-v166.png

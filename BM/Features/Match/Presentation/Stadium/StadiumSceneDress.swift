@@ -199,12 +199,19 @@ extension StadiumIdentity {
         super.init()
         name = "stadiumDress-" + stadium.theme.title
         let y: CGFloat = camera == .pitcher ? 0.25 : camera == .batter ? 0.166 : 0.15
-        let positions: [CGFloat] = camera == .field ? (hasVenueBackdrop ? [] : [0.13, 0.87]) : [0.16, 0.84]
+        let positions: [CGFloat] = hasVenueBackdrop ? [] : camera == .field ? [0.13, 0.87] : [0.16, 0.84]
         let school = stadium.school
         let pro = stadium.pro
         let panelColor = UIColor(Color(hex: stadium.panelColor))
         let trimColor = UIColor(Color(hex: stadium.trimColor))
         let accentColor = UIColor(Color(hex: stadium.accentColor))
+        if hasVenueBackdrop, camera != .field, let pro {
+            let logo = SKSpriteNode(imageNamed: pro.club.asset)
+            logo.name = "match-club-logo-" + pro.club.id; logo.texture?.filteringMode = .nearest
+            logo.size = CGSize(width: size.width * 0.045, height: size.width * 0.045)
+            logo.position = CGPoint(x: size.width * 0.95, y: size.height * 0.95)
+            addChild(logo)
+        }
         for (i, x) in positions.enumerated() {
             let sponsor = stadium.sponsors[i]
             let venueName = i == 0 ? school?.name ?? pro?.club.name : nil

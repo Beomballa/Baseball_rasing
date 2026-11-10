@@ -15,6 +15,32 @@ struct PlayerHomeView: View {
     @Query(sort: \CareerMatchRecord.gameDate, order: .reverse) private var gameRecords: [CareerMatchRecord]
     @Query private var abilityProfiles: [PlayerAbilities]
     @Query(sort: \CareerTrainingRecord.gameDate, order: .reverse) private var trainingRecords: [CareerTrainingRecord]
+    @Query private var rosterCalendars: [CareerCalendarState]
+    private struct RosterIdentityKey: Equatable {
+        let id: UUID
+        let date: String
+        let revision: Int?
+        let actionDate: String?
+        let lifecycle: Data?
+        let appearance: PlayerAppearance
+        let matchVisible: Bool
+        let transitionIdle: Bool
+    }
+    @State private var rosterIdentities: [UUID: ManagementPlayerAffiliation] = [:]
+    private var rosterIdentityKey: [RosterIdentityKey] {
+        players.filter { !$0.isRetired }.map { candidate in
+            let state = candidate.id == player.id ? calendar : rosterCalendars.first { $0.playerID == candidate.id }
+            return RosterIdentityKey(id: candidate.id, date: candidate.gameDate, revision: state?.revision,
+                actionDate: state?.actionDate, lifecycle: candidate.lifecycleData, appearance: candidate.appearance,
+                matchVisible: presentedMatchLobby != nil, transitionIdle: transition.display == nil)
+        }
+    }
+    private func refreshRosterIdentities() {
+        rosterIdentities = Dictionary(uniqueKeysWithValues: players.filter { !$0.isRetired }.map { candidate in
+            let state = candidate.id == player.id ? calendar : rosterCalendars.first { $0.playerID == candidate.id }
+            return (candidate.id, ManagementPlayerAffiliation.read(player: candidate, calendar: state))
+        })
+    }
     @State private var showOriginals = false
     @State private var recentSnapshots: [String: MatchDisplaySnapshot] = [:]
     private var recentRecords: [CareerMatchRecord] { Array(gameRecords.filter { $0.playerID == player.id && $0.completed }.prefix(5)) }
@@ -23,15 +49,22 @@ struct PlayerHomeView: View {
     private var age: Int { (try? calendar?.age(of: player)) ?? player.startAge }
 
     @ViewBuilder private var rolePicker: some View {
-                if players.count > 1 {
-                    let roleLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
+                if !players.isEmpty {
+                    Text("나의 선수").font(ManagementPixelFont.readable(.sectionTitle)).foregroundStyle(GameTheme.gold)
+                    let roleLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
                     roleLayout {
                         ForEach(players.filter {!$0.isRetired}) { candidate in
+                            let identity = rosterIdentities[candidate.id]
                             Button { select(candidate.id) } label: {
-                                VStack(spacing: 2) {
-                                    Text(candidate.role.label).font(.subheadline.bold())
-                                    Text(candidate.name).font(.caption).lineLimit(1)
-                                }.frame(maxWidth: .infinity, minHeight: 48)
+                                HStack(alignment: .center, spacing: 8) {
+                                    ManagementPortrait(appearance: identity?.appearance ?? neutralRosterAppearance(candidate), role: candidate.role, number: candidate.jerseyNumber)
+                                        .frame(width: 44, height: 52).accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(candidate.name).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                                        Text(candidate.roleDetail).font(.caption).fixedSize(horizontal: false, vertical: true)
+                                        Text(identity?.name ?? "소속 확인 중").font(.caption2).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+                                    }.frame(maxWidth: .infinity, alignment: .leading)
+                                }.padding(10).frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                                     .foregroundStyle(candidate.id == player.id ? GameTheme.gold : GameTheme.boardInk)
                                     .background(GameTheme.boardPanel)
                                     .overlay(Rectangle().strokeBorder(candidate.id == player.id ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2))
@@ -150,11 +183,30 @@ struct PlayerHomeView: View {
         if let presentedMatchLobby {return presentedMatchLobby.uniformTeamID}
         return try? calendar?.teamID(for:player,on:GameDate(player.gameDate))
     }
+    private func neutralRosterAppearance(_ candidate: CareerPlayer) -> PlayerAppearance {
+        var look = candidate.appearance.wearing(teamID: nil)
+        look.schoolKitID = nil
+        return look
+    }
+    private var headerAppearance: PlayerAppearance {
+        if let presentedMatchLobby {
+            var look = player.appearance.wearing(teamID: presentedMatchLobby.uniformTeamID)
+            if presentedMatchLobby.uniformTeamID == nil { look.schoolKitID = nil }
+            return look
+        }
+        return rosterIdentities[player.id]?.appearance ?? neutralRosterAppearance(player)
+    }
+    private var currentMenuVenue: StadiumIdentity? {
+        (headerAppearance.uniformTeamID ?? headerAppearance.schoolKitID).map { StadiumIdentity(homeTeamID: $0) }
+    }
     @ViewBuilder private var navigationHeader: some View {
         ManagementSpatialHeader(player: player, affiliation: affiliationLabel,
-                                uniformTeamID: headerUniformTeamID, age: age,
+                                uniformTeamID: headerUniformTeamID, appearanceOverride: headerAppearance, age: age,
                                 used: calendar?.hasAction(on: player.gameDate) == true,
                                 pending: todayTraining?.completed == false) { roomDetail = .profile }
+        if selectedTab != .game, let venue = currentMenuVenue {
+            ManagementVenueBanner(stadium: venue)
+        }
         if let clubSelectionFailure {
             VStack(alignment: .leading, spacing: 8) {
                 Text("기용 조회 실패 · " + clubSelectionFailure).font(.subheadline).accessibilityIdentifier("homeSelectionError")
@@ -171,12 +223,16 @@ struct PlayerHomeView: View {
                 let schedule = stadiumSchedule
                 ManagementStadiumRoom(selection: $selectedTab, scheduleTitle: schedule.title, date: schedule.date,
                                       teams: schedule.teams, fixtureNumber: schedule.number, schools: schools, entryTitle: stadiumEntryTitle, entryStatus: gameLobbyAction.title,
+                                      stadium: currentMenuVenue,
                                       choose: chooseFacility) { navigationHeader }
             } else {
                 ManagementSpatialRoom(asset: roomAsset, title: roomTitle, facilities: roomFacilities,
                                       selection: $selectedTab, choose: chooseFacility, home: { selectedTab = .home }) { navigationHeader }
                     .spatialAbilities(HomeAbilitySummary(player: player, abilities: abilities).originals)
             }
+        }
+        .task(id: rosterIdentityKey) {
+            if presentedMatchLobby == nil, transition.display == nil { refreshRosterIdentities() }
         }
         .task(id: "selection-\(player.id)-\(player.gameDate)-\(calendar?.revision ?? -1)-\(presentedMatchLobby != nil)") {
             if presentedMatchLobby == nil { refreshSelection() }
@@ -212,11 +268,8 @@ struct PlayerHomeView: View {
                                 case .career(let section): careerContent(section)
                                 case .profile:
                                     rolePicker
-                                    ManagementPanel("선수 정보", surface: .paper) {
-                                        Text(player.name + " · #" + String(player.jerseyNumber)).managementFont(.sectionTitle)
-                                        Text(affiliationLabel).managementFont(.body)
-                                        Text("\(age)세 · \(player.role.label) · \(player.roleDetail)").managementFont(.body)
-                                    }
+                                    PlayerNotebookIdentity(player: player, affiliation: affiliationLabel, age: age,
+                                        appearanceOverride: headerAppearance, actionAvailable: calendar.map { !$0.hasAction(on: player.gameDate) })
                                     if players.filter({ !$0.isRetired }).count < PlayerRole.allCases.count {
                                         Button("다른 역할 선수 만들기") { leaveRoom(for: .create) }.buttonStyle(ManagementButtonStyle())
                                     }
@@ -467,7 +520,8 @@ struct PlayerHomeView: View {
         let summary = HomeAbilitySummary(player: player, abilities: abilities)
         rolePicker
         ManagementSectionTabs(options: ManagementPlayerSection.allCases, selection: Binding(get: { section }, set: { playerSection = $0; roomDetail = .player($0) }), title: { $0 == .positions && player.role == .pitcher ? "구종" : $0.title }, identifier: "playerSection", horizontal: true)
-        PlayerNotebookIdentity(player: player, affiliation: affiliationLabel, age: age)
+        PlayerNotebookIdentity(player: player, affiliation: affiliationLabel, age: age,
+            appearanceOverride: headerAppearance, actionAvailable: calendar.map { !$0.hasAction(on: player.gameDate) })
         switch section {
         case .abilities:
             PlayerNotebookHighlights(values: summary.originals)

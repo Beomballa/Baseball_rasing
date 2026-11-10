@@ -21,6 +21,40 @@ enum ObservationReviewSection: CaseIterable {
     var title: String { switch self { case .summary: "결론·행동"; case .growth: "능력 변화"; case .records: "성적 변화"; case .projects: "관찰 근거" } }
 }
 
+private struct V166ScoutSections<Selection: Hashable>: View {
+    let options: [Selection]
+    @Binding var selection: Selection
+    let title: (Selection) -> String
+    let identifier: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        if typeSize.isAccessibilitySize {
+            Menu {
+                ForEach(options, id: \.self) { item in
+                    Button { selection = item } label: { Text(title(item)) }
+                        .accessibilityIdentifier(identifier + "-" + String(describing: item))
+                        .accessibilityAddTraits(selection == item ? .isSelected : [])
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Text(title(selection)).managementFont(.label).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down").accessibilityHidden(true)
+                }.padding(.horizontal, 12).padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: ManagementTheme.Control.hit)
+                    .foregroundStyle(GameTheme.boardInk)
+                    .background(ManagementTheme.Palette.control, in: ManagementStepFrame())
+                    .contentShape(ManagementStepFrame())
+            }.buttonStyle(.plain)
+                .accessibilityLabel("보고서 구역").accessibilityValue(title(selection))
+                .accessibilityHint("펼쳐서 확인할 자료를 선택합니다")
+                .accessibilityIdentifier(identifier + "Menu")
+        } else {
+            ManagementSectionTabs(options: options, selection: $selection, title: title, identifier: identifier)
+        }
+    }
+}
+
 struct ScoutingSampleGroup: Identifiable, Codable {
     let id: String
     var totals = PersonalSeasonTotals()
@@ -34,6 +68,7 @@ struct ScoutingObservationHomePanel: View {
     let calendar: CareerCalendarState
     var archive = false
     @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Query(sort: \CareerScoutingReport.period, order: .reverse) private var saved: [CareerScoutingReport]
     @State private var error: String?
     @State private var showHistory = false
@@ -46,16 +81,23 @@ struct ScoutingObservationHomePanel: View {
         } catch { self.error = error.localizedDescription }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 24 : 16) {
             ScoutDeskHeading(title: archive ? "관찰 파일 · 지난 이력" : "스카우트 데스크", subtitle: "28일마다 남기는 선수의 발자취")
             if let error {
                 Text(error).font(.body).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutArchiveError")
                 Button("보고서 저장 다시 확인", action: refresh).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutArchiveRetry")
             } else if let row = own.first, let value = try? row.snapshot() {
-                ScoutingInterestList(value: value, compact: true)
+                ScoutObservationFileCover(value: value, schoolID: player.schoolID,
+                                          legacySchoolName: player.schoolName, compact: true)
                 NavigationLink { SavedScoutingObservationView(value: value, schoolID: player.schoolID, legacySchoolName: player.schoolName) } label: {
-                    HStack { Text("확정 보고서 펼치기").accessibilityIdentifier("openSavedScoutingReportTitle"); Spacer(); Text("›") }
+                    HStack(spacing: 12) {
+                        Text("확정 보고서 펼치기").fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("openSavedScoutingReportTitle")
+                        Spacer(minLength: 0)
+                        Text("›").accessibilityHidden(true)
+                    }
                 }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("openSavedScoutingReport")
+                ScoutingInterestList(value: value, compact: true)
                 DisclosureGroup("관찰 날짜 · 집계 범위 · 보고서 이력") {
                     ScoutPeriodRibbon(value: value, count: own.count)
                     ScoutObservationDates(value: value, today: player.gameDate)
@@ -86,6 +128,7 @@ struct ScoutingObservationHomePanel: View {
             }.tint(GameTheme.gold)
         }.padding(16).background(ScoutDeskPalette.surface)
             .overlay(ManagementStepFrame().stroke(GameTheme.boardLine, lineWidth: 2))
+            .lineSpacing(typeSize.isAccessibilitySize ? 5 : 3)
             .task(id: "\(player.id)-\(player.gameDate)") { refresh() }
     }
 }
@@ -143,15 +186,16 @@ struct SavedScoutingObservationView: View {
     @State private var section: FrozenScoutSection = .summary
     var body: some View {
         VStack(spacing: 0) {
-            ManagementSectionTabs(options: FrozenScoutSection.allCases, selection: $section,
-                                  title: { $0.title }, identifier: "frozenScoutSection")
+            V166ScoutSections(options: FrozenScoutSection.allCases, selection: $section,
+                              title: { $0.title }, identifier: "frozenScoutSection")
                 .padding(16).background(ScoutDeskPalette.ink)
                 .fixedSize(horizontal: false, vertical: true).layoutPriority(1)
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 16) {
                     Text("관찰 확정 · " + ManagementDisplay.date(value.observedDate))
                         .managementFont(.label).accessibilityIdentifier("scoutFrozenDate")
                     if section == .summary {
+                        frozenIdentity
                         ManagementPanel("이번 관찰 · 먼저 확인") {
                             Text("확정 자료 · " + ManagementDisplay.date(value.observedDate)).managementFont(.label)
                             if let condition = value.evaluationPending.first {
@@ -161,9 +205,11 @@ struct SavedScoutingObservationView: View {
                             }
                             Text("현재 능력과 다른 시점의 자료입니다. 관심 구단은 실제 계약 제의와 구분합니다.").managementFont(.helper)
                         }.accessibilityIdentifier("scoutDecisionSummary")
-                        DisclosureGroup("선수 정보 · 관찰 원문과 집계 범위") { frozenIdentity }
+                        DisclosureGroup("선수 정보 · 관찰 원문과 집계 범위") { frozenMetadata }
                             .tint(GameTheme.gold).accessibilityElement(children: .contain).accessibilityIdentifier("scoutFrozenIdentityDetails")
                         reviewConditions
+                    } else {
+                        v166FrozenCompactIdentity
                     }
                     if section == .clubs {
                         ScoutingInterestList(value: value)
@@ -191,7 +237,8 @@ struct SavedScoutingObservationView: View {
             }.id(section).accessibilityIdentifier("frozenScoutScroll")
                 .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
         }
-            .lineLimit(nil).lineSpacing(4).background(ScoutDeskPalette.ink).foregroundStyle(GameTheme.boardInk)
+            .lineLimit(nil).lineSpacing(typeSize.isAccessibilitySize ? 5 : 3)
+            .background(ScoutDeskPalette.ink).foregroundStyle(GameTheme.boardInk)
             .navigationTitle("확정 관찰 보고서").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar).tint(GameTheme.gold)
@@ -210,34 +257,72 @@ struct SavedScoutingObservationView: View {
             }.fixedSize(horizontal: false, vertical: true)
         }.tint(GameTheme.gold).accessibilityIdentifier("scoutReviewConditions")
     }
-    private var frozenIdentity: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))) {
-                Image("NavCareerV1").resizable().interpolation(.none).frame(width: 28, height: 28).accessibilityHidden(true)
-                Text("SCOUT ARCHIVE").font(.subheadline.monospaced().bold()).fixedSize(horizontal: false, vertical: true)
-                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
-                Text("FILE \(value.period + 1)").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold).fixedSize(horizontal: false, vertical: true)
-            }.padding(14).background(ScoutDeskPalette.surface)
-            ScoutDossier(title: "\(value.period + 1)차 관찰 보고서", code: "OBSERVATION / FIXED RECORD", stamp: "관찰 확정", isPreview: false) {
-                (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .center, spacing: 14)) : AnyLayout(HStackLayout(alignment: .center, spacing: 14))) {
-                    DetailGamePortrait(role: value.role, appearance: value.appearance, number: value.number, hand: value.hand).frame(width: 76, height: 100).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("\(value.name) #\(value.number)").font(ManagementPixelFont.readable(.sectionTitle)).fixedSize(horizontal: false, vertical: true)
-                        Text("\(value.age)세 · \(value.role.label) · " + (value.role == .batter ? FieldPosition(rawValue: value.position)?.label ?? value.position : value.hand == "left" ? "좌투" : "우투")).font(.subheadline)
-                        Text(value.age <= 18 ? SchoolCatalog.displayName(id: schoolID, fallback: value.school) : "등록 학교 · \(value.school == legacySchoolName ? SchoolCatalog.displayName(id: schoolID, fallback: value.school) : value.school)").font(.subheadline)
-                    }
-                }
-                Text("관찰일 \(ManagementDisplay.date(value.observedDate))").font(.subheadline.bold())
-                    .frame(maxWidth: .infinity, minHeight: 44).multilineTextAlignment(.center)
-                    .padding(8).background(ScoutDossierInk.rule.opacity(0.22)).accessibilityIdentifier("scoutFrozenIdentityDate")
-                Text("주기 \(ManagementDisplay.date(value.periodStart)) ~ \((try? GameDate(value.nextDate).adding(days: -1).description).map(ManagementDisplay.date) ?? "—")").font(.subheadline.monospaced())
-                Text("성적 집계 "+ManagementDisplay.date(value.sampleStart)+" ~ "+ManagementDisplay.date(value.observedDate)+" · 완료 개인 경기").font(.subheadline).foregroundStyle(ScoutDossierInk.muted).accessibilityIdentifier("scoutFrozenSampleCutoff")
-                Text("위 주기 종료일은 관찰 주기의 경계이며 성적 집계 마감일과 다릅니다. 현재 값과 구분해 보관한 당시 자료입니다.").font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
+    @ViewBuilder private var frozenIdentity: some View {
+        if typeSize.isAccessibilitySize {
+            v166FrozenSummary
+        } else {
+            ScoutObservationFileCover(value: value, schoolID: schoolID, legacySchoolName: legacySchoolName)
+        }
+    }
+    private var v166FrozenRole: String {
+        value.role == .batter ? FieldPosition(rawValue: value.position)?.label ?? value.position
+            : value.hand == "left" ? "좌투" : "우투"
+    }
+    private var v166FrozenSchool: String {
+        if value.age <= 18 { return SchoolCatalog.displayName(id: schoolID, fallback: value.school) }
+        return "등록 학교 · " + (value.school == legacySchoolName
+            ? SchoolCatalog.displayName(id: schoolID, fallback: value.school) : value.school)
+    }
+    private var v166FrozenCompactIdentity: some View {
+        Text("\(value.name) #\(value.number) · \(value.role.label) · \(v166FrozenRole)")
+            .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("scoutFrozenCompactIdentity")
+    }
+    private var v166FrozenSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                ManagementPortrait(appearance: value.appearance, role: value.role, number: value.number)
+                    .frame(width: 36, height: 40).accessibilityHidden(true)
+                Text("\(value.name) #\(value.number)").font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            Text("\(value.totals.games)경기 · " + (value.role == .batter ? "\(value.totals.line.plateAppearances)타석" : "\(value.totals.innings)이닝"))
+                .font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("scoutFrozenCoverMetrics")
+            Text("\(value.age)세 · \(value.role.label) · \(v166FrozenRole)").font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(v166FrozenSchool).font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("관심 구단 · " + (value.interests.map { "\($0.entries.count)곳" } ?? "미기록"))
+                .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
+            .overlay(Rectangle().strokeBorder(ScoutDossierInk.rule, lineWidth: 1))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("scoutFrozenFileCover")
+    }
+    private var frozenMetadata: some View {
+        VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 16 : 8) {
+            Text("주기 \(ManagementDisplay.date(value.periodStart)) ~ \((try? GameDate(value.nextDate).adding(days: -1).description).map(ManagementDisplay.date) ?? "—")")
+                .font(.subheadline.monospaced()).fixedSize(horizontal: false, vertical: true)
+            Text("성적 집계 "+ManagementDisplay.date(value.sampleStart)+" ~ "+ManagementDisplay.date(value.observedDate)+" · 완료 개인 경기")
+                .font(.subheadline).accessibilityIdentifier("scoutFrozenSampleCutoff")
+            Text("위 주기 종료일은 관찰 주기의 경계이며 성적 집계 마감일과 다릅니다. 현재 값과 구분해 보관한 당시 자료입니다.")
+                .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+        }.padding(.top, typeSize.isAccessibilitySize ? 16 : 8)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    @ViewBuilder private var frozenAbilityCharts: some View {
+        ScoutAbilityFileChart(title: "관찰 당시 원본 기량", subtitle: "확정 관찰 · " + ManagementDisplay.date(value.observedDate),
+                              values: Array(value.abilities.originals.prefix(4)), identifier: "scoutFrozenVisual")
+        if value.role == .pitcher {
+            ScoutAbilityFileChart(title: "관찰 당시 구종 · 숙련", subtitle: "같은 확정 파일에 저장된 구종 자료",
+                                  values: value.abilities.pitches, identifier: "scoutFrozenPitchVisual")
         }
     }
     private var roleBoard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 24 : 16) {
+            frozenAbilityCharts
             ScoutDeskHeading(title: "어떤 역할에 가까운가", subtitle: "관찰 당시 역할 기량 H · 100점 기준")
             ForEach(value.grades) { grade in
                 VStack(alignment: .leading, spacing: 10) {
@@ -402,6 +487,7 @@ struct ScoutingReportView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var report: ScoutingReportSnapshot?
+    @State private var affiliation: ManagementPlayerAffiliation?
     @State private var error: String?
     @State private var showOriginals = false
     @State private var section: CurrentScoutSection = .abilities
@@ -409,26 +495,37 @@ struct ScoutingReportView: View {
     private var gap: CGFloat { min(scaledGap, 24) }
 
     private func load() {
-        do { report = try ScoutingReportSnapshot.load(player: player, calendar: calendar, in: context); error = nil }
-        catch { report = nil; self.error = error.localizedDescription }
+        do {
+            report = try ScoutingReportSnapshot.load(player: player, calendar: calendar, in: context)
+            affiliation = ManagementPlayerAffiliation.read(player: player, calendar: calendar)
+            error = nil
+        } catch { report = nil; affiliation = nil; self.error = error.localizedDescription }
     }
     var body: some View {
         VStack(spacing: 0) {
             if report != nil, error == nil {
-                ManagementSectionTabs(options: CurrentScoutSection.allCases, selection: $section,
-                                      title: { $0.title }, identifier: "currentScoutSection")
+                V166ScoutSections(options: CurrentScoutSection.allCases, selection: $section,
+                                  title: { $0.title }, identifier: "currentScoutSection")
                     .padding(16).background(ScoutDeskPalette.ink)
                     .fixedSize(horizontal: false, vertical: true).layoutPriority(1)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 16) {
                     if let error {
                         ScoutNote(title: "관찰 자료를 불러오지 못했습니다", message: error, messageIdentifier: "scoutReportError")
                         Button("다시 확인", action: load).buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("scoutReportRetry")
                     } else if let report {
                         if section == .abilities {
-                        identity(report)
-                        currentAbilityBoard(report)
+                            if typeSize.isAccessibilitySize {
+                                v166CurrentSummary(report)
+                                currentAbilityBoard(report)
+                                DisclosureGroup("선수 표지 · 상세 정보") { v166CurrentOriginalDetails(report) }
+                                    .font(.subheadline).tint(GameTheme.gold)
+                                    .accessibilityElement(children: .contain).accessibilityIdentifier("scoutCurrentIdentityDetails")
+                            } else {
+                                identity(report)
+                                currentAbilityBoard(report)
+                            }
                         }
                         if section == .records { currentSampleBoard(report) }
                         if section == .archive {
@@ -452,23 +549,69 @@ struct ScoutingReportView: View {
             }.id(section).accessibilityIdentifier("currentScoutScroll")
                 .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
         }
-            .lineLimit(nil).lineSpacing(typeSize.isAccessibilitySize ? 5 : 4)
+            .lineLimit(nil).lineSpacing(typeSize.isAccessibilitySize ? 5 : 3)
             .background(ScoutDeskPalette.ink).foregroundStyle(GameTheme.boardInk)
             .navigationTitle("내 관찰 보고서").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GameTheme.board, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar).tint(GameTheme.gold)
             .onAppear(perform: load)
     }
+    private func v166CurrentRole(_ report: ScoutingReportSnapshot) -> String {
+        "\(report.age)세 · " + (player.role == .batter
+            ? "타자 / \(FieldPosition(rawValue: player.positionRaw)?.label ?? player.positionRaw)"
+            : "투수 / \(player.throwingHandRaw == "left" ? "좌투" : "우투")")
+    }
+    private func v166CurrentAffiliation(_ report: ScoutingReportSnapshot) -> String {
+        affiliation?.name ?? (report.age <= 18 ? player.displaySchoolName : SeasonSchedule.academicStatus(age: report.age))
+    }
+    private func v166CurrentSummary(_ report: ScoutingReportSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                ManagementPortrait(appearance: affiliation?.appearance ?? player.appearance, role: player.role,
+                                   number: player.jerseyNumber)
+                    .frame(width: 36, height: 40).accessibilityHidden(true)
+                Text("\(player.name)  #\(player.jerseyNumber)").font(.headline)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("scoutActualPlayer")
+            }
+            Text("기준일 \(ManagementDisplay.date(report.date.description))")
+                .font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutCurrentDate")
+            Text(v166CurrentRole(report)).font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("scoutActualRole")
+            Text(v166CurrentAffiliation(report)).font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("scoutActualAffiliation")
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("scoutCurrentSummary")
+    }
+    private func v166CurrentOriginalDetails(_ report: ScoutingReportSnapshot) -> some View {
+        ScoutDossier(title: "선수 관찰 파일", code: "PLAYER RECORD / READ ONLY", stamp: "현재 자료", isPreview: false) {
+            Text("\(player.name)  #\(player.jerseyNumber)").font(.title3.bold())
+                .accessibilityIdentifier("scoutDetailPlayer")
+            Text(v166CurrentRole(report)).font(.subheadline).accessibilityIdentifier("scoutDetailRole")
+            Text(v166CurrentAffiliation(report)).font(.subheadline).accessibilityIdentifier("scoutDetailAffiliation")
+            if report.age > 18 {
+                Text(SeasonSchedule.academicStatus(age: report.age)).font(.subheadline)
+                Text("등록 학교 · " + player.displaySchoolName).font(.subheadline)
+            }
+            Text("기준일 \(ManagementDisplay.date(report.date.description))").font(.subheadline.bold())
+                .foregroundStyle(ScoutDossierInk.muted)
+            Text("현재 저장 자료 · 성장/날짜 변경 없는 조회").font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
+        }
+    }
     private func identity(_ report: ScoutingReportSnapshot) -> some View {
         ScoutDossier(title: "선수 관찰 파일", code: "PLAYER RECORD / READ ONLY", stamp: "현재 자료", isPreview: false) {
             (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 18)) : AnyLayout(HStackLayout(alignment: .top, spacing: 18))) {
-                DetailGamePortrait(role: player.role, appearance: player.appearance, number: player.jerseyNumber, hand: player.throwingHandRaw).frame(width: 76, height: 100).accessibilityHidden(true)
+                ManagementPortrait(appearance: affiliation?.appearance ?? player.appearance, role: player.role,
+                                   number: player.jerseyNumber).frame(width: 76, height: 84).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 10) {
                     Text("\(player.name)  #\(player.jerseyNumber)").font(.title3.bold()).accessibilityIdentifier("scoutActualPlayer")
                     Text("\(report.age)세 · " + (player.role == .batter ? "타자 / \(FieldPosition(rawValue: player.positionRaw)?.label ?? player.positionRaw)" : "투수 / \(player.throwingHandRaw == "left" ? "좌투" : "우투")"))
                         .font(.subheadline).accessibilityIdentifier("scoutActualRole")
-                    Text(report.age <= 18 ? player.displaySchoolName : SeasonSchedule.academicStatus(age: report.age)).font(.subheadline).accessibilityIdentifier("scoutActualAffiliation")
-                    if report.age > 18 { Text("등록 학교 · " + player.displaySchoolName).font(.subheadline) }
+                    Text(affiliation?.name ?? (report.age <= 18 ? player.displaySchoolName : SeasonSchedule.academicStatus(age: report.age)))
+                        .font(.subheadline).accessibilityIdentifier("scoutActualAffiliation")
+                    if report.age > 18 {
+                        Text(SeasonSchedule.academicStatus(age: report.age)).font(.subheadline)
+                        Text("등록 학교 · " + player.displaySchoolName).font(.subheadline)
+                    }
                 }.fixedSize(horizontal: false, vertical: true)
             }
             Text("기준일 \(ManagementDisplay.date(report.date.description))").font(.subheadline.bold()).foregroundStyle(ScoutDossierInk.muted)
@@ -476,9 +619,16 @@ struct ScoutingReportView: View {
         }
     }
     private func currentAbilityBoard(_ report: ScoutingReportSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 24 : 16) {
             ScoutDeskHeading(title: "지금의 선수 기량", subtitle: "내 실제 능력 · 구단 합격선과 별개")
-            HomeRadarChart(values: report.abilities.axes)
+            ScoutAbilityFileChart(title: "현재 원본 기량", subtitle: "현재 자료 · " + ManagementDisplay.date(report.date.description),
+                                  values: Array(report.abilities.originals.prefix(4)), identifier: "scoutCurrentVisual")
+            if player.role == .pitcher {
+                ScoutAbilityFileChart(title: "현재 구종 · 숙련", subtitle: "현재 선수에게 저장된 구종 자료",
+                                      values: report.abilities.pitches, identifier: "scoutCurrentPitchVisual")
+            }
+            DisclosureGroup("현재 능력 전체 그래프") { HomeRadarChart(values: report.abilities.axes).padding(.top, 16) }
+                .font(.subheadline).tint(GameTheme.gold)
             HomeDetailButton(title: "원본 능력치·구종 보기", expanded: $showOriginals, identifier: "scoutAbilityDetails")
             if showOriginals {
                 ForEach(report.abilities.originals + report.abilities.pitches) { HomeGrowthRow(value: $0) }
@@ -502,6 +652,116 @@ struct ScoutingReportView: View {
             Text("환경별 표본을 따로 비교합니다. 서로 다른 경기 환경의 표본을 합쳐 심사하지 않습니다.")
                 .font(.subheadline).foregroundStyle(GameTheme.gold)
         }
+    }
+}
+
+private struct ScoutObservationFileCover: View {
+    let value: ScoutingObservation
+    let schoolID: String?
+    let legacySchoolName: String?
+    var compact = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var gap: CGFloat { typeSize.isAccessibilitySize ? 24 : 16 }
+    private var roleLabel: String {
+        value.role == .batter ? FieldPosition(rawValue: value.position)?.label ?? value.position
+            : value.hand == "left" ? "좌투" : "우투"
+    }
+    private var schoolName: String {
+        if value.age <= 18 { return SchoolCatalog.displayName(id: schoolID, fallback: value.school) }
+        return "등록 학교 · " + (value.school == legacySchoolName
+            ? SchoolCatalog.displayName(id: schoolID, fallback: value.school) : value.school)
+    }
+    private var sample: String {
+        value.role == .batter ? "\(value.totals.line.plateAppearances)타석" : "\(value.totals.innings)이닝"
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: gap) {
+            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))) {
+                Text("FILE \(String(format: "%02d", value.period + 1))")
+                    .font(.subheadline.monospaced().bold()).fixedSize(horizontal: false, vertical: true)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                Text("관찰 확정").font(.caption.bold()).foregroundStyle(ScoutDossierInk.green)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .overlay(Rectangle().strokeBorder(ScoutDossierInk.green, lineWidth: 1))
+            }
+            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))) {
+                ManagementPortrait(appearance: value.appearance, role: value.role, number: value.number)
+                    .frame(width: typeSize.isAccessibilitySize ? 60 : 76, height: typeSize.isAccessibilitySize ? 64 : 84)
+                    .padding(4).background(ScoutDossierInk.rule.opacity(0.35))
+                    .overlay(Rectangle().strokeBorder(ScoutDossierInk.rule, lineWidth: 1)).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 16 : 8) {
+                    Text("\(value.name) #\(value.number)").font(ManagementPixelFont.readable(.sectionTitle))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("\(value.age)세 · \(value.role.label) · \(roleLabel)").font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(schoolName).font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Text("관찰일 \(ManagementDisplay.date(value.observedDate))").font(.subheadline.bold())
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(compact ? "scoutSavedCoverDate" : "scoutFrozenIdentityDate")
+            Rectangle().fill(ScoutDossierInk.rule).frame(height: 1).accessibilityHidden(true)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: typeSize.isAccessibilitySize ? 1 : 3), spacing: 12) {
+                metric("완료 경기", "\(value.totals.games)경기")
+                metric("공식 표본", sample)
+                metric("관심 구단", value.interests.map { "\($0.entries.count)곳" } ?? "미기록")
+            }.accessibilityIdentifier(compact ? "scoutSavedCoverMetrics" : "scoutFrozenCoverMetrics")
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
+            .overlay(Rectangle().strokeBorder(ScoutDossierInk.rule, lineWidth: 1))
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(compact ? "scoutSavedFileCover" : "scoutFrozenFileCover")
+    }
+    private func metric(_ title: String, _ number: String) -> some View {
+        (typeSize.isAccessibilitySize ? AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 16)) : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))) {
+            Text(title).font(.caption).foregroundStyle(ScoutDossierInk.muted)
+            if typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            Text(number).font(.subheadline.monospaced().bold()).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .combine)
+    }
+}
+
+private struct ScoutAbilityFileChart: View {
+    let title: String
+    let subtitle: String
+    let values: [HomeAbilityValue]
+    let identifier: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var gap: CGFloat { typeSize.isAccessibilitySize ? 24 : 16 }
+    private let colors = [Color(hex: 0x2f7b65), Color(hex: 0xa16436), Color(hex: 0x2e7b94), Color(hex: 0x7e589e)]
+    var body: some View {
+        VStack(alignment: .leading, spacing: gap) {
+            VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 16 : 8) {
+                Text(title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                Text(subtitle).font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if values.isEmpty {
+                Text("저장된 자료 없음").font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
+                    .accessibilityIdentifier(identifier + "Empty")
+            } else {
+                ForEach(Array(values.enumerated()), id: \.element.id) { index, value in
+                    chartRow(value, color: colors[index % colors.count])
+                }
+            }
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
+            .overlay(Rectangle().strokeBorder(ScoutDossierInk.rule, lineWidth: 1))
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
+    }
+    private func chartRow(_ value: HomeAbilityValue, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 16 : 8) {
+            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))) {
+                Text(value.label).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                Text(value.current.formatted(.number.precision(.fractionLength(1))))
+                    .font(.headline.monospacedDigit()).fixedSize(horizontal: true, vertical: true)
+            }
+            ScoutSegmentMeter(value: value.current, maximum: 100, color: color).frame(height: 8)
+        }.accessibilityElement(children: .combine).accessibilityIdentifier(identifier + "-" + value.id)
     }
 }
 

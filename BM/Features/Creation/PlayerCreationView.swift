@@ -17,12 +17,13 @@ struct PlayerCreationView: View {
     @State private var draft = PlayerDraft()
     @State private var errorMessage: String?
     @State private var showSchools = false
+    @State private var showGamePreview = false
     @FocusState private var focusedField: Field?
     private enum Field { case name, number }
     private enum CreationSection: String, CaseIterable {
         case information, abilities, appearance, review
         var title: String {
-            switch self { case .information: "정보"; case .abilities: "능력"; case .appearance: "외형"; case .review: "확인" }
+            switch self { case .information: "정보"; case .abilities: "유형·능력"; case .appearance: "외형"; case .review: "확인" }
         }
     }
 
@@ -35,26 +36,14 @@ struct PlayerCreationView: View {
         } else {
         ScrollView {
             VStack(spacing: ManagementTheme.Space.screen) {
-                HStack(alignment: .center, spacing: 12) {
-                    CreationAvatarImage(appearance: draft.appearance, role: draft.role,
-                                        number: Int(draft.jerseyNumber) ?? 0, cap: true, mode: .full)
-                        .frame(width: 48, height: 64)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("새 커리어 · 16세 고1").font(ManagementPixelFont.readable(.label)).foregroundStyle(GameTheme.gold)
-                        Text(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "나의 첫 시즌" : draft.name)
-                            .font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
-                        Text("\(selectedSchool?.name ?? "학교 미선택") · \(draft.role.label)")
-                            .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                        Text("#\(draft.jerseyNumber) · \(draft.role == .batter ? draft.position.label : draft.throwingHand.label)")
-                            .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                    }
-                    Spacer(minLength: 0)
-                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(GameTheme.boardPanel)
-                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 2))
-                    .accessibilityElement(children: .combine).accessibilityIdentifier("creationPreview")
+                CreationIdentityCard(appearance: draft.appearance, role: draft.role,
+                    number: draft.jerseyNumber, name: draft.name, school: selectedSchool,
+                    position: draft.role == .batter ? draft.position.label : draft.throwingHand.label,
+                    typeLabel: draft.isCustom ? "사용자 지정" : draft.selectedArchetype.label,
+                    points: draft.assignedAbilityPoints, budget: draft.abilityBudget, compact: true)
+                    .accessibilityIdentifier("creationPreview")
 
-                GamePanel(title: "01  선수 정보", onBoard: true) {
+                GamePanel(title: "선수 정보", onBoard: true) {
                     Text("선수 이름 · 가상 이름 1~12자").font(.caption).foregroundStyle(GameTheme.boardMuted)
                     TextField("선수 이름", text: $draft.name, prompt: Text("선수 이름").foregroundStyle(GameTheme.boardMuted))
                         .focused($focusedField, equals: .name)
@@ -96,7 +85,7 @@ struct PlayerCreationView: View {
                         }
                     }
                 }.id(CreationSection.information.rawValue)
-                GamePanel(title: "02  소속 학교", onBoard: true) {
+                GamePanel(title: "소속 학교", onBoard: true) {
                     Button { focusedField = nil; showSchools = true } label: {
                         HStack {
                             if let selectedSchool { SchoolCrest(school: selectedSchool).frame(width: 40, height: 44) }
@@ -113,14 +102,15 @@ struct PlayerCreationView: View {
                     if let selectedSchool { SchoolReputationLabels(school: selectedSchool) }
                     Text("이름·교표는 게임 전용 창작 설정입니다. 학교를 골라도 시작 능력·성장 배율은 같습니다.").managementFont(.helper)
                 }
-                GamePanel(title: "03  선수 유형", onBoard: true) {
+                GamePanel(title: "선수 유형 · 시작 능력", onBoard: true) {
                     LazyVGrid(columns: choiceColumns, spacing: 8) {
                         ForEach(PlayerArchetype.choices(for: draft.role)) { archetype in
-                            choice(archetype.label, selected: !draft.isCustom && draft.selectedArchetype == archetype, id: "archetype-" + archetype.rawValue) {
+                            archetypeChoice(archetype) {
                                 draft.archetype = archetype; draft.isCustom = false
                             }
                         }
-                        choice("사용자 지정", selected: draft.isCustom, id: "archetype-custom") {
+                        typeChoice(title: "사용자 지정", detail: "내가 원하는 능력 배분", kind: "custom",
+                            accent: Color(hex: 0xb9cbd4), selected: draft.isCustom, identifier: "archetype-custom") {
                             if draft.allocation == nil { draft.allocation = PlayerStatAllocation(role: draft.role, base: draft.selectedArchetype.values) }
                             draft.isCustom = true
                         }
@@ -138,19 +128,19 @@ struct PlayerCreationView: View {
                     } else {
                         let values = draft.initialValues
                         if draft.role == .batter {
-                            CreationStatRow(name: "컨택", value: values.contact)
-                            CreationStatRow(name: "파워", value: values.power)
-                            CreationStatRow(name: "선구안", value: values.discipline)
+                            creationStat(name: "컨택", value: values.contact)
+                            creationStat(name: "파워", value: values.power)
+                            creationStat(name: "선구안", value: values.discipline)
                         } else {
-                            CreationStatRow(name: "구속 능력", value: values.velocity ?? 0)
-                            CreationStatRow(name: "제구", value: values.control ?? 0)
-                            CreationStatRow(name: "구위", value: values.stuff ?? 0)
-                            CreationStatRow(name: "지구력", value: values.stamina ?? 0)
+                            creationStat(name: "구속 능력", value: values.velocity ?? 0)
+                            creationStat(name: "제구", value: values.control ?? 0)
+                            creationStat(name: "구위", value: values.stuff ?? 0)
+                            creationStat(name: "지구력", value: values.stamina ?? 0)
                         }
-                        CreationStatRow(name: "스피드", value: values.speed)
-                        CreationStatRow(name: "수비", value: values.defense)
-                        CreationStatRow(name: "송구", value: values.arm)
-                        CreationStatRow(name: "멘탈", value: values.mental)
+                        creationStat(name: "스피드", value: values.speed)
+                        creationStat(name: "수비", value: values.defense)
+                        creationStat(name: "송구", value: values.arm)
+                        creationStat(name: "멘탈", value: values.mental)
                         Text(draft.role == .batter ? "유형은 시작 능력치만 바꿉니다. 성장 배율과 상한은 같습니다." : "구속 능력은 0~100점 기준 · 초기 구종 숙련은 아래 구성에서 확인하세요.")
                             .font(.caption).foregroundStyle(GameTheme.boardMuted)
                     }
@@ -204,7 +194,10 @@ struct PlayerCreationView: View {
         .overlay {
             if registeredID != nil {
                 CreationRegistrationOverlay(appearance: draft.appearance, role: draft.role,
-                                            number: Int(draft.jerseyNumber) ?? 0, name: draft.name, reduced: reduced)
+                                            number: Int(draft.jerseyNumber) ?? 0, name: draft.name, school: selectedSchool,
+                                            position: draft.role == .batter ? draft.position.label : draft.throwingHand.label,
+                                            typeLabel: draft.isCustom ? "사용자 지정" : draft.selectedArchetype.label,
+                                            points: draft.assignedAbilityPoints, budget: draft.abilityBudget, reduced: reduced)
             }
         }
         .navigationBarBackButtonHidden(registeredID != nil)
@@ -236,30 +229,38 @@ struct PlayerCreationView: View {
     }
     private var registrationReview: some View {
         GamePanel(title: "등록 전 확인", onBoard: true) {
-            CreationGamePreview(draft: draft)
-            Text(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "이름 미입력" : draft.name)
-                .managementFont(.sectionTitle)
-            Text("#\(draft.jerseyNumber) · \(draft.role.label) · \(draft.role == .pitcher ? draft.throwingHand.label : draft.position.label)").managementFont(.body)
-            if let selectedSchool {
-                HStack(spacing: 10) {
-                    SchoolCrest(school: selectedSchool).frame(width: 36, height: 40)
-                    Text(selectedSchool.name).managementFont(.body)
-                }
-                SchoolReputationLabels(school: selectedSchool)
-            } else { Text("학교 미선택").managementFont(.body) }
-            Text("전체 능력 \(draft.assignedAbilityPoints) / \(draft.abilityBudget)점 · \(draft.isCustom ? "사용자 지정" : draft.selectedArchetype.label)").managementFont(.label)
-                .accessibilityIdentifier("creationReviewBudget")
+            CreationIdentityCard(appearance: draft.appearance, role: draft.role,
+                number: draft.jerseyNumber, name: draft.name, school: selectedSchool,
+                position: draft.role == .batter ? draft.position.label : draft.throwingHand.label,
+                typeLabel: draft.isCustom ? "사용자 지정" : draft.selectedArchetype.label,
+                points: draft.assignedAbilityPoints, budget: draft.abilityBudget)
+            Text("전체 능력 \(draft.assignedAbilityPoints) / \(draft.abilityBudget)점 · \(draft.isCustom ? "사용자 지정" : draft.selectedArchetype.label)")
+                .managementFont(.label).accessibilityIdentifier("creationReviewBudget")
             if draft.role == .pitcher {
                 Text("구종 \(draft.selectedPitchCodes.count)개 · " + draft.selectedPitchCodes.compactMap { PitchType(rawValue: $0)?.label }.joined(separator: " · "))
-                    .managementFont(.body).accessibilityIdentifier("creationReviewPitches")
+                    .managementFont(.body).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("creationReviewPitches")
             }
+            if let selectedSchool { SchoolReputationLabels(school: selectedSchool) }
             ForEach(PlayerRole.allCases) { role in
                 let own = existingPlayers.filter { $0.role == role }
                 Text("\(role.label) · 활성 \(own.filter { !$0.isRetired }.count)/1 · 보관 \(own.filter { $0.isRetired }.count)명")
                     .managementFont(.helper).accessibilityIdentifier("creationSlots-" + role.rawValue)
             }
             Text(registrationReadiness).managementFont(.body).foregroundStyle(GameTheme.gold)
-                .accessibilityIdentifier("creationReadiness")
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("creationReadiness")
+            VStack(alignment: .leading, spacing: 0) {
+                Button { showGamePreview.toggle() } label: {
+                    HStack {
+                        Text("경기 동작 미리보기")
+                        Spacer(minLength: 8)
+                        Image(systemName: showGamePreview ? "chevron.up" : "chevron.down")
+                            .foregroundStyle(GameTheme.gold).accessibilityHidden(true)
+                    }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityValue(showGamePreview ? "펼침" : "접힘")
+                    .accessibilityIdentifier("creationGamePoseDisclosure")
+                if showGamePreview { CreationGamePreview(draft: draft).padding(.top, 12) }
+            }
             Text("확정하기 전에는 입력값만 바뀝니다. 저장에 실패하면 입력을 유지한 채 다시 시도할 수 있습니다.").managementFont(.helper)
         }
     }
@@ -277,7 +278,7 @@ struct PlayerCreationView: View {
     }
 
     private var pitchSelection: some View {
-        GamePanel(title: "04  구종 구성", onBoard: true) {
+        GamePanel(title: "구종 구성", onBoard: true) {
             HStack(alignment: .firstTextBaseline) {
                 Text("보유 \(draft.selectedPitchCodes.count) / 5")
                     .font(.headline.monospaced()).foregroundStyle(GameTheme.gold)
@@ -332,6 +333,50 @@ struct PlayerCreationView: View {
                 }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true)).accessibilityIdentifier("creationPitchRandom")
             }
         }
+    }
+
+    private func creationStat(name: String, value: Double) -> some View {
+        CreationStatRow(name: name, value: value, accent: draft.isCustom ? GameTheme.gold : archetypeAccent(draft.selectedArchetype))
+    }
+    private func archetypeAccent(_ type: PlayerArchetype) -> Color {
+        switch type {
+        case .contact: Color(hex: 0x74c8aa)
+        case .slugger: Color(hex: 0xefaa78)
+        case .onBase: Color(hex: 0x86c8df)
+        case .stuff: Color(hex: 0xbaa5de)
+        case .control: Color(hex: 0x83cbb8)
+        case .endurance: Color(hex: 0xedc671)
+        }
+    }
+    private func archetypeChoice(_ type: PlayerArchetype, action: @escaping () -> Void) -> some View {
+        let values = type.values
+        let detail: String
+        switch type {
+        case .contact: detail = "컨택 \(Int(values.contact)) · 스피드 \(Int(values.speed))"
+        case .slugger: detail = "파워 \(Int(values.power)) · 송구 \(Int(values.arm))"
+        case .onBase: detail = "선구안 \(Int(values.discipline)) · 스피드 \(Int(values.speed))"
+        case .stuff: detail = "구위 \(Int(values.stuff ?? 0)) · 구속 능력 \(Int(values.velocity ?? 0))"
+        case .control: detail = "제구 \(Int(values.control ?? 0)) · 구위 \(Int(values.stuff ?? 0))"
+        case .endurance: detail = "지구력 \(Int(values.stamina ?? 0)) · 제구 \(Int(values.control ?? 0))"
+        }
+        return typeChoice(title: type.label, detail: detail, kind: type.rawValue, accent: archetypeAccent(type),
+            selected: !draft.isCustom && draft.selectedArchetype == type, identifier: "archetype-" + type.rawValue, action: action)
+    }
+    private func typeChoice(title: String, detail: String, kind: String, accent: Color,
+                            selected: Bool, identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 9) {
+                    CreationTypeMark(kind: kind, color: accent).frame(width: 28, height: 28).accessibilityHidden(true)
+                    Text(title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                }
+                Text(detail).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.frame(maxWidth: .infinity, minHeight: 68, alignment: .leading).padding(.vertical, 4)
+        }.buttonStyle(GameButtonStyle(secondary: !selected, onBoard: true))
+            .overlay(Rectangle().strokeBorder(selected ? GameTheme.gold : GameTheme.boardLine, lineWidth: 2).allowsHitTesting(false))
+            .accessibilityLabel(title).accessibilityValue(detail).accessibilityIdentifier(identifier)
+            .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func choice(_ title: String, selected: Bool, id: String, action: @escaping () -> Void) -> some View {
@@ -481,21 +526,108 @@ private struct SchoolPicker: View {
     }
 }
 
+private struct CreationIdentityCard: View {
+    let appearance: PlayerAppearance
+    let role: PlayerRole
+    let number: String
+    let name: String
+    let school: School?
+    let position: String
+    let typeLabel: String
+    let points: Int
+    let budget: Int
+    var compact = false
+    @Environment(\.dynamicTypeSize) private var type
+    private var cleanName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let layout = type.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+                : AnyLayout(HStackLayout(alignment: .center, spacing: 16))
+            layout {
+                ManagementPortrait(appearance: appearance, role: role, number: Int(number) ?? 0)
+                    .frame(width: compact ? 80 : type.isAccessibilitySize ? 128 : 96,
+                           height: compact ? 88 : type.isAccessibilitySize ? 128 : 108)
+                    .background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("MY FIRST SEASON").font(ManagementPixelFont.readable(.helper)).foregroundStyle(GameTheme.gold)
+                    Text(cleanName.isEmpty ? "나의 첫 시즌" : cleanName)
+                        .font(.title3.bold()).fixedSize(horizontal: false, vertical: true)
+                    Text("#\(number.isEmpty ? "—" : number) · 16세 · \(role.label)")
+                        .font(.subheadline.monospaced()).foregroundStyle(GameTheme.boardMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !compact { Text(position).font(.subheadline).foregroundStyle(GameTheme.boardMuted) }
+                    if let school {
+                        HStack(spacing: 6) {
+                            SchoolCrest(school: school).frame(width: 23, height: 26)
+                            Text(school.name).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else { Text("학교 미선택").font(.subheadline).foregroundStyle(GameTheme.boardMuted) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(16)
+            if !compact {
+            Rectangle().fill(GameTheme.boardLine).frame(height: 1)
+            let metadata = type.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
+                : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+            metadata {
+                item("선수 유형", typeLabel)
+                item("시작 능력", "\(points)/\(budget)점")
+                item("첫 시즌", "고교 1학년")
+            }.padding(14)
+            }
+        }.foregroundStyle(GameTheme.boardInk).frame(maxWidth: .infinity, alignment: .leading)
+            .background(GameTheme.boardPanel).overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            .accessibilityElement(children: .combine)
+    }
+    private func item(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.caption).foregroundStyle(GameTheme.boardMuted)
+            Text(value).font(.subheadline.bold()).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct CreationTypeMark: View {
+    let kind: String
+    let color: Color
+    private var rows: [String] {
+        switch kind {
+        case "contact": ["000010000", "011111110", "010010010", "010000010", "111010111", "010000010", "010010010", "011111110", "000010000"]
+        case "slugger": ["000000110", "000001111", "000011110", "000111100", "001111000", "001110000", "011100000", "111000000", "010000000"]
+        case "onBase": ["000000000", "000111000", "011111110", "110010011", "100111001", "110010011", "011111110", "000111000", "000000000"]
+        case "stuff": ["000111000", "011000110", "010100010", "100010001", "100100001", "100010001", "010100010", "011000110", "000111000"]
+        case "control": ["000010000", "000010000", "001111100", "001010100", "111101111", "001010100", "001111100", "000010000", "000010000"]
+        case "endurance": ["000111000", "011111110", "010000010", "010111010", "010000010", "010111010", "010111010", "010000010", "011111110"]
+        default: ["001100000", "111111111", "001100000", "000001100", "111111111", "000001100", "011000000", "111111111", "011000000"]
+        }
+    }
+    var body: some View {
+        Canvas { context, size in
+            let unit = min(size.width, size.height) / 9
+            for (y, row) in rows.enumerated() {
+                for (x, pixel) in row.enumerated() where pixel == "1" {
+                    context.fill(Path(CGRect(x: CGFloat(x) * unit, y: CGFloat(y) * unit, width: unit, height: unit)), with: .color(color))
+                }
+            }
+        }
+    }
+}
+
 private struct CreationStatRow: View {
     let name: String
     let value: Double
+    var accent: Color = GameTheme.growth
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(name)
                 Spacer(minLength: 8)
-                Text(value.formatted(.number.precision(.fractionLength(1)))).monospacedDigit().foregroundStyle(GameTheme.growth)
+                Text(value.formatted(.number.precision(.fractionLength(1)))).monospacedDigit().foregroundStyle(accent)
             }.font(.subheadline)
             GeometryReader { proxy in
                 Rectangle().fill(GameTheme.board)
                     .overlay(alignment: .leading) {
-                        Rectangle().fill(GameTheme.growth).frame(width: proxy.size.width * min(100, max(0, value)) / 100)
+                        Rectangle().fill(accent).frame(width: proxy.size.width * min(100, max(0, value)) / 100)
                     }
             }.frame(height: dynamicTypeSize.isAccessibilitySize ? 8 : 5).accessibilityHidden(true)
         }.accessibilityElement(children: .combine)
@@ -507,6 +639,11 @@ private struct CreationRegistrationOverlay: View {
     let role: PlayerRole
     let number: Int
     let name: String
+    let school: School?
+    let position: String
+    let typeLabel: String
+    let points: Int
+    let budget: Int
     let reduced: Bool
     private let started = Date()
     var body: some View {
@@ -515,9 +652,8 @@ private struct CreationRegistrationOverlay: View {
                 GameTheme.board.opacity(0.97).ignoresSafeArea()
                 ScrollView {
                     GamePanel(title: "선수 등록", onBoard: true) {
-                        CreationAvatarImage(appearance: appearance, role: role, number: number, cap: true, mode: .full)
-                            .frame(width: 48, height: 64)
-                        Text(name).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+                        CreationIdentityCard(appearance: appearance, role: role, number: String(number), name: name,
+                            school: school, position: position, typeLabel: typeLabel, points: points, budget: budget)
                         Text("선수 정보 저장 완료").font(.headline).foregroundStyle(GameTheme.growth)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("첫 시즌을 준비하고 있습니다").font(.subheadline).fixedSize(horizontal: false, vertical: true)

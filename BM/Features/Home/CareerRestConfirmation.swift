@@ -23,27 +23,40 @@ struct CareerRestConfirmation: View {
     @State private var recoveryTask: Task<Void, Never>?
     @State private var displayFatigue = 0.0
     @State private var scheduleRetry = 0
-    @State private var restPose = RestPlayerPose.standing
     private var scheduleStatus: CalendarScheduleStatus { CalendarScheduleStatus(player: player, state: state) }
+    private var renderAppearance: PlayerAppearance {
+        ManagementPlayerAffiliation.read(player: player, calendar: state).appearance
+    }
+    private var fatigueBefore: Int { completed ? before : player.fatigue }
+    private var fatigueAfter: Int { completed ? player.fatigue : DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest) }
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 12) {
-                        PixelPlayer(appearance: player.appearance).frame(width: 36, height: 44).accessibilityHidden(true)
+                        ManagementPortrait(appearance: renderAppearance, role: player.role, number: player.jerseyNumber)
+                            .frame(width: 48, height: 48).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(player.name + " · #" + String(player.jerseyNumber)).managementFont(.label)
+                                .fixedSize(horizontal: false, vertical: true)
                             Text(ManagementDisplay.date(player.gameDate)).managementFont(.helper)
                         }
                         Spacer(minLength: 0)
                     }.padding(16)
-                    if typeSize.isAccessibilitySize { fatigueReceipt.padding(16).background(GameTheme.boardInk).foregroundStyle(GameTheme.navy) }
-                    RestBenchScene(appearance: player.appearance, number: player.jerseyNumber, pose: restPose)
+                    Image("RestBenchV69").resizable().interpolation(.none).scaledToFill()
+                        .frame(height: typeSize.isAccessibilitySize ? 112 : 144).clipped()
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(recovering ? "잠시 숨을 돌리는 중…" : completed ? "몸을 충분히 쉬었어요" : "오늘은 회복에 집중하자")
+                        Text("DUGOUT RECOVERY").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.muted)
+                        Text(recovering ? "휴식을 저장했어요" : completed ? "회복을 마쳤어요" : "잠깐 쉬어갈까요?")
                             .font(ManagementPixelFont.readable(.sectionTitle)).accessibilityAddTraits(.isHeader)
-                        if !typeSize.isAccessibilitySize { fatigueReceipt }
-                        Text("휴식 최대 −\(DailyRecovery.rest) · 다음 날 수면 −\(DailyRecovery.sleep)은 별도").managementFont(.helper)
+                        fatigueReceipt
+                        Text("피로 \(max(0, fatigueBefore - fatigueAfter)) " + (completed ? "회복" : "회복 예상"))
+                            .font(.subheadline.bold()).foregroundStyle(Color(hex: 0x1c6b54))
+                            .padding(.horizontal, 8).padding(.vertical, 5).background(Color(hex: 0xd8e1c6))
+                        Divider().overlay(GameTheme.muted.opacity(0.3))
+                        recoveryOutcome("오늘 행동", value: completed || !used ? "1 / 1 → 0 / 1" : "0 / 1 · 사용 완료")
+                        recoveryOutcome("현재 일자", value: ManagementDisplay.date(player.gameDate) + " · 유지")
                         if let error = scheduleStatus.errorMessage, !completed {
                             Text("일정 확인 전에는 휴식할 수 없습니다. " + error).managementFont(.body).accessibilityIdentifier("restScheduleError")
                             Button("일정 다시 확인") { scheduleRetry += 1 }.frame(minHeight: 44).id(scheduleRetry)
@@ -53,6 +66,11 @@ struct CareerRestConfirmation: View {
                         if let failure { Text(failure).managementFont(.body).foregroundStyle(Color(hex: 0x8b431b)).accessibilityIdentifier("restError") }
                         if completed && !recovering { Text("휴식을 저장했습니다.").managementFont(.label).accessibilityIdentifier("restSaved") }
                     }.padding(16).foregroundStyle(GameTheme.navy).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.boardInk)
+                    DisclosureGroup("다음 날 진행과는 달라요") {
+                        Text("휴식은 오늘 행동을 사용해 최대 \(DailyRecovery.rest)을 회복하고 날짜를 유지합니다. 다음 날 진행 시 수면 회복 \(DailyRecovery.sleep)은 별도로 반영됩니다.")
+                            .font(.subheadline).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 8)
+                    }.font(.subheadline).tint(GameTheme.gold).padding(16)
                 }
             }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -86,15 +104,34 @@ struct CareerRestConfirmation: View {
         completed ? "피로 \(before) → \(player.fatigue)" : "피로 \(player.fatigue) → \(DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest))"
     }
     private var fatigueReceipt: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(fatigueText).managementFont(.metric).monospacedDigit().accessibilityIdentifier("restFatigueForecast")
-            ProgressView(value: completed ? displayFatigue : Double(player.fatigue), total: 100).tint(Color(hex: 0x237459))
-                .accessibilityLabel("피로")
-                .accessibilityValue("\(player.fatigue) / 100")
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 14))
+        return layout {
+            fatigueColumn(title: completed ? "휴식 전 피로" : "현재 피로", value: fatigueBefore,
+                progress: Double(fatigueBefore), color: Color(hex: 0x94734f))
+            Text(typeSize.isAccessibilitySize ? "↓" : "→").managementFont(.metric).foregroundStyle(GameTheme.muted)
+                .accessibilityLabel(fatigueText).accessibilityIdentifier("restFatigueForecast")
+            fatigueColumn(title: completed ? "저장된 피로" : "휴식 후 예상", value: fatigueAfter,
+                progress: completed ? displayFatigue : Double(fatigueAfter), color: Color(hex: 0x237459))
         }
     }
+    private func fatigueColumn(title: String, value: Int, progress: Double, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(value)").font(.system(.largeTitle, design: .monospaced, weight: .bold)).foregroundStyle(color)
+            Text(title).font(.caption).foregroundStyle(GameTheme.muted).fixedSize(horizontal: false, vertical: true)
+            ProgressView(value: progress, total: 100).tint(color)
+        }.frame(maxWidth: .infinity, alignment: .leading).accessibilityHidden(true)
+    }
+    private func recoveryOutcome(_ title: String, value: String) -> some View {
+        (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(spacing: 12))) {
+            Text(title).font(.subheadline).foregroundStyle(GameTheme.muted)
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            Text(value).font(.subheadline.monospacedDigit().bold()).fixedSize(horizontal: false, vertical: true)
+        }.accessibilityElement(children: .combine)
+    }
     private func finishRecovery() {
-        recoveryTask?.cancel(); displayFatigue = Double(player.fatigue); recovering = false; restPose = .standing
+        recoveryTask?.cancel(); displayFatigue = Double(player.fatigue); recovering = false
     }
     private func save() {
         do {
@@ -105,14 +142,10 @@ struct CareerRestConfirmation: View {
             if reduced { finishRecovery() }
             else {
                 recovering = true
-                restPose = .sitDown
                 withAnimation(.easeOut(duration: 3.2)) { displayFatigue = Double(player.fatigue) }
                 recoveryTask = Task { @MainActor in
-                    let steps: [(RestPlayerPose, Double)] = [(.seated, 0.35), (.raiseBottle, 0.45), (.drink, 0.45), (.lowerBottle, 1.1), (.standUp, 0.4), (.standing, 0.45)]
-                    for (pose, seconds) in steps {
-                        do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-                        guard !Task.isCancelled else { return }; restPose = pose
-                    }
+                    do { try await Task.sleep(for: .seconds(3.2)) } catch { return }
+                    guard !Task.isCancelled else { return }
                     finishRecovery()
                 }
             }

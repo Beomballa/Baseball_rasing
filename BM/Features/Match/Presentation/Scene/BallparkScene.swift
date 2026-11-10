@@ -416,6 +416,7 @@ import SwiftUI
     /// 선수 동작은 유지하고 연습장 배경으로 바꾸며 경기용 장식을 제거한다.
     func usePracticeSetting() {
         guard let field = childNode(withName: "fixedStadiumBackground") as? SKSpriteNode else { return }
+        field.childNode(withName: "clubStadiumBackdrop")?.removeFromParent()
         let image = role == .batter ? MatchArt.image("batting-practice-v75") : TrainingEnvironmentArt.image(.bullpen)
         if let image {
             let texture = SKTexture(image: image)
@@ -427,12 +428,21 @@ import SwiftUI
         for i in 0..<3 { childNode(withName: "backgroundFielder-\(i)")?.removeFromParent() }
         if role == .pitcher { batter.isHidden = true }
     }
-    /// 구장 식별 정보에 맞는 장식만 교체한다.
+    /// Changes the venue layers without changing the fixed camera or moving actors.
     func setStadium(_ value: StadiumIdentity) {
         stadium = value
         dress?.removeFromParent()
         guard ready else { return }
-        let next = StadiumSceneDress(stadium: value, size: size, camera: role == .pitcher ? .pitcher : .batter)
+        let field = childNode(withName: "fixedStadiumBackground") as? SKSpriteNode
+        field?.childNode(withName: "clubStadiumBackdrop")?.removeFromParent()
+        let venue = MatchStadiumBackdropArt.art(stadium: value, role: role)
+        if let field, let venue {
+            let backdrop = SKSpriteNode(texture: venue.texture, size: size)
+            backdrop.name = "clubStadiumBackdrop"; backdrop.zPosition = 0.1
+            field.addChild(backdrop)
+        }
+        let next = StadiumSceneDress(stadium: value, size: size, camera: role == .pitcher ? .pitcher : .batter,
+                                    hasVenueBackdrop: venue != nil)
         next.zPosition = 1
         addChild(next)
         dress = next

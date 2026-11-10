@@ -2643,10 +2643,22 @@ extension ManagementDetailFlowTests {
             let button=app.buttons["role-"+role];reveal(button,app);button.tap()
             reveal(app.buttons["randomSchool"],app);app.buttons["randomSchool"].tap()
             app.buttons["creationSection-review"].tap()
-            let next=app.buttons["creationNextGamePose"];reveal(next,app)
+            let next=app.buttons["creationNextGamePose"]
+            if !next.exists {
+                let preview=app.descendants(matching:.any).matching(identifier:"creationGamePoseDisclosure").firstMatch
+                XCTAssertTrue(preview.waitForExistence(timeout:8));v104RevealCreation(preview,app,targetIdentifier:"creationGamePoseDisclosure")
+                XCTAssertTrue(preview.isHittable);preview.tap()
+            }
+            v104RevealCreation(next,app,targetIdentifier:"creationNextGamePose")
             XCTAssertTrue(next.isHittable);XCTAssertGreaterThanOrEqual(next.frame.height,44)
+            let faceCaption=app.staticTexts["creationSelectedFaceCaption"],poseCaption=app.staticTexts["creationGamePoseCaption"]
+            XCTAssertTrue(faceCaption.isHittable);XCTAssertTrue(poseCaption.isHittable)
+            XCTAssertGreaterThanOrEqual(poseCaption.frame.minX-faceCaption.frame.maxX,12)
+            XCTAssertGreaterThanOrEqual(next.frame.minY-max(faceCaption.frame.maxY,poseCaption.frame.maxY),8)
             capture(app,"v104-creation-"+role)
             next.tap();XCTAssertTrue(app.staticTexts["자세 2 / 6"].exists)
+            let caption=app.staticTexts["자세 2 / 6"]
+            v104RevealCreation(caption,app,targetIdentifier:"자세 2 / 6");XCTAssertTrue(caption.isHittable)
             XCTAssertFalse(app.staticTexts["homePlayerName"].exists)
         }
         app.terminate();app.launchArguments=["-management-career-verification"];app.launch()
@@ -2657,4 +2669,54 @@ extension ManagementDetailFlowTests {
         if app.buttons["previewSound"].isEnabled {app.buttons["previewSound"].tap()}
         app.buttons["closeSettings"].tap();XCTAssertEqual(status(app),before)
     }
+
+    @MainActor private func v104RevealCreation(_ element: XCUIElement, _ app: XCUIApplication, targetIdentifier: String) {
+        let scroll=app.scrollViews["creationScroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout:8))
+        var audit: [[String:Any]]=[]
+        for attempt in 0..<18 {
+            let shortcuts=["information","abilities","appearance","review"]
+                .map {app.buttons["creationSection-"+$0]}.filter(\.exists)
+            let viewport=scroll.frame.intersection(app.windows.firstMatch.frame)
+            let top=max(viewport.minY,shortcuts.map(\.frame.maxY).max() ?? viewport.minY)+8
+            let bottom=viewport.maxY-12
+            XCTAssertGreaterThan(bottom-top,60,"생성 화면의 실제 스크롤 가시 영역이 필요합니다.")
+            let exists=element.exists,frame=exists ? element.frame:.zero
+            let visible=exists && element.isHittable && frame.minY >= top && frame.maxY <= bottom
+            let middle=(top+bottom)/2
+            let distance=exists ? frame.midY-middle:CGFloat(80)
+            let delta=min(CGFloat(80),max(CGFloat(-80),distance))
+            audit.append(["attempt":attempt+1,"scrollIdentifier":"creationScroll",
+                "targetIdentifier":targetIdentifier,"targetExists":exists,"targetHittable":exists && element.isHittable,
+                "targetEnabled":exists && element.isEnabled,"targetLabel":exists ? element.label:"",
+                "matchingButtonCount":app.buttons.matching(identifier:targetIdentifier).count,
+                "targetFrame":[Double(frame.minX),Double(frame.minY),Double(frame.width),Double(frame.height)],
+                "viewportTop":Double(top),"viewportBottom":Double(bottom),"contentDelta":Double(visible ? 0:delta),
+                "fullyVisible":visible])
+            if visible {v104RecordCreationAudit(audit,identifier:targetIdentifier);return}
+            let origin=app.frame.origin
+            let start=app.coordinate(withNormalizedOffset:.zero)
+                .withOffset(CGVector(dx:viewport.maxX-origin.x-18,dy:middle-origin.y))
+            start.press(forDuration:0.05,thenDragTo:start.withOffset(CGVector(dx:0,dy:-delta)),
+                withVelocity:100,thenHoldForDuration:0.2)
+        }
+        v104RecordCreationAudit(audit,identifier:targetIdentifier)
+        let hierarchy=app.debugDescription
+        print("V104 creation accessibility before failure · "+targetIdentifier+"\n"+hierarchy)
+        let hierarchyAttachment=XCTAttachment(string:hierarchy)
+        hierarchyAttachment.name="V104-creation-accessibility-"+targetIdentifier
+        hierarchyAttachment.lifetime = .keepAlways;add(hierarchyAttachment)
+        capture(app,"V104-creation-scroll-not-visible")
+        XCTFail("생성 화면 항목을 creationScroll의 가시 영역으로 이동하지 못했습니다: "+targetIdentifier)
+    }
+
+    @MainActor private func v104RecordCreationAudit(_ audit: [[String:Any]], identifier: String) {
+        do {
+            let data=try JSONSerialization.data(withJSONObject:audit,options:[.prettyPrinted,.sortedKeys])
+            let attachment=XCTAttachment(data:data,uniformTypeIdentifier:"public.json")
+            attachment.name="V104-creation-scroll-"+identifier
+            attachment.lifetime = .keepAlways;add(attachment)
+        } catch {print("V104 생성 화면 스크롤 근거 기록 실패: "+error.localizedDescription)}
+    }
+
 }

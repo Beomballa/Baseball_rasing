@@ -105,6 +105,11 @@ ART_HASHES['BM/Resources/Assets.xcassets/RestBenchV69.imageset/room.png'] = '24b
 ART_HASHES.update({'BM/Resources/MatchArt/batter-actions-v75.png': '495d460d405eeea31419c1b6f3223c0a5ae3fa5d0265e2e74c5a1e5cb86eba5c', 'BM/Resources/MatchArt/pitcher-delivery-v75.png': '5c5d19bd692776c691ec47c9fad81e92571fe12a572a811c1de8c7034969cd3e', 'BM/Resources/MatchArt/batting-practice-v75.png': '4304ab31aaf4d7764a0d3d7341e5be09f7c6e0ad8c712aafa8745ae7e0d87068'})
 ART_HASHES['BM/Resources/MatchArt/opponent-batter-v116.png'] = '5ea509c981dc72727c577043a69cdfe2400914d6b699442b66a402b5aa4e0573'
 
+# V166 reviewed modular management portraits and standalone umpire.
+EXACT_PATHS.add("docs/management-ui-v166.md")
+ART_HASHES.update({'BM/Resources/Assets.xcassets/ManagementHeadsV166.imageset/image.png': 'c6e881e3e0263a738a995d09ba61f3386212ab946e4008a31f118d07868feb9a', 'BM/Resources/Assets.xcassets/ManagementFeaturesV166.imageset/image.png': '4a421f399ad8516b5db77f512bb820c471aafaddc973a4363a56f29775a6ec5d', 'BM/Resources/MatchArt/umpire-isolated-v166.png': '6647a946a376c7edd596e502504c0de289b4b1d774e8ce99e8d49f995b815b8e'})
+EXACT_PATHS.update({'BM/Resources/Assets.xcassets/ManagementFeaturesV166.imageset/Contents.json', 'BM/Resources/Assets.xcassets/ManagementHeadsV166.imageset/Contents.json'})
+
 # V79 generated club logos reviewed in design_V79; no wildcard binary permission.
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/Club-kbo-0.imageset/Contents.json',
  'BM/Resources/Assets.xcassets/Club-kbo-1.imageset/Contents.json',

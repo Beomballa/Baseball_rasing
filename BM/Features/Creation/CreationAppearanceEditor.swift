@@ -7,7 +7,7 @@ struct CreationAppearanceEditor: View {
     let next: () -> Void
     @Environment(\.dynamicTypeSize) private var type
     @State private var tab = Tab.hair
-    @State private var cap = true
+    @State private var cap = false
     private enum Tab: String, CaseIterable {
         case hair, face, expression, colors
         var label: String { switch self { case .hair: "헤어"; case .face: "얼굴"; case .expression: "표정"; case .colors: "색상" } }
@@ -20,8 +20,9 @@ struct CreationAppearanceEditor: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 0) {
-                    stage(height: min(geometry.size.width * 0.84, max(210, geometry.size.height * 0.44)))
+                    stage(height: min(240, max(190, geometry.size.width * 0.58)))
                     VStack(alignment: .leading, spacing: 16) {
+                        portraitPresets
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: type.isAccessibilitySize ? 2 : 4), spacing: 4) {
                             ForEach(Tab.allCases, id: \.self) { item in
                                 Button { tab = item } label: {
@@ -104,52 +105,67 @@ struct CreationAppearanceEditor: View {
     private func changed(_ change: (inout PlayerAppearance) -> Void) -> PlayerAppearance {
         var value = draft.appearance; change(&value); return value
     }
-    private func stage(height: CGFloat) -> some View {
-        VStack(spacing: 0) {
-        GeometryReader { g in
-            ZStack(alignment: .bottomLeading) {
-                Image("CreationLockerV98").resizable().scaledToFill().frame(width: g.size.width, height: height).clipped()
-                CreationAvatarImage(appearance: draft.appearance, role: draft.role, number: Int(draft.jerseyNumber) ?? 0, cap: cap, mode: .portrait)
-                    .frame(width: g.size.width * 0.60, height: height * 0.96)
-                    .position(x: g.size.width * 0.27, y: height * 0.47)
-                CreationAvatarImage(appearance: draft.appearance, role: draft.role, number: Int(draft.jerseyNumber) ?? 0, cap: cap, mode: .full)
-                    .frame(width: g.size.width * 0.48, height: height * 0.88)
-                    .position(x: g.size.width * 0.77, y: height * 0.51)
-                if !type.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text((draft.name.isEmpty ? "나의 선수" : draft.name) + " · #" + draft.jerseyNumber)
-                        .font(ManagementPixelFont.readable(.sectionTitle)).lineLimit(2)
-                    Text((school?.name ?? "학교 미선택") + " · " + draft.role.label)
-                        .font(ManagementPixelFont.readable(.helper)).fixedSize(horizontal: false, vertical: true)
-                }.foregroundStyle(GameTheme.boardInk).padding(10).frame(width: g.size.width * 0.57, alignment: .leading)
-                    .background(GameTheme.board).overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
-                    .padding(8).accessibilityElement(children: .combine).accessibilityIdentifier("creationMotionPreview")
-                    .accessibilityValue("\(PlayerAppearance.hairNames[draft.appearance.hairStyle]) · \(PlayerAppearance.expressionNames[draft.appearance.expression]) · \(PlayerAppearance.eyeNames[draft.appearance.eyeIndex]) · \(PlayerAppearance.browNames[draft.appearance.browIndex])")
-                Button { cap.toggle() } label: {
-                    HStack(spacing: 5) { Image(systemName: cap ? "checkmark.square.fill" : "square"); Text("모자 보기") }
-                        .font(ManagementPixelFont.readable(.helper)).padding(.horizontal, 8).frame(minHeight: 44)
-                        .foregroundStyle(GameTheme.boardInk).background(GameTheme.board)
-                        .overlay(ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2))
-                }.buttonStyle(.plain).accessibilityValue(cap ? "착용" : "벗음")
-                    .accessibilityIdentifier("appearanceCap")
-                    .position(x: g.size.width * 0.84, y: height - 28)
+    private var portraitPresets: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            heading("얼굴 스타일", detail: "4가지 시작 모습")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+                ForEach(0..<4) { index in
+                    let look = preset(index)
+                    Button { draft.appearance = look } label: {
+                        VStack(spacing: 7) {
+                            ManagementPortrait(appearance: look, role: draft.role, number: Int(draft.jerseyNumber) ?? 0)
+                                .frame(height: type.isAccessibilitySize ? 108 : 90)
+                            Text(["얼굴 A · 스포츠컷", "얼굴 B · 옆가르마", "얼굴 C · 크루컷", "얼굴 D · 웨이브"][index])
+                                .font(ManagementPixelFont.readable(.helper)).fixedSize(horizontal: false, vertical: true)
+                        }.frame(maxWidth: .infinity, minHeight: 120).padding(8)
+                    }.buttonStyle(CreationPaperChoice(selected: draft.appearance == look))
+                        .accessibilityLabel("얼굴 스타일 " + ["A", "B", "C", "D"][index])
+                        .accessibilityAddTraits(draft.appearance == look ? .isSelected : [])
+                        .accessibilityIdentifier("appearancePreset-\(index)")
                 }
             }
-        }.frame(height: height).clipped()
-        if type.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 12) {
-                Text((draft.name.isEmpty ? "나의 선수" : draft.name) + " · #" + draft.jerseyNumber).managementFont(.body)
-                Text((school?.name ?? "학교 미선택") + " · " + draft.role.label).managementFont(.helper)
-                Button { cap.toggle() } label: {
-                    HStack { Image(systemName: cap ? "checkmark.square.fill" : "square"); Text("모자") }
-                        .managementFont(.label).frame(maxWidth: .infinity, minHeight: 44)
-                }.buttonStyle(ManagementButtonStyle(variant: .secondary))
-                    .accessibilityLabel("모자 보기").accessibilityValue(cap ? "착용" : "벗음")
-                    .accessibilityIdentifier("appearanceCap")
-            }.padding(16).foregroundStyle(GameTheme.boardInk).frame(maxWidth: .infinity, alignment: .leading)
-                .background(GameTheme.board)
+            Text("스타일을 고른 뒤 헤어·눈매·눈썹·표정·색상을 각각 바꿀 수 있습니다.")
+                .managementFont(.helper).fixedSize(horizontal: false, vertical: true)
         }
-        }
+    }
+    private func preset(_ index: Int) -> PlayerAppearance {
+        var value = draft.appearance
+        value.skin = index == 2 ? 2 : 0; value.hair = 0
+        value.hairStyle = [0, 1, 3, 7][index]
+        value.eyeShape = [0, 0, 2, 1][index]
+        value.browShape = [0, 1, 1, 3][index]
+        value.expression = index < 2 ? 2 : 0
+        return value
+    }
+    private func stage(height: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            let layout = type.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
+                : AnyLayout(HStackLayout(alignment: .center, spacing: 16))
+            layout {
+                ManagementPortrait(appearance: draft.appearance, role: draft.role,
+                    number: Int(draft.jerseyNumber) ?? 0, cap: cap)
+                    .frame(width: type.isAccessibilitySize ? 144 : 128, height: min(168, height * 0.74))
+                    .background(GameTheme.board)
+                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("MY PLAYER").font(ManagementPixelFont.readable(.helper)).foregroundStyle(GameTheme.gold)
+                    Text((draft.name.isEmpty ? "나의 선수" : draft.name) + " · #" + draft.jerseyNumber)
+                        .font(.headline).fixedSize(horizontal: false, vertical: true)
+                    Text((school?.name ?? "학교 미선택") + " · " + draft.role.label)
+                        .font(.subheadline).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+                    Text("\(PlayerAppearance.hairNames[draft.appearance.hairStyle]) · \(PlayerAppearance.expressionNames[draft.appearance.expression])")
+                        .font(.caption).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.accessibilityElement(children: .combine).accessibilityIdentifier("creationMotionPreview")
+                .accessibilityValue("\(PlayerAppearance.hairNames[draft.appearance.hairStyle]) · \(PlayerAppearance.expressionNames[draft.appearance.expression]) · \(PlayerAppearance.eyeNames[draft.appearance.eyeIndex]) · \(PlayerAppearance.browNames[draft.appearance.browIndex])")
+            Button { cap.toggle() } label: {
+                HStack(spacing: 8) { Text(cap ? "■" : "□"); Text("모자 보기"); Spacer() }
+                    .font(.subheadline).frame(minHeight: 44).padding(.horizontal, 10)
+                    .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            }.buttonStyle(.plain).accessibilityLabel("모자 보기").accessibilityValue(cap ? "착용" : "벗음")
+                .accessibilityIdentifier("appearanceCap")
+        }.padding(16).foregroundStyle(GameTheme.boardInk).frame(maxWidth: .infinity, alignment: .leading)
+            .background(GameTheme.boardPanel)
     }
     private func heading(_ title: String, detail: String) -> some View {
         HStack { Text(title).font(ManagementPixelFont.readable(.sectionTitle)); Spacer(); Text(detail).managementFont(.helper) }
@@ -158,7 +174,7 @@ struct CreationAppearanceEditor: View {
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
-                CreationAvatarImage(appearance: appearance, cap: cap).frame(height: type.isAccessibilitySize ? 80 : 64)
+                ManagementPortrait(appearance: appearance, role: draft.role, number: Int(draft.jerseyNumber) ?? 0, cap: cap).frame(height: type.isAccessibilitySize ? 96 : 80)
                 Text(label).font(ManagementPixelFont.readable(.helper)).fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity).padding(4)
                 .overlay(alignment: .topTrailing) {

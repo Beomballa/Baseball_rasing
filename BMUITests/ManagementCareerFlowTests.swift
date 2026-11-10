@@ -335,7 +335,10 @@ final class ManagementCareerFlowTests: XCTestCase {
             "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]; app.launch()
         XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 20))
         app.buttons["creationSection-appearance"].tap()
-        let cap = app.buttons["appearanceCap"]; XCTAssertTrue(cap.waitForExistence(timeout: 10)); revealAppearance(cap, app); cap.tap()
+        let cap = app.buttons["appearanceCap"]; XCTAssertTrue(cap.waitForExistence(timeout: 10)); revealAppearance(cap, app)
+        XCTAssertEqual(cap.value as? String, "벗음")
+        cap.tap(); XCTAssertEqual(cap.value as? String, "착용")
+        cap.tap()
         XCTAssertEqual(cap.value as? String, "벗음")
         let next = app.buttons["이 모습으로 계속"]
         XCTAssertTrue(next.isHittable); XCTAssertGreaterThanOrEqual(next.frame.height, 44)
@@ -576,8 +579,15 @@ final class ManagementCareerFlowTests: XCTestCase {
             let before = labels(app)
             app.buttons["managementTab-training"].tap(); app.buttons["facility-training"].tap()
             let kind = pitcher ? "control" : "power"
-            reveal(app.buttons["trainingKind-" + kind], app); app.buttons["trainingKind-" + kind].tap()
-            XCTAssertEqual(app.staticTexts["trainingHubMethod"].label, pitcher ? "목표 코스 조준" : "타이어 · MAX 중앙에서 손 떼기")
+            expand("trainingEquipmentChoices", app)
+            let shelf = app.scrollViews["trainingEquipmentShelf"]
+            XCTAssertTrue(shelf.waitForExistence(timeout: 5)); reveal(shelf, app)
+            let choice = app.buttons["trainingKind-" + kind]
+            for _ in 0..<4 where !choice.isHittable { shelf.swipeLeft() }
+            XCTAssertTrue(choice.isHittable, kind); choice.tap()
+            expand("trainingMethodDetails", app)
+            reveal(app.staticTexts["trainingHubMethod"], app)
+            XCTAssertEqual(app.staticTexts["trainingHubMethod"].label, pitcher ? "목표 코스 조준" : "티배팅 · MAX 중앙에서 손 떼기")
             reveal(app.buttons["openTraining"], app); app.buttons["openTraining"].tap()
             XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 6))
             XCTAssertTrue(app.buttons["trainingKind-" + kind].isSelected)
@@ -589,15 +599,88 @@ final class ManagementCareerFlowTests: XCTestCase {
             app.buttons["openTraining"].tap()
             XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch.exists)
             XCTAssertFalse(app.buttons["startTraining"].exists)
+            let navigationArena = v166SettledTrainingGeometry(app, pitcher: pitcher, route: "navigation")
             capture(app, pitcher ? "pitcher-training-resume" : "batter-training-resume")
             app.navigationBars.buttons.element(boundBy: 0).tap(); closeDetail(app)
             app.buttons["managementTab-home"].tap()
-            XCTAssertTrue(app.buttons["homeResumeTraining"].exists)
+            XCTAssertEqual(Array(labels(app).prefix(2)), Array(before.prefix(2)))
+            let homeTraining = app.buttons["clubhouse-training"]
+            reveal(homeTraining, app); XCTAssertTrue(homeTraining.isHittable); homeTraining.tap()
+            let resumed = app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch
+            XCTAssertTrue(resumed.waitForExistence(timeout: 8))
+            XCTAssertTrue(resumed.label.contains(pitcher ? "제구" : "파워"), resumed.label)
+            XCTAssertFalse(app.buttons["startTraining"].exists)
+            _ = v166SettledTrainingGeometry(app, pitcher: pitcher, route: "home", referenceArena: navigationArena)
+            capture(app, pitcher ? "pitcher-home-training-resume" : "batter-home-training-resume")
+            closeDetail(app)
             XCTAssertEqual(Array(labels(app).prefix(2)), Array(before.prefix(2)))
             app.buttons["clubhouse-rest"].tap()
             XCTAssertFalse(app.buttons["confirmRest"].isEnabled)
             app.buttons["닫기"].tap()
         }
+    }
+
+    @MainActor private func v166SettledTrainingGeometry(_ app: XCUIApplication, pitcher: Bool, route: String,
+                                                       referenceArena: CGRect? = nil) -> CGRect {
+        let arenaID = pitcher ? "trainingField" : "skillPracticeField"
+        let controlID = pitcher ? "trainingAttempt" : "skillPowerHold"
+        let scroll = app.scrollViews["careerTrainingScroll"]
+        let arena = app.descendants(matching: .any).matching(identifier: arenaID).firstMatch
+        let control = app.descendants(matching: .any).matching(identifier: controlID).firstMatch
+        let progress = app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch
+        var previous: [CGRect] = [], consecutive = 0, samples: [[String: Any]] = []
+        func numbers(_ rect: CGRect) -> [Double] { [rect.minX, rect.minY, rect.width, rect.height].map(Double.init) }
+        let stable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let viewport = scroll.exists ? scroll.frame.intersection(app.windows.firstMatch.frame) : .zero
+            let field = arena.exists ? arena.frame : .zero
+            let action = control.exists ? control.frame : .zero
+            let heading = progress.exists ? progress.frame : .zero
+            let frames = [viewport, field, action, heading]
+            let same = previous.count == frames.count && zip(previous, frames).allSatisfy { old, new in
+                zip(numbers(old), numbers(new)).allSatisfy { abs($0 - $1) <= 1 }
+            }
+            let visible = viewport.insetBy(dx: -1, dy: -1)
+            let ready = scroll.exists && arena.exists && control.exists && progress.exists
+                && frames.allSatisfy { $0.width.isFinite && $0.height.isFinite && $0.width > 0 && $0.height > 0 }
+                && control.isEnabled && control.isHittable
+                && visible.contains(field) && visible.contains(action) && visible.contains(heading)
+            consecutive = ready ? (same ? consecutive + 1 : 1) : 0
+            samples.append(["viewport": numbers(viewport), "arena": numbers(field), "control": numbers(action),
+                "progress": numbers(heading), "controlExists": control.exists,
+                "controlEnabled": control.exists && control.isEnabled, "controlHittable": control.exists && control.isHittable,
+                "ready": ready, "consecutiveReadySamples": consecutive])
+            previous = frames
+            return consecutive >= 2
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [stable], timeout: 10)
+        let finalArena = arena.exists ? arena.frame : .zero
+        let evidence: [String: Any] = ["route": route, "role": pitcher ? "pitcher" : "batter",
+            "arenaIdentifier": arenaID, "controlIdentifier": controlID, "samples": samples,
+            "waitResult": result.rawValue, "requiredConsecutiveSamples": 2, "frameTolerancePoints": 1,
+            "sourceMinimumArenaHeight": 150, "sourceArenaWidthToHeight": pitcher ? 320.0 / 340 : 320.0 / 220,
+            "sourceMinimumArenaWidth": pitcher ? 150.0 * 320 / 340 : 150.0 * 320 / 220,
+            "finalArena": numbers(finalArena), "atSourceMinimumHeight": abs(finalArena.height - 150) <= 1,
+            "navigationReferenceArena": referenceArena.map(numbers) ?? [],
+            "homeToNavigationWidthRatio": referenceArena.map { $0.width > 0 ? Double(finalArena.width / $0.width) : 0 } ?? 0,
+            "limits": "Two visible stable samples gate the screenshot. For the same viewport, home resume must retain navigation arena width within 1pt. Actual play and largest active layout remain outside this case."]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys])
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = "V166-training-geometry-" + (pitcher ? "pitcher-" : "batter-") + route
+            attachment.lifetime = .keepAlways; add(attachment)
+        } catch { XCTFail("훈련 화면 geometry 근거 기록 실패: " + error.localizedDescription) }
+        if result != .completed {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "V166-training-geometry-failed-" + route
+            hierarchy.lifetime = .keepAlways; add(hierarchy)
+            capture(app, "V166-training-not-settled-" + (pitcher ? "pitcher-" : "batter-") + route)
+        }
+        XCTAssertEqual(result, .completed, "훈련장·진행 정보·실제 조작 영역이 두 번 연속 가시 상태로 정착해야 합니다.")
+        if let referenceArena {
+            XCTAssertGreaterThanOrEqual(finalArena.width, referenceArena.width - 1,
+                "같은 훈련과 화면 크기에서 홈 이어하기 경기장이 일반 이어하기보다 축소되면 안 됩니다.")
+        }
+        return finalArena
     }
 
     @MainActor func testRestGameCompletionAndNextDayBothRoles() {
@@ -696,6 +779,179 @@ final class ManagementCareerFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["closeRoomDetail"].exists)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["managementTab-home"].waitForExistence(timeout: 6))
+    }
+
+    @MainActor func testV166ApprovedManagementScreensReadOnlyBothRoles() {
+        v166ApprovedScreens(large: false)
+    }
+
+    @MainActor func testV166ApprovedManagementScreensLargestTextBothRoles() {
+        v166ApprovedScreens(large: true)
+    }
+
+    @MainActor private func v166ApprovedScreens(large: Bool) {
+        continueAfterFailure = false
+        let app = launch(large: large)
+        defer { app.terminate() }
+        let prefix = large ? "V166-approved-largest" : "V166-approved-regular"
+        for pitcher in [false, true] {
+            if pitcher { v166SwitchToPitcher(app) }
+            let role = pitcher ? "pitcher" : "batter", before = labels(app)
+            app.buttons["roomProfile"].tap()
+            for id in ["homeRole-batter", "homeRole-pitcher"] {
+                let card = app.buttons[id]
+                XCTAssertTrue(card.waitForExistence(timeout: 8)); reveal(card, app)
+                XCTAssertGreaterThanOrEqual(card.frame.height, 44)
+                XCTAssertGreaterThanOrEqual(card.frame.width, 44)
+            }
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "notebookIdentity").firstMatch.exists)
+            capture(app, prefix + "-" + role + "-player-cards")
+            closeDetail(app)
+
+            v99Menu("training", title: "훈련", app: app)
+            v166Tap("facility-training", app)
+            capture(app, prefix + "-" + role + "-training-hub")
+            v166Tap("openTraining", app)
+            XCTAssertTrue(app.buttons["startTraining"].waitForExistence(timeout: 8))
+            capture(app, prefix + "-" + role + "-training-preparation-no-start")
+            v166CheckVisibleTextBounds(app)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            closeDetail(app)
+
+            v99Menu("home", title: "홈", app: app)
+            XCTAssertEqual(labels(app), before)
+            v166Tap("clubhouse-rest", app)
+            XCTAssertTrue(app.staticTexts["restFatigueForecast"].waitForExistence(timeout: 8))
+            capture(app, prefix + "-" + role + "-recovery-before-confirmation")
+            let cancel = app.buttons["취소 · 돌아가기"]
+            reveal(cancel, app); XCTAssertTrue(cancel.isHittable); cancel.tap()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 8))
+            XCTAssertEqual(labels(app), before)
+            XCTAssertFalse(app.staticTexts["restSaved"].exists)
+
+            v99Menu("career", title: "커리어", app: app)
+            v166Tap("facility-observation", app)
+            let cover = app.descendants(matching: .any).matching(identifier: "scoutSavedFileCover").firstMatch
+            XCTAssertTrue(cover.waitForExistence(timeout: 8)); reveal(cover, app)
+            capture(app, prefix + "-" + role + "-saved-report-cover")
+            v166Tap("openSavedScoutingReport", app)
+            let date = app.staticTexts["scoutFrozenDate"]
+            XCTAssertTrue(date.waitForExistence(timeout: 8))
+            let originalDate = date.label
+            for section in ["summary", "abilities", "records", "clubs"] {
+                v166Tap("frozenScoutSection-" + section, app)
+                v166CheckSelectedReportSection("frozenScoutSection", section: section, app: app)
+                XCTAssertEqual(date.label, originalDate)
+                let fullIdentity = app.descendants(matching: .any).matching(identifier: "scoutFrozenFileCover").firstMatch
+                let compactIdentity = app.descendants(matching: .any).matching(identifier: "scoutFrozenCompactIdentity").firstMatch
+                if section == "summary" {
+                    XCTAssertTrue(fullIdentity.waitForExistence(timeout: 8))
+                    XCTAssertFalse(compactIdentity.exists)
+                } else {
+                    XCTAssertTrue(compactIdentity.waitForExistence(timeout: 8))
+                    XCTAssertFalse(fullIdentity.exists)
+                }
+                v166CheckVisibleTextBounds(app)
+                capture(app, prefix + "-" + role + "-frozen-" + section)
+            }
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            v166Tap("openScoutingReport", app)
+            let actualPlayer = app.staticTexts["scoutActualPlayer"]
+            XCTAssertTrue(actualPlayer.waitForExistence(timeout: 8))
+            if large {
+                let currentDate = app.staticTexts["scoutCurrentDate"]
+                XCTAssertTrue(currentDate.waitForExistence(timeout: 8))
+                capture(app, prefix + "-" + role + "-current-initial-viewport")
+                let window = app.windows.firstMatch.frame, navigation = app.navigationBars.firstMatch.frame
+                for text in [actualPlayer, currentDate] {
+                    XCTAssertTrue(text.isHittable, text.identifier)
+                    XCTAssertGreaterThanOrEqual(text.frame.minY, navigation.maxY - 1, text.identifier)
+                    XCTAssertLessThanOrEqual(text.frame.maxY, window.maxY + 1, text.identifier)
+                    XCTAssertGreaterThanOrEqual(text.frame.minX, window.minX - 1, text.identifier)
+                    XCTAssertLessThanOrEqual(text.frame.maxX, window.maxX + 1, text.identifier)
+                }
+            }
+            for section in ["abilities", "records", "archive"] {
+                v166Tap("currentScoutSection-" + section, app)
+                v166CheckSelectedReportSection("currentScoutSection", section: section, app: app)
+                v166CheckVisibleTextBounds(app)
+                capture(app, prefix + "-" + role + (section == "abilities" ? "-current-report" : "-current-" + section))
+            }
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            closeDetail(app)
+
+            v99Menu("game", title: "경기", app: app)
+            let entry = app.buttons["roomPrimary"]
+            XCTAssertTrue(entry.waitForExistence(timeout: 8)); reveal(entry, app)
+            XCTAssertGreaterThanOrEqual(entry.frame.height, 44)
+            capture(app, prefix + "-" + role + "-team-stadium-menu")
+            v99Menu("home", title: "홈", app: app)
+            XCTAssertEqual(labels(app), before, "Reading screens and cancelling preparation/rest must not consume the day or action")
+        }
+    }
+
+    @MainActor private func v166SwitchToPitcher(_ app: XCUIApplication) {
+        app.buttons["roomProfile"].tap()
+        let choice = app.buttons["homeRole-pitcher"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 8)); reveal(choice, app)
+        XCTAssertTrue(choice.isHittable); choice.tap()
+        if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
+        v99Menu("home", title: "홈", app: app)
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("CareerPitch"))
+    }
+
+    @MainActor private func v166CheckSelectedReportSection(_ identifier: String, section: String, app: XCUIApplication) {
+        let menu = app.buttons[identifier + "Menu"]
+        if menu.exists {
+            let titles = identifier == "currentScoutSection"
+                ? ["abilities": "현재 능력", "records": "출전 기록", "archive": "관찰 보관함"]
+                : ["summary": "요약", "abilities": "능력·구종", "records": "경기·근거", "clubs": "관심 구단"]
+            XCTAssertEqual(menu.value as? String, titles[section])
+        } else {
+            XCTAssertTrue(app.buttons[identifier + "-" + section].isSelected)
+        }
+    }
+
+    @MainActor func testV166ApprovedCreationStyleAndTypeReachFinalCardWithoutRegistration() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        for pitcher in [false, true] {
+            app.terminate()
+            app.launchArguments = ["-management-career-verification", "-management-empty-verification"]
+            app.launch()
+            let name = app.textFields["playerName"]
+            XCTAssertTrue(name.waitForExistence(timeout: 20))
+            name.tap(); name.typeText(pitcher ? "CardPitch" : "CardBat")
+            app.buttons["입력 완료"].tap()
+            if pitcher { reveal(app.buttons["role-pitcher"], app); app.buttons["role-pitcher"].tap() }
+            reveal(app.buttons["schoolPicker"], app); app.buttons["schoolPicker"].tap()
+            let school = app.buttons["hs-ref-001"]; reveal(school, app); school.tap()
+            app.buttons["creationSection-abilities"].tap()
+            let archetype = app.buttons[pitcher ? "archetype-endurance" : "archetype-onBase"]
+            reveal(archetype, app); XCTAssertTrue(archetype.isHittable); archetype.tap()
+            let summary = app.staticTexts["archetypePreviewTitle"]
+            reveal(summary, app)
+            XCTAssertTrue(summary.label.contains(pitcher ? "지구력형" : "출루형"))
+            capture(app, "V166-approved-creation-" + (pitcher ? "pitcher" : "batter") + "-type-chart")
+            app.buttons["creationSection-appearance"].tap()
+            let preset = app.buttons["appearancePreset-3"]
+            XCTAssertTrue(preset.waitForExistence(timeout: 8)); revealAppearance(preset, app); preset.tap()
+            let hair = app.buttons["hairStyle-7"]; revealAppearance(hair, app)
+            XCTAssertTrue(hair.isSelected, "Style D must remain editable through the saved hairstyle controls")
+            capture(app, "V166-approved-creation-" + (pitcher ? "pitcher" : "batter") + "-style-D")
+            app.buttons["이 모습으로 계속"].tap()
+            capture(app, "V166-approved-creation-" + (pitcher ? "pitcher" : "batter") + "-final-card-cover")
+            let budget = app.staticTexts["creationReviewBudget"]
+            reveal(budget, app); XCTAssertTrue(budget.exists)
+            XCTAssertTrue(budget.label.contains(pitcher ? "459" : "388"))
+            XCTAssertTrue(budget.label.contains(pitcher ? "지구력형" : "출루형"))
+            if pitcher { XCTAssertTrue(app.staticTexts["creationReviewPitches"].exists) }
+            capture(app, "V166-approved-creation-" + (pitcher ? "pitcher" : "batter") + "-final-card-no-save")
+            let create = app.buttons["createPlayer"]; reveal(create, app); XCTAssertTrue(create.isEnabled)
+            XCTAssertFalse(app.staticTexts["homePlayerName"].exists, "This case stops before registering the local QA draft")
+        }
     }
 
     @MainActor func testV166ControlsKeepContentInsetsAndCreationCloseRegular() {
@@ -838,8 +1094,9 @@ final class ManagementCareerFlowTests: XCTestCase {
     }
 
     @MainActor private func v166Tap(_ identifier: String, _ app: XCUIApplication) {
-        if identifier.hasPrefix("frozenScoutSection-"), app.buttons["frozenScoutSectionMenu"].exists {
-            app.buttons["frozenScoutSectionMenu"].tap()
+        let prefix = String(identifier.split(separator: "-").first ?? "")
+        if ["frozenScoutSection", "currentScoutSection"].contains(prefix), app.buttons[prefix + "Menu"].exists {
+            app.buttons[prefix + "Menu"].tap()
         }
         let button = app.buttons[identifier]
         XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
