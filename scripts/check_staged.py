@@ -109,6 +109,8 @@ ART_HASHES['BM/Resources/MatchArt/opponent-batter-v116.png'] = '5ea509c981dc7272
 EXACT_PATHS.add("docs/management-ui-v166.md")
 ART_HASHES.update({'BM/Resources/Assets.xcassets/ManagementHeadsV166.imageset/image.png': 'c6e881e3e0263a738a995d09ba61f3386212ab946e4008a31f118d07868feb9a', 'BM/Resources/Assets.xcassets/ManagementFeaturesV166.imageset/image.png': '4a421f399ad8516b5db77f512bb820c471aafaddc973a4363a56f29775a6ec5d', 'BM/Resources/MatchArt/umpire-isolated-v166.png': '6647a946a376c7edd596e502504c0de289b4b1d774e8ce99e8d49f995b815b8e'})
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/ManagementFeaturesV166.imageset/Contents.json', 'BM/Resources/Assets.xcassets/ManagementHeadsV166.imageset/Contents.json'})
+EXACT_PATHS.add("BM/Resources/Assets.xcassets/ManagementPortraitReferenceV167.imageset/Contents.json")
+ART_HASHES["BM/Resources/Assets.xcassets/ManagementPortraitReferenceV167.imageset/image.png"] = "dfdea7a78f410d8359e06fe5d7fab8c70608f2a0bd9e5c11213953571014e02a"
 
 # V79 generated club logos reviewed in design_V79; no wildcard binary permission.
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/Club-kbo-0.imageset/Contents.json',
