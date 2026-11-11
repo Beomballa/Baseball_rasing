@@ -1018,11 +1018,17 @@ struct CareerGameView: View {
                 cancelInput()
             }
         }
-        .confirmationDialog("남은 경기를 자동으로 진행할까요?", isPresented: $confirmAutomatic, titleVisibility: .visible) {
-            Button("진행하고 결과 저장") { advance(.automatic) }
+        .managementConfirmationDialog("남은 경기를 자동으로 진행할까요?", isPresented: $confirmAutomatic, titleVisibility: .visible) {
+            Button("진행하고 결과 저장", role: .destructive) { advance(.automatic) }
         } message: { Text(assessmentID == nil ? "현재 카운트·주자에서 이어서 진행합니다. 실제 출전 성적과 피로를 반영하며 취소할 수 없습니다.":"현재 평가 경기의 카운트·주자에서 이어서 진행합니다. 자동 입력을 구분해 평가전 원장에 저장합니다.") }
-        .alert("경기를 저장하지 못했습니다", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("확인") { error = nil }
+        .managementAlert("경기를 저장하지 못했습니다", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } }), kind: .failure) {
+            if let pending = retrySave {
+                Button("같은 입력 다시 저장") {
+                    error = nil
+                    commit(pending)
+                }.accessibilityIdentifier("retryGameInputFromAlert")
+            }
+            Button("확인", role: .cancel) { error = nil }
         } message: { Text(error ?? "") }
     }
 }
@@ -1413,7 +1419,7 @@ struct MatchOpponentCenter:View {
                         .padding(.horizontal,12).padding(.vertical,8).background(GameTheme.board)
                 }
             }
-            .alert("미집계 통계",isPresented:$showStatsInfo) {
+            .managementAlert("미집계 통계",isPresented:$showStatsInfo, kind: .information, identifier: "opponentStatsInformation") {
                 Button("확인",role:.cancel) {}
             } message: {
                 Text("경기 전날까지 완료된 실제 경기·자동 경기 원장의 개인 성적입니다. 경기 시작 때 저장해 이어하기에서도 바꾸지 않습니다. 분모 0·과거 미수집·자책점 미채점은 미집계로 남기며 WAR·코스별 기록은 후속입니다.")

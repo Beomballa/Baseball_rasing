@@ -25,6 +25,8 @@ struct ContractMarketView:View {
                         CareerMarketCounts(retention: entries.filter {$0.retention && $0.status == "검토 가능"}.count + domestic.filter {$0.renewal != nil && $0.status == "검토 가능"}.count,
                                            external: entries.filter {!$0.retention && $0.status == "검토 가능"}.count + domestic.filter {$0.renewal == nil && $0.status == "검토 가능"}.count)
                         Text("역할·배치 → 발효일·기간 → 경제 지수 순으로 비교 · 출전 보장 없음").font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketComparisonPriority")
+                        NavigationLink { ScoutingFundsView(player: player, calendar: calendar) } label: { Text("내 자금 관리") }
+                            .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openScoutingFunds")
                         if hasPending {ContractNextStep(title:"수락된 변경 발효 대기",timing:"예약된 발효일은 계약·소속에서 확인",action:"다른 제의를 다시 수락하지 않고 현재 소속과 예약 원문을 확인하세요.",identifier:"marketPendingTransition")}
                         DisclosureGroup("경제 지수 · 수락 시 유의사항") {
                             Text("검토 가능 제의는 마감 순입니다. 마감·거절·제의 없음은 자동 방출이나 FA가 아닙니다.").font(.subheadline)
@@ -40,6 +42,7 @@ struct ContractMarketView:View {
                                 .background(GameTheme.navy,in:ManagementStepFrame()).overlay {ManagementStepFrame().strokeBorder(GameTheme.gold,lineWidth:2)}.accessibilityIdentifier("marketOfferStatus")
                             ContractTermsTimeline(issued:entry.offer.issued,expires:entry.offer.expires,effective:entry.offer.effective)
                             ContractTermsMetric(title:"연봉지수",value:String(entry.offer.economicIndex),note:"\(entry.offer.years)년 · 실제 통화/출전 보장 아님")
+                            if let amount = entry.offer.signingBonusWon { SigningBonusOfferAmount(amount: amount) }
                             Text("경제 기간 종료 · "+ManagementDisplay.date(entry.offer.economicEnd)).font(.footnote.monospacedDigit())
                             if entry.retention {
                                 NavigationLink {OverseasRenewalView(player:player,calendar:calendar)} label: {Text("잔류 조건 상세 · 결정")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketOfferDecision-"+entry.id)
@@ -96,6 +99,7 @@ struct DomesticMarketCards:View {
                 ContractTermsTimeline(issued:entry.issued,expires:entry.expires,effective:entry.renewal?.offer?.effectiveDate ?? "상세에서 확인")
                 Text("출전 보장 없음 · 상세에서 소속/등록 조건 확인").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 Text(entry.economicLabel+" \(entry.economicIndex)").font(.title2.monospacedDigit().bold()).padding(.vertical,8).accessibilityIdentifier("domesticMarketEconomic")
+                if let amount = entry.signingBonusWon { SigningBonusOfferAmount(amount: amount) }
                 if let renewal=entry.renewal {
                     NavigationLink {DomesticRenewalDetail(player:player,calendar:calendar,value:renewal,evaluatedDate:entry.issued)} label: {Text("잔류 조건 · 결정")}.buttonStyle(MatchPixelButtonStyle())
                 } else if let evaluation=try? ContractEvaluationStore.records(player:player,calendar:calendar,in:context).first(where:{$0.key == entry.evaluationKey}) {

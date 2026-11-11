@@ -23,19 +23,21 @@ extension Color {
 
 struct GameButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isFocused) private var isFocused
     var secondary = false
     var onBoard = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(.body, design: .monospaced, weight: .bold))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .foregroundStyle(onBoard ? (isEnabled ? GameTheme.boardInk : GameTheme.boardMuted) : (!isEnabled ? GameTheme.muted : (secondary ? GameTheme.navy : .white)))
-            .background(onBoard ? (isEnabled ? (secondary ? Color(hex: 0x334c50) : Color(hex: 0x307855)) : GameTheme.boardPanel) : (!isEnabled ? GameTheme.paper : (secondary ? GameTheme.gold : GameTheme.green)))
-            .overlay(Rectangle().strokeBorder(onBoard ? (isEnabled && secondary ? GameTheme.gold : GameTheme.boardLine.opacity(isEnabled ? 1 : 0.45)) : GameTheme.navy.opacity(isEnabled ? 1 : 0.25), lineWidth: 2))
-            .overlay(alignment: .bottom) { Rectangle().fill(.black.opacity(0.18)).frame(height: 3).allowsHitTesting(false) }
-            .contentTransition(.identity)
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .managementButtonChrome(variant: configuration.role == .destructive ? .destructive :
+                                        (secondary ? (onBoard ? .secondary : .paper) : .primary),
+                                    pressed: configuration.isPressed, enabled: isEnabled,
+                                    focused: isFocused, minHeight: 48)
     }
 }
 

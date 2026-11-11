@@ -2443,7 +2443,7 @@ extension CareerFlowTests {
 
     @MainActor private func v168ScoutReveal(_ element: XCUIElement, app: XCUIApplication) {
         if element.isHittable { return }
-        let scrollIDs = ["frozenScoutScroll", "currentScoutScroll", "overseasScoutScroll",
+        let scrollIDs = ["scoutFundsScroll", "liveOfferScroll", "overseasContractScroll", "frozenScoutScroll", "currentScoutScroll", "overseasScoutScroll",
                          "roomDetailScroll", "roomFacilityList", "roomPropScroll"]
         let scroll = scrollIDs.lazy.map { app.scrollViews[$0] }.first { $0.exists && $0.isHittable }
         if let scroll {
@@ -2454,6 +2454,139 @@ extension CareerFlowTests {
             }
         }
         XCTAssertTrue(element.isHittable, element.identifier)
+    }
+
+    @MainActor private func v168ScoutCapture(_ name: String, app: XCUIApplication) {
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor func testV168DomesticOfferCancelAcceptAndWonFundsSurviveRelaunch() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified",
+                               "-v168-finance-qa-session", UUID().uuidString]
+        app.launch()
+        defer { app.terminate() }
+        let playerName = app.staticTexts["homePlayerName"]
+        XCTAssertTrue(playerName.waitForExistence(timeout: 60))
+        v168ScoutSelectRole("batter", expectedName: "CareerBat", app: app)
+        let originalDate = app.staticTexts["calendarDate"].label
+
+        v168ScoutMenu("career", app: app)
+        v168ScoutTap("facility-contracts", app: app)
+        v168ScoutTap("openDomesticOffers", app: app)
+        v168ScoutTap("liveOfferDetail-rookie", app: app)
+        let term = app.descendants(matching: .any).matching(identifier: "signingBonusOfferAmount").firstMatch
+        XCTAssertTrue(term.waitForExistence(timeout: 8))
+        let amountRange = try XCTUnwrap(term.label.range(of: #"[0-9][0-9,]*\s*원"#, options: .regularExpression))
+        let amount = term.label[amountRange].filter { !$0.isWhitespace }
+        XCTAssertNotEqual(amount, "0원")
+
+        v168ScoutTap("acceptLiveOffer", app: app)
+        let confirm = app.buttons["confirmOfferDecision"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 8))
+        v168ScoutCapture("V168 신규 국내 계약 확인", app: app)
+        app.buttons["취소"].tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["liveOfferDecisionReceipt"].exists)
+        v168ScoutTap("acceptLiveOffer", app: app)
+        XCTAssertTrue(confirm.waitForExistence(timeout: 8))
+        confirm.tap()
+        XCTAssertTrue(app.staticTexts["liveOfferDecisionReceipt"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["acceptLiveOffer"].exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        v168ScoutTap("closeRoomDetail", app: app)
+        XCTAssertEqual(app.staticTexts["calendarDate"].label, originalDate)
+
+        func openFunds() {
+            v168ScoutMenu("career", app: app)
+            v168ScoutTap("facility-observation", app: app)
+            v168ScoutTap("scoutDeskSection-funds", app: app)
+        }
+        openFunds()
+        let balance = app.descendants(matching: .any).matching(identifier: "scoutingFundsBalance").firstMatch
+        let reserve = app.descendants(matching: .any).matching(identifier: "scoutingFundsReserve").firstMatch
+        XCTAssertTrue(balance.waitForExistence(timeout: 8), app.debugDescription)
+        v168ScoutCapture("V168 국내 계약금 입금과 잔액", app: app)
+        let credited = balance.label.filter { !$0.isWhitespace }
+        XCTAssertTrue(credited.contains(amount), balance.label)
+        v168ScoutReveal(reserve, app: app)
+        let before = reserve.label
+        v168ScoutTap("scoutingFundsTrainingIncrease", app: app)
+        XCTAssertTrue(app.staticTexts["scoutFundsSaved"].waitForExistence(timeout: 8))
+        XCTAssertNotEqual(reserve.label, before)
+        let allocated = reserve.label
+        XCTAssertEqual(balance.label.filter { !$0.isWhitespace }, credited)
+        v168ScoutCapture("V168 원 단위 자금 관리 · 예산 배정", app: app)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(playerName.waitForExistence(timeout: 60))
+        v168ScoutSelectRole("batter", expectedName: "CareerBat", app: app)
+        XCTAssertEqual(app.staticTexts["calendarDate"].label, originalDate)
+        openFunds()
+        XCTAssertTrue(balance.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertEqual(balance.label.filter { !$0.isWhitespace }, credited)
+        v168ScoutReveal(reserve, app: app)
+        XCTAssertEqual(reserve.label, allocated)
+        let transactions = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "scoutFundsTransaction-"))
+        XCTAssertEqual(transactions.count, 1)
+    }
+
+    @MainActor func testV168OverseasOfferShowsWonAndPendingFundsBeforeEffectiveDate() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-college-pro-verification"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60))
+        v168ScoutSelectRole("pitcher", expectedName: "CareerPitch", app: app)
+        let originalDate = app.staticTexts["calendarDate"].label
+        v168ScoutMenu("career", app: app)
+        v168ScoutTap("facility-contracts", app: app)
+        v168ScoutTap("openOverseasReport", app: app)
+        v168ScoutTap("captureOverseasReport", app: app)
+        v168ScoutTap("overseasScoutSection-clubs", app: app)
+        let quote = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "overseasInterestQuote-")).firstMatch
+        XCTAssertTrue(quote.waitForExistence(timeout: 8))
+        XCTAssertTrue(quote.label.contains("원"), quote.label)
+        v168ScoutReveal(quote, app: app)
+        v168ScoutCapture("V168 해외 구단 관찰과 예상 계약금", app: app)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        v168ScoutTap("openOverseasContracts", app: app)
+        v168ScoutTap("registerOverseasApplicant", app: app)
+        v168ScoutTap("evaluateOverseasOffers", app: app)
+        let accept = app.buttons["acceptOverseasOffer"].firstMatch
+        XCTAssertTrue(accept.waitForExistence(timeout: 8))
+        v168ScoutReveal(accept, app: app)
+        accept.tap()
+        let confirmation = app.staticTexts["overseasDecisionTarget"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 8))
+        let amountRange = try XCTUnwrap(confirmation.label.range(of: #"[0-9][0-9,]*\s*원"#, options: .regularExpression))
+        let amount = confirmation.label[amountRange].filter { !$0.isWhitespace }
+        app.buttons["confirmOverseasDecision"].tap()
+        let reserved = app.staticTexts.matching(identifier: "overseasOfferDecision")
+            .matching(NSPredicate(format: "label CONTAINS %@", "전환 예약")).firstMatch
+        XCTAssertTrue(reserved.waitForExistence(timeout: 8))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        v168ScoutTap("closeRoomDetail", app: app)
+        XCTAssertEqual(app.staticTexts["calendarDate"].label, originalDate)
+        v168ScoutMenu("career", app: app)
+        v168ScoutTap("facility-observation", app: app)
+        v168ScoutTap("scoutDeskSection-funds", app: app)
+        let balance = app.descendants(matching: .any).matching(identifier: "scoutingFundsBalance").firstMatch
+        XCTAssertTrue(balance.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(balance.label.filter { !$0.isWhitespace }.contains("0원"), balance.label)
+        let pending = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "scoutFundsPending-")).firstMatch
+        XCTAssertTrue(pending.waitForExistence(timeout: 8))
+        XCTAssertTrue(pending.label.filter { !$0.isWhitespace }.contains(amount), pending.label)
+        v168ScoutCapture("V168 해외 계약금 발효 대기", app: app)
+        XCTAssertFalse(app.buttons["scoutingFundsTrainingIncrease"].isEnabled)
     }
 
     @MainActor func testClubInterestLargeTextAndEmptyFirstReportBothRoles() throws {
@@ -3541,7 +3674,8 @@ extension CareerFlowTests {
             XCTAssertTrue(app.descendants(matching:.any)["opponentPortrait"].firstMatch.exists)
             capture("native-opponent-pitcher-"+role)
             let stats=app.buttons["opponentStatsInfo"];XCTAssertTrue(stats.waitForExistence(timeout:5));guard stats.exists else {return};revealFit(stats,in:app);stats.tap()
-            XCTAssertTrue(app.alerts["미집계 통계"].waitForExistence(timeout:5));app.alerts.buttons["확인"].tap()
+            XCTAssertTrue(app.descendants(matching: .any)["opponentStatsInformation"].firstMatch.waitForExistence(timeout: 5))
+            app.buttons["확인"].tap()
             app.buttons["opponentTab-lineup"].tap()
             XCTAssertTrue(app.descendants(matching:.any)["opponentLineupRatings"].firstMatch.waitForExistence(timeout:5))
             capture("native-opponent-lineup-"+role)

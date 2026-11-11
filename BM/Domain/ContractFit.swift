@@ -584,6 +584,8 @@ struct DomesticContractOffer: Codable, Equatable, Identifiable {
     let competition: Int
     var reentry:Bool? = nil
     var collegeEntry:CollegeProEntry? = nil
+    var signingBonusTerms: SigningBonusTerms? = nil
+    var signingBonusWon: Int? { signingBonusTerms?.amountWon }
     var kind: String {collegeEntry != nil ? "대학 재학생 프로 진출 계약":reentry == true ? "국내 육성팀 재입단 계약":route == .rookie ? "국내 신인 육성 계약":"대학 입단안"}
     var placement: String {route == .rookie ? "국내 육성 · 출전/승격 경쟁":"대학 야구부 · 학적/등록 심사"}
     var economicLabel: String {route == .rookie ? "연봉지수":"선발 지원지수"}
@@ -631,8 +633,12 @@ struct DomesticOfferPacket: Codable, Equatable {
     }
     func validate(evaluation:ContractEvaluationSnapshot,key:String,today:GameDate) throws {
         let issued=try GameDate(issuedDate)
-        guard version == 1,rule == "domestic-offers-v1",evaluationKey == key,issued <= today,
-              self == (try Self.make(evaluation:evaluation,key:key,on:issued).limited(to:horizon)) else {throw ContractOfferError.invalid}
+        guard [1, 2].contains(version),evaluationKey == key,issued <= today else {throw ContractOfferError.invalid}
+        var expected = try Self.make(evaluation:evaluation,key:key,on:issued).limited(to:horizon)
+        if version == 2 {
+            expected = try expected.withSigningBonuses()
+        }
+        guard self == expected else { throw ContractOfferError.invalid }
     }
     func limited(to horizon:String?) throws -> Self {
         guard let horizon else {return self};let limit=try GameDate(horizon);var value=self;value.horizon=horizon
@@ -784,6 +790,7 @@ struct CareerContractJournal:Codable,Equatable {
     var seasonGoalReports:[ClubSeasonObservation]? = nil
     var seasonReviews:[ClubSeasonReview]? = nil
     var clubSelections:[ClubSelectionReview]? = nil
+    var signingFunds: CareerSigningFunds? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
         (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
             var value=member
@@ -819,7 +826,7 @@ struct CareerContractJournal:Codable,Equatable {
     func validate(player:CareerPlayer,calendar:CareerCalendarState,offers:[DomesticContractOffer],reviews:[String:DomesticRenewalReview]=[:]) throws {
         let today=try GameDate(player.gameDate),origin=try GameDate(calendar.originDate)
         if let retiredOn {guard try player.lifecycle.retirement?.date == retiredOn,try GameDate(retiredOn)<=today else {throw ContractRegistrationError.invalid}}
-        guard version == 1,playerID == player.id,revision >= 0,
+        guard hasSupportedVersion,playerID == player.id,revision >= 0,
               Set(decisions.map(\.offerID)).count == decisions.count,Set(memberships.map(\.offerID)).count == memberships.count else {throw ContractRegistrationError.invalid}
         var selections: [String: ClubSelectionReview] = [:]
         var selectionIDs = Set<String>()
@@ -912,6 +919,7 @@ struct CareerContractJournal:Codable,Equatable {
                 guard try !membershipHistory()[index-1].contains(date),previous < date else {throw ContractRegistrationError.invalid}
             }
         }
+        try validateFinances(domesticOffers: offers, today: today)
     }
     func releaseEligible(review:DomesticRenewalReview,key:String,on date:GameDate,reviews:[String:DomesticRenewalReview],ignoringReleases:Bool=false) throws -> Bool {
         let window=ContractEvaluationWindow(year:try GameDate(String(key.suffix(7))+"-01").year,month:11)
@@ -1434,8 +1442,12 @@ struct OverseasScoutingReport:Codable {
     let projections:[OverseasGrowthProjection]
     var market:OverseasMarket? = nil
     var growthPolicy:OverseasGrowthPolicy?
+    var signingBonusForecasts: [SigningBonusForecast]? = nil
     var id:String {observation.playerID.uuidString+":overseas-report-v1:"+String(period)}
     var selected:ScoutingPerformanceComparison? {ScoutingContractFit.selected(comparisons,role:observation.role)}
+    func signingBonusForecast(clubID: String, roleID: String) -> SigningBonusForecast? {
+        signingBonusForecasts?.first { $0.clubID == clubID && $0.roleID == roleID }
+    }
     @MainActor static func make(observation:ScoutingObservation,eligibility:OverseasEligibilitySnapshot,growthPolicy:OverseasGrowthPolicy?=nil,expandedMarket:Bool=false) throws -> Self {
         let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
         let groups=observation.groups.filter {$0.id.hasPrefix(level+"/")}
@@ -1457,6 +1469,9 @@ struct OverseasScoutingReport:Codable {
               comparisons.count <= observation.groups.count,Set(comparisons.map(\.id)).count == comparisons.count,
               projections == (try OverseasGrowthProjection.make(observation:observation,policy:growthPolicy)) else {throw ContractEvaluationError.invalid}
         guard version == 1 ? market == nil:market == OverseasMarket.make(report:self,version:version-1) else {throw ContractEvaluationError.invalid}
+        if let signingBonusForecasts, signingBonusForecasts != SigningBonusPolicy.overseasForecasts(for: self) {
+            throw ContractEvaluationError.invalid
+        }
         let level=eligibility.evidence.current?.level ?? eligibility.evidence.memberships.last?.level ?? "highschool"
         guard comparisons.map(\.id) == observation.groups.filter({$0.id.hasPrefix(level+"/")}).map(\.id) else {throw ContractEvaluationError.invalid}
         for row in comparisons {
@@ -1566,6 +1581,8 @@ struct OverseasOffer:Codable,Equatable,Identifiable {
     let c:Double
     let p:Double
     let margin:Double
+    var signingBonusTerms: SigningBonusTerms? = nil
+    var signingBonusWon: Int? { signingBonusTerms?.amountWon }
     func membership() -> CareerMembership {
         var value=CareerMembership(offerID:id,route:.rookie,teamID:teamID,name:name,since:effective,economicEnd:economicEnd,enrollmentEnd:nil,economicIndex:economicIndex)
         value.competitionLevel=route == .mlbDevelopment ? "mlb-development":route == .npbFirstTeam ? "npb-first-team":"mlb-first-team"
@@ -1587,6 +1604,7 @@ struct OverseasOfferEvaluation:Codable,Equatable,Identifiable {
     var professional:OverseasProContext? = nil
     var mobility:OverseasMobilityContext? = nil
     var horizon:String? = nil
+    var signingBonusPolicy: Int? = nil
     static func make(report:OverseasScoutingReport,window:ContractEvaluationWindow,on date:GameDate,registrationDate:String?,member:CareerMembership?,reserved:Bool) throws -> Self {
         guard window == ContractEvaluationWindow.containing(date),date.year < 9995,
               report.observation.observedDate <= date.description else {throw ContractEvaluationError.invalid}
@@ -1683,16 +1701,16 @@ struct OverseasCareerJournal:Codable,Equatable {
             guard let report=owner.overseasReports?.first(where:{$0.id == evaluation.reportID}),try GameDate(evaluation.date)<=today,
                   [1,2,3].contains(evaluation.version) else {throw ContractRegistrationError.invalid}
             if evaluation.version == 1 {
-                guard evaluation.professional == nil,evaluation.mobility == nil,evaluation == (try OverseasOfferEvaluation.make(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:evaluation.source,reserved:evaluation.reservedAtEvaluation).limited(to:evaluation.horizon)) else {throw ContractRegistrationError.invalid}
+                guard evaluation.professional == nil,evaluation.mobility == nil,evaluation == (try OverseasOfferEvaluation.make(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:evaluation.source,reserved:evaluation.reservedAtEvaluation).limited(to:evaluation.horizon).withSigningBonuses(policy: evaluation.signingBonusPolicy)) else {throw ContractRegistrationError.invalid}
             } else if evaluation.version == 2 {
                 guard evaluation.mobility == nil,let proof=evaluation.professional,let member=evaluation.source,consents.contains(proof.consent),proof.service.allSatisfy({(service ?? []).contains($0)}),
-                      evaluation == (try OverseasOfferEvaluation.makeProfessional(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:member,context:proof,reserved:evaluation.reservedAtEvaluation).limited(to:evaluation.horizon)) else {throw ContractRegistrationError.invalid}
+                      evaluation == (try OverseasOfferEvaluation.makeProfessional(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:member,context:proof,reserved:evaluation.reservedAtEvaluation).limited(to:evaluation.horizon).withSigningBonuses(policy: evaluation.signingBonusPolicy)) else {throw ContractRegistrationError.invalid}
             } else {
                 guard evaluation.professional == nil,let proof=evaluation.mobility,
                       (proof.historicalReportID == nil && proof.historicalDate == nil && proof.historicalSample == nil) || owner.overseasReports?.contains(where:{$0.id == proof.historicalReportID && $0.observation.observedDate == proof.historicalDate && $0.selected == proof.historicalSample && $0.eligibility.evidence.current?.offerID == proof.source.offerID && $0.eligibility.evidence.current?.level == proof.source.level}) == true,
                       proof.service.allSatisfy({(faService ?? []).contains($0)}),(proof.internationalService ?? []).allSatisfy({(service ?? []).contains($0)}),
                       (proof.fa.map {(faDeclarations ?? []).contains($0)} ?? false) != (proof.release.map {(releases ?? []).contains($0)} ?? false),
-                      evaluation == (try OverseasOfferEvaluation.makeMobility(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:evaluation.source,context:proof,reserved:evaluation.reservedAtEvaluation).limited(to:evaluation.horizon)) else {throw ContractRegistrationError.invalid}
+                      evaluation == (try OverseasOfferEvaluation.makeMobility(report:report,window:evaluation.window,on:GameDate(evaluation.date),registrationDate:evaluation.registeredAt,member:evaluation.source,context:proof,reserved:evaluation.reservedAtEvaluation).limited(to:evaluation.horizon).withSigningBonuses(policy: evaluation.signingBonusPolicy)) else {throw ContractRegistrationError.invalid}
             }
         }
         for evaluation in evaluations {
@@ -2194,6 +2212,7 @@ struct DomesticMarketEntry:Identifiable {
     let expires:String
     let status:String
     let renewal:DomesticRenewalReview?
+    var signingBonusWon: Int? = nil
     var visible:Bool {["검토 가능","수락 · 발효 대기"].contains(status)}
 }
 

@@ -270,7 +270,7 @@ struct DevelopmentHomePanel:View {
                 }
             } else {Text("성장 기록을 읽지 못했습니다.").foregroundStyle(GameTheme.gold)}
             if let failure {Text(failure).font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("developmentError")}
-        }.alert("새 성장 정책 적용",isPresented:$confirm) {
+        }.managementAlert("새 성장 정책 적용",isPresented:$confirm, kind: .confirmation) {
             Button("현재 능력을 유지하고 적용") {do {try DevelopmentStore.adopt(player:player,calendar:calendar,in:context);failure=nil} catch {failure=error.localizedDescription}}
             Button("취소",role:.cancel) {}
         } message: {Text("기존 선수는 균형 발현으로 시작합니다. 과거 훈련·경기·노화는 다시 계산하지 않습니다. 날짜·피로·오늘 행동은 유지됩니다.")}

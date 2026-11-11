@@ -191,8 +191,24 @@ struct CareerPathVerification: View {
         }.task {
             guard container == nil, failure == nil else { return }
             do {
-                let c = try CareerStore.makeContainer(inMemory:true), schools = try SchoolCatalog.load()
                 let args = ProcessInfo.processInfo.arguments
+                let schools = try SchoolCatalog.load()
+                let c: ModelContainer
+                if let index = args.firstIndex(of: "-v168-finance-qa-session") {
+                    guard args.indices.contains(index + 1), let session = UUID(uuidString: args[index + 1]) else {
+                        throw NSError(domain: "BM.QA", code: 168, userInfo: [NSLocalizedDescriptionKey: "자금 QA 세션 ID가 올바르지 않습니다."])
+                    }
+                    let url = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("v168-finance-qa-\(session.uuidString).store")
+                    c = try CareerStore.makeContainer(url: url)
+                    if try c.mainContext.fetchCount(FetchDescriptor<CareerPlayer>()) > 0 {
+                        self.schools = schools
+                        self.container = c
+                        return
+                    }
+                } else {
+                    c = try CareerStore.makeContainer(inMemory: true)
+                }
                 let age = args.contains("-career-age20") ? 20 : args.contains("-career-age19") ? 19 : 16
                 let verifyDivisions = args.contains("-v147-divisions-verification")
                 for role in verifyDivisions ? [PlayerRole.batter] : PlayerRole.allCases {
@@ -722,7 +738,7 @@ struct SaveProtectionView: View {
             switch result {case .success:message="백업 내보내기 완료 · 기기의 진행 기록은 유지됩니다.";case .failure(let error):message=isCancelled(error) ? "내보내기 취소 · 기존 저장은 유지됩니다.":error.localizedDescription}
         }
         .fileImporter(isPresented:$importing,allowedContentTypes:[.data],onCompletion:importBackup)
-        .alert("모든 커리어를 백업 시점으로 되돌릴까요?", isPresented: $confirming) {
+        .managementAlert("모든 커리어를 백업 시점으로 되돌릴까요?", isPresented: $confirming, kind: .confirmation) {
             Button("전체 복원", role: .destructive) {
                 guard working == nil else {return}
                 working="검증한 저장으로 전환 중"

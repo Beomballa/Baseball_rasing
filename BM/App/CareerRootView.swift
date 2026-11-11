@@ -103,11 +103,11 @@ struct CareerLifecyclePanel:View {
                 .disabled(((try? calendar.age(of:player)) ?? 0)<20).accessibilityIdentifier("openRetirementConfirmation")
             if let error {Text(error).managementFont(.body).accessibilityIdentifier("retirementError")}
         }
-        .confirmationDialog("이 선수를 은퇴 처리할까요?",isPresented:$showConfirmation,titleVisibility:.visible) {
+        .managementConfirmationDialog("이 선수를 은퇴 처리할까요?",isPresented:$showConfirmation,titleVisibility:.visible, showsCancel: false) {
             Button("은퇴하고 기록 보존",role:.destructive) {
                 do {try CareerLifecycleStore.retire(player:player,state:calendar,date:player.gameDate,revision:calendar.revision,in:context)} catch {self.error=error.localizedDescription}
             }.accessibilityIdentifier("confirmRetirement")
-            Button("취소") {showConfirmation=false}
+            Button("취소", role: .cancel) {showConfirmation=false}
         } message: {Text("능력치·구종·경기와 소속 이력은 보존됩니다. 이후 날짜·훈련·경기는 진행할 수 없고 새 커리어를 만들 수 있습니다. 미래 경제 지급은 종료되며 자동 FA나 방출로 처리하지 않습니다.")}
     }
     static func label(_ key:String) -> String {

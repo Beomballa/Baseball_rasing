@@ -463,6 +463,7 @@ enum MatchBallPath {
 
 struct MatchPixelButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.isFocused) private var focused
     var selected = false
     var primary = false
     func makeBody(configuration: Configuration) -> some View {
@@ -470,12 +471,10 @@ struct MatchPixelButtonStyle: ButtonStyle {
             .fixedSize(horizontal: false, vertical: true)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .frame(maxWidth: .infinity, minHeight: primary ? 48 : 44)
-            .foregroundStyle(enabled ? Color(hex: 0xf3edcf) : Color(hex: 0x9aacb7))
-            .background(selected || primary ? Color(hex: 0x307855) : Color(hex: 0x203e57))
-            .overlay(Rectangle().strokeBorder(selected ? GameTheme.gold : Color(hex: 0x7695a6), lineWidth: 2))
-            .overlay(alignment: .bottom) { Rectangle().fill(.black.opacity(0.25)).frame(height: 3) }
-            .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.5)
+            .frame(maxWidth: .infinity)
+            .managementButtonChrome(variant: configuration.role == .destructive ? .destructive : (primary ? .primary : .secondary), selected: selected,
+                                    pressed: configuration.isPressed, enabled: enabled,
+                                    focused: focused, minHeight: primary ? 48 : 44)
     }
 }
 

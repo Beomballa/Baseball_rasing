@@ -427,6 +427,7 @@ struct DomesticOffersView: View {
     @State private var command:Command?
     @State private var failure:String?
     @State private var receipt:String?
+    @State private var signingNotice: String?
 
     @Environment(\.modelContext) private var context
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -465,26 +466,41 @@ struct DomesticOffersView: View {
                     if let receipt {Text(receipt).font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferDecisionReceipt")}
                 }
             }.padding(14).frame(maxWidth:540,alignment:.leading).frame(maxWidth:.infinity)
-        }.background(GameTheme.navy).foregroundStyle(GameTheme.boardInk)
+        }.accessibilityIdentifier("liveOfferScroll").background(GameTheme.navy).foregroundStyle(GameTheme.boardInk)
             .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GameTheme.navy,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar)
             .toolbarColorScheme(.dark,for:.navigationBar).tint(GameTheme.gold)
-            .confirmationDialog("제의 결정을 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible) {
+            .managementNotice($signingNotice)
+            .managementConfirmationDialog("제의 결정을 확정할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible,showsCancel:false) {
                 if let selected=command {
                     Button(selected.accept ? "수락 확정":"거절 확정",role:selected.accept ? nil:.destructive) {complete(selected)}.accessibilityIdentifier("confirmOfferDecision")
                 }
-                Button("취소") {command=nil}
+                Button("취소", role: .cancel) {command=nil}
             } message: {
-                if let selected=command {Text(selected.accept ? "\(selected.offer.name) 계약을 수락합니다. \(selected.offer.collegeEntry.map { $0.effectiveDate+"부터 프로 소속으로 전환하며 그 전까지 대학 소속을 유지합니다." } ?? "오늘 소속을 등록합니다.") 다른 열린 제의는 닫히며 날짜·피로·능력치는 유지합니다.":"이 제의를 거절합니다. 같은 창에서 다시 발행하지 않으며 다른 열린 제의는 유지합니다.")}
+                if let selected = command { Text(decisionMessage(selected)) }
             }
-            .alert("제의 결정을 완료하지 못했습니다",isPresented:Binding(get:{failure != nil},set:{if !$0 {failure=nil}})) {
+            .managementAlert("제의 결정을 완료하지 못했습니다",isPresented:Binding(get:{failure != nil},set:{if !$0 {failure=nil}}),kind:.failure) {
                 Button("확인") {failure=nil}
             } message:{Text(failure ?? "")}
+    }
+    private func decisionMessage(_ selected: Command) -> String {
+        guard selected.accept else {
+            return "이 제의를 거절합니다. 이번 창의 다른 열린 제의는 계속 검토할 수 있습니다."
+        }
+        let offer = selected.offer
+        let transition = offer.collegeEntry.map { $0.effectiveDate + "부터 프로 소속으로 전환합니다. 그 전까지 대학 소속입니다." }
+            ?? "오늘 소속을 등록합니다."
+        let payment = offer.signingBonusWon.map { " 계약금 \(SigningBonusDisplay.won($0))은 발효일에 한 번 입금됩니다." } ?? ""
+        return "\(offer.name) 계약을 수락합니다. \(transition)\(payment) 다른 열린 제의는 닫힙니다."
     }
     private func complete(_ selected:Command) {
         do {
             try ContractRegistrationStore.decide(player:player,calendar:calendar,offerID:selected.offer.id,accept:selected.accept,date:selected.date,revision:selected.revision,in:context)
             receipt=selected.accept ? selected.offer.name+(selected.offer.collegeEntry != nil ? " · 수락/소속 전환 예약 완료":" · 수락/소속 발효 완료"):"제의 거절 완료 · 다른 열린 제의는 유지합니다."
+            if selected.accept, let amount = selected.offer.signingBonusWon {
+                let status = selected.offer.collegeEntry == nil ? " 입금" : " 확정 · 발효 대기"
+                signingNotice = "계약금 " + SigningBonusDisplay.won(amount) + status
+            }
         } catch {failure=error.localizedDescription}
         command=nil
     }
@@ -517,6 +533,7 @@ struct DomesticOffersView: View {
                     .overlay {ManagementStepFrame().strokeBorder(GameTheme.gold,lineWidth:2)}
                     .accessibilityIdentifier("liveOfferStatus-"+offer.route.rawValue)
                 ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:offer.period)
+                if offer.route == .rookie { SigningBonusOfferAmount(amount: offer.signingBonusWon) }
                 ContractTermsTimeline(issued:offer.issuedDate,expires:offer.expiresDate,effective:offer.collegeEntry?.effectiveDate ?? "수락 후 확정")
                 NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation,page:.detail(offer.id))} label: {Text("제의 상세 보기")}
                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("liveOfferDetail-"+offer.route.rawValue)
@@ -536,6 +553,7 @@ struct DomesticOffersView: View {
                 detailRow("선수",value.observation.name+" · #\(value.observation.number) / "+value.observation.role.label)
                 Text(DomesticContractOffer.roleName(offer.roleID)).font(.title3.bold())
                 ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:"해당 경로 기준 100 · 실제 통화 금액 아님",paper:true)
+                if offer.route == .rookie { SigningBonusOfferAmount(amount: offer.signingBonusWon, paper: true) }
                 detailRow("종류 / 배치",offer.kind+" / "+offer.placement)
                 detailRow("기간",offer.period)
                 ContractTermsTimeline(issued:offer.issuedDate,expires:offer.expiresDate,effective:offer.collegeEntry?.effectiveDate ?? "수락일",paper:true)
@@ -544,7 +562,7 @@ struct DomesticOffersView: View {
                 detailRow("출전 보장","없음 · 입단 후 역할/선발 경쟁")
                 DisclosureGroup("예산 · 경쟁 · 등록 조건 원본") {
                     VStack(alignment:.leading,spacing:12) {
-                        detailRow("계약금/옵션/성과급","0 · 실제 통화 금액 아님")
+                        detailRow("옵션 · 성과급", "0")
                         detailRow("연간 예산","잔여\(offer.availableBudget) / 필요\(offer.economicIndex)지수")
                         detailRow("경쟁/선발","적격 경쟁\(offer.competition)명 · 고정F/ID 순으로 선발")
                         detailRow("필요 확인",offer.collegeEntry != nil ? "대학 재학생 자격 검증 · 발효 전 대학 소속/학적 유지":"성인 무소속 신규 지원 · 수락/등록은 별도")
@@ -617,6 +635,7 @@ struct DomesticOffersView: View {
             Text("발효 · "+(offer.collegeEntry?.effectiveDate ?? "수락일 즉시")).font(.subheadline.monospacedDigit())
             Text("출전 보장 없음 · 입단 후 경쟁").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:offer.period)
+            if offer.route == .rookie { SigningBonusOfferAmount(amount: offer.signingBonusWon) }
             Text(status(offer)).font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
             Text("마감 · "+ManagementDisplay.date(offer.expiresDate)).font(.footnote.monospacedDigit())
             NavigationLink {DomesticOffersView(player:player,calendar:calendar,evaluation:evaluation,page:.detail(offer.id))} label: {Text("상세 · 결정")}
@@ -644,10 +663,12 @@ struct ContractTermsMetric: View {
     let value: String
     var note: String = ""
     var paper = false
+    var valueIdentifier = ""
     var body: some View {
         VStack(alignment:.leading,spacing:8) {
             Text(title).font(.footnote.bold()).foregroundStyle(paper ? ScoutDossierInk.muted:GameTheme.boardMuted)
             Text(value).font(.title.monospaced().bold()).foregroundStyle(paper ? ScoutDossierInk.ink:GameTheme.gold)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier(valueIdentifier)
             if !note.isEmpty {Text(note).font(.subheadline).fixedSize(horizontal:false,vertical:true)}
         }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
             .foregroundStyle(paper ? ScoutDossierInk.ink:GameTheme.boardInk)

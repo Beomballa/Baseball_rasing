@@ -1218,7 +1218,7 @@ struct PitchRepertoireView: View {
             }.padding(12)
         }.background(GameTheme.board).foregroundStyle(GameTheme.paper).navigationTitle("구종 보관함")
             .onAppear(perform: load)
-            .alert("구종 훈련을 준비할까요?", isPresented: $confirm) {
+            .managementAlert("구종 훈련을 준비할까요?", isPresented: $confirm, kind: .confirmation) {
                 Button("훈련 준비 화면으로") { showTraining = true }.accessibilityIdentifier("pitchStudyConfirm")
                 Button("취소", role: .cancel) {}
             } message: {

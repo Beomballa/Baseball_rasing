@@ -1077,7 +1077,7 @@ extension PlayerAbilitiesTests {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (p,s)=try scoutingSetup(context:c)
             let row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
-            var value=try row.snapshot();value.version=1;value.contractFit=nil;value.interests=nil
+            var value=try row.snapshot();value.version=1;value.contractFit=nil;value.interests=nil;value.signingBonusForecasts=nil
             value.evaluationPending=ScoutingObservation.pendingReasons(age:value.age,role:value.role,groups:value.groups)
             row.payload=try JSONEncoder().encode(value);oldData=row.payload
             try insertFitRecord(p,s,XCTUnwrap(s.fixtures(for:p,year:2026).first),c,legacy:true);try c.save()
@@ -1228,7 +1228,7 @@ extension PlayerAbilitiesTests {
             try insertFitRecord(p,s,XCTUnwrap(s.fixtures(for:p,year:2026).first),c,manual:true)
             p.gameDate="2026-04-29";try c.save();try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c)
             let report=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
-            var value=try report.snapshot();value.version=2;value.contractFit?.version=1;value.interests=nil
+            var value=try report.snapshot();value.version=2;value.contractFit?.version=1;value.interests=nil;value.signingBonusForecasts=nil
             report.payload=try JSONEncoder().encode(value);bytes=report.payload;try c.save()
             let fixture=try XCTUnwrap(s.fixtures(for:p,year:2026).first{$0.date.description == "2026-05-01"})
             p.gameDate=fixture.date.description
@@ -1395,7 +1395,7 @@ extension PlayerAbilitiesTests {
         try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
             let (p,s,value)=try readyInterest(.batter,in:c),row=try XCTUnwrap(ScoutingObservationStore.reports(player:p,calendar:s,in:c).first)
-            var old=value;old.version=3;old.interests=nil;row.payload=try JSONEncoder().encode(old);bytes=row.payload;next=value.nextDate
+            var old=value;old.version=3;old.interests=nil;old.signingBonusForecasts=nil;row.payload=try JSONEncoder().encode(old);bytes=row.payload;next=value.nextDate
             p.gameDate=try GameDate(next).adding(days:-1).description;try c.save()
             let before=preserved(p)
             XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c,save:{_ in throw Failure.injected}))

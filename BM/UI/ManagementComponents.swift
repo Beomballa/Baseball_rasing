@@ -1,39 +1,114 @@
 import SwiftUI
 
-enum ManagementButtonVariant { case primary, secondary, paper }
+enum ManagementButtonVariant { case primary, secondary, paper, destructive }
 
 struct ManagementButtonStyle: ButtonStyle {
     var variant = ManagementButtonVariant.primary
     var selected = false
+    var compact = false
     @Environment(\.isEnabled) private var enabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var background: Color {
-        if !enabled { return ManagementTheme.Palette.control }
-        if selected { return ManagementTheme.Palette.gold }
-        switch variant {
-        case .primary: return ManagementTheme.Palette.gold
-        case .secondary: return ManagementTheme.Palette.control
-        case .paper: return ManagementTheme.Palette.paper
-        }
-    }
+    @Environment(\.isFocused) private var focused
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .managementFont(.body).fontWeight(.semibold)
+            .font(ManagementPixelFont.readable(compact ? .label : .body))
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, ManagementTheme.Space.screen)
-            .padding(.vertical, ManagementTheme.Space.compact)
-            .frame(maxWidth: .infinity, minHeight: variant == .primary ? ManagementTheme.Control.primaryHeight : ManagementTheme.Control.secondaryHeight)
-            .foregroundStyle(enabled && (selected || variant != .secondary) ? ManagementTheme.Palette.ink : ManagementTheme.Palette.onDark)
-            .background(background, in: ManagementStepFrame())
-            .overlay { ManagementStepFrame().strokeBorder(enabled && variant == .primary ? ManagementTheme.Palette.ink : ManagementTheme.Palette.border, lineWidth: ManagementTheme.Control.border) }
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(ManagementTheme.Palette.ink.opacity(0.35)).frame(height: ManagementTheme.Control.depth)
-                    .padding(.horizontal, ManagementTheme.Control.corner).allowsHitTesting(false)
+            .padding(.horizontal, compact ? ManagementTheme.Space.inline : ManagementTheme.Space.screen)
+            .padding(.vertical, compact ? ManagementTheme.Space.inline : ManagementTheme.Space.compact)
+            .frame(maxWidth: .infinity)
+            .managementButtonChrome(
+                variant: configuration.role == .destructive ? .destructive : variant,
+                selected: selected, pressed: configuration.isPressed, enabled: enabled, focused: focused,
+                minHeight: compact ? ManagementTheme.Control.hit :
+                    (variant == .primary ? ManagementTheme.Control.primaryHeight : ManagementTheme.Control.secondaryHeight)
+            )
+    }
+}
+
+private struct ManagementButtonColors {
+    let fill: Color
+    let ink: Color
+    let edge: Color
+    let highlight: Color
+    let shade: Color
+
+    private init(_ fill: Int, _ ink: Int, _ edge: Int, _ highlight: Int, _ shade: Int) {
+        self.fill = Color(hex: fill)
+        self.ink = Color(hex: ink)
+        self.edge = Color(hex: edge)
+        self.highlight = Color(hex: highlight)
+        self.shade = Color(hex: shade)
+    }
+
+    static let primary = Self(0xedc46f, 0x253b37, 0x644d27, 0xffe2a0, 0xaa823a)
+    static let secondary = Self(0x294b44, 0xf6f0d6, 0x112f2c, 0x56776a, 0x112c29)
+    static let paper = Self(0xe3e4d6, 0x27413c, 0x758476, 0xf9faea, 0xa8b4a1)
+    static let destructive = Self(0x814637, 0xfff0dd, 0x4d2921, 0xae6850, 0x5b3029)
+    static let disabled = Self(0xc8cbbb, 0x46564b, 0x9ca797, 0xe0e2d6, 0xa8b1a0)
+}
+
+private struct ManagementButtonChrome: ViewModifier {
+    let variant: ManagementButtonVariant
+    let selected: Bool
+    let pressed: Bool
+    let enabled: Bool
+    let focused: Bool
+    let minHeight: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var colors: ManagementButtonColors {
+        guard enabled else { return .disabled }
+        if selected { return .primary }
+        switch variant {
+        case .primary: return .primary
+        case .secondary: return .secondary
+        case .paper: return .paper
+        case .destructive: return .destructive
+        }
+    }
+
+    func body(content: Content) -> some View {
+        let isPressed = enabled && pressed
+        let shape = ManagementStepFrame()
+        content
+            .frame(minWidth: ManagementTheme.Control.hit, minHeight: minHeight)
+            .foregroundStyle(colors.ink)
+            .background {
+                ZStack(alignment: .top) {
+                    shape.fill(colors.fill)
+                    Rectangle().fill(isPressed ? colors.shade : colors.highlight).frame(height: 4)
+                    if !isPressed {
+                        VStack {
+                            Spacer(minLength: 0)
+                            Rectangle().fill(colors.shade).frame(height: 4)
+                        }
+                    }
+                }.clipShape(shape)
             }
-            .contentShape(ManagementStepFrame())
-            .offset(y: configuration.isPressed && !reduceMotion ? ManagementTheme.Control.depth : 0)
-            .animation(reduceMotion ? nil : .easeOut(duration: ManagementTheme.Control.pressDuration), value: configuration.isPressed)
+            .overlay {
+                shape.strokeBorder(colors.edge, lineWidth: ManagementTheme.Control.border)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+            .overlay {
+                if focused && enabled {
+                    shape.inset(by: ManagementTheme.Control.border)
+                        .strokeBorder(Color(hex: 0x2f757c), lineWidth: 2)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+            .offset(y: isPressed && !reduceMotion ? ManagementTheme.Control.depth : 0)
+            .contentShape(Rectangle())
+            .animation(reduceMotion ? nil : .easeOut(duration: ManagementTheme.Control.pressDuration), value: isPressed)
+    }
+}
+
+extension View {
+    func managementButtonChrome(variant: ManagementButtonVariant, selected: Bool = false,
+                                pressed: Bool, enabled: Bool, focused: Bool = false,
+                                minHeight: CGFloat? = nil) -> some View {
+        modifier(ManagementButtonChrome(variant: variant, selected: selected, pressed: pressed,
+                                        enabled: enabled, focused: focused,
+                                        minHeight: max(ManagementTheme.Control.hit, minHeight ?? 0)))
     }
 }
 
@@ -227,13 +302,12 @@ struct ManagementObservationChange: View {
 
 struct ManagementToolbarButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.isFocused) private var focused
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(ManagementPixelFont.readable(.label))
-            .lineLimit(1).fixedSize(horizontal: true, vertical: true)
-            .padding(.horizontal, 10).frame(minWidth: 44, minHeight: 44)
-            .foregroundStyle(enabled ? GameTheme.gold : GameTheme.boardMuted)
-            .background(configuration.isPressed ? GameTheme.navy : GameTheme.boardPanel, in: ManagementStepFrame())
-            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            .lineLimit(1).minimumScaleFactor(0.7)
+            .padding(.horizontal, 10)
+            .managementButtonChrome(variant: .secondary, pressed: configuration.isPressed, enabled: enabled, focused: focused)
     }
 }
 

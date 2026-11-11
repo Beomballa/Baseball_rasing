@@ -25,11 +25,30 @@ struct ManagementSectionTabs<Selection: Hashable>: View {
     let title: (Selection) -> String
     let identifier: String
     var horizontal = false
+    var compactAccessibility = false
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        if horizontal && !typeSize.isAccessibilitySize {
+        if compactAccessibility && typeSize.isAccessibilitySize {
+            Menu {
+                ForEach(options, id: \.self) { item in
+                    Button { selection = item } label: { Text(title(item)) }
+                        .accessibilityIdentifier(identifier + "-" + String(describing: item))
+                        .accessibilityAddTraits(selection == item ? .isSelected : [])
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Text(title(selection)).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down").accessibilityHidden(true)
+                }
+            }.buttonStyle(ManagementButtonStyle(variant: .paper, compact: true))
+                .accessibilityLabel("보고서 구역")
+                .accessibilityValue(title(selection))
+                .accessibilityHint("펼쳐서 확인할 자료를 선택합니다")
+                .accessibilityIdentifier(identifier + "Menu")
+        } else if horizontal && typeSize < .xxLarge {
             HStack(spacing: 8) { choices }
-        } else if typeSize.isAccessibilitySize {
+        } else if typeSize.isAccessibilitySize && !horizontal {
             // Pinned report tabs must stay mounted while the document scrolls.
             VStack(spacing: 8) { choices }
         } else {
@@ -38,15 +57,17 @@ struct ManagementSectionTabs<Selection: Hashable>: View {
     }
     private var choices: some View {
         ForEach(options, id: \.self) { item in
-                Button { selection = item } label: {
-                    Text(title(item)).managementFont(.label).fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, minHeight: ManagementTheme.Control.hit)
-                        .foregroundStyle(selection == item ? GameTheme.navy : GameTheme.boardInk)
-                        .background(selection == item ? GameTheme.gold : ManagementTheme.Palette.control, in: ManagementStepFrame())
-                        .contentShape(ManagementStepFrame())
-                }.buttonStyle(.plain).accessibilityIdentifier(identifier + "-" + String(describing: item))
-                    .accessibilityAddTraits(selection == item ? .isSelected : [])
+            let selected = selection == item
+            Button { selection = item } label: {
+                HStack(spacing: 4) {
+                    if selected { Text("◆").font(.system(size: 8)).accessibilityHidden(true) }
+                    Text(title(item))
+                }
+            }
+            .buttonStyle(ManagementButtonStyle(variant: .paper, selected: selected, compact: true))
+            .accessibilityLabel(title(item))
+            .accessibilityIdentifier(identifier + "-" + String(describing: item))
+            .accessibilityAddTraits(selected ? .isSelected : [])
         }
     }
 }

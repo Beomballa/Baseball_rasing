@@ -252,10 +252,10 @@ struct CareerCalendarPanel: View {
             }
         }
         .onDisappear { transition.requestCancel() }
-        .confirmationDialog("나이·학적 변경일로 진행할까요?", isPresented: $confirmBirthday, titleVisibility: .visible) {
+        .managementConfirmationDialog("나이·학적 변경일로 진행할까요?", isPresented: $confirmBirthday, titleVisibility: .visible) {
             Button("확인하고 다음 날") { nextDay(confirmed: true) }
         } message: { Text("게임 달력의 기념일에만 나이가 바뀝니다. 31~40세에는 능력별 노화가 적용되고, 41세에는 기록을 보존하며 은퇴합니다. 성인 도달이 프로 입단을 뜻하지 않습니다.") }
-        .alert("날짜 진행을 완료하지 못했습니다", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+        .managementAlert("날짜 진행을 완료하지 못했습니다", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }), kind: .failure) {
             Button("확인") { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
         .sheet(isPresented: $showRest) {

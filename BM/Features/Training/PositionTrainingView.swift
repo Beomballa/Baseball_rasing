@@ -93,7 +93,7 @@ struct PositionHomePanel: View {
                     }
                     if let switchFailure {Text(switchFailure).font(.subheadline).foregroundStyle(GameTheme.gold)}
                 }
-            }.alert("주 포지션 전환",isPresented:$switching) {
+            }.managementAlert("주 포지션 전환",isPresented:$switching, kind: .confirmation) {
                 if let calendar {Button("전환 확정 · 오늘 행동 사용") {do {try DevelopmentStore.changePosition(player:player,calendar:calendar,to:selected,date:player.gameDate,revision:calendar.revision,in:context);switchFailure=nil} catch {switchFailure=error.localizedDescription}}}
                 Button("취소",role:.cancel) {}
             } message: {Text("현재 위치별 숙련/능력/기록은 유지합니다. 전환 후28일간 재전환할 수 없고 프로는 오프시즌에만 가능합니다. 전환 자체로 성장 보상을 지급하지 않습니다.")}
