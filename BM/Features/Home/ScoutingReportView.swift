@@ -159,10 +159,10 @@ struct ScoutingInterestList: View {
                         .background(ScoutDeskPalette.ink).overlay(Rectangle().strokeBorder(GameTheme.boardLine, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
                 } else {
                     ForEach(compact && !showAll ? Array(interests.entries.prefix(2)) : interests.entries) { entry in
-                        ScoutInterestCard(entry: entry)
+                        ScoutInterestCard(entry: entry, presentation: ScoutingClubPresentation.matching(entry, in: value.contractFit))
                     }
                     if compact && interests.entries.count > 2 {
-                        HomeDetailButton(title: "관심 구단 전체 \(interests.entries.count)곳", expanded: $showAll, identifier: "scoutInterestDetails")
+                        HomeDetailButton(title: showAll ? "관심 구단 접기" : "관심 구단 더보기 · 나머지 \(interests.entries.count - 2)곳", expanded: $showAll, identifier: "scoutInterestDetails")
                     }
                 }
                 Text("\(ManagementDisplay.date(value.observedDate)) 확정 · 다음 \(ManagementDisplay.date(value.nextDate))")
@@ -828,6 +828,7 @@ private struct ScoutStatusTag: View {
 
 private struct ScoutInterestCard: View {
     let entry: ScoutingClubInterest
+    let presentation: ScoutingClubPresentation?
     @Environment(\.dynamicTypeSize) private var typeSize
     private var level: Int { switch entry.level { case .observing: 0; case .focused: 1; case .priority: 2 } }
     var body: some View {
@@ -846,7 +847,15 @@ private struct ScoutInterestCard: View {
                 }
             }.accessibilityHidden(true)
             Text("관찰 관심 → 집중 관찰 → 우선 관찰").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-            if let first=entry.reasons.first {Text(first).font(.subheadline).foregroundStyle(GameTheme.boardInk)}
+            if let presentation {
+                Text(presentation.recruitmentContext + " · 내 기량 " + ScoutDeskFormat.number(presentation.club.h)
+                     + " / 구단 기준 " + ScoutDeskFormat.number(presentation.club.c))
+                    .font(.subheadline).foregroundStyle(GameTheme.boardInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("scoutInterestBasis-" + entry.id)
+            } else if let first = entry.reasons.first {
+                Text(first).font(.subheadline).foregroundStyle(GameTheme.boardInk)
+            }
             DisclosureGroup("관심 이유 전체 · \(entry.reasons.count)개") {
                 ForEach(entry.reasons, id: \.self) { Text($0).font(.subheadline).padding(.top, 8) }
             }.font(.subheadline).tint(GameTheme.gold)
@@ -948,6 +957,7 @@ private struct ScoutSampleCard: View {
 private struct ScoutClubComparisonCard: View {
     let club: ScoutingClubFit
     let roleName: String
+    private var presentation: ScoutingClubPresentation { ScoutingClubPresentation(club: club) }
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         ScoutDossier(title: "모집 선수 · " + roleName, code: "CLUB SCOUTING FILE", stamp: club.recruitment.demand.label, isPreview: false) {
@@ -971,16 +981,23 @@ private struct ScoutClubComparisonCard: View {
                     Text(club.f.map(ScoutDeskFormat.signed) ?? "평가 대기").font(.headline.monospacedDigit())
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.padding(10).background(ScoutDossierInk.rule.opacity(0.15))
-            if let first = club.blockers.first {
+            if let first = presentation.improvementConditions.first {
                 Text("먼저 보완할 조건").font(.subheadline.bold())
                 Text(first).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("기록된 기량·자료 보완 조건 없음 · 계약 심사는 별도입니다.")
+                    .font(.subheadline).fixedSize(horizontal: false, vertical: true)
             }
             Text("H \(ScoutDeskFormat.number(club.h)) / C \(ScoutDeskFormat.number(club.c)) / P \(ScoutDeskFormat.number(club.p)) / F \(ScoutDeskFormat.number(club.f))")
                 .font(.caption.monospacedDigit()).accessibilityIdentifier("scoutClub-\(club.id)")
             DisclosureGroup("추가 조건") {
-                ForEach(Array(club.blockers.dropFirst()), id: \.self) { Text($0).font(.subheadline) }
+                ForEach(Array(presentation.improvementConditions.dropFirst()), id: \.self) { Text($0).font(.subheadline) }
+                if !presentation.generalReviewConditions.isEmpty {
+                    Text("별도 계약·진로 확인").font(.subheadline.bold()).padding(.top, 8)
+                    ForEach(presentation.generalReviewConditions, id: \.self) { Text($0).font(.subheadline) }
+                }
             }.tint(ScoutDossierInk.ink)
-            if club.c == nil { Text("경쟁자 자료 대기 · 공석으로 가정하지 않습니다.").font(.subheadline) }
+            Text(presentation.competitionContext).font(.subheadline).fixedSize(horizontal: false, vertical: true)
             Text("관찰 당시 고정 자료 · 계약 제의 아님").font(.caption.bold()).foregroundStyle(ScoutDossierInk.muted)
         }.accessibilityElement(children: .contain).accessibilityIdentifier("scoutClubFile-" + club.id)
     }

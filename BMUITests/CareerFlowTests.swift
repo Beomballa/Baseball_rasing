@@ -2341,36 +2341,121 @@ extension CareerFlowTests {
         }
     }
     @MainActor func testClubInterestBothRolesHomeArchiveAndDiskRelaunch() throws {
-        let app=XCUIApplication();app.launchArguments=["-offseason-verification","-club-interest-verification"];app.launch()
-        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:60))
-        for pitcher in [false,true] {
-            let role=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(role,in:app);role.tap()
-            let date=app.staticTexts["calendarDate"].label,fatigue=app.staticTexts["homeFatigue"].label
-            revealFit(app.staticTexts["scoutInterestCount"],in:app)
-            let count=app.staticTexts["scoutInterestCount"].label;XCTAssertFalse(count.contains("0곳"))
-            let first=app.staticTexts.matching(NSPredicate(format:"identifier BEGINSWITH %@","scoutInterest-")).firstMatch
-            revealFit(first,in:app);let name=first.label;XCTAssertTrue(first.isHittable)
-            let shot=XCTAttachment(screenshot:app.screenshot());shot.name=pitcher ? "Pitcher actual club interest home":"Batter actual club interest home";shot.lifetime = .keepAlways;add(shot)
-            revealFit(app.buttons["scoutInterestDetails"],in:app);XCTAssertTrue(app.buttons["scoutInterestDetails"].exists);app.buttons["scoutInterestDetails"].tap()
-            revealFit(app.buttons["openSavedScoutingReport"],in:app);app.buttons["openSavedScoutingReport"].tap()
-            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
-            XCTAssertEqual(app.staticTexts["scoutInterestCount"].label,count);XCTAssertEqual(first.label,name)
-            app.terminate();app.launch()
-            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:40))
-            let restored=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"];reveal(restored,in:app);restored.tap()
-            XCTAssertEqual(app.staticTexts["calendarDate"].label,date);XCTAssertEqual(app.staticTexts["homeFatigue"].label,fatigue)
-            revealFit(app.staticTexts["scoutInterestCount"],in:app);XCTAssertEqual(app.staticTexts["scoutInterestCount"].label,count)
-            revealFit(first,in:app);XCTAssertEqual(first.label,name)
-            revealFit(app.buttons["openScoutingReport"],in:app);app.buttons["openScoutingReport"].tap()
-            revealFit(app.buttons["currentScoutSection-archive"], in: app); app.buttons["currentScoutSection-archive"].tap()
-            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","관심은 확정 보고서 기준")).firstMatch.exists)
-            revealFit(app.buttons["scoutHistoryDetails"],in:app);app.buttons["scoutHistoryDetails"].tap()
-            revealFit(app.buttons["scoutHistory-0"],in:app);app.buttons["scoutHistory-0"].tap()
-            revealFit(app.buttons["frozenScoutSection-clubs"], in: app); app.buttons["frozenScoutSection-clubs"].tap()
-            XCTAssertTrue(app.staticTexts["scoutInterestEmpty"].waitForExistence(timeout:5))
-            app.navigationBars.buttons.element(boundBy:0).tap();app.navigationBars.buttons.element(boundBy:0).tap()
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-offseason-verification", "-club-interest-verification", "-qa-session", UUID().uuidString]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60))
+        for role in ["batter", "pitcher"] {
+            let expectedName = role == "batter" ? "SeasonBat" : "SeasonPitch"
+            v168ScoutSelectRole(role, expectedName: expectedName, app: app)
+            let date = app.staticTexts["calendarDate"].label
+            let fatigue = app.staticTexts["homeFatigue"].label
+            v168ScoutMenu("career", app: app)
+            v168ScoutTap("facility-observation", app: app)
+            let interestCount = app.staticTexts["scoutInterestCount"]
+            XCTAssertTrue(interestCount.waitForExistence(timeout: 8))
+            let count = interestCount.label
+            let total = try XCTUnwrap(count.split(separator: " ").last.flatMap { Int($0.dropLast()) })
+            XCTAssertGreaterThan(total, 2)
+            let cards = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "scoutInterest-"))
+            let first = cards.firstMatch
+            v168ScoutReveal(first, app: app)
+            let firstID = first.identifier, firstLevel = first.label
+            let basis = app.staticTexts["scoutInterestBasis-" + firstID.dropFirst("scoutInterest-".count)]
+            XCTAssertTrue(basis.exists)
+            XCTAssertTrue(basis.label.contains("내 기량"))
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "V168 \(role) interest at scouting desk"
+            shot.lifetime = .keepAlways
+            add(shot)
+            let more = app.buttons["scoutInterestDetails"]
+            XCTAssertTrue(more.exists)
+            XCTAssertTrue(more.label.contains("관심 구단 더보기"))
+            XCTAssertTrue(more.label.contains("나머지 \(total - 2)곳"))
+            XCTAssertEqual(cards.count, 2)
+            v168ScoutTap("scoutInterestDetails", app: app)
+            let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                cards.count == total && more.label.contains("관심 구단 접기")
+            }, object: app)
+            XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 8), .completed)
+            v168ScoutTap("openSavedScoutingReport", app: app)
+            v168ScoutTap("frozenScoutSection-clubs", app: app)
+            XCTAssertEqual(interestCount.label, count)
+            XCTAssertEqual(first.identifier, firstID)
+            XCTAssertEqual(first.label, firstLevel)
+
+            app.terminate()
+            app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+            v168ScoutSelectRole(role, expectedName: expectedName, app: app)
+            XCTAssertEqual(app.staticTexts["calendarDate"].label, date)
+            XCTAssertEqual(app.staticTexts["homeFatigue"].label, fatigue)
+            v168ScoutMenu("career", app: app)
+            v168ScoutTap("facility-observation", app: app)
+            XCTAssertTrue(interestCount.waitForExistence(timeout: 8))
+            XCTAssertEqual(interestCount.label, count)
+            XCTAssertEqual(first.identifier, firstID)
+            XCTAssertEqual(first.label, firstLevel)
+            v168ScoutTap("openScoutingReport", app: app)
+            v168ScoutTap("currentScoutSection-archive", app: app)
+            XCTAssertTrue(app.staticTexts["scoutEvaluationPending"].label.contains("확정 보고서"))
+            v168ScoutTap("scoutHistoryDetails", app: app)
+            v168ScoutTap("scoutHistory-0", app: app)
+            v168ScoutTap("frozenScoutSection-clubs", app: app)
+            XCTAssertTrue(app.staticTexts["scoutInterestEmpty"].waitForExistence(timeout: 8))
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            let close = app.buttons["closeRoomDetail"]
+            XCTAssertTrue(close.waitForExistence(timeout: 8))
+            close.tap()
+            v168ScoutMenu("home", app: app)
         }
     }
+    @MainActor private func v168ScoutSelectRole(_ role: String, expectedName: String, app: XCUIApplication) {
+        v168ScoutTap("roomProfile", app: app)
+        v168ScoutTap("homeRole-" + role, app: app)
+        let close = app.buttons["closeRoomDetail"]
+        if close.exists && close.isHittable { close.tap() }
+        let name = app.staticTexts["homePlayerName"]
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !close.exists && name.exists && name.label.contains(expectedName)
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 8), .completed)
+    }
+
+    @MainActor private func v168ScoutMenu(_ tab: String, app: XCUIApplication) {
+        if app.buttons["managementTab-" + tab].exists {
+            v168ScoutTap("managementTab-" + tab, app: app)
+        } else {
+            v168ScoutTap("managementLargeMenu", app: app)
+            v168ScoutTap("managementMenu-" + tab, app: app)
+        }
+    }
+
+    @MainActor private func v168ScoutTap(_ identifier: String, app: XCUIApplication) {
+        let button = app.buttons[identifier]
+        XCTAssertTrue(button.waitForExistence(timeout: 8), identifier)
+        v168ScoutReveal(button, app: app)
+        button.tap()
+    }
+
+    @MainActor private func v168ScoutReveal(_ element: XCUIElement, app: XCUIApplication) {
+        if element.isHittable { return }
+        let scrollIDs = ["frozenScoutScroll", "currentScoutScroll", "overseasScoutScroll",
+                         "roomDetailScroll", "roomFacilityList", "roomPropScroll"]
+        let scroll = scrollIDs.lazy.map { app.scrollViews[$0] }.first { $0.exists && $0.isHittable }
+        if let scroll {
+            for _ in 0..<24 {
+                if element.isHittable { return }
+                if element.exists && element.frame.midY < scroll.frame.midY { scroll.swipeDown() }
+                else { scroll.swipeUp() }
+            }
+        }
+        XCTAssertTrue(element.isHittable, element.identifier)
+    }
+
     @MainActor func testClubInterestLargeTextAndEmptyFirstReportBothRoles() throws {
         let app=XCUIApplication();app.launchArguments=["-season-summary-verification","-club-interest-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL"];app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:60))
@@ -2936,18 +3021,42 @@ extension CareerFlowTests {
 
 extension CareerFlowTests {
     @MainActor func testOverseasMarketBothRolesShowsInterestAsSeparateFromOffers() throws {
-        let app=XCUIApplication();app.launchArguments=["-career-path-verification","-career-age20","-selection-qualified","-college-pro-verification"];app.launch()
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified", "-college-pro-verification"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60))
         for role in ["batter","pitcher"] {
-            let selector=app.buttons["homeRole-"+role];revealFit(selector,in:app);selector.tap()
-            let open=app.buttons["openOverseasReport"];revealFit(open,in:app);open.tap();app.buttons["captureOverseasReport"].tap()
-            revealFit(app.buttons["overseasScoutSection-clubs"], in: app); app.buttons["overseasScoutSection-clubs"].tap()
-            let interest=app.staticTexts["overseasClubInterest"].firstMatch;revealFit(interest,in:app);XCTAssertTrue(interest.exists)
-            let all=app.buttons["overseasInterestDetails"];revealFit(all,in:app);all.tap()
+            v168ScoutSelectRole(role, expectedName: role == "batter" ? "CareerBat" : "CareerPitch", app: app)
+            v168ScoutMenu("career", app: app)
+            v168ScoutTap("facility-contracts", app: app)
+            v168ScoutTap("openOverseasReport", app: app)
+            v168ScoutTap("captureOverseasReport", app: app)
+            v168ScoutTap("overseasScoutSection-clubs", app: app)
+            let cards = app.staticTexts.matching(identifier: "overseasClubInterest")
+            XCTAssertTrue(cards.firstMatch.waitForExistence(timeout: 8))
+            let all = app.buttons["overseasInterestDetails"]
+            XCTAssertLessThanOrEqual(cards.count, 2)
+            if all.exists {
+                XCTAssertEqual(cards.count, 2)
+                XCTAssertTrue(all.label.contains("관심 구단 더보기"))
+                v168ScoutTap("overseasInterestDetails", app: app)
+                let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    cards.count > 2 && all.label.contains("관심 구단 접기")
+                }, object: app)
+                XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 8), .completed)
+            }
             XCTAssertFalse(app.buttons["acceptOverseasOffer"].exists)
-            app.navigationBars.buttons.element(boundBy:0).tap()
-            let summary=app.staticTexts["homeOverseasInterest"];revealFit(summary,in:app);XCTAssertTrue(summary.label.contains("정식 제의 별도"))
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            let summary = app.staticTexts["homeOverseasInterest"]
+            XCTAssertTrue(summary.waitForExistence(timeout: 8))
+            XCTAssertTrue(summary.label.contains("정식 제의 별도"))
+            let close = app.buttons["closeRoomDetail"]
+            XCTAssertTrue(close.waitForExistence(timeout: 8))
+            close.tap()
+            v168ScoutMenu("home", app: app)
         }
-        app.terminate()
     }
 }
 

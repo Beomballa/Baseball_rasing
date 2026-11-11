@@ -2,6 +2,41 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV168HomeVenueStaysInsideClubhouseAndOtherMenusKeepTheirRooms() {
+        v168RoomVenueBoundary(large: false)
+    }
+
+    @MainActor func testV168RoomMenusAtLargestTextDoNotAddCroppedVenueHeaders() {
+        v168RoomVenueBoundary(large: true)
+    }
+
+    @MainActor private func v168RoomVenueBoundary(large: Bool) {
+        continueAfterFailure = false
+        let app = launch(large: large)
+        defer { app.terminate() }
+        let before = labels(app)
+        for (tab, title) in [("home", "홈"), ("player", "선수"), ("training", "훈련"), ("career", "커리어")] {
+            v99Menu(tab, title: title, app: app)
+            let banners = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "managementVenue-"))
+            XCTAssertEqual(banners.count, 0, "Only the dedicated game menu may show the separate stadium header")
+            if !large {
+                let homeVenue = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "managementHomeVenue-")).firstMatch
+                if tab == "home" { XCTAssertTrue(homeVenue.waitForExistence(timeout: 8)) }
+                else {
+                    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "managementRoomScene-" + tab).firstMatch.waitForExistence(timeout: 8), tab)
+                    XCTAssertFalse(homeVenue.exists)
+                }
+            }
+            capture(app, "v168-" + tab + (large ? "-largest" : "-regular"))
+        }
+        v99Menu("game", title: "경기", app: app)
+        let gameVenue = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "managementVenue-")).firstMatch
+        XCTAssertTrue(gameVenue.waitForExistence(timeout: 8), "The separate game menu venue must remain available")
+        capture(app, "v168-game" + (large ? "-largest" : "-regular"))
+        v99Menu("home", title: "홈", app: app)
+        XCTAssertEqual(labels(app), before, "Reading menu artwork must not change the day, action, or fatigue")
+    }
+
     @MainActor func testV107TrainingReviewSmallLargeTextResumeBothRoles() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

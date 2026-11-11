@@ -204,9 +204,6 @@ struct PlayerHomeView: View {
                                 uniformTeamID: headerUniformTeamID, appearanceOverride: headerAppearance, age: age,
                                 used: calendar?.hasAction(on: player.gameDate) == true,
                                 pending: todayTraining?.completed == false) { roomDetail = .profile }
-        if selectedTab != .game, let venue = currentMenuVenue {
-            ManagementVenueBanner(stadium: venue)
-        }
         if let clubSelectionFailure {
             VStack(alignment: .leading, spacing: 8) {
                 Text("기용 조회 실패 · " + clubSelectionFailure).font(.subheadline).accessibilityIdentifier("homeSelectionError")
@@ -229,6 +226,7 @@ struct PlayerHomeView: View {
                 ManagementSpatialRoom(asset: roomAsset, title: roomTitle, facilities: roomFacilities,
                                       selection: $selectedTab, choose: chooseFacility, home: { selectedTab = .home }) { navigationHeader }
                     .spatialAbilities(HomeAbilitySummary(player: player, abilities: abilities).originals)
+                    .spatialHomeVenue(selectedTab == .home ? currentMenuVenue : nil)
             }
         }
         .task(id: rosterIdentityKey) {
@@ -1874,7 +1872,7 @@ struct OverseasMarketPanel:View {
                 Text("현재 해외 관심 구단 없음").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasInterestEmpty")
                 Text("관찰 표본·기량·모집 조건을 보완하세요. 관심이나 제의를 채우려고 구단을 재추첨하지 않습니다.").font(.caption)
             } else {
-                ForEach(Array((expanded ? best:Array(best.prefix(3))))) {row in
+                ForEach(expanded ? best : Array(best.prefix(2))) {row in
                     VStack(alignment:.leading,spacing:8) {
                         ClubFileHeader(name:row.name,subtitle:row.route.label)
                         Text(DomesticContractOffer.roleName(row.roleID)+" · "+(row.interest?.label ?? "관찰 대기")+" / F "+String(format:"%+.1f",row.f ?? 0)).font(.subheadline).accessibilityIdentifier("overseasClubInterest")
@@ -1883,7 +1881,10 @@ struct OverseasMarketPanel:View {
                         Text(row.blockers.isEmpty ? "기량상 후보 · 실제 계약 자격/기간·예산·경쟁 심사는 별도":row.blockers.prefix(2).joined(separator:" / ")).font(.caption).foregroundStyle(GameTheme.boardMuted)
                     }.padding(.vertical,6)
                 }
-                Button(expanded ? "관심 구단 접기":"관심 구단 전체 \(best.count)건") {expanded.toggle()}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("overseasInterestDetails")
+                if best.count > 2 {
+                    Button(expanded ? "관심 구단 접기" : "관심 구단 더보기 · 나머지 \(best.count - 2)곳") { expanded.toggle() }
+                        .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("overseasInterestDetails")
+                }
             }
             Text("가상 구단의 고정 모집 자료입니다. 관심은 정식 계약 제의나 출전 보장이 아닙니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }

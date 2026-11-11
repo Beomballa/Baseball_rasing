@@ -117,10 +117,20 @@ private struct SeasonSummaryVerification: View {
     @MainActor private func prepare() {
         do {
             let schools = try SchoolCatalog.load()
-            let diskQA = ProcessInfo.processInfo.arguments.contains("-offseason-verification")
-            let inputQA = ProcessInfo.processInfo.arguments.contains("-input-fit-verification")
-            let interestQA = ProcessInfo.processInfo.arguments.contains("-club-interest-verification")
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("offseason-verification.store")
+            let arguments = ProcessInfo.processInfo.arguments
+            let diskQA = arguments.contains("-offseason-verification")
+            let inputQA = arguments.contains("-input-fit-verification")
+            let interestQA = arguments.contains("-club-interest-verification")
+            let storeName: String
+            if diskQA, let index = arguments.firstIndex(of: "-qa-session") {
+                guard arguments.indices.contains(index + 1), let session = UUID(uuidString: arguments[index + 1]) else {
+                    throw NSError(domain: "BM.QA", code: 2, userInfo: [NSLocalizedDescriptionKey: "시즌 QA 세션 ID가 올바르지 않습니다."])
+                }
+                storeName = "offseason-verification-\(session.uuidString).store"
+            } else {
+                storeName = "offseason-verification.store"
+            }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(storeName)
             let store = try diskQA ? CareerStore.makeContainer(url: url) : CareerStore.makeContainer(inMemory: true)
             let c = store.mainContext
             if try c.fetchCount(FetchDescriptor<CareerPlayer>()) > 0 {

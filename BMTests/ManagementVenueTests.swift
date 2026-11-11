@@ -5,6 +5,55 @@ import SwiftData
 @testable import BM
 
 @MainActor final class ManagementVenueTests: XCTestCase {
+    func testV168HomeVenueChangesOnlyTheStandsInsideTheClubhouseArch() throws {
+        let asset = "ClubhouseRoomV59"
+        let original = try pixels(XCTUnwrap(UIImage(named: asset)))
+        XCTAssertEqual(original.width, 948); XCTAssertEqual(original.height, 1659)
+        for team in ["hs-ref-001", "kbo-0", "npb-12", "mlb-12"] {
+            let art = try XCTUnwrap(ManagementHomeVenueArt.art(asset: asset, selection: .home,
+                                                              stadium: StadiumIdentity(homeTeamID: team)))
+            let composite = try pixels(art.image)
+            XCTAssertEqual(composite.width, original.width); XCTAssertEqual(composite.height, original.height)
+            guard composite.width == original.width, composite.height == original.height else { continue }
+            let stride = original.width * 4
+            var replaced = false
+            var firstProtectedChange: Int?
+            for y in 0..<original.height {
+                let row = y * stride
+                if (374..<514).contains(y) {
+                    let left = row + 327 * 4, right = row + 621 * 4
+                    replaced = replaced || composite.bytes[left..<right] != original.bytes[left..<right]
+                    if composite.bytes[row..<left] != original.bytes[row..<left] ||
+                        composite.bytes[right..<(row + stride)] != original.bytes[right..<(row + stride)] {
+                        firstProtectedChange = y; break
+                    }
+                } else if composite.bytes[row..<(row + stride)] != original.bytes[row..<(row + stride)] {
+                    firstProtectedChange = y; break
+                }
+            }
+            XCTAssertNil(firstProtectedChange, "Original arch, foreground and field must stay unchanged for \(team)")
+            XCTAssertTrue(replaced, "The affiliated team's stands must be visible for \(team)")
+            let attachment = XCTAttachment(image: art.image)
+            attachment.name = "V168-home-arch-\(team)"; attachment.lifetime = .keepAlways; add(attachment)
+        }
+    }
+
+    func testV168HomeVenueCacheTracksTeamAndNeverReplacesOtherRooms() throws {
+        let asset = "ClubhouseRoomV59"
+        let first = StadiumIdentity(homeTeamID: "hs-ref-001"), second = StadiumIdentity(homeTeamID: "hs-ref-004")
+        let firstArt = try XCTUnwrap(ManagementHomeVenueArt.art(asset: asset, selection: .home, stadium: first))
+        XCTAssertTrue(firstArt === ManagementHomeVenueArt.art(asset: asset, selection: .home, stadium: first))
+        let secondArt = try XCTUnwrap(ManagementHomeVenueArt.art(asset: asset, selection: .home, stadium: second))
+        XCTAssertFalse(firstArt === secondArt)
+        XCTAssertTrue(try pixels(firstArt.image).bytes != pixels(secondArt.image).bytes,
+                      "Schools that share a venue structure still need their own board identity")
+        for tab in ManagementTab.allCases where tab != .home {
+            XCTAssertNil(ManagementHomeVenueArt.art(asset: asset, selection: tab, stadium: first))
+        }
+        XCTAssertNil(ManagementHomeVenueArt.art(asset: "ScoutRoomV59", selection: .home, stadium: first))
+        XCTAssertNil(ManagementHomeVenueArt.art(asset: asset, selection: .home, stadium: .legacy))
+    }
+
     func testV166RenderedCloseupsKeepActorsAndTeamVenueBothRoles() throws {
         for role in [PlayerRole.batter, .pitcher] {
             for team in ["hs-ref-001", "kbo-0", "npb-12", "mlb-12"] {

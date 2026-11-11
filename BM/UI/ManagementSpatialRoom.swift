@@ -167,6 +167,7 @@ struct ManagementSpatialRoom<Header: View>: View {
     @ViewBuilder let header: Header
     @Environment(\.dynamicTypeSize) private var typeSize
     var propAbilities: [HomeAbilityValue] = []
+    var homeVenue: StadiumIdentity? = nil
     private var usesProps: Bool { asset.hasSuffix("V59") || asset.hasSuffix("V62") }
 
     var body: some View {
@@ -174,6 +175,9 @@ struct ManagementSpatialRoom<Header: View>: View {
     }
     func spatialAbilities(_ values: [HomeAbilityValue]) -> Self {
         var copy = self; copy.propAbilities = values; return copy
+    }
+    func spatialHomeVenue(_ stadium: StadiumIdentity?) -> Self {
+        var copy = self; copy.homeVenue = stadium; return copy
     }
     private var legacyRoom: some View {
         GeometryReader { geometry in
@@ -260,8 +264,13 @@ struct ManagementSpatialRoom<Header: View>: View {
         }.background(ManagementTheme.Spatial.canvas.ignoresSafeArea()).toolbar(.hidden, for: .navigationBar).preferredColorScheme(.dark)
     }
     private func propScene(width: CGFloat, height: CGFloat) -> some View {
-        ZStack(alignment: .topLeading) {
-            Image(asset).resizable().interpolation(.none).frame(width: width, height: height).accessibilityHidden(true)
+        let venue = homeVenue.flatMap { stadium in
+            ManagementHomeVenueArt.art(asset: asset, selection: selection, stadium: stadium)
+                .map { (stadium: stadium, art: $0) }
+        }
+        return ZStack(alignment: .topLeading) {
+            (venue.map { Image(uiImage: $0.art.image) } ?? Image(asset))
+                .resizable().interpolation(.none).frame(width: width, height: height).accessibilityHidden(true)
             ForEach(facilities) { facility in
                 if let p = facility.prop {
                     Button { choose(facility.id) } label: {
@@ -320,6 +329,10 @@ struct ManagementSpatialRoom<Header: View>: View {
                 }
             }
         }.frame(width: width, height: height)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(venue.map { "managementHomeVenue-" + $0.stadium.key } ?? "managementRoomScene-" + selection.rawValue)
+            .accessibilityLabel(title)
+            .accessibilityValue(venue?.stadium.backdrop?.name ?? "")
     }
     private var roomToolbar: some View {
         HStack {
@@ -699,5 +712,88 @@ private struct StadiumLEDLettering: ViewModifier {
         } else {
             content.foregroundStyle(color)
         }
+    }
+}
+
+/// The home room looks out onto the affiliated team's distant stands, not a second scene above the room.
+@MainActor enum ManagementHomeVenueArt {
+    final class Artwork {
+        let image: UIImage
+        init(_ image: UIImage) { self.image = image }
+    }
+    static let roomAsset = "ClubhouseRoomV59"
+    static let referenceSize = CGSize(width: 948, height: 1659)
+    // Inside the vertical part of the arch, above the existing field and all foreground rails.
+    static let standsBounds = CGRect(x: 327, y: 374, width: 294, height: 140)
+    private static let skyBlend = CGGradient(colorSpace: CGColorSpaceCreateDeviceGray(),
+                                              colorComponents: [0, 0, 0, 1], locations: [0, 1], count: 2)
+    private static let cache: NSCache<NSString, Artwork> = {
+        let cache = NSCache<NSString, Artwork>()
+        cache.totalCostLimit = 24 * 1024 * 1024; cache.countLimit = 3
+        return cache
+    }()
+
+    static func art(asset: String, selection: ManagementTab, stadium: StadiumIdentity) -> Artwork? {
+        guard selection == .home, asset == roomAsset, let venue = stadium.backdrop else { return nil }
+        let key = "v168-home-2:\(stadium.key):\(venue.imageName)" as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let original = UIImage(named: roomAsset), original.size == referenceSize,
+              let upper = InplayStadiumArt.upperArt(venue)?.image else { return nil }
+        let scale = max(standsBounds.width / upper.size.width, standsBounds.height / upper.size.height)
+        let size = CGSize(width: upper.size.width * scale, height: upper.size.height * scale)
+        let target = CGRect(x: standsBounds.midX - size.width / 2, y: standsBounds.maxY - size.height,
+                            width: size.width, height: size.height)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1; format.opaque = true; format.preferredRange = .standard
+        let image = UIGraphicsImageRenderer(size: referenceSize, format: format).image { renderer in
+            let context = renderer.cgContext; context.interpolationQuality = .none
+            original.draw(in: CGRect(origin: .zero, size: referenceSize))
+            context.saveGState(); context.clip(to: standsBounds)
+            drawStands(upper, in: target, context: context)
+            drawIdentity(venue, in: target, context: context)
+            context.restoreGState()
+        }
+        let art = Artwork(image)
+        cache.setObject(art, forKey: key, cost: Int(referenceSize.width * referenceSize.height) * 4)
+        return art
+    }
+
+    private static func drawStands(_ upper: UIImage, in target: CGRect, context: CGContext) {
+        guard let skyBlend else { upper.draw(in: target); return }
+        // Finish the sky transition before the original board starts at y391.
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        upper.draw(in: target)
+        context.saveGState(); context.setBlendMode(.destinationIn)
+        context.drawLinearGradient(skyBlend,
+                                   start: CGPoint(x: standsBounds.midX, y: standsBounds.minY),
+                                   end: CGPoint(x: standsBounds.midX, y: 390),
+                                   options: [.drawsAfterEndLocation])
+        context.restoreGState()
+        context.endTransparencyLayer()
+    }
+
+    private static func drawIdentity(_ venue: StadiumBackdrop, in target: CGRect, context: CGContext) {
+        // Backdrop board coordinates use the shared 1024px scene, including the 768px pro source.
+        let board = CGRect(x: target.minX + venue.board.minX * target.width / 1024,
+                           y: target.minY + venue.board.minY * target.height / venue.height,
+                           width: venue.board.width * target.width / 1024,
+                           height: venue.board.height * target.height / venue.height).integral
+        context.setFillColor(UIColor(Color(hex: venue.panel)).cgColor); context.fill(board)
+        context.setStrokeColor(UIColor(Color(hex: venue.trim)).cgColor)
+        context.setLineWidth(1); context.stroke(board.insetBy(dx: 0.5, dy: 0.5))
+        var textRect = board.insetBy(dx: 3, dy: 2)
+        if let logoName = venue.logoAsset, let logo = UIImage(named: logoName) {
+            let side = max(1, min(textRect.height, textRect.width * 0.25))
+            logo.draw(in: CGRect(x: textRect.minX, y: textRect.midY - side / 2, width: side, height: side))
+            textRect.origin.x += side + 2; textRect.size.width -= side + 2
+        }
+        let style = NSMutableParagraphStyle(); style.alignment = .center; style.lineBreakMode = .byClipping
+        let size = min(textRect.height * 0.65, textRect.width / CGFloat(max(1, venue.name.count)))
+        let font = UIFont.systemFont(ofSize: max(1, size), weight: .heavy)
+        let label = NSString(string: venue.name)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor(white: 0.96, alpha: 1), .paragraphStyle: style]
+        let labelSize = label.size(withAttributes: attributes)
+        label.draw(in: CGRect(x: textRect.minX, y: textRect.midY - labelSize.height / 2,
+                              width: textRect.width, height: labelSize.height), withAttributes: attributes)
     }
 }
