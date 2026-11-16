@@ -1552,7 +1552,10 @@ enum GoalSpecialError:LocalizedError {
         return projected
     }
     static func matchSelection(player:CareerPlayer,calendar:CareerCalendarState,fixture:SeasonFixture,in context:ModelContext) throws -> MatchClubSelection? {
-        try projection(player:player,calendar:calendar,in:context).map { MatchClubSelection(fixtureID:fixture.id,review:$0,rotationDay:fixture.isAppearance(for:player.role)) }
+        try projection(player: player, calendar: calendar, in: context).map {
+            MatchClubSelection(fixtureID: fixture.id, review: $0, rotationDay: fixture.isAppearance(for: player.role),
+                               fixtureNumber: fixture.number)
+        }
     }
     static func opportunities(player:CareerPlayer,through:String,in context:ModelContext) throws -> ClubOpportunitySummary {
         let id = player.id

@@ -662,15 +662,41 @@ struct MatchClubSelection: Codable, Equatable {
     let fixtureID: String
     let review: ClubSelectionReview
     let rotationDay: Bool
+    var fixtureNumber: Int? = nil
     var appearance: Bool { rotationDay && review.isStarter }
     func validate(fixtureID: String, playerID: UUID, date: String, competition: String?, appearance: Bool, role: String) throws {
         try review.own.validate(); try review.rival.validate();try review.validateRivalBasis()
-        let day=try GameDate(date), opening=try GameDate("\(day.year)-04-01")
-        let expectedTurn=role == "batter" || (opening.days(to:day)/6).isMultiple(of:5)
-        guard review.version == 1, review.week == day.monday.description, rotationDay == expectedTurn,
+        let day = try GameDate(date)
+        guard review.version == 1, review.week == day.monday.description,
               [review.own.id,review.rival.id].contains(review.selected),
               self.fixtureID == fixtureID, review.own.id == playerID.uuidString, review.date <= date,
-              review.level == competition, self.appearance == appearance else { throw MatchError.invalidRecord }
+              review.level == competition, self.appearance == appearance,
+              fixtureNumber.map({ (1...30).contains($0) }) ?? true else { throw MatchError.invalidRecord }
+        let expectedTurn = try role == "batter" || (pitchingFixtureNumber(on: day) - 1).isMultiple(of: 5)
+        guard rotationDay == expectedTurn else { throw MatchError.invalidRecord }
+    }
+
+    func validateScheduledFixture(_ fixture: SeasonFixture) throws {
+        guard fixture.id == fixtureID,
+              fixtureNumber.map({ $0 == fixture.number }) ?? true else { throw MatchError.invalidRecord }
+    }
+
+    private func pitchingFixtureNumber(on day: GameDate) throws -> Int {
+        if let fixtureNumber { return fixtureNumber }
+        // Old overseas saves can come from either schedule. A bye can change the order for each team.
+        if ["npb-first-team", "mlb-first-team"].contains(review.level) {
+            for expanded in [false, true] {
+                let fixtures = try CareerTeamDirectory.fixtures(level: review.level, year: day.year, expanded: expanded)
+                if let fixture = fixtures.first(where: {
+                    $0.date == day && $0.id == fixtureID && $0.includes(review.teamID)
+                }) {
+                    return fixture.forTeam(review.teamID).number
+                }
+            }
+            throw MatchError.invalidRecord
+        }
+        let opening = try GameDate("\(day.year)-04-01")
+        return opening.days(to: day) / 6 + 1
     }
 }
 struct ClubOpportunitySummary: Codable, Equatable {

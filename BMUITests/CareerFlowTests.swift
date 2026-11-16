@@ -2909,16 +2909,30 @@ extension CareerFlowTests {
         try verifyProVenueLiveAndSavedReplay(league: "MLB", id: "us-pro-0", team: "퍼시픽 웨이브스")
     }
 
-    @MainActor private func verifyProVenueLiveAndSavedReplay(league: String, id: String, team: String) throws {
+    private enum PortlandResume: String {
+        case newMatch = "new match"
+        case legacySave = "legacy save"
+    }
+
+    @MainActor func testPortlandExpandedSchedulePitcherStartsResumesAndReplays() throws {
+        try verifyProVenueLiveAndSavedReplay(league: "MLB", id: "us-pro-12", team: "포틀랜드 에버그린스", portland: .newMatch)
+    }
+
+    @MainActor func testPortlandLegacySavedPitcherResumesAndReplays() throws {
+        try verifyProVenueLiveAndSavedReplay(league: "MLB", id: "us-pro-12", team: "포틀랜드 에버그린스", portland: .legacySave)
+    }
+
+    @MainActor private func verifyProVenueLiveAndSavedReplay(league: String, id: String, team: String, portland: PortlandResume? = nil) throws {
         guard ProcessInfo.processInfo.environment["BM_V188_PRO_VENUE_QA"] == "1" else {
             throw XCTSkip("Requires isolated pro career fixtures under the BM-QA app's tmp/v188-publish-venue directory.")
         }
         continueAfterFailure = false
-        for pitcher in [true, false] {
-            let app = try launchIsolatedCareerQA(pitcher: pitcher, arguments: ["-qa-v188-publish-venue", id])
+        for pitcher in portland == nil ? [true, false] : [true] {
+            let venueArguments = ["-qa-v188-publish-venue", id] + (portland == .legacySave ? ["-qa-portland-legacy-save"] : [])
+            let app = try launchIsolatedCareerQA(pitcher: pitcher, arguments: venueArguments)
             defer { app.terminate() }
             let role = pitcher ? "pitcher" : "batter"
-            let title = "V188 publish \(league) \(role)"
+            let title = portland.map { "Portland rotation \($0.rawValue)" } ?? "V188 publish \(league) \(role)"
             let scoringSide = pitcher ? "상대 팀" : "우리 팀"
 
             func element(_ identifier: String) -> XCUIElement {
@@ -2943,6 +2957,15 @@ extension CareerFlowTests {
                 capture(phase)
             }
 
+            func scorePair(_ label: String) throws -> [Int] {
+                let pattern = try NSRegularExpression(pattern: #"득점 (\d+), 안타"#)
+                let scores = pattern.matches(in: label, range: NSRange(label.startIndex..., in: label)).compactMap { match in
+                    Range(match.range(at: 1), in: label).flatMap { Int(label[$0]) }
+                }
+                XCTAssertEqual(scores.count, 2, label)
+                return scores
+            }
+
             let arena = element("careerMatchField")
             XCTAssertTrue(arena.waitForExistence(timeout: 40), app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " / "))
             let board = element("matchScoreboard")
@@ -2950,6 +2973,10 @@ extension CareerFlowTests {
             XCTAssertTrue(boardScore.contains(team + " 득점"), boardScore)
             let inning = board.staticTexts["careerGameInning"].label
             let openingHalf = try XCTUnwrap(["1회 초": 0, "1회 말": 1][inning], inning)
+            if portland != nil {
+                XCTAssertEqual(inning, "1회 말")
+                XCTAssertEqual(element("boardPitchCount").label, "내 투구 수 0")
+            }
             capture("before")
 
             if pitcher {
@@ -2977,10 +3004,24 @@ extension CareerFlowTests {
             let stage = element("homeRunStage")
             let liveFinished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: stage)
             XCTAssertEqual(XCTWaiter.wait(for: [liveFinished], timeout: 15), .completed, title)
+            if portland != nil {
+                let liveIDs = ["careerGameInning", "careerGameScore", "careerGameCount", "boardPitchName", "boardPitchSpeed", "boardPitchCount"]
+                let committed = liveIDs.map { element($0).label }
+                let beforeScore = try scorePair(boardScore)
+                XCTAssertEqual(try scorePair(committed[1]), [beforeScore[0], beforeScore[1] + runs])
+                XCTAssertEqual(element("boardPitchCount").label, "내 투구 수 1")
+                app.terminate(); app.launch()
+                XCTAssertTrue(arena.waitForExistence(timeout: 40))
+                XCTAssertTrue(app.buttons["gamePitch"].isEnabled)
+                XCTAssertFalse(stage.exists)
+                XCTAssertEqual(liveIDs.map { element($0).label }, committed)
+                capture("resumed")
+            }
             app.buttons["gameAutomatic"].tap()
             app.buttons["진행하고 결과 저장"].tap()
             XCTAssertTrue(element("gameResultSaved").waitForExistence(timeout: 60))
             let resultIDs = ["gameFinalScore", "gameResultFatigue", pitcher ? "gameResult-runsAllowed" : "gameResult-homeRuns"]
+                + (portland == nil ? [] : ["careerGameFinished", "gameResult-pitches"])
             let originalResult = resultIDs.map { element($0).label }
 
             let highlights = app.buttons["openMatchHighlights"]
@@ -3006,6 +3047,19 @@ extension CareerFlowTests {
             XCTAssertEqual(row.label, rowLabel)
             app.buttons["closeMatchHighlights"].tap()
             XCTAssertEqual(resultIDs.map { element($0).label }, originalResult)
+            if portland != nil {
+                app.terminate(); app.launch()
+                XCTAssertTrue(element("gameResultSaved").waitForExistence(timeout: 40))
+                XCTAssertEqual(resultIDs.map { element($0).label }, originalResult)
+                XCTAssertFalse(app.buttons["gameAutomatic"].exists)
+                reveal(highlights, in: app); highlights.tap()
+                XCTAssertTrue(filter.waitForExistence(timeout: 8)); filter.tap()
+                reveal(row, in: app)
+                XCTAssertEqual(rows.count, 1, liveReceipt)
+                XCTAssertEqual(row.label, rowLabel)
+                app.buttons["closeMatchHighlights"].tap()
+                capture("reopened result")
+            }
 
             let audit = XCTAttachment(string: "\(team) (\(id))\n\(boardScore)\n\(rowLabel)\n\(liveReceipt)")
             audit.name = "\(title) audit"

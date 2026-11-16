@@ -6739,6 +6739,155 @@ extension CareerCalendarTests {
         XCTAssertThrowsError(try SeasonSchedule.expandedFixtures(year: 2036, east: ["same"], west: ["same"]))
     }
 
+    func testPortlandPitcherRotationUsesAwayTeamFixtureNumber() throws {
+        let level = "mlb-first-team", awayTeam = "us-pro-0"
+        let fixtureID = "2040-07-17-us-pro-12-us-pro-0"
+        let schedule = try CareerTeamDirectory.fixtures(level: level, year: 2040, expanded: true)
+        let fixture = try XCTUnwrap(schedule.first { $0.id == fixtureID }).forTeam(awayTeam)
+        let opening = try GameDate("2040-04-01")
+        XCTAssertEqual(fixture.number, 21)
+        XCTAssertTrue(fixture.isAppearance(for: .pitcher))
+        XCTAssertFalse((opening.days(to: fixture.date) / 6).isMultiple(of: 5))
+
+        let playerID = UUID()
+        let review = try pitcherRotationReview(for: playerID, teamID: awayTeam, level: level, date: fixture.date)
+        let selection = MatchClubSelection(fixtureID: fixtureID, review: review, rotationDay: true, fixtureNumber: fixture.number)
+        let bytes = try JSONEncoder().encode(selection)
+        let decoded = try JSONDecoder().decode(MatchClubSelection.self, from: bytes)
+        XCTAssertEqual(decoded, selection)
+        XCTAssertNoThrow(try decoded.validateScheduledFixture(fixture))
+        var wrongScheduledNumber = decoded
+        wrongScheduledNumber.fixtureNumber = fixture.number - 5
+        XCTAssertThrowsError(try wrongScheduledNumber.validateScheduledFixture(fixture)) {
+            XCTAssertEqual($0 as? MatchError, .invalidRecord)
+        }
+        XCTAssertNoThrow(try decoded.validate(fixtureID: fixtureID, playerID: playerID,
+            date: fixture.date.description, competition: level, appearance: true, role: "pitcher"))
+
+        let legacy = MatchClubSelection(fixtureID: fixtureID, review: review, rotationDay: true)
+        let restored = try JSONDecoder().decode(MatchClubSelection.self, from: JSONEncoder().encode(legacy))
+        XCTAssertNil(restored.fixtureNumber)
+        XCTAssertNoThrow(try restored.validate(fixtureID: fixtureID, playerID: playerID,
+            date: fixture.date.description, competition: level, appearance: true, role: "pitcher"))
+        let differentDay = fixture.date.adding(days: 1)
+        XCTAssertEqual(differentDay.monday, fixture.date.monday)
+        XCTAssertThrowsError(try restored.validate(fixtureID: fixtureID, playerID: playerID,
+            date: differentDay.description, competition: level, appearance: true, role: "pitcher")) {
+            XCTAssertEqual($0 as? MatchError, .invalidRecord)
+        }
+        let incorrectLegacy = MatchClubSelection(fixtureID: fixtureID, review: review, rotationDay: false)
+        XCTAssertThrowsError(try incorrectLegacy.validate(fixtureID: fixtureID, playerID: playerID,
+            date: fixture.date.description, competition: level, appearance: false, role: "pitcher")) {
+            XCTAssertEqual($0 as? MatchError, .invalidRecord)
+        }
+
+        for number in [0, fixture.number + 1, 31] {
+            let inconsistent = MatchClubSelection(fixtureID: fixtureID, review: review, rotationDay: true, fixtureNumber: number)
+            XCTAssertThrowsError(try inconsistent.validate(fixtureID: fixtureID, playerID: playerID,
+                date: fixture.date.description, competition: level, appearance: true, role: "pitcher")) {
+                XCTAssertEqual($0 as? MatchError, .invalidRecord)
+            }
+        }
+    }
+
+    func testLegacySixTeamPitcherRotationWithoutFixtureNumber() throws {
+        let level = "mlb-first-team", teamID = "us-pro-0", playerID = UUID()
+        let schedule = try CareerTeamDirectory.fixtures(level: level, year: 2036, expanded: false)
+        let fixtures = schedule.filter { $0.includes(teamID) }.prefix(2)
+        XCTAssertEqual(fixtures.map(\.number), [1, 2])
+
+        for fixture in fixtures {
+            let review = try pitcherRotationReview(for: playerID, teamID: teamID, level: level, date: fixture.date)
+            let rotationDay = fixture.isAppearance(for: .pitcher)
+            let selection = MatchClubSelection(fixtureID: fixture.id, review: review, rotationDay: rotationDay)
+            let bytes = try JSONEncoder().encode(selection)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+            XCTAssertNil(object["fixtureNumber"])
+            let decoded = try JSONDecoder().decode(MatchClubSelection.self, from: bytes)
+            XCTAssertNil(decoded.fixtureNumber)
+            XCTAssertNoThrow(try decoded.validate(fixtureID: fixture.id, playerID: playerID,
+                date: fixture.date.description, competition: level, appearance: rotationDay, role: "pitcher"))
+        }
+    }
+
+    func testExpandedMLBLegacyPitcherGameResumesFromDiskAndCompletesOnce() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("career.store")
+        let saved = try autoreleasepool {
+            let (container, player, state) = try proCareerFixture(.pitcher, seasons: 7, rating: 99,
+                legacyURL: url, legacyVersion: 15)
+            let context = container.mainContext
+            let offer = try XCTUnwrap(professionalOffers(player, state, context).first { $0.route == .mlbFirstTeam })
+            try OverseasContractStore.decide(player: player, calendar: state, offerID: offer.id, accept: true,
+                date: player.gameDate, revision: state.revision, in: context)
+            try state.adoptOverseasExpansion(after: GameDate(player.gameDate))
+            let opening = try GameDate(offer.effective)
+            let fixture = try XCTUnwrap(state.fixtures(for: player, year: opening.year).first { game in
+                game.isAppearance(for: .pitcher) && !(opening.days(to: game.date) / 6).isMultiple(of: 5)
+            })
+            player.gameDate = fixture.date.description
+            try context.save()
+
+            try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context)
+            let record = try CareerMatchStore.start(player: player, state: state, in: context)
+            XCTAssertEqual(try record.snapshot().clubSelection?.fixtureNumber, fixture.number)
+            let pitch = try XCTUnwrap(player.pitches.first?.code)
+            try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision,
+                input: .pitch, pitchCode: pitch, control: ManualMatchInput(release: 0.68), in: context)
+            XCTAssertFalse(record.completed)
+
+            var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: record.payload) as? [String: Any])
+            var selection = try XCTUnwrap(payload["clubSelection"] as? [String: Any])
+            XCTAssertNotNil(selection.removeValue(forKey: "fixtureNumber"))
+            payload["clubSelection"] = selection
+            record.payload = try JSONSerialization.data(withJSONObject: payload, options: .sortedKeys)
+            try context.save()
+            let legacy = try JSONDecoder().decode(CareerMatch.self, from: record.payload)
+            return (playerID: player.id, fixture: fixture, bytes: record.payload, legacy: legacy, pitch: pitch,
+                    matchRevision: record.revision, calendarRevision: state.revision, fatigue: player.fatigue)
+        }
+
+        let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+        let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == saved.playerID })
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == saved.playerID })
+        let record = try CareerMatchStore.start(player: player, state: state, in: context)
+        XCTAssertEqual(record.fixtureID, saved.fixture.id)
+        XCTAssertEqual(record.payload, saved.bytes)
+        XCTAssertEqual(record.revision, saved.matchRevision)
+        XCTAssertEqual(state.revision, saved.calendarRevision)
+        XCTAssertEqual(player.fatigue, saved.fatigue)
+        XCTAssertEqual(try record.snapshot(), saved.legacy)
+        XCTAssertFalse(context.hasChanges)
+
+        let prepared = try await CareerMatchStore.prepareManual(player: player, state: state, record: record,
+            revision: record.revision, input: .pitch, pitchCode: saved.pitch, control: ManualMatchInput(release: 0.68))
+        XCTAssertEqual(record.payload, saved.bytes)
+        _ = try CareerMatchStore.commitManual(prepared, player: player, state: state, record: record, in: context)
+        XCTAssertEqual(try record.snapshot().line.pitches, saved.legacy.line.pitches + 1)
+        XCTAssertEqual(record.revision, saved.matchRevision + 1)
+
+        try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision,
+            input: .automatic, in: context)
+        XCTAssertTrue(record.completed)
+        let completed = record.payload, fatigue = player.fatigue, revision = state.revision
+        XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: state, record: record,
+            revision: record.revision, input: .automatic, in: context)) {
+            XCTAssertEqual($0 as? MatchError, .finished)
+        }
+        XCTAssertEqual(try CareerMatchStore.start(player: player, state: state, in: context).payload, completed)
+        XCTAssertEqual(player.fatigue, fatigue)
+        XCTAssertEqual(state.revision, revision)
+    }
+
+    private func pitcherRotationReview(for playerID: UUID, teamID: String, level: String, date: GameDate) throws -> ClubSelectionReview {
+        try ClubSelectionReview.make(context: "membership/\(teamID)/\(level)/\(date.year)/P",
+            membershipID: "membership", teamID: teamID, level: level, position: "P", roleID: "starter", date: date,
+            own: ClubSelectionCandidate(id: playerID.uuidString, h: 80, p: 0, readiness: 100, evidence: nil, note: "QA"),
+            rival: ClubSelectionCandidate(id: "npc", h: 30, p: 0, readiness: 100, evidence: nil, note: "QA"), previous: nil)
+    }
+
     func testV147ExpandedStandingsAndSeasonCompletionUseAllFifteenTeams() throws {
         let east = (0..<8).map { "east-\($0)" }, west = (0..<7).map { "west-\($0)" }
         let fixtures = try SeasonSchedule.expandedFixtures(year: 2036, east: east, west: west)

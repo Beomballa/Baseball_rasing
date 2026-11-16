@@ -49,8 +49,10 @@ enum CareerSchemaV3: VersionedSchema {
         }
         #endif
         static func key(_ playerID: UUID, _ fixtureID: String) -> String { "\(playerID.uuidString):\(fixtureID)" }
-        func snapshot() throws -> CareerMatch {
-            try CareerMatchReadSnapshot(self).validated()
+        func snapshot(for fixture: SeasonFixture? = nil) throws -> CareerMatch {
+            let match = try CareerMatchReadSnapshot(self).validated()
+            if let fixture { try match.clubSelection?.validateScheduledFixture(fixture) }
+            return match
         }
     }
 }
@@ -148,7 +150,7 @@ struct CareerCommittedManualInput {
     }
     static func isCompleted(player: CareerPlayer, fixture: SeasonFixture, in context: ModelContext) throws -> Bool {
         guard let saved = try record(player: player, fixture: fixture, in: context) else { return false }
-        return try saved.snapshot().completed
+        return try saved.snapshot(for: fixture).completed
     }
     static func today(player: CareerPlayer, state: CareerCalendarState) throws -> SeasonFixture {
         let date = try GameDate(player.gameDate)
@@ -159,7 +161,7 @@ struct CareerCommittedManualInput {
     static func start(player: CareerPlayer, state: CareerCalendarState, planChoice:MatchPlanChoice? = nil, in context: ModelContext,
                       save: CalendarProgression.Save = { try $0.save() }) throws -> CareerMatchRecord {
         let fixture = try today(player: player, state: state)
-        if let saved = try record(player: player, fixture: fixture, in: context) { _ = try saved.snapshot(); return saved }
+        if let saved = try record(player: player, fixture: fixture, in: context) { _ = try saved.snapshot(for: fixture); return saved }
         try CareerTrainingStore.requireNoPending(player: player, in: context)
         guard state.hasAction(on: player.gameDate) else { throw MatchError.preparation }
         let seed = (player.id.uuidString + fixture.id).utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
@@ -235,6 +237,7 @@ struct CareerCommittedManualInput {
         try match.validateDetailedField()
         let saved = try CareerMatchRecord(player: player, fixture: fixture, match: match)
         saved.rulesVersion = "native-match-v2"
+        _ = try saved.snapshot(for: fixture)
         context.insert(saved); state.revision += 1
         do {
             if selection != nil { _ = try ClubSelectionStore.capture(player:player,calendar:state,in:context) }
@@ -312,6 +315,7 @@ struct CareerCommittedManualInput {
                   prepared.playerDate == player.gameDate,prepared.playerFatigue == player.fatigue else {throw MatchError.stale}
         }
         let previous=try prepared?.previous ?? record.snapshot()
+        try previous.clubSelection?.validateScheduledFixture(fixture)
         var match=prepared?.updated ?? previous
         #if DEBUG
         MatchRenderMetrics.mark("career.store.snapshotReady")
@@ -517,7 +521,7 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
     static func startPrepared(player:CareerPlayer,state:CareerCalendarState,choice:MatchPlanChoice,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws -> CareerMatchRecord {
         let fixture=try today(player:player,state:state)
         if let saved=try record(player:player,fixture:fixture,in:context) {
-            guard try saved.snapshot().preparation?.choice == choice else {throw MatchError.stale}
+            guard try saved.snapshot(for: fixture).preparation?.choice == choice else {throw MatchError.stale}
             return saved
         }
         guard !context.hasChanges,player.gameDate == date,state.revision == revision else {throw MatchError.stale}

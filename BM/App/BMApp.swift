@@ -579,8 +579,9 @@ enum LiveCareerQA {
     }
 
     @MainActor static func prepareProVenueHomeRun(player: CareerPlayer, calendar: CareerCalendarState,
-                                                 in context: ModelContext) throws {
+                                                 legacySnapshot: CareerMatchReadSnapshot? = nil, in context: ModelContext) throws {
         let row = try CareerMatchStore.start(player: player, state: calendar, in: context)
+        if let legacySnapshot, CareerMatchReadSnapshot(row) != legacySnapshot { throw MatchError.invalidRecord }
         guard row.revision == 0 else { return }
         var match = try row.snapshot()
         let pitcher = player.role == .pitcher
@@ -772,6 +773,8 @@ private struct LiveCareerPerformanceRun:View {
                 } else {
                     opponentHomeRun = nil
                 }
+                let legacyPortland = args.contains("-qa-portland-legacy-save")
+                let freshSession = !FileManager.default.fileExists(atPath: url.path)
                 let proVenueID: String?
                 if let index = args.firstIndex(of: "-qa-v188-publish-venue") {
                     guard opponentHomeRun == nil, args.indices.contains(index + 1),
@@ -779,14 +782,19 @@ private struct LiveCareerPerformanceRun:View {
                         throw MatchError.invalidInput
                     }
                     proVenueID = args[index + 1]
-                    if !FileManager.default.fileExists(atPath: url.path) {
+                    guard !legacyPortland || (proVenueID == "us-pro-12" && args.contains("-qa-pitcher")) else {
+                        throw MatchError.invalidInput
+                    }
+                    if freshSession {
                         let role: PlayerRole = args.contains("-qa-pitcher") ? .pitcher : .batter
+                        let fixture = legacyPortland ? "mlb-portland-legacy-pitcher.store" : "\(venue.club.league.rawValue)-\(role.rawValue).store"
                         let source = FileManager.default.temporaryDirectory
                             .appendingPathComponent("v188-publish-venue", isDirectory: true)
-                            .appendingPathComponent("\(venue.club.league.rawValue)-\(role.rawValue).store")
+                            .appendingPathComponent(fixture)
                         try FileManager.default.copyItem(at: source, to: url)
                     }
                 } else {
+                    guard !legacyPortland else { throw MatchError.invalidInput }
                     proVenueID = nil
                 }
                 let c=try CareerStore.makeContainer(url:url),catalog=try SchoolCatalog.load()
@@ -825,7 +833,25 @@ private struct LiveCareerPerformanceRun:View {
                     try LiveCareerQA.prepareOpponentHomeRun(opponentHomeRun, player: p, calendar: state, in: c.mainContext)
                 }
                 if proVenueID != nil {
-                    try LiveCareerQA.prepareProVenueHomeRun(player: p, calendar: state, in: c.mainContext)
+                    let legacySnapshot: CareerMatchReadSnapshot?
+                    if legacyPortland {
+                        let fixture = try CareerMatchStore.today(player: p, state: state)
+                        guard p.role == .pitcher, fixture.id == "2040-07-17-us-pro-12-us-pro-0",
+                              let row = try CareerMatchStore.record(player: p, fixture: fixture, in: c.mainContext) else {
+                            throw MatchError.noFixture
+                        }
+                        if freshSession {
+                            let saved = try row.snapshot()
+                            guard row.revision == 0, !saved.isHome, saved.ownPitcherActive, saved.half == 1,
+                                  let selection = saved.clubSelection, selection.rotationDay, selection.fixtureNumber == nil else {
+                                throw MatchError.invalidRecord
+                            }
+                        }
+                        legacySnapshot = CareerMatchReadSnapshot(row)
+                    } else {
+                        legacySnapshot = nil
+                    }
+                    try LiveCareerQA.prepareProVenueHomeRun(player: p, calendar: state, legacySnapshot: legacySnapshot, in: c.mainContext)
                 }
                 schools=catalog;player=p;calendar=state;container=c
             } catch {failure=error.localizedDescription}
