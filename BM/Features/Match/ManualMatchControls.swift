@@ -186,6 +186,11 @@ enum MatchBroadcastData {
 }
 
 struct MatchBroadcastBoard: View, @MainActor Equatable {
+    struct Inplay: Equatable {
+        let half: Int
+        let scoringHome: Bool?
+    }
+
     let match: CareerMatch
     let homeName: String
     let awayName: String
@@ -193,17 +198,21 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
     let pulse: String?
     let pulseAt: Date
     var stadium: StadiumIdentity = .legacy
+    var inplay: Inplay? = nil
     static func ==(lhs:Self,rhs:Self)->Bool {
         lhs.match == rhs.match && lhs.homeName == rhs.homeName && lhs.awayName == rhs.awayName
             && lhs.date == rhs.date && lhs.pulse == rhs.pulse && lhs.pulseAt == rhs.pulseAt
-            && lhs.stadium == rhs.stadium
+            && lhs.stadium == rhs.stadium && lhs.inplay == rhs.inplay
     }
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     private let paper = Color(hex: 0xf3edcf)
     private let muted = Color(hex: 0x93aab8)
     private var panel: Color { Color(hex: stadium.panelColor) }
-    private var activeInning: Int? { match.completed ? nil : match.half / 2 + 1 }
+    private var activeInning: Int? {
+        if let inplay { return inplay.half / 2 + 1 }
+        return match.completed ? nil : match.half / 2 + 1
+    }
     private var pitchCount: Int? { match.role == "pitcher" ? match.line.pitches : nil }
     private var displayedDate: String {
         let parts = date.split(separator: "-").compactMap { Int($0) }
@@ -211,18 +220,20 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
     }
     var body: some View {
         VStack(spacing: 5) {
-            if typeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(displayedDate).fixedSize(horizontal: false, vertical: true)
-                    Text(match.inningLabel).foregroundStyle(GameTheme.gold)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                    .font(.system(.caption2, design: .monospaced, weight: .bold))
-            } else {
-                HStack(spacing: 6) {
-                    Text(displayedDate).lineLimit(1)
-                    Spacer(minLength: 2)
-                    Text(match.inningLabel).foregroundStyle(GameTheme.gold)
-                }.font(.system(.caption2, design: .monospaced, weight: .bold))
+            if inplay == nil {
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(displayedDate).fixedSize(horizontal: false, vertical: true)
+                        Text(match.inningLabel).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerGameInning")
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                        .font(.system(.caption2, design: .monospaced, weight: .bold))
+                } else {
+                    HStack(spacing: 6) {
+                        Text(displayedDate).lineLimit(1)
+                        Spacer(minLength: 2)
+                        Text(match.inningLabel).foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerGameInning")
+                    }.font(.system(.caption2, design: .monospaced, weight: .bold))
+                }
             }
             if typeSize.isAccessibilitySize {
                 VStack(spacing: 4) {
@@ -239,6 +250,15 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
                     .accessibilityLabel("\(teamSummary(home: false)). \(MatchBroadcastData.inningSummary(match, home: false)). \(teamSummary(home: true)). \(MatchBroadcastData.inningSummary(match, home: true))")
                     .accessibilityIdentifier("careerGameScore")
             }
+            if inplay == nil { pitchReadout }
+        }.foregroundStyle(paper).padding(8).frame(maxWidth: .infinity)
+            .background(panel)
+            .overlay(StadiumBoardFrame(stadium: stadium).allowsHitTesting(false).accessibilityHidden(true))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(inplay == nil ? "matchScoreboard" : "inplayScoreboard")
+    }
+    private var pitchReadout: some View {
+        VStack(spacing: 5) {
             Rectangle().fill(Color(hex: stadium.trimColor)).frame(height: stadium.theme == .brick ? 2 : 1)
             TimelineView(.animation(minimumInterval: 0.2, paused: reduced || pulse == nil)) { timeline in
                 let elapsed = timeline.date.timeIntervalSince(pulseAt)
@@ -272,10 +292,7 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
                     }.foregroundStyle(muted)
                 }
             }
-        }.foregroundStyle(paper).padding(8).frame(maxWidth: .infinity)
-            .background(panel)
-            .overlay(StadiumBoardFrame(stadium: stadium).allowsHitTesting(false).accessibilityHidden(true))
-            .accessibilityElement(children: .contain).accessibilityIdentifier("matchScoreboard")
+        }
     }
     private var inningRow: some View {
         HStack(spacing: 0) {
@@ -289,7 +306,8 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
         }
     }
     private func teamRow(home: Bool) -> some View {
-        HStack(spacing: 0) {
+        let scored = inplay?.scoringHome == home
+        return HStack(spacing: 0) {
             Text(home ? homeName : awayName).lineLimit(1).truncationMode(.tail).frame(width: 58, alignment: .leading)
             ForEach(1...9, id: \.self) { inning in
                 Text(MatchBroadcastData.inningMark(match, home: home, inning: inning))
@@ -297,7 +315,10 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
                     .frame(maxWidth: .infinity, minHeight: 17)
                     .background(activeInning == inning ? Color(hex: 0x29445a) : .clear)
             }
-            Text(String(home ? match.homeScore : match.awayScore)).foregroundStyle(GameTheme.gold).frame(width: 20)
+            Text(String(home ? match.homeScore : match.awayScore))
+                .foregroundStyle(scored ? GameTheme.navy : GameTheme.gold)
+                .frame(width: 20, height: 17)
+                .background(scored ? GameTheme.gold : .clear)
             Text(MatchBroadcastData.hits(match, home: home).map(String.init) ?? "—").frame(width: 20)
             Text(MatchBroadcastData.errors(match, home: home).map(String.init) ?? "—").frame(width: 20)
         }
@@ -310,14 +331,16 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
                 accessibleTotal("H", value: MatchBroadcastData.hits(match, home: home).map(String.init) ?? "—")
                 accessibleTotal("E", value: MatchBroadcastData.errors(match, home: home).map(String.init) ?? "—")
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3), alignment: .leading, spacing: 6) {
-                ForEach(1...9, id: \.self) { inning in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(inning)회").font(.caption2).foregroundStyle(muted)
-                        Text(MatchBroadcastData.inningMark(match, home: home, inning: inning)).font(.headline.monospacedDigit())
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(MatchBroadcastData.inningDescription(match, home: home, inning: inning))
+            if inplay == nil {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3), alignment: .leading, spacing: 6) {
+                    ForEach(1...9, id: \.self) { inning in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(inning)회").font(.caption2).foregroundStyle(muted)
+                            Text(MatchBroadcastData.inningMark(match, home: home, inning: inning)).font(.headline.monospacedDigit())
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(MatchBroadcastData.inningDescription(match, home: home, inning: inning))
+                    }
                 }
             }
         }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .ignore)
@@ -357,6 +380,38 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
     }
 }
 
+
+struct MatchLastPlayStrip<Action: View>: View {
+    let title: String
+    let summary: String
+    var summaryID = "gameLastPlaySummary"
+    var emphasizesHit = false
+    @ViewBuilder var action: () -> Action
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(spacing: 8))
+        layout {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption2.bold()).foregroundStyle(GameTheme.boardMuted)
+                Text(summary)
+                    .font(emphasizesHit ? .title3.bold() : .caption.bold())
+                    .foregroundStyle(emphasizesHit ? GameTheme.boardInk : GameTheme.gold)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(summaryID)
+            }.layoutPriority(1)
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            action().frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : 100)
+        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.leading, emphasizesHit ? 10 : 0)
+            .background(alignment: .leading) {
+                if emphasizesHit { Rectangle().fill(GameTheme.growth).frame(width: 2).accessibilityHidden(true) }
+            }
+    }
+}
 
 /// A compact visual plate inside the full 44-point button target.
 struct MatchPitchChip: View {

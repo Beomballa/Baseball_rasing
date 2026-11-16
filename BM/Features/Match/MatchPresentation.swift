@@ -617,6 +617,34 @@ struct MatchResultSummary {
 
 
 enum FieldReplayPresentation {
+    static func confirmedHitLabel(_ play: MatchDetailedPlay) -> String? {
+        // Preserve the full ruling when the same play includes an out or an error.
+        guard play.misplay == nil, play.outsAdded == 0 else { return nil }
+        switch play.hitBases {
+        case 1: return "안타"
+        case 2: return "2루타"
+        default: return nil
+        }
+    }
+
+    static func hitSafeBase(_ play: MatchDetailedPlay, time: Double, finished: Bool) -> Int? {
+        guard !finished, confirmedHitLabel(play) != nil,
+              let batter = play.runners.first(where: { $0.from == 0 }), !batter.out,
+              (1...3).contains(batter.destination),
+              let arrival = batter.arrival(at: batter.destination) else { return nil }
+        let safeAt = play.targetRunner == 0 ? max(arrival, play.decisionAt) : arrival
+        return time >= safeAt && time < safeAt + 0.85 ? batter.destination : nil
+    }
+
+    static func hitSafeLayout(base: Int, size: CGSize) -> (bag: CGRect, badge: CGRect) {
+        let point = InplayFieldProjection.point(DetailedFieldRules.bases[base], size: size)
+        let bag = CGRect(x: point.x - 9, y: point.y - 4, width: 18, height: 8)
+        let width: CGFloat = 56
+        let x = base == 1 ? point.x - width - 16 : point.x + 16
+        let badge = CGRect(x: min(size.width - width - 4, max(4, x)), y: point.y - 32, width: width, height: 22)
+        return (bag, badge)
+    }
+
     static func resultTitle(_ play:MatchDetailedPlay) -> String {
         if let error=play.misplay {return error.kind == .fielding ? "포구 실책":"악송구"}
         return play.secondThrow?.out == true ? "DOUBLE PLAY":play.fly?.caught == true && play.targetRunner == nil ? "CATCH · OUT":play.out ? "OUT":"SAFE"
@@ -1626,6 +1654,8 @@ struct DetailedFieldReplayBoard:View {
     var playbackMode:FieldPlaybackMode = .system
     var preparesMotion=false
     var preparation:FieldReplayPreparation?=nil
+    var canvasWidth: CGFloat? = nil
+    var showsHitReceipt = true
     var onResolved:@MainActor () -> Void = {}
     let complete:@MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var systemReduced
@@ -1742,9 +1772,20 @@ struct DetailedFieldReplayBoard:View {
                     #endif
                 }
             }.aspectRatio(2.0/3,contentMode:.fit)
+                .frame(width: canvasWidth, height: canvasWidth.map { $0 * 1.5 })
                 .accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.fly == nil ? "땅볼":"공중 타구"))
                 .accessibilityValue(finished ? FieldReplayPresentation.errorDetail(play,ownTeamFielding:ownTeamFielding ?? !play.ownBatter) ?? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
                 .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
+            if finished, showsHitReceipt, let label = FieldReplayPresentation.confirmedHitLabel(play) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("직전 플레이").font(.caption2.bold()).foregroundStyle(GameTheme.boardMuted)
+                    Text(label).font(.headline).foregroundStyle(GameTheme.boardInk)
+                        .accessibilityIdentifier("fieldReplayHitResult")
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GameTheme.boardPanel)
+            }
         }.padding(4).background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
     }
     #if DEBUG
@@ -1815,7 +1856,15 @@ struct DetailedFieldReplayBoard:View {
                         }
                     }
                     PixelBaseball.draw(in:context,at:ballPoint(time),diameter:max(5,6*InplayFieldProjection.actorScale(FieldNode.sample(play.ball,at:time),size:size)))
-                    if finished {
+                    if let base = FieldReplayPresentation.hitSafeBase(play, time: time, finished: finished) {
+                        let layout = FieldReplayPresentation.hitSafeLayout(base: base, size: size)
+                        context.stroke(Path(ellipseIn: layout.bag), with: .color(GameTheme.growth), lineWidth: 1.5)
+                        context.fill(Path(layout.badge), with: .color(GameTheme.boardPanel))
+                        context.stroke(Path(layout.badge), with: .color(GameTheme.growth), lineWidth: 1)
+                        context.draw(Text("세이프").font(.system(size: 14, weight: .bold)).foregroundStyle(GameTheme.growth),
+                                     at: CGPoint(x: layout.badge.midX, y: layout.badge.midY))
+                    }
+                    if finished && FieldReplayPresentation.confirmedHitLabel(play) == nil {
                         let label=FieldReplayPresentation.resultTitle(play)
                         let detail=FieldReplayPresentation.errorDetail(play,ownTeamFielding:defenseOwn)
                         let frame=CGRect(x:size.width*(detail == nil ? 0.18:0.04),y:size.height*0.27,width:size.width*(detail == nil ? 0.64:0.92),height:detail == nil ? 32:78)
@@ -1994,6 +2043,33 @@ struct PitchLocationBoard: View {
 
 // Presentation version 1 is fixed for persisted home-run inputs; no result or reward mutation here.
 enum HomeRunPresentation {
+    enum Stage: Int, CaseIterable {
+        case flight, fence, rounding, confirmed
+
+        var title: String {
+            switch self {
+            case .flight: "타구 비행"
+            case .fence: "담장 통과"
+            case .rounding: "주자 일주"
+            case .confirmed: "득점 확정"
+            }
+        }
+    }
+
+    static let fenceDuration = 1.1
+
+    static func stage(_ event: MatchHomeRun, time: Double, finished: Bool) -> Stage {
+        if finished { return .confirmed }
+        if time < event.flight { return .flight }
+        if time < event.flight + fenceDuration { return .fence }
+        return .rounding
+    }
+
+    static func resultFrame(size: CGSize) -> CGRect {
+        CGRect(x: size.width * 0.175, y: size.height * 0.269,
+               width: size.width * 0.65, height: max(46, min(64, size.width * 0.156)))
+    }
+
     static func ballPoint(_ event:MatchHomeRun,time:Double,size:CGSize) -> CGPoint {
         let world=event.ball(at:time),point=InplayFieldProjection.point(world,size:size)
         let beyond=max(0,min(1,(hypot(world.x,world.y)-65)/max(1,Double(event.distance)-65)))
@@ -2017,9 +2093,6 @@ enum HomeRunPresentation {
         if let at=runner.nodes.dropFirst(2).first(where:{$0.at>=time}),at.at-time<0.25 {motion.runnerPose = .turn}
         return (p,motion)
     }
-    static func phase(_ event:MatchHomeRun,time:Double,finished:Bool) -> String {
-        finished ? "홈 도착 · 홈런":time<event.flight ? "타구 비행 · 외야 추적":"베이스 일주 중"
-    }
 }
 
 struct HomeRunReplayBoard:View {
@@ -2039,10 +2112,12 @@ struct HomeRunReplayBoard:View {
     var preparesMotion=false
     var preparation:FieldReplayPreparation?=nil
     var playsSound=false
+    var canvasWidth: CGFloat? = nil
     var onResolved:@MainActor () -> Void = {}
     var complete:@MainActor () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Environment(\.accessibilityDimFlashingLights) private var dimFlashingLights
+    @Environment(\.dynamicTypeSize) private var typeSize
     private var reduced:Bool {playbackMode.reducesMovement(system:systemReduced)}
     private var replay:InplayReplay {.homeRun(event)}
     private var effectsReduced:Bool {dimFlashingLights || (reduceMotionOverride ?? (systemReduced || reduced))}
@@ -2135,8 +2210,26 @@ struct HomeRunReplayBoard:View {
         let elapsed=FieldReplayPresentation.elapsed(start:start,handoff:playbackHandoff,now:now)
         let time=previewTime.map {max(0,min(event.duration,$0))} ?? (resolved || !animated ? event.duration:replay.time(elapsed:elapsed,reduced:reduced))
         let finished=previewTime.map {$0>=event.duration} ?? (resolved || !animated)
+        let phaseTime = previewTime ?? (start == nil ? 0 : elapsed)
+        let stage = HomeRunPresentation.stage(event, time: phaseTime, finished: finished)
+        let fieldLabel = finished ? "홈런 · \(event.distance)m · \(event.runs)점" : "타구 비행과 주자 베이스 일주"
+        let specialTitle = stage == .flight ? nil : event.celebrationKind.title
         VStack(spacing:8) {
-            Text(HomeRunPresentation.phase(event,time:time,finished:finished)).font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeRunPhase")
+            let statusLayout = typeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))
+            statusLayout {
+                Text(stage.title)
+                    .font(stage == .flight ? .headline : .caption)
+                    .foregroundStyle(stage == .flight ? GameTheme.boardInk : GameTheme.boardMuted)
+                    .accessibilityIdentifier("homeRunPhase")
+                if stage != .flight {
+                    let team = ownTeamFielding ? "상대 팀" : "우리 팀"
+                    Text(stage == .confirmed ? "\(team) 득점 · \(event.runs)점" : "\(team) 홈런")
+                        .font(.subheadline.bold().monospacedDigit())
+                        .foregroundStyle(ownTeamFielding ? ManagementTheme.Palette.error : GameTheme.gold)
+                        .accessibilityIdentifier("homeRunScoringTeam")
+                }
+            }
             GeometryReader {geometry in
                 if usesSpriteKit {
                     if let scene {InplayFieldSurface(scene:scene,scoreText:scoreText,finished:finished,reduced:reduced,effectsReduced:effectsReduced,previewTime:previewTime ?? (!animated ? event.duration:nil),preparing:animated && previewTime == nil && start == nil)}
@@ -2146,12 +2239,46 @@ struct HomeRunReplayBoard:View {
                     legacyFrame(geometry:geometry,now:now,time:time,finished:finished)
                     #endif
                 }
-            }.aspectRatio(2.0/3,contentMode:.fit).accessibilityElement(children:.ignore)
-                .accessibilityLabel(finished ? "홈런 · \(event.distance)m · \(event.runs)점":"타구 비행과 주자 베이스 일주")
+            }.aspectRatio(2.0/3,contentMode:.fit)
+                .frame(width: canvasWidth, height: canvasWidth.map { $0 * 1.5 })
+                .accessibilityElement(children:.ignore)
+                .accessibilityLabel(specialTitle.map { "\($0) · \(fieldLabel)" } ?? fieldLabel)
                 .accessibilityValue(finished ? "홈 도착 완료":"진행 \(Int(time/event.duration*100))%")
-                .accessibilityIdentifier("homeRunCanvas")
-            if finished {Text("HOME RUN · \(event.distance)m · \(event.runs)점").font(.headline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("homeRunCelebration")}
+                .accessibilityIdentifier("homeRunCanvas").id("fieldGraphic")
+            progress(for: stage)
         }.padding(4).background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:2))
+    }
+
+    private func progress(for stage: HomeRunPresentation.Stage) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            switch stage {
+            case .flight:
+                Text("비거리 측정 중").font(.caption).foregroundStyle(GameTheme.boardMuted)
+            case .fence:
+                Text("비거리 \(event.distance)m").font(.caption.monospacedDigit()).foregroundStyle(GameTheme.boardInk)
+            case .rounding:
+                Text("주자 \(event.runners.count)명").font(.caption.monospacedDigit()).foregroundStyle(GameTheme.boardInk)
+            case .confirmed:
+                Text("\(ownTeamFielding ? "상대 팀" : "우리 팀") \(event.runs)점 · 비거리 \(event.distance)m")
+                    .font(.caption.bold().monospacedDigit()).foregroundStyle(GameTheme.gold)
+                    .accessibilityIdentifier("homeRunCelebration")
+            }
+            if !typeSize.isAccessibilitySize {
+                HStack(alignment: .top, spacing: 4) {
+                    ForEach(HomeRunPresentation.Stage.allCases, id: \.rawValue) { step in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Rectangle().fill(step.rawValue <= stage.rawValue ? GameTheme.gold : GameTheme.boardLine)
+                                .frame(height: 2)
+                            Text(step.title).font(.caption2.weight(step == stage ? .bold : .regular))
+                                .foregroundStyle(step == stage ? GameTheme.gold : GameTheme.boardMuted)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }.accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GameTheme.boardPanel)
     }
     #if DEBUG
     private func legacyFrame(geometry:GeometryProxy,now:Double,time:Double,finished:Bool) -> some View {
@@ -2192,11 +2319,11 @@ struct HomeRunReplayBoard:View {
                             PixelBaseball.draw(in:context,at:p,diameter:diameter)
                         }
                         if finished {
-                            let banner=CGRect(x:size.width*0.08,y:size.height*0.24,width:size.width*0.84,height:size.height*0.12)
+                            let banner = HomeRunPresentation.resultFrame(size: size)
                             context.fill(Path(banner),with:.color(GameTheme.navy.opacity(0.97)))
-                            context.stroke(Path(banner),with:.color(GameTheme.gold),lineWidth:3)
-                            context.draw(Text("HOME RUN · \(event.distance)m").font(.system(size:max(16,size.width*0.052),weight:.black,design:.monospaced)).foregroundStyle(GameTheme.gold),at:CGPoint(x:banner.midX,y:banner.minY+banner.height*0.36))
-                            context.draw(Text("\(event.runs)점 · \(ownTeamFielding ? "상대 팀":"우리 팀") 홈 도착").font(.system(size:max(12,size.width*0.035),weight:.bold)).foregroundStyle(GameTheme.paper),at:CGPoint(x:banner.midX,y:banner.minY+banner.height*0.75))
+                            context.stroke(Path(banner),with:.color(GameTheme.gold),lineWidth:1)
+                            context.draw(Text(event.resultTitle).font(.system(size: max(16, min(22, size.width * 0.055)), weight: .bold, design: .monospaced)).foregroundStyle(GameTheme.gold),at:CGPoint(x:banner.midX,y:banner.minY+banner.height*0.36))
+                            context.draw(Text(event.resultDistance).font(.system(size:13,weight:.bold,design:.monospaced)).foregroundStyle(GameTheme.paper),at:CGPoint(x:banner.midX,y:banner.minY+banner.height*0.75))
                         }
                     }
     }
@@ -2326,7 +2453,7 @@ final class FieldCacheMetrics:NSObject,NSCacheDelegate,@unchecked Sendable {
     var phaseMoments:[Double] {
         switch self {
         case .field(let p):FieldReplayPhaseSchedule.moments(p)
-        case .homeRun(let h):[0,h.flight,h.duration]
+        case .homeRun(let h):[0, h.flight, min(h.duration, h.flight + HomeRunPresentation.fenceDuration), h.duration]
         }
     }
     func time(elapsed:Double,reduced:Bool) -> Double {
@@ -2396,6 +2523,7 @@ struct InplayStartupReadiness {
     private let ball=SKSpriteNode(texture:PixelBaseball.texture),ballShadow=SKShapeNode(ellipseOf:CGSize(width:6,height:2))
     private let trail=(0..<3).map {_ in SKSpriteNode(color:UIColor(GameTheme.paper).withAlphaComponent(0.4),size:CGSize(width:2,height:2))}
     private let result=SKNode()
+    private let hitSafe = SKNode()
     private let stadium:StadiumIdentity
     private var venueScoreboard:InplayStadiumArt.Scoreboard?
     private var stadiumDress:StadiumSceneDress?
@@ -2466,10 +2594,12 @@ struct InplayStartupReadiness {
             addBackdrop(upper.texture,frame:InplayStadiumArt.upperFrame(venue,in:size),depth:-999,name:venue.imageName)
             venueScoreboard=InplayStadiumArt.scoreboard(venue,in:size)
         }
-        let dress=StadiumSceneDress(stadium:stadium,size:size,camera:.field,hasVenueBackdrop:venueScoreboard != nil);dress.zPosition = 10;content.addChild(dress);stadiumDress=dress
         let isHomeRun:Bool
         switch replay {case .field:isHomeRun=false;case .homeRun:isHomeRun=true}
         let scoreFrame=venueScoreboard?.frame ?? InplayStadiumArt.legacyScoreFrame(in:size,homeRun:isHomeRun)
+        let dress = StadiumSceneDress(stadium: stadium, size: size, camera: .field,
+                                      hasVenueBackdrop: venueScoreboard != nil, scoreboardFrame: scoreFrame)
+        dress.zPosition = 10;content.addChild(dress);stadiumDress=dress
         let board=SKShapeNode(rectOf:scoreFrame.size)
         board.name="inplay-scoreboard"
         board.position=convertPoint(CGPoint(x:scoreFrame.midX,y:scoreFrame.midY))
@@ -2499,6 +2629,7 @@ struct InplayStartupReadiness {
         ballShadow.fillColor=UIColor.black.withAlphaComponent(0.4);ballShadow.strokeColor = .clear;ballShadow.zPosition=1900;content.addChild(ballShadow)
         for node in trail {node.zPosition=1999;content.addChild(node)}
         ball.zPosition=2000;content.addChild(ball);configureResult();result.name="finalPlayResult";result.zPosition=3000;result.isHidden=true;content.addChild(result)
+        configureHitSafe()
     }
     required init?(coder:NSCoder) {fatalError("init(coder:) has not been implemented")}
     private func addBackdrop(_ texture:SKTexture,frame:CGRect,depth:CGFloat,name:String) {
@@ -2506,27 +2637,74 @@ struct InplayStartupReadiness {
         backdrop.name=name;backdrop.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY))
         backdrop.size=frame.size;backdrop.zPosition=depth;content.addChild(backdrop)
     }
+    private func configureHitSafe() {
+        guard case .field(let play) = replay, FieldReplayPresentation.confirmedHitLabel(play) != nil,
+              let batter = play.runners.first(where: { $0.from == 0 }), !batter.out,
+              (1...3).contains(batter.destination) else { return }
+        let layout = FieldReplayPresentation.hitSafeLayout(base: batter.destination, size: size)
+        let bag = SKShapeNode(ellipseOf: layout.bag.size)
+        bag.position = convertPoint(CGPoint(x: layout.bag.midX, y: layout.bag.midY))
+        bag.strokeColor = UIColor(GameTheme.growth)
+        bag.lineWidth = 1.5
+        hitSafe.addChild(bag)
+
+        let connector = CGMutablePath()
+        let first = batter.destination == 1
+        connector.move(to: convertPoint(CGPoint(x: first ? layout.badge.maxX - 5 : layout.badge.minX + 5,
+                                                y: layout.badge.maxY - 1)))
+        connector.addLine(to: convertPoint(CGPoint(x: first ? layout.bag.minX + 2 : layout.bag.maxX - 2,
+                                                    y: layout.bag.minY + 1)))
+        let leader = SKShapeNode(path: connector)
+        leader.strokeColor = UIColor(GameTheme.growth)
+        hitSafe.addChild(leader)
+
+        let panel = SKShapeNode(rectOf: layout.badge.size)
+        panel.position = convertPoint(CGPoint(x: layout.badge.midX, y: layout.badge.midY))
+        panel.fillColor = UIColor(GameTheme.boardPanel)
+        panel.strokeColor = UIColor(GameTheme.growth)
+        panel.zPosition = 1
+        let title = SKLabelNode(fontNamed: "AppleSDGothicNeo-Bold")
+        title.text = "세이프"
+        title.fontSize = 14
+        title.fontColor = UIColor(GameTheme.growth)
+        title.verticalAlignmentMode = .center
+        title.zPosition = 1
+        panel.addChild(title)
+        hitSafe.addChild(panel)
+        hitSafe.name = "hitSafeArrival"
+        hitSafe.zPosition = 2800
+        hitSafe.isHidden = true
+        content.addChild(hitSafe)
+    }
     private func configureResult() {
         let frame:CGRect,title:String,detail:String?,home:Bool
         switch replay {
         case .field(let p):
+            guard FieldReplayPresentation.confirmedHitLabel(p) == nil else { return }
             let doublePlay=p.secondThrow?.out == true
             detail=doublePlay ? "2루 아웃 → 1루 아웃" : FieldReplayPresentation.errorDetail(p,ownTeamFielding:sprites.ownTeamFielding ?? !p.ownBatter)
             frame=CGRect(x:size.width*(detail == nil ? 0.18:0.04),y:size.height*0.27,width:size.width*(detail == nil ? 0.64:0.92),height:detail == nil ? 32:78)
             title=doublePlay ? "DOUBLE PLAY · 병살" : FieldReplayPresentation.resultTitle(p);home=false
         case .homeRun(let h):
-            frame=CGRect(x:size.width*0.08,y:size.height*0.24,width:size.width*0.84,height:size.height*0.12)
-            title="HOME RUN · \(h.distance)m";detail="\(h.runs)점 · \(sprites.ownTeamFielding == true ? "상대 팀":"우리 팀") 홈 도착";home=true
+            frame = HomeRunPresentation.resultFrame(size: size)
+            title = h.resultTitle
+            detail = h.resultDistance
+            home = true
         }
-        let panel=SKShapeNode(rectOf:frame.size);panel.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));panel.fillColor=UIColor(Color(hex:stadium.panelColor));panel.strokeColor=UIColor(Color(hex:stadium.trimColor));panel.lineWidth=home ? 3:2;result.addChild(panel)
-        let label=SKLabelNode(fontNamed:"Menlo-Bold");label.text=title;label.fontSize=home ? max(16,size.width*0.052):18;label.fontColor=UIColor(home ? GameTheme.gold:GameTheme.paper);label.verticalAlignmentMode = .center
+        let panel=SKShapeNode(rectOf:frame.size);panel.position=convertPoint(CGPoint(x:frame.midX,y:frame.midY));panel.fillColor=UIColor(Color(hex:stadium.panelColor));panel.strokeColor=UIColor(home ? GameTheme.gold:Color(hex:stadium.trimColor));panel.lineWidth=home ? 1:2;result.addChild(panel)
+        let label=SKLabelNode(fontNamed:"Menlo-Bold");label.text=title;label.fontSize=home ? max(16,min(22,size.width*0.055)):18;label.fontColor=UIColor(home ? GameTheme.gold:GameTheme.paper);label.verticalAlignmentMode = .center
+        if home { label.name = "home-run-result-title" }
         label.position=convertPoint(CGPoint(x:frame.midX,y:detail == nil ? frame.midY:frame.minY+(home ? frame.height*0.36:16)));label.zPosition=1;result.addChild(label)
         if let detail {
-            let note=SKLabelNode(fontNamed:"Menlo-Bold");note.text=detail;note.fontSize=home ? max(12,size.width*0.035):12;note.fontColor=UIColor(GameTheme.paper);note.verticalAlignmentMode = .center;note.numberOfLines=0;note.preferredMaxLayoutWidth=frame.width-12
+            let note=SKLabelNode(fontNamed:"Menlo-Bold");note.text=detail;note.fontSize=home ? 13:12;note.fontColor=UIColor(GameTheme.paper);note.verticalAlignmentMode = .center;note.numberOfLines=0;note.preferredMaxLayoutWidth=frame.width-12
+            if home { note.name = "home-run-result-distance" }
             note.position=convertPoint(CGPoint(x:frame.midX,y:home ? frame.minY+frame.height*0.75:frame.minY+50));note.zPosition=1;result.addChild(note)
         }
     }
     func preload() async {
+        #if DEBUG
+        MatchRenderMetrics.mark("scenePreload.begin")
+        #endif
         for (key,image) in prepared.images {let texture=SKTexture(image:image);texture.filteringMode = .nearest;textures[key]=texture}
         let values=Array(textures.values)+content.children.compactMap {($0 as? SKSpriteNode)?.texture}
         #if DEBUG
@@ -2595,7 +2773,9 @@ struct InplayStartupReadiness {
         switch replay {
         case .field(let play):
             let targetBase=time >= (play.secondThrow?.releaseAt ?? .infinity) ? 1:play.targetBase
-            target.isHidden=time<play.pickupAt || play.releaseAt<=play.pickupAt
+            let safeBase = FieldReplayPresentation.hitSafeBase(play, time: time, finished: finished)
+            hitSafe.isHidden = safeBase == nil
+            target.isHidden=time<play.pickupAt || play.releaseAt<=play.pickupAt || safeBase == targetBase
             target.position=convertPoint(InplayFieldProjection.point(DetailedFieldRules.bases[targetBase],size:size))
             let ground=InplayFieldProjection.point(FieldNode.sample(play.ball,at:time),size:size)
             ballShadow.isHidden=false;ballShadow.position=convertPoint(ground)
@@ -2605,19 +2785,19 @@ struct InplayStartupReadiness {
             target.isHidden=true;ballShadow.isHidden=true
             let diameter=max(6,size.width*0.016);ball.size=CGSize(width:diameter,height:diameter)
             ballVisible=time<=event.flight;trailEnd=event.flight
-            if time>=event.flight {stadiumDress?.celebrate(.homeRun,reduced:effectsReduced)}
+            if time >= event.flight || finished {
+                stadiumDress?.celebrate(.homeRun, reduced: effectsReduced || previewTime != nil,
+                                        homeRunStyle: event.celebrationKind)
+            }
         }
         ball.isHidden = !ballVisible;ball.position=convertPoint(replay.ballPoint(time:time,size:size,leftIndex:leftIndex))
         for (index,node) in trail.enumerated() {
             node.isHidden=effectsReduced || time>=trailEnd
             let p=replay.ballPoint(time:max(0,time-Double(index+1)*0.04),size:size,leftIndex:leftIndex);node.position=convertPoint(CGPoint(x:p.x+1,y:p.y+1))
         }
-        result.isHidden = !finished
-        if finished {
-            switch replay {
-            case .homeRun:stadiumDress?.celebrate(.homeRun,reduced:effectsReduced)
-            case .field(let p):if p.secondThrow?.out == true {stadiumDress?.celebrate(.doublePlay,reduced:effectsReduced)}
-            }
+        result.isHidden = !finished || result.children.isEmpty
+        if finished, case .field(let play) = replay, play.secondThrow?.out == true {
+            stadiumDress?.celebrate(.doublePlay, reduced: effectsReduced)
         }
     }
     private func updateActors(_ samples:[FieldReplaySprites.Actor]) {
@@ -2665,6 +2845,7 @@ struct InplayStartupReadiness {
     var ballPosition:CGPoint {ball.position}
     var ballVisible:Bool {!ball.isHidden}
     var resultVisible:Bool {!result.isHidden}
+    var hitSafeVisible: Bool { hitSafe.parent != nil && !hitSafe.isHidden }
     var effectsVisible:Bool {trail.contains {!$0.isHidden} || actors.contains {$0.dust.contains {!$0.isHidden}}}
     var targetPosition:CGPoint {target.position}
     var contactPointCount:Int {actors.filter {!$0.contact.isHidden}.count}

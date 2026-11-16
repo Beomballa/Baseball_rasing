@@ -329,7 +329,8 @@ struct CareerMatch: Codable, Equatable {
             let speeds=DetailedFieldRules.names.indices.map {index in index == ownIndex ? fieldStats?.speed ?? 60:npcDefenders?[index].speed ?? 60}
             let event=MatchHomeRun(half:half,order:half%2 == 1 ? homeOrder:awayOrder,seed:random,
                 power:batter ? power:npcPower,quality:battingQuality ?? 0.65,directionOffset:offsetX,
-                before:before,batter:newRunner,defenderSpeeds:speeds,ownDefender:ownIndex)
+                before:before,batter:newRunner,defenderSpeeds:speeds,ownDefender:ownIndex,
+                scoreBefore: .init(home: homeScore, away: awayScore))
             if homeRuns == nil {homeRuns=[]};homeRuns?.append(event)
         }
         if let version=detailedFieldVersion,[1,2,3,4,5].contains(version), ["안타","범타"].contains(initial) {
@@ -664,6 +665,24 @@ struct MatchAbilityExperience: Codable, Equatable {
 
 /// Frozen display inputs for an already-decided home run. Does not consume match RNG or award runs.
 struct MatchHomeRun:Codable,Equatable {
+    enum CelebrationKind: Equatable {
+        case standard, grandSlam, goAhead, walkOff
+
+        var title: String? {
+            switch self {
+            case .standard: nil
+            case .grandSlam: "GRAND SLAM"
+            case .goAhead: "GO-AHEAD HOME RUN"
+            case .walkOff: "WALK-OFF HOME RUN"
+            }
+        }
+    }
+
+    struct ScoreBefore: Codable, Equatable {
+        let home: Int
+        let away: Int
+    }
+
     var version=1
     let half:Int
     let order:Int
@@ -675,6 +694,8 @@ struct MatchHomeRun:Codable,Equatable {
     let batter:FieldRunnerProfile
     let defenderSpeeds:[Double]
     var ownDefender:Int? = nil
+    // Older home-run records contain the runners but do not carry the score at contact.
+    var scoreBefore: ScoreBefore? = nil
     var eventID:String {"hr-v1/\(half)/\(order)"}
     private var variation:Double {Double(MatchNPCFielders.hash("hr-v1/\(seed)/\(half)/\(order)")%1001)/1000}
     var direction:Double {max(-25,min(25,(variation-0.5)*40+directionOffset*18))}
@@ -683,6 +704,31 @@ struct MatchHomeRun:Codable,Equatable {
     var flight:Double {3.8+Double(distance-110)*0.025}
     var duration:Double {max(flight,runners.map(\.arrival).max() ?? 0)}
     var runs:Int {before.compactMap {$0}.count+1}
+    private var battingDeficit: Int? {
+        guard let scoreBefore, scoreBefore.home >= 0, scoreBefore.away >= 0 else { return nil }
+        return half.isMultiple(of: 2) ? scoreBefore.home - scoreBefore.away : scoreBefore.away - scoreBefore.home
+    }
+    var isWalkOff: Bool {
+        guard half == 17, let deficit = battingDeficit else { return false }
+        return deficit >= 0 && runs > deficit
+    }
+    var isGoAhead: Bool {
+        guard let deficit = battingDeficit else { return false }
+        return deficit > 0 && runs > deficit
+    }
+    var celebrationKind: CelebrationKind {
+        if isWalkOff { return .walkOff }
+        if isGoAhead { return .goAhead }
+        return runs == 4 ? .grandSlam : .standard
+    }
+    var resultTitle: String {
+        switch runs {
+        case 1: "SOLO HOME RUN"
+        case 4: "GRAND SLAM"
+        default: "\(runs)-RUN HOME RUN"
+        }
+    }
+    var resultDistance: String { "DISTANCE \(distance) m" }
     var runners:[DetailedRunner] {
         ([0]+(1...3).filter {before[$0-1] != nil}).map {from in
             let profile=from == 0 ? batter:before[from-1]!
@@ -708,6 +754,7 @@ struct MatchHomeRun:Codable,Equatable {
         guard version == 1,(0...17).contains(half),(0...100_000).contains(order),
               [power,quality,directionOffset].allSatisfy(\.isFinite),(0...100).contains(power),(0...1).contains(quality),(-1...1).contains(directionOffset),
               before.count == 3,ownDefender.map({(0..<9).contains($0)}) ?? true,defenderSpeeds.count == 9,defenderSpeeds.allSatisfy({$0.isFinite && (0...100).contains($0)}),
+              scoreBefore.map({$0.home >= 0 && $0.away >= 0}) ?? true,
               ([batter]+before.compactMap {$0}).allSatisfy({$0.speed.isFinite && (0...100).contains($0.speed) && TraitLoadout.valid($0.traits)}) else {throw MatchError.invalidRecord}
     }
 }

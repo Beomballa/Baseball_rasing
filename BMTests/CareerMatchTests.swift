@@ -871,6 +871,178 @@ import AVFoundation
         }
     }
 
+    func testWalkOffGrandSlamFromActualPitchSavesBothDecisiveConditions() throws {
+        var match = try pitchThatAllowsHomeRun(half: 17, home: 1, away: 2, runners: 3)
+        let homeRun = try XCTUnwrap(match.homeRuns?.first)
+        XCTAssertFalse(homeRun.batter.own)
+        XCTAssertEqual(homeRun.scoreBefore, .init(home: 1, away: 2))
+        XCTAssertEqual(homeRun.runs, 4)
+        XCTAssertTrue(homeRun.isWalkOff)
+        XCTAssertTrue(homeRun.isGoAhead)
+        XCTAssertEqual(homeRun.celebrationKind, .walkOff)
+        XCTAssertEqual(homeRun.celebrationKind.title, "WALK-OFF HOME RUN")
+        XCTAssertEqual(homeRun.resultTitle, "GRAND SLAM")
+        XCTAssertEqual(match.teamScore, 2)
+        XCTAssertEqual(match.opponentScore, 5)
+        XCTAssertEqual(match.line.runsAllowed, 4)
+        XCTAssertTrue(match.completed)
+        try match.validateHomeRuns()
+
+        let data = try JSONEncoder().encode(match)
+        let restored = try JSONDecoder().decode(CareerMatch.self, from: data)
+        let row = try XCTUnwrap(MatchHighlights(match: restored).rows(for: .homeRun).first)
+        XCTAssertEqual(row.play, .homeRun(homeRun))
+        XCTAssertEqual(row.title, "GRAND SLAM")
+        XCTAssertEqual(row.detail, "홈팀 · \(homeRun.distance)m")
+        XCTAssertEqual(row.tags, ["홈런", "끝내기", "역전"])
+        XCTAssertThrowsError(try match.advance(.pitch, pitchCode: "four-seam"))
+        XCTAssertEqual(match, restored)
+    }
+
+    func testHomeRunCelebrationUsesLeadChangeAndBattingSide() throws {
+        let scenarios: [(half: Int, home: Int, away: Int, runners: Int, kind: MatchHomeRun.CelebrationKind, ends: Bool)] = [
+            (17, 2, 2, 0, .walkOff, true),
+            (17, 1, 2, 0, .standard, false),
+            (16, 1, 0, 1, .goAhead, false),
+            (3, 0, 1, 3, .goAhead, false),
+            (3, 2, 1, 3, .grandSlam, false),
+            (3, 1, 1, 0, .standard, false),
+        ]
+        for scenario in scenarios {
+            let match = try pitchThatAllowsHomeRun(half: scenario.half, home: scenario.home, away: scenario.away, runners: scenario.runners)
+            let homeRun = try XCTUnwrap(match.homeRuns?.first)
+            XCTAssertEqual(homeRun.celebrationKind, scenario.kind)
+            XCTAssertEqual(match.completed, scenario.ends)
+            XCTAssertEqual(match.opponentScore, (scenario.half.isMultiple(of: 2) ? scenario.away : scenario.home) + homeRun.runs)
+        }
+    }
+
+    func testLegacyHomeRunDecodesWithoutScoreAndRetainsGrandSlamPresentation() throws {
+        let match = try pitchThatAllowsHomeRun(half: 17, home: 1, away: 2, runners: 3)
+        let homeRun = try XCTUnwrap(match.homeRuns?.first)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(homeRun)) as? [String: Any])
+        XCTAssertNotNil(legacy.removeValue(forKey: "scoreBefore"))
+        let restored = try JSONDecoder().decode(MatchHomeRun.self, from: JSONSerialization.data(withJSONObject: legacy))
+        try restored.validate()
+        XCTAssertNil(restored.scoreBefore)
+        XCTAssertEqual(restored.celebrationKind, .grandSlam)
+        XCTAssertEqual(restored.resultTitle, homeRun.resultTitle)
+        XCTAssertEqual(restored.resultDistance, homeRun.resultDistance)
+    }
+
+    private func pitchThatAllowsHomeRun(half: Int, home: Int, away: Int, runners: Int) throws -> CareerMatch {
+        // This saved RNG seed produces contact and a home run on a centered pitch.
+        var match = CareerMatch(random: 128, isHome: half.isMultiple(of: 2), role: "pitcher", appearance: true,
+                                contact: 60, power: 60, discipline: 60, mastery: ["four-seam": 60])
+        match.half = half
+        match.homeScore = home
+        match.awayScore = away
+        match.bases = (0..<3).map { $0 < runners }
+        try match.advance(.pitch, pitchCode: "four-seam", control: .init(release: ManualMatchRules.releaseCenter,
+                                                                        pitchTarget: .init(x: 0.5, y: 0.5)))
+        XCTAssertEqual(match.lastManual?.outcome, "홈런")
+        return match
+    }
+
+    func testV178HighlightsMergeNumericTimelineWithoutDuplicatePlateAppearances() throws {
+        let ownBatter = FieldRunnerProfile(speed: 60, own: true)
+        let runner = FieldRunnerProfile(speed: 60)
+        let solo = MatchHomeRun(half: 2, order: 10, seed: 91, power: 70, quality: 0.8,
+                                directionOffset: 0, before: [nil, nil, nil], batter: runner,
+                                defenderSpeeds: Array(repeating: 60, count: 9))
+        let grandSlam = MatchHomeRun(half: 3, order: 11, seed: 21, power: 70, quality: 0.8,
+                                     directionOffset: 0, before: [runner, runner, runner], batter: ownBatter,
+                                     defenderSpeeds: Array(repeating: 60, count: 9))
+        let early = highlightGroundBall(half: 2, order: 2)
+        let tiedPlate = highlightGroundBall(half: 2, order: 10)
+        let late = highlightGroundBall(half: 10, order: 16)
+        var match = highlightMatch()
+        match.homeRuns = [grandSlam, solo, solo]
+        match.fieldPlays = [late, tiedPlate, early, early]
+        let before = match
+
+        let highlights = MatchHighlights(match: match, homeName: "서울북악고", awayName: "성남문현고")
+        XCTAssertEqual(highlights.rows.map(\.id), ["2:2", "2:10", "3:11", "10:16"])
+        XCTAssertEqual(highlights.rows.map(\.inningLabel), ["2회 초", "2회 초", "2회 말", "6회 초"])
+        XCTAssertEqual(highlights.rows(for: .all), highlights.rows)
+        XCTAssertEqual(highlights.rows(for: .homeRun).map(\.play), [.homeRun(solo), .homeRun(grandSlam)])
+        XCTAssertEqual(highlights.rows(for: .field).map(\.play), [.field(early), .field(late)])
+        XCTAssertEqual(highlights.homeRunCount, 2)
+        XCTAssertEqual(highlights.fieldCount, 2)
+        let homeRuns = highlights.rows(for: .homeRun)
+        XCTAssertEqual(homeRuns[0].detail, "성남문현고 · \(solo.distance)m")
+        XCTAssertEqual(homeRuns[1].detail, "서울북악고 · \(grandSlam.distance)m")
+        XCTAssertEqual(homeRuns[0].title, "SOLO HOME RUN")
+        XCTAssertEqual(homeRuns[1].title, "GRAND SLAM")
+        XCTAssertEqual(homeRuns[1].tags, ["홈런", "내 타석"])
+        XCTAssertEqual(match, before)
+    }
+
+    func testV178HighlightsKeepOneFieldRowWithRecordedOutcomeAndTags() throws {
+        let failed = highlightGroundBall(half: 3, order: 9, batterSpeed: 100)
+        let succeeded = highlightGroundBall(half: 3, order: 10, batterSpeed: 0)
+        XCTAssertFalse(try XCTUnwrap(failed.secondThrow).out)
+        XCTAssertTrue(try XCTUnwrap(succeeded.secondThrow).out)
+        let relayStats = MatchFieldStats(version: 3, speed: 60, defense: 60, arm: 60,
+                                         position: "2B", activeTraits: [], positionMastery: 100)
+        let fly = DetailedFieldRules.resolveFly(
+            half: 8, order: 22, landing: FieldPoint(x: 0, y: 100), flight: 7,
+            runners: [nil, nil, FieldRunnerProfile(speed: 100)], batter: FieldRunnerProfile(speed: 60),
+            outs: 0, stats: relayStats, defending: true, ownBatter: false, relayEnabled: true
+        )
+        XCTAssertNotNil(fly.relay)
+        var draws = Array(repeating: 0.999999, count: 7)
+        draws[0] = 0
+        let clean = highlightGroundBall(half: 7, order: 19)
+        let error = FieldMisplayRules.applying(to: clean, stats: relayStats, defending: true, draws: draws)
+        XCTAssertNotNil(error.misplay)
+        var match = highlightMatch()
+        match.fieldPlays = [fly, failed, succeeded, error]
+
+        let highlights = MatchHighlights(match: match)
+        XCTAssertEqual(highlights.rows.count, 4)
+        let miss = try XCTUnwrap(highlights.rows.first)
+        XCTAssertEqual(miss.title, "병살 무산")
+        XCTAssertTrue(miss.tags.contains("병살 시도"))
+        XCTAssertEqual(miss.detail, "2루 아웃 → 1루 세이프 · 아웃 1개")
+        let success = highlights.rows[1]
+        XCTAssertEqual(success.title, "병살 성공")
+        XCTAssertEqual(success.detail, "2루 아웃 → 1루 아웃 · 아웃 2개")
+        XCTAssertTrue(highlights.rows[2].tags.contains("실책"))
+        let tagUp = try XCTUnwrap(highlights.rows.last)
+        XCTAssertEqual(tagUp.title, "뜬공 포구 · 태그업")
+        XCTAssertTrue(Set(["뜬공", "중계 송구", "태그업"]).isSubset(of: Set(tagUp.tags)))
+        XCTAssertEqual(tagUp.play, .field(fly))
+    }
+
+    func testV178HighlightsDoNotInventClipsForLegacyOrUnfinishedGames() {
+        var match = highlightMatch()
+        XCTAssertTrue(MatchHighlights(match: match).rows.isEmpty)
+        match.homeRuns = []
+        match.fieldPlays = []
+        XCTAssertTrue(MatchHighlights(match: match).rows.isEmpty)
+        match.completed = false
+        match.fieldPlays = [highlightGroundBall(half: 1, order: 1)]
+        XCTAssertTrue(MatchHighlights(match: match).rows.isEmpty)
+    }
+
+    private func highlightMatch() -> CareerMatch {
+        var match = CareerMatch(random: 42, isHome: true, role: "batter", appearance: true,
+                                contact: 60, power: 60, discipline: 60, mastery: [:])
+        match.completed = true
+        return match
+    }
+
+    private func highlightGroundBall(half: Int, order: Int, batterSpeed: Double = 60) -> MatchDetailedPlay {
+        DetailedFieldRules.resolve(
+            half: half, order: order, landing: FieldPoint(x: -14, y: 35), flight: 1,
+            runners: [FieldRunnerProfile(speed: 60), nil, nil], batter: FieldRunnerProfile(speed: batterSpeed),
+            outs: 0, stats: MatchFieldStats(version: 3, speed: 60, defense: 60, arm: 60,
+                                            position: "SS", activeTraits: [], positionMastery: 60),
+            defending: true, ownBatter: false, doublePlayEnabled: true, groundBall: true
+        )
+    }
+
 }
 
 extension CareerMatchTests {

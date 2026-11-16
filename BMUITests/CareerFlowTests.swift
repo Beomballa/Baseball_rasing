@@ -2897,6 +2897,190 @@ extension CareerFlowTests {
             app.terminate()
         }
     }
+    @MainActor func testV191SavedFieldHighlightReturnsToUnchangedResult() throws {
+        continueAfterFailure = false
+        let app = try launchIsolatedCareerQA(pitcher: false)
+        defer { app.terminate() }
+
+        let automatic = app.buttons["gameAutomatic"]
+        XCTAssertTrue(automatic.waitForExistence(timeout: 30))
+        automatic.tap()
+        app.buttons["진행하고 결과 저장"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "gameResultSaved").firstMatch.waitForExistence(timeout: 60))
+        let score = app.staticTexts["gameFinalScore"].label
+        let fatigue = app.staticTexts["gameResultFatigue"].label
+
+        let highlights = app.buttons["openMatchHighlights"]
+        reveal(highlights, in: app)
+        highlights.tap()
+        let field = app.buttons["matchHighlightsFilter-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 8))
+        field.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "matchHighlight-")).firstMatch
+        reveal(row, in: app)
+        let rowLabel = row.label
+        let rowID = row.identifier
+        row.tap()
+        XCTAssertTrue(app.otherElements["fieldReplayCanvas"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["matchHighlightReplayFinished"].waitForExistence(timeout: 35))
+        app.buttons["closeMatchHighlightReplay"].tap()
+        XCTAssertTrue(field.isSelected)
+        XCTAssertEqual(app.buttons[rowID].label, rowLabel)
+        XCTAssertTrue(app.buttons[rowID].isHittable)
+        app.buttons["closeMatchHighlights"].tap()
+        XCTAssertEqual(app.staticTexts["gameFinalScore"].label, score)
+        XCTAssertEqual(app.staticTexts["gameResultFatigue"].label, fatigue)
+    }
+
+    @MainActor func testV191OpponentWalkOffHomeRunPublishesLossAfterHomeArrival() throws {
+        try verifyOpponentHomeRun("walk-off", title: "WALK-OFF HOME RUN", runs: 2)
+    }
+
+    @MainActor func testV191OpponentGoAheadHomeRunReplaysSpecialPresentation() throws {
+        try verifyOpponentHomeRun("go-ahead", title: "GO-AHEAD HOME RUN", runs: 3)
+    }
+
+    @MainActor func testV191OpponentGrandSlamReplaysSpecialPresentation() throws {
+        try verifyOpponentHomeRun("grand-slam", title: "GRAND SLAM", runs: 4)
+    }
+
+    @MainActor private func launchIsolatedCareerQA(pitcher: Bool, arguments: [String] = []) throws -> XCUIApplication {
+        guard Bundle(for: CareerFlowTests.self).bundleIdentifier == "dev.bm.career.performanceqa.bmuitests" else {
+            throw XCTSkip("Requires the BM-QA scheme and its isolated app bundle.")
+        }
+        let app = XCUIApplication()
+        let base = ["-live-career-autoplay", "-qa-session", UUID().uuidString, "-bm.fieldPlaybackMode.v1", "system"]
+        app.launchArguments = base + (pitcher ? ["-qa-pitcher"] : []) + arguments
+        app.launch()
+        return app
+    }
+
+    @MainActor private func verifyOpponentHomeRun(_ scenario: String, title: String, runs: Int) throws {
+        continueAfterFailure = false
+        let app = try launchIsolatedCareerQA(pitcher: true, arguments: ["-qa-v191-opponent-homer", scenario])
+        defer { app.terminate() }
+
+        func element(_ identifier: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        }
+
+        func scores(_ board: XCUIElement) throws -> [Int] {
+            let label = board.descendants(matching: .any).matching(identifier: "careerGameScore").firstMatch.label
+            let pattern = try NSRegularExpression(pattern: #"득점 (\d+), 안타"#)
+            let values = pattern.matches(in: label, range: NSRange(label.startIndex..., in: label)).compactMap { match in
+                Range(match.range(at: 1), in: label).flatMap { Int(label[$0]) }
+            }
+            XCTAssertEqual(values.count, 2, label)
+            return values
+        }
+
+        func capture(_ label: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "V191 \(scenario) \(label)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        func watchHomeRun(_ label: String, prePitchScores: [Int]? = nil) throws -> String {
+            let canvas = element("homeRunCanvas")
+            let phase = app.staticTexts["homeRunPhase"]
+            let team = app.staticTexts["homeRunScoringTeam"]
+            let receipt = app.staticTexts["homeRunCelebration"]
+            XCTAssertTrue(canvas.waitForExistence(timeout: 15), label)
+            let rounding = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "주자 일주"), object: phase)
+            XCTAssertEqual(XCTWaiter.wait(for: [rounding], timeout: 14), .completed, label)
+            XCTAssertEqual(team.label, "상대 팀 홈런", label)
+            XCTAssertFalse(receipt.exists, label)
+            XCTAssertNotEqual(canvas.value as? String, "홈 도착 완료", label)
+            if let prePitchScores {
+                XCTAssertEqual(try scores(element("inplayScoreboard")), prePitchScores)
+                if scenario == "walk-off" {
+                    XCTAssertFalse(element("gameResultSaved").exists)
+                    XCTAssertFalse(element("careerGameFinished").exists)
+                }
+            }
+            capture("\(label) rounding")
+            XCTAssertTrue(receipt.waitForExistence(timeout: 20), label)
+            XCTAssertEqual(phase.label, "득점 확정", label)
+            XCTAssertTrue(canvas.label.contains(title), canvas.label)
+            XCTAssertEqual(canvas.value as? String, "홈 도착 완료", label)
+            XCTAssertEqual(team.label, "상대 팀 득점 · \(runs)점", label)
+            XCTAssertTrue(receipt.label.hasPrefix("상대 팀 \(runs)점"), receipt.label)
+            XCTAssertTrue(receipt.label.contains("비거리"), receipt.label)
+            capture("\(label) confirmed")
+            return receipt.label
+        }
+
+        let field = element("careerMatchField")
+        XCTAssertTrue(field.waitForExistence(timeout: 90), app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " / "))
+        let board = element("matchScoreboard")
+        let inning = board.staticTexts["careerGameInning"].label
+        if scenario == "walk-off" { XCTAssertEqual(inning, "9회 말") }
+        let bases = board.descendants(matching: .any).matching(NSPredicate(format: "label MATCHES %@", "주자 [123](,[123])*루")).firstMatch
+        XCTAssertTrue(bases.exists)
+        XCTAssertEqual(bases.label.filter { "123".contains($0) }.count, runs - 1)
+        let before = try scores(board)
+        if scenario == "go-ahead" { XCTAssertGreaterThan(before[0], before[1]) }
+        let expectedScores = [before[0], before[1] + runs]
+
+        let pitch = app.buttons["gamePitch"]
+        waitForEnabled(pitch, timeout: 10)
+        pitch.tap()
+        Thread.sleep(forTimeInterval: 0.8)
+        let release = app.buttons["gameRelease"]
+        XCTAssertTrue(release.exists)
+        release.tap()
+        let live = try watchHomeRun("live", prePitchScores: before)
+        XCTAssertEqual(try scores(element("inplayScoreboard")), expectedScores)
+
+        let stage = element("homeRunStage")
+        let finishedLive = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: stage)
+        XCTAssertEqual(XCTWaiter.wait(for: [finishedLive], timeout: 15), .completed)
+        if scenario != "walk-off" {
+            app.buttons["gameAutomatic"].tap()
+            app.buttons["진행하고 결과 저장"].tap()
+        }
+        XCTAssertTrue(element("gameResultSaved").waitForExistence(timeout: 60))
+        if scenario == "walk-off" {
+            XCTAssertEqual(element("careerGameFinished").label, "패배")
+            XCTAssertEqual(element("gameFinalScore").label, "내 팀 \(expectedScores[0]) : \(expectedScores[1]) 상대")
+        }
+        let resultIDs = ["gameFinalScore", "careerGameFinished", "gameResultFatigue", "gameResult-pitches", "gameResult-runsAllowed"]
+        let result = resultIDs.map { element($0).label }
+        capture("result")
+
+        let highlights = app.buttons["openMatchHighlights"]
+        reveal(highlights, in: app)
+        highlights.tap()
+        let filter = app.buttons["matchHighlightsFilter-homeRun"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 8))
+        filter.tap()
+        let distance = try XCTUnwrap(live.components(separatedBy: "비거리 ").last)
+        let runTitle = runs == 4 ? "GRAND SLAM" : "\(runs)-RUN HOME RUN"
+        let matching = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@ AND label CONTAINS %@ AND label CONTAINS %@ AND NOT (label CONTAINS %@)",
+                                                        "matchHighlight-", inning, distance, runTitle, "내 타석"))
+        let row = matching.firstMatch
+        reveal(row, in: app)
+        XCTAssertTrue(row.exists)
+        XCTAssertEqual(matching.count, 1)
+        row.tap()
+        XCTAssertTrue(element("matchHighlightReplay").waitForExistence(timeout: 10))
+        XCTAssertEqual(try watchHomeRun("replay"), live)
+        XCTAssertTrue(app.staticTexts["matchHighlightReplayFinished"].waitForExistence(timeout: 15))
+        app.buttons["closeMatchHighlightReplay"].tap()
+        XCTAssertTrue(row.exists && filter.isSelected)
+        app.buttons["closeMatchHighlights"].tap()
+        XCTAssertEqual(resultIDs.map { element($0).label }, result)
+
+        if scenario == "walk-off" {
+            app.terminate()
+            app.launch()
+            XCTAssertTrue(element("gameResultSaved").waitForExistence(timeout: 15))
+            XCTAssertEqual(resultIDs.map { element($0).label }, result)
+            XCTAssertFalse(pitch.exists)
+        }
+    }
+
     @MainActor func testHomeRunFlightBasesAndCelebrationBothRolesWithoutCareerStore() throws {
         let app=XCUIApplication();app.launchArguments=["-home-run-verification"];app.launch()
         for pitcher in [false,true] {

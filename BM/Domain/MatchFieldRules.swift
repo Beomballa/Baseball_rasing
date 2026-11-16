@@ -1101,3 +1101,153 @@ extension MatchNPCPitcher {
         return stats.homeRunChance(quality:(profile.mastery[code] ?? 60)/100*execution(pressure:pressure))-baseline.homeRunChance(quality:0.6)
     }
 }
+
+// MARK: - Match highlights
+
+struct MatchHighlights {
+    enum Filter: String, CaseIterable, Identifiable {
+        case all, homeRun, field
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .all: "전체"
+            case .homeRun: "홈런"
+            case .field: "수비·주루"
+            }
+        }
+    }
+
+    enum Play: Equatable {
+        case homeRun(MatchHomeRun)
+        case field(MatchDetailedPlay)
+
+        var filter: Filter {
+            switch self {
+            case .homeRun: .homeRun
+            case .field: .field
+            }
+        }
+    }
+
+    struct Row: Identifiable, Equatable {
+        let half: Int
+        let order: Int
+        let title: String
+        let detail: String
+        let tags: [String]
+        let play: Play
+
+        var id: String { "\(half):\(order)" }
+        var inningLabel: String { "\(half / 2 + 1)회 \(half.isMultiple(of: 2) ? "초" : "말")" }
+    }
+
+    private struct Plate: Hashable {
+        let half: Int
+        let order: Int
+    }
+
+    let rows: [Row]
+    let homeRunCount: Int
+    var fieldCount: Int { rows.count - homeRunCount }
+
+    init(match: CareerMatch, homeName: String = "홈팀", awayName: String = "원정팀") {
+        guard match.completed else {
+            rows = []
+            homeRunCount = 0
+            return
+        }
+        var byPlate: [Plate: Row] = [:]
+        // The match engine records one play per plate. In a conflicting record,
+        // show the stored home run in the merged timeline.
+        for event in match.homeRuns ?? [] {
+            let key = Plate(half: event.half, order: event.order)
+            guard byPlate[key] == nil else { continue }
+            let team = event.half.isMultiple(of: 2) ? awayName : homeName
+            var tags = ["홈런"]
+            if event.isWalkOff { tags.append("끝내기") }
+            if event.isGoAhead { tags.append("역전") }
+            if event.batter.own { tags.append("내 타석") }
+            byPlate[key] = Row(
+                half: event.half, order: event.order,
+                title: event.resultTitle,
+                detail: "\(team) · \(event.distance)m",
+                tags: tags,
+                play: .homeRun(event)
+            )
+        }
+        homeRunCount = byPlate.count
+        for event in match.fieldPlays ?? [] {
+            let key = Plate(half: event.half, order: event.order)
+            guard byPlate[key] == nil else { continue }
+            byPlate[key] = Self.fieldRow(event)
+        }
+        rows = byPlate.values.sorted {
+            ($0.half, $0.order) < ($1.half, $1.order)
+        }
+    }
+
+    func rows(for filter: Filter) -> [Row] {
+        filter == .all ? rows : rows.filter { $0.play.filter == filter }
+    }
+
+    private static func fieldRow(_ event: MatchDetailedPlay) -> Row {
+        var tags = ["수비"]
+        if event.fly != nil { tags.append("뜬공") }
+        if event.relay != nil { tags.append("중계 송구") }
+
+        let title: String
+        var details: [String]
+        let target = event.targetBase == 4 ? "홈" : "\(event.targetBase)루"
+        let fielder = positionLabel(event.fielder)
+        if let secondThrow = event.secondThrow {
+            title = secondThrow.out ? "병살 성공" : "병살 무산"
+            tags += ["병살 시도", title]
+            details = [secondThrow.out ? "2루 아웃 → 1루 아웃" : "2루 아웃 → 1루 세이프"]
+        } else if let error = event.misplay {
+            title = error.kind == .fielding ? "포구 실책" : "악송구"
+            tags.append("실책")
+            details = [positionLabel(error.fielder)]
+            if error.reachedOnError { details.append("실책 출루") }
+            let bases = error.extraBases.values.reduce(0, +)
+            if bases > 0 { details.append("추가 진루 \(bases)베이스") }
+        } else if event.fly?.caught == true {
+            details = [fielder]
+            if let runner = event.targetRunner {
+                title = "뜬공 포구 · 태그업"
+                tags.append("태그업")
+                details.append("\(runner)루 → \(target) \(event.out ? "아웃" : "세이프")")
+            } else {
+                title = "뜬공 포구"
+            }
+        } else {
+            let result: String
+            switch event.hitBases {
+            case 2: result = "2루타"
+            case 1: result = "안타"
+            default:
+                if event.out && event.targetRunner == 0 {
+                    result = event.fly == nil ? "땅볼 아웃" : "타자 아웃"
+                } else {
+                    result = "야수 선택"
+                }
+            }
+            title = event.fly == nil ? result : "뜬공 낙하 · \(result)"
+            let action = event.targetRunner == nil ? "주자 진루 완료" : "\(target) \(event.out ? "아웃" : "송구")"
+            details = [fielder, action]
+        }
+        if event.outsAdded > 0 { details.append("아웃 \(event.outsAdded)개") }
+        if event.runs > 0 { details.append("\(event.runs)득점") }
+        if event.ownBatter { tags.append("내 타석") }
+        if event.ownParticipation { tags.append("내 수비") }
+
+        return Row(half: event.half, order: event.order, title: title,
+                   detail: details.joined(separator: " · "), tags: tags, play: .field(event))
+    }
+
+    private static func positionLabel(_ index: Int) -> String {
+        let code = DetailedFieldRules.names[index]
+        if code == "P" { return PlayerRole.pitcher.label }
+        return FieldPosition(rawValue: code)?.label ?? code
+    }
+}

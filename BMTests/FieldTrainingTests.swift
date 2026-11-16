@@ -1053,6 +1053,48 @@ import SpriteKit
         }
     }
 
+    func testHitPresentationLabelsTheResultAndMarksOnlyTheBattersDestinationAtArrival() throws {
+        for (scenario, base, label) in [(FieldVerificationScenario.single, 1, "안타"), (.doubleHit, 2, "2루타")] {
+            let play = try scenario.make(ownBatter: true)
+            let batter = try XCTUnwrap(play.runners.first { $0.from == 0 })
+            let arrival = try XCTUnwrap(batter.arrival(at: base))
+            let ruling = play.targetRunner == 0 ? max(arrival, play.decisionAt) : arrival
+            XCTAssertEqual(play.hitBases, base)
+            XCTAssertEqual(batter.destination, base)
+            XCTAssertFalse(batter.out)
+            XCTAssertEqual(FieldReplayPresentation.confirmedHitLabel(play), label)
+
+            if base == 2 {
+                let firstBaseArrival = try XCTUnwrap(batter.arrival(at: 1))
+                XCTAssertNil(FieldReplayPresentation.hitSafeBase(play, time: firstBaseArrival, finished: false))
+            }
+            XCTAssertNil(FieldReplayPresentation.hitSafeBase(play, time: arrival - 0.001, finished: false))
+            XCTAssertNil(FieldReplayPresentation.hitSafeBase(play, time: ruling - 0.001, finished: false))
+            XCTAssertEqual(FieldReplayPresentation.hitSafeBase(play, time: ruling, finished: false), base)
+            XCTAssertEqual(FieldReplayPresentation.hitSafeBase(play, time: ruling + 0.1, finished: false), base)
+            XCTAssertNil(FieldReplayPresentation.hitSafeBase(play, time: ruling + 1, finished: false))
+            XCTAssertNil(FieldReplayPresentation.hitSafeBase(play, time: play.duration, finished: true))
+        }
+    }
+
+    func testHitPresentationDoesNotTurnAnOutOrReachedOnErrorIntoAHit() throws {
+        let out = try FieldVerificationScenario.groundOut.make(ownBatter: true)
+        XCTAssertTrue(out.out)
+        let basesLoaded = Array(repeating: Optional(FieldRunnerProfile(speed: 60)), count: 3)
+        let reachedOnError = misplay(fly(before: basesLoaded), stage: 0, position: "CF")
+        XCTAssertEqual(reachedOnError.misplay?.reachedOnError, true)
+        let batter = try XCTUnwrap(reachedOnError.runners.first { $0.from == 0 })
+        XCTAssertFalse(batter.out)
+
+        for play in [out, reachedOnError] {
+            XCTAssertNil(FieldReplayPresentation.confirmedHitLabel(play))
+            for time in [play.controlAt, play.duration] {
+                XCTAssertNil(FieldReplayPresentation.hitSafeBase(play, time: time, finished: false))
+            }
+        }
+        XCTAssertNil(FieldReplayPresentation.hitSafeBase(reachedOnError, time: batter.arrival, finished: false))
+    }
+
     func testFieldPresentationSeparatesGroundAirPosesAndTeamKits() {
         let ground=doublePlay(),air=fly()
         XCTAssertLessThanOrEqual(FieldReplayPresentation.lift(ground,time:ground.flight/2,height:300),3)
@@ -2229,8 +2271,10 @@ import SpriteKit
                 XCTAssertEqual(FieldNode.sample(runner.nodes,at:event.duration),DetailedFieldRules.bases[4])
             }
             XCTAssertGreaterThan(event.duration,event.flight)
-            XCTAssertFalse(HomeRunPresentation.phase(event,time:event.flight,finished:false).contains("홈런"))
-            XCTAssertEqual(HomeRunPresentation.phase(event,time:event.duration,finished:true),"홈 도착 · 홈런")
+            XCTAssertEqual(HomeRunPresentation.stage(event, time: event.flight - 0.001, finished: false), .flight)
+            XCTAssertEqual(HomeRunPresentation.stage(event, time: event.flight, finished: false), .fence)
+            XCTAssertEqual(HomeRunPresentation.stage(event, time: event.flight + 1.101, finished: false), .rounding)
+            XCTAssertEqual(HomeRunPresentation.stage(event, time: event.duration, finished: true), .confirmed)
             for t in [0.0,event.flight,event.duration] {XCTAssertLessThanOrEqual(HomeRunPresentation.time(event,elapsed:t,reduced:true),t)}
         }
     }
@@ -2275,15 +2319,27 @@ import SpriteKit
     }
 
     func testHomeRunBoardResolvesOnceAfterLastRunnerAndPreviewNeverRewards() async throws {
-        let event=homeRunSample(before:[FieldRunnerProfile(speed:60),nil,nil]),window=UIWindow(frame:CGRect(x:0,y:0,width:390,height:700))
+        let event = homeRunSample(before: [FieldRunnerProfile(speed: 60), nil, nil])
+        let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previousWindow = windowScene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: windowScene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        let didResolve = expectation(description: "The last runner reached home")
+        let didComplete = expectation(description: "The confirmation finished presenting")
         var resolved=0,completed=0
         let now=ProcessInfo.processInfo.systemUptime
         let handoff=FieldContactHandoff(startedAt:now-event.duration+0.8,cutAt:now,sourcePoint:.zero)
-        window.rootViewController=UIHostingController(rootView:HomeRunReplayBoard(event:event,appearance:PlayerAppearance(),handoff:handoff,onResolved:{resolved+=1}) {completed+=1})
-        window.makeKeyAndVisible();defer {window.isHidden=true;window.rootViewController=nil}
+        window.rootViewController = UIHostingController(rootView: HomeRunReplayBoard(event: event,
+            appearance: PlayerAppearance(), handoff: handoff, onResolved: { resolved += 1; didResolve.fulfill() }) {
+                completed += 1; didComplete.fulfill()
+            })
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
         try await Task.sleep(for:.seconds(0.1));XCTAssertEqual(resolved,0);XCTAssertEqual(completed,0)
-        try await Task.sleep(for:.seconds(1));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,0)
-        try await Task.sleep(for:.seconds(2.2));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
+        await fulfillment(of: [didResolve], timeout: 8)
+        XCTAssertEqual(resolved, 1); XCTAssertEqual(completed, 0)
+        await fulfillment(of: [didComplete], timeout: 5)
+        XCTAssertEqual(resolved, 1); XCTAssertEqual(completed, 1)
         for time in [0.0,event.flight,event.duration] {
             window.rootViewController=UIHostingController(rootView:HomeRunReplayBoard(event:event,appearance:PlayerAppearance(),previewTime:time,onResolved:{resolved+=1}) {completed+=1})
             try await Task.sleep(for:.seconds(0.1));XCTAssertEqual(resolved,1);XCTAssertEqual(completed,1)
@@ -2587,7 +2643,7 @@ import SpriteKit
                     }
                     let ball=FieldBallPresentation.point(play,time:time,size:scene.size,leftIndex:pitcher ? 0:nil)
                     XCTAssertEqual(scene.ballPosition.x,ball.x,accuracy:0.0001);XCTAssertEqual(scene.ballPosition.y,scene.size.height-ball.y,accuracy:0.0001)
-                    XCTAssertEqual(scene.resultVisible,time>=play.duration)
+                    XCTAssertEqual(scene.resultVisible,time>=play.duration && FieldReplayPresentation.confirmedHitLabel(play) == nil)
                 }
                 }
                 scene.setReduced(false)
@@ -2600,6 +2656,24 @@ import SpriteKit
                 view.presentScene(nil)
             }
         }
+    }
+    func testNativeHitBadgeFollowsTheRulingAndSurvivesReducedEffects() throws {
+        let play = try FieldVerificationScenario.doubleHit.make(ownBatter: true)
+        let batter = try XCTUnwrap(play.runners.first { $0.from == 0 })
+        let arrival = try XCTUnwrap(batter.arrival(at: 2))
+        let ruling = play.targetRunner == 0 ? max(arrival, play.decisionAt) : arrival
+        let sprites = FieldReplaySprites(appearance: PlayerAppearance(), jerseyNumber: 1, ownPosition: "CF", throwingHand: "right", ownTeamFielding: false)
+        let scene = InplayFieldScene(play: play, sprites: sprites, prepared: FieldRasterArt.Prepared(images: [:]), scoreText: "H 0 : 0 A")
+
+        scene.display(time: ruling - 0.001, finished: false)
+        XCTAssertFalse(scene.hitSafeVisible)
+        scene.display(time: ruling, finished: false)
+        XCTAssertTrue(scene.hitSafeVisible)
+        scene.setEffectsReduced(true)
+        XCTAssertTrue(scene.hitSafeVisible)
+        scene.setFinished(true)
+        XCTAssertFalse(scene.hitSafeVisible)
+        XCTAssertFalse(scene.resultVisible)
     }
     func testHomeRunBothRolesRetainSavedGeometryAndEffectsDoNotFreezeActors() async throws {
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
@@ -2770,6 +2844,172 @@ import SpriteKit
 }
 
 extension FieldTrainingTests {
+    func testV189HomeRunBannerAndFireworksClearEveryRegisteredScoreboard() throws {
+        let size = InplayFieldScene.fieldSize
+        let schoolIDs = try SchoolCatalog.load().map(\.id)
+        let clubIDs = ClubIdentity.all.map(\.id)
+        XCTAssertEqual(schoolIDs.count, 50)
+        XCTAssertEqual(clubIDs.count, 40)
+        let venueBoards = try (schoolIDs + clubIDs).map { id in
+            let backdrop = try XCTUnwrap(StadiumIdentity(homeTeamID: id).backdrop, id)
+            return (id, InplayStadiumArt.scoreboard(backdrop, in: size).frame)
+        }
+        let boards = venueBoards + [("legacy", InplayStadiumArt.legacyScoreFrame(in: size, homeRun: true))]
+        let sceneFrame = CGRect(origin: .zero, size: size)
+        let gap = StadiumSceneDress.HomeRunLayout.scoreboardClearance
+        let receipt = HomeRunPresentation.resultFrame(size: size)
+
+        for (id, board) in boards {
+            let layout = StadiumSceneDress.HomeRunLayout(size: size, scoreboardFrame: board)
+            let protectedBoard = board.insetBy(dx: -gap, dy: -gap)
+            XCTAssertFalse(layout.bannerFrame.isEmpty, id)
+            XCTAssertTrue(sceneFrame.contains(layout.bannerFrame), id)
+            XCTAssertTrue(layout.bannerFrame.intersection(protectedBoard).isEmpty, "\(id) banner")
+            XCTAssertTrue(receipt.intersection(protectedBoard).isEmpty, "\(id) final receipt")
+            XCTAssertEqual(layout.bursts.count, 4, id)
+            for (index, burst) in layout.bursts.enumerated() {
+                XCTAssertFalse(burst.bounds.isEmpty, "\(id) burst \(index)")
+                XCTAssertTrue(sceneFrame.contains(burst.bounds), "\(id) full burst \(index) clipped out of scene")
+                XCTAssertTrue(burst.bounds.intersection(protectedBoard).isEmpty, "\(id) full burst \(index)")
+                XCTAssertTrue(burst.bounds.intersection(layout.bannerFrame).isEmpty, "\(id) burst \(index) over banner")
+            }
+        }
+    }
+
+    func testV189HomeRunAndHighlightRenderSameScoreboardAndEnglishReceipt() throws {
+        let event = homeRunSample()
+        let sprites = FieldReplaySprites(appearance: PlayerAppearance(kit: 1), jerseyNumber: 27,
+                                        ownPosition: "CF", throwingHand: "right", ownTeamFielding: false)
+        let prepared = FieldRasterArt.Prepared(images: [:])
+        for id in ["pro-falcons", "jp-pro-0", "us-pro-12"] {
+            let stadium = StadiumIdentity(homeTeamID: id)
+            let venue = try XCTUnwrap(stadium.backdrop, id)
+            let size = InplayFieldScene.fieldSize
+            let boardFrame = InplayStadiumArt.scoreboard(venue, in: size).frame
+            let layout = StadiumSceneDress.HomeRunLayout(size: size, scoreboardFrame: boardFrame)
+            let venueArt = try XCTUnwrap(InplayStadiumArt.upperArt(venue), id)
+
+            for scoreText in ["H 3 : 2 A", "REPLAY"] {
+                let scene = InplayFieldScene(event: event, sprites: sprites, prepared: prepared,
+                                             scoreText: scoreText, stadium: stadium)
+                let label = "\(id) \(scoreText)"
+                let upper = try XCTUnwrap(scene.childNode(withName: "//" + venue.imageName) as? SKSpriteNode, label)
+                let actual = try XCTUnwrap(upper.texture, label)
+                XCTAssertEqual(actual.size(), venue.pixelSize, label)
+                if actual !== venueArt.texture {
+                    // The cache can recreate a texture; compare both textures after the same pixel conversion.
+                    let actualPixels = try stadiumTexturePixels(actual)
+                    let expectedPixels = try stadiumTexturePixels(venueArt.texture)
+                    XCTAssertTrue(actualPixels.elementsEqual(expectedPixels), label)
+                }
+                let board = try XCTUnwrap(scene.childNode(withName: "//inplay-scoreboard"), label)
+                let score = try XCTUnwrap(scene.childNode(withName: "//inplay-score") as? SKLabelNode, label)
+                XCTAssertEqual(score.text, scoreText, label)
+                let boardCenter = scene.convert(CGPoint.zero, from: board)
+                XCTAssertEqual(boardCenter.x, boardFrame.midX, accuracy: 0.001, label)
+                XCTAssertEqual(size.height - boardCenter.y, boardFrame.midY, accuracy: 0.001, label)
+
+                let dress = try XCTUnwrap(scene.childNode(withName: "//stadiumDress-*") as? StadiumSceneDress, label)
+                let banner = try XCTUnwrap(scene.childNode(withName: "//home-run-banner"), label)
+                let plate = try XCTUnwrap(banner.childNode(withName: "home-run-banner-plate") as? SKSpriteNode, label)
+                let title = try XCTUnwrap(banner.childNode(withName: "home-run-banner-title") as? SKLabelNode, label)
+                XCTAssertEqual(title.text, "HOME RUN", label)
+                XCTAssertGreaterThan(title.zPosition, plate.zPosition, label)
+                let bannerCenter = scene.convert(CGPoint.zero, from: plate)
+                XCTAssertEqual(bannerCenter.x, layout.bannerFrame.midX, accuracy: 0.001, label)
+                XCTAssertEqual(size.height - bannerCenter.y, layout.bannerFrame.midY, accuracy: 0.001, label)
+                XCTAssertEqual(plate.size, layout.bannerFrame.size, label)
+
+                scene.display(time: event.flight - 0.01, finished: false)
+                XCTAssertTrue(banner.isHidden, label)
+                XCTAssertEqual(dress.effectNodeCount, 0, label)
+                scene.display(time: event.flight + 0.01, finished: false)
+                XCTAssertFalse(banner.isHidden, label)
+                XCTAssertGreaterThan(dress.effectNodeCount, 0, label)
+                let cores = scene["//home-run-firework-core"]
+                XCTAssertEqual(cores.count, layout.bursts.count, label)
+                for node in cores {
+                    let point = scene.convert(CGPoint.zero, from: node)
+                    let center = CGPoint(x: point.x, y: size.height - point.y)
+                    XCTAssertTrue(layout.bursts.contains { $0.bounds.contains(center) }, label)
+                    XCTAssertTrue(node.hasActions(), label)
+                }
+
+                scene.setEffectsReduced(true)
+                XCTAssertFalse(banner.isHidden, label)
+                XCTAssertEqual(dress.effectNodeCount, 0, label)
+                scene.setFinished(true)
+                let receipt = try XCTUnwrap(scene.childNode(withName: "//finalPlayResult"), label)
+                let receiptTitle = try XCTUnwrap(receipt.childNode(withName: "home-run-result-title") as? SKLabelNode, label)
+                let distance = try XCTUnwrap(receipt.childNode(withName: "home-run-result-distance") as? SKLabelNode, label)
+                XCTAssertFalse(receipt.isHidden, label)
+                XCTAssertEqual(receiptTitle.text, "SOLO HOME RUN", label)
+                XCTAssertEqual(distance.text, "DISTANCE \(event.distance) m", label)
+            }
+        }
+    }
+
+    private func stadiumTexturePixels(_ texture: SKTexture) throws -> [UInt8] {
+        let image = texture.cgImage()
+        let bytesPerRow = image.width * 4
+        let format = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        let colorSpace = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * image.height)
+        try pixels.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                                                 bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                                                 space: colorSpace, bitmapInfo: format))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+        return pixels
+    }
+
+    func testV191SpecialHomeRunEffectsGrowWithoutRestartingOrFlashingInReducedMotion() throws {
+        let stadium = StadiumIdentity(homeTeamID: "pro-falcons")
+        let venue = try XCTUnwrap(stadium.backdrop)
+        let size = InplayFieldScene.fieldSize
+        let board = InplayStadiumArt.scoreboard(venue, in: size).frame
+        let layout = StadiumSceneDress.HomeRunLayout(size: size, scoreboardFrame: board)
+        let styles: [MatchHomeRun.CelebrationKind] = [.standard, .goAhead, .grandSlam, .walkOff]
+        var previous = 0
+        for style in styles {
+            let dress = StadiumSceneDress(stadium: stadium, size: size, camera: .field,
+                                          hasVenueBackdrop: true, scoreboardFrame: board)
+            dress.celebrate(.homeRun, reduced: false, homeRunStyle: style)
+            let count = dress.effectNodeCount
+            XCTAssertGreaterThan(count, previous)
+            previous = count
+            let sign = try XCTUnwrap(dress.childNode(withName: "//home-run-banner-title") as? SKLabelNode)
+            XCTAssertEqual(sign.text, style.title ?? "HOME RUN")
+            XCTAssertLessThanOrEqual(sign.frame.width, layout.bannerFrame.width)
+            dress.enumerateChildNodes(withName: "//home-run-firework-core") { core, _ in
+                let center = CGPoint(x: core.position.x, y: size.height - core.position.y)
+                XCTAssertTrue(layout.bursts.contains { $0.bounds.contains(center) })
+            }
+            dress.celebrate(.homeRun, reduced: false, homeRunStyle: style)
+            XCTAssertEqual(dress.effectNodeCount, count)
+            XCTAssertEqual(dress.celebrationCount, 1)
+
+            let reduced = StadiumSceneDress(stadium: stadium, size: size, camera: .field,
+                                            hasVenueBackdrop: true, scoreboardFrame: board)
+            reduced.celebrate(.homeRun, reduced: true, homeRunStyle: style)
+            XCTAssertEqual(reduced.effectNodeCount, 0)
+            XCTAssertEqual(reduced.animatedLightCount, 0)
+            XCTAssertEqual((reduced.childNode(withName: "//home-run-banner-title") as? SKLabelNode)?.text,
+                           style.title ?? "HOME RUN")
+        }
+    }
+
+    func testV189HomeRunResultTitlesMatchNumberOfRunners() {
+        let titles = ["SOLO HOME RUN", "2-RUN HOME RUN", "3-RUN HOME RUN", "GRAND SLAM"]
+        for (occupiedBases, title) in titles.enumerated() {
+            let before: [FieldRunnerProfile?] = (0..<3).map { $0 < occupiedBases ? FieldRunnerProfile(speed: 60) : nil }
+            let event = homeRunSample(before: before)
+            XCTAssertEqual(event.resultTitle, title)
+            XCTAssertEqual(event.resultDistance, "DISTANCE \(event.distance) m")
+        }
+    }
+
     func testV144EverySchoolGetsItsBundledStructureAndOwnPalette() throws {
         let catalog=try SchoolCatalog.load()
         let stadiums=try catalog.map { school in

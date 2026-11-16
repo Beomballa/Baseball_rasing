@@ -182,8 +182,94 @@ extension StadiumIdentity {
 @MainActor final class StadiumSceneDress: SKNode {
     enum Camera { case batter, pitcher, field }
     enum Celebration: String { case homeRun, doublePlay }
+
+    struct HomeRunLayout {
+        struct Burst {
+            let index: Int
+            let bounds: CGRect
+            let radius: CGFloat
+            let delay: TimeInterval
+            let spokeCount: Int
+        }
+
+        static let scoreboardClearance: CGFloat = 8
+        let bannerFrame: CGRect
+        let bursts: [Burst]
+        private let protectedFrames: [CGRect]
+
+        // The scoreboard and this layout use the same top-origin scene coordinates.
+        init(size: CGSize, scoreboardFrame: CGRect?) {
+            let unit = size.width / 390
+            let sky = CGRect(x: 4 * unit, y: 4 * unit, width: size.width - 8 * unit,
+                             height: size.height * 0.32 - 4 * unit)
+            let board = scoreboardFrame?.insetBy(dx: -Self.scoreboardClearance, dy: -Self.scoreboardClearance)
+            let preferredBanner = CGRect(x: size.width * 0.24, y: size.height * 0.125 - 14,
+                                         width: size.width * 0.52, height: 28)
+            if let board, preferredBanner.intersects(board) {
+                let above = board.minY - preferredBanner.height - 1
+                let below = board.maxY + 1
+                let hasRoomAbove = above >= sky.minY
+                let fitsBetterAbove = preferredBanner.minY - above <= below - preferredBanner.minY
+                let y = hasRoomAbove && fitsBetterAbove ? above : below
+                bannerFrame = preferredBanner.offsetBy(dx: 0, dy: y - preferredBanner.minY)
+            } else {
+                bannerFrame = preferredBanner
+            }
+            let obstacles = [board, bannerFrame.insetBy(dx: -3 * unit, dy: -3 * unit)].compactMap { $0 }
+            protectedFrames = obstacles
+            let slots: [(x: CGFloat, y: CGFloat, radius: CGFloat, delay: TimeInterval, spokeCount: Int)] = [
+                (0.20, 0.075, 38, 0.00, 12),
+                (0.80, 0.075, 38, 0.12, 12),
+                (0.11, 0.130, 20, 0.21, 6),
+                (0.89, 0.130, 20, 0.29, 6),
+            ]
+            bursts = slots.enumerated().compactMap { index, slot in
+                let preferred = CGPoint(x: size.width * slot.x, y: size.height * slot.y)
+                let halfWidth = size.width * 0.5
+                let side = CGRect(x: slot.x < 0.5 ? sky.minX : halfWidth, y: sky.minY,
+                                  width: halfWidth - sky.minX, height: sky.height)
+                for radiusScale: CGFloat in [1, 0.75] {
+                    let radius = slot.radius * unit * radiusScale
+                    // The 4 pt sparks include half their width beyond the maximum travel.
+                    let extent = max(radius + 2 * unit, 8 * unit)
+                    if let origin = Self.burstOrigin(near: preferred, extent: extent, in: side, avoiding: obstacles) {
+                        let bounds = CGRect(x: origin.x - extent, y: origin.y - extent, width: 2 * extent, height: 2 * extent)
+                        return Burst(index: index, bounds: bounds, radius: radius, delay: slot.delay, spokeCount: slot.spokeCount)
+                    }
+                }
+                return nil
+            }
+        }
+
+        func leavesClear(_ frame: CGRect) -> Bool {
+            !protectedFrames.contains { $0.intersects(frame) }
+        }
+
+        private static func burstOrigin(near preferred: CGPoint, extent: CGFloat, in area: CGRect,
+                                        avoiding obstacles: [CGRect]) -> CGPoint? {
+            guard area.width > extent * 2, area.height > extent * 2 else { return nil }
+            let centers = area.insetBy(dx: extent, dy: extent)
+            let blocked = obstacles.map { $0.insetBy(dx: -extent, dy: -extent) }
+            func bounded(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                CGPoint(x: min(centers.maxX, max(centers.minX, x)), y: min(centers.maxY, max(centers.minY, y)))
+            }
+            let closest = bounded(preferred.x, preferred.y)
+            if !blocked.contains(where: { $0.contains(closest) }) { return closest }
+
+            // A legal center near the default lies just beyond an obstacle edge or corner.
+            let xs = [closest.x] + blocked.flatMap { [$0.minX - 1, $0.maxX + 1] }
+            let ys = [closest.y] + blocked.flatMap { [$0.minY - 1, $0.maxY + 1] }
+            return xs.flatMap { x in ys.map { bounded(x, $0) } }
+                .filter { point in !blocked.contains { $0.contains(point) } }
+                .min { a, b in
+                    hypot(a.x - preferred.x, a.y - preferred.y) < hypot(b.x - preferred.x, b.y - preferred.y)
+                }
+        }
+    }
+
     let stadium: StadiumIdentity
     let fieldSize: CGSize
+    private let homeRunLayout: HomeRunLayout?
     private let effects = SKNode()
     private var lamps: [SKSpriteNode] = []
     private var floodlights: [SKNode] = []
@@ -193,9 +279,10 @@ extension StadiumIdentity {
     var effectNodeCount: Int { effects.children.count }
     var floodlightCount: Int { floodlights.count }
     var animatedLightCount: Int { (lamps.map { $0 as SKNode } + floodlights).filter { $0.hasActions() }.count }
-    init(stadium: StadiumIdentity, size: CGSize, camera: Camera, hasVenueBackdrop: Bool = false) {
+    init(stadium: StadiumIdentity, size: CGSize, camera: Camera, hasVenueBackdrop: Bool = false, scoreboardFrame: CGRect? = nil) {
         self.stadium = stadium
         fieldSize = size
+        homeRunLayout = camera == .field ? HomeRunLayout(size: size, scoreboardFrame: scoreboardFrame) : nil
         super.init()
         name = "stadiumDress-" + stadium.theme.title
         let y: CGFloat = camera == .pitcher ? 0.25 : camera == .batter ? 0.166 : 0.15
@@ -256,7 +343,7 @@ extension StadiumIdentity {
             lamps.append(light)
             addChild(light)
         }
-        if camera == .field {
+        if let homeRunLayout {
             for i in 0..<4 {
                 let bank = SKNode()
                 bank.position = CGPoint(
@@ -275,15 +362,20 @@ extension StadiumIdentity {
                 addChild(bank)
             }
             let plate = SKSpriteNode(
-                color: panelColor, size: CGSize(width: size.width * 0.52, height: 28))
+                color: panelColor, size: homeRunLayout.bannerFrame.size)
+            plate.name = "home-run-banner-plate"
             let text = SKLabelNode(fontNamed: "Menlo-Bold")
+            text.name = "home-run-banner-title"
             text.text = "HOME RUN"
             text.fontSize = 18
             text.fontColor = UIColor(GameTheme.gold)
             text.verticalAlignmentMode = .center
+            text.zPosition = 1
+            homeRunSign.name = "home-run-banner"
             homeRunSign.addChild(plate)
             homeRunSign.addChild(text)
-            homeRunSign.position = CGPoint(x: size.width * 0.5, y: size.height * 0.875)
+            homeRunSign.position = CGPoint(x: homeRunLayout.bannerFrame.midX, y: size.height - homeRunLayout.bannerFrame.midY)
+            homeRunSign.zPosition = 3
             homeRunSign.isHidden = true
             addChild(homeRunSign)
         }
@@ -304,11 +396,14 @@ extension StadiumIdentity {
         }
     }
     /// 장면당 축하 효과를 한 번만 시작한다. 경기 보상 처리와는 별개다.
-    func celebrate(_ kind: Celebration, reduced: Bool) {
+    func celebrate(_ kind: Celebration, reduced: Bool, homeRunStyle: MatchHomeRun.CelebrationKind = .standard) {
         guard celebration == nil else { return }
         celebration = kind
         celebrationCount += 1
         homeRunSign.isHidden = kind != .homeRun
+        if kind == .homeRun, let title = homeRunStyle.title {
+            dressHomeRunSign(title: title, accent: homeRunPalette(homeRunStyle).accent)
+        }
         guard !reduced else {
             reduceEffects()
             return
@@ -316,6 +411,7 @@ extension StadiumIdentity {
         let delay = Double(stadium.variation) * 0.08
         // 화면 전체를 번쩍이지 않고 조명 묶음만 천천히 두 번 변화시킨다.
         for (i, bank) in floodlights.enumerated() {
+            if kind == .homeRun && !clearOfHomeRunArtwork(bank) { continue }
             bank.isHidden = false
             bank.run(
                 .sequence([
@@ -328,6 +424,7 @@ extension StadiumIdentity {
                 ]))
         }
         for (i, light) in lamps.enumerated() {
+            if kind == .homeRun && !clearOfHomeRunArtwork(light) { continue }
             light.isHidden = false
             let at = Double(stadium.theme == .brick ? i : 11 - i) * 0.04 + delay
             light.run(
@@ -336,9 +433,11 @@ extension StadiumIdentity {
                     .fadeAlpha(to: 0.65, duration: 0.35),
                 ]))
         }
-        // 장식 개수와 경로를 고정해 경기 난수를 소비하지 않는다.
-        let count = kind == .doublePlay ? 12 : stadium.theme == .harbor ? 40 : 24
-        for i in 0..<count {
+        if kind == .homeRun {
+            showHomeRunFireworks(style: homeRunStyle)
+            return
+        }
+        for i in 0..<12 {
             let node = SKSpriteNode(
                 color: i.isMultiple(of: 3) ? UIColor(GameTheme.gold) : UIColor(Color(hex: stadium.accentColor)),
                 size: CGSize(width: 3, height: i < 8 ? 6 : 3))
@@ -363,6 +462,107 @@ extension StadiumIdentity {
                         .sequence([.wait(forDuration: 0.40), .fadeOut(withDuration: 0.35)]),
                     ]), .removeFromParent(),
                 ]))
+        }
+    }
+
+    private func clearOfHomeRunArtwork(_ light: SKNode) -> Bool {
+        guard let homeRunLayout else { return true }
+        let frame = light.calculateAccumulatedFrame()
+        let sceneFrame = CGRect(x: frame.minX, y: fieldSize.height - frame.maxY, width: frame.width, height: frame.height)
+        return homeRunLayout.leavesClear(sceneFrame)
+    }
+
+    private func dressHomeRunSign(title: String, accent: UIColor) {
+        guard let homeRunLayout,
+              let label = homeRunSign.childNode(withName: "home-run-banner-title") as? SKLabelNode else { return }
+        label.text = title
+        label.fontColor = accent
+        let availableWidth = homeRunLayout.bannerFrame.width - 12
+        if availableWidth > 0, label.frame.width > availableWidth {
+            label.fontSize *= availableWidth / label.frame.width
+        }
+
+        let frame = homeRunLayout.bannerFrame.insetBy(dx: 1, dy: 1)
+        let rim = SKShapeNode(rectOf: frame.size)
+        rim.name = "home-run-banner-accent"
+        rim.strokeColor = accent
+        rim.lineWidth = 1
+        rim.isAntialiased = false
+        rim.zPosition = 0.5
+        homeRunSign.addChild(rim)
+    }
+
+    private func homeRunPalette(_ style: MatchHomeRun.CelebrationKind)
+        -> (accent: UIColor, alternate: UIColor, extraSpokes: Int, secondWaveSlots: Range<Int>) {
+        let gold = UIColor(GameTheme.gold)
+        switch style {
+        case .standard:
+            return (gold, UIColor(Color(hex: 0xd4b7f7)), 0, 0..<0)
+        case .grandSlam:
+            return (gold, UIColor(Color(hex: 0x79efcf)), 4, 0..<2)
+        case .goAhead:
+            return (UIColor(Color(hex: 0x9fe1ff)), gold, 2, 2..<4)
+        case .walkOff:
+            return (UIColor(Color(hex: 0xffdc86)), UIColor(Color(hex: 0xffabd2)), 6, 0..<4)
+        }
+    }
+
+    private func showHomeRunFireworks(style: MatchHomeRun.CelebrationKind) {
+        guard let homeRunLayout else { return }
+        let palette = homeRunPalette(style)
+        for burst in homeRunLayout.bursts {
+            let usesAlternate = burst.index == 1 || (style != .standard && burst.index == 3)
+            let color = usesAlternate ? palette.alternate : palette.accent
+            launchHomeRunBurst(burst, color: color, delay: burst.delay, radius: burst.radius,
+                               spokes: burst.spokeCount + palette.extraSpokes)
+            if palette.secondWaveSlots.contains(burst.index) {
+                let encore = usesAlternate ? palette.accent : palette.alternate
+                // Reuse the first burst's clearance envelope for every spoke in the second wave.
+                launchHomeRunBurst(burst, color: encore, delay: burst.delay + 0.34,
+                                   radius: burst.radius * 0.78, spokes: max(6, burst.spokeCount / 2 + 2), angleOffset: .pi / 10)
+            }
+        }
+    }
+
+    private func launchHomeRunBurst(_ burst: HomeRunLayout.Burst, color: UIColor, delay: TimeInterval,
+                                    radius: CGFloat, spokes: Int, angleOffset: CGFloat = 0) {
+        let cream = UIColor(GameTheme.paper)
+        let unit = fieldSize.width / 390
+        let origin = CGPoint(x: burst.bounds.midX, y: fieldSize.height - burst.bounds.midY)
+        let corePath = CGMutablePath()
+        corePath.addRect(CGRect(x: -5 * unit, y: -unit, width: 10 * unit, height: 2 * unit))
+        corePath.addRect(CGRect(x: -unit, y: -5 * unit, width: 2 * unit, height: 10 * unit))
+        let core = SKShapeNode(path: corePath)
+        core.name = "home-run-firework-core"
+        core.fillColor = cream
+        core.strokeColor = .clear
+        core.isAntialiased = false
+        core.position = origin
+        core.alpha = 0
+        effects.addChild(core)
+        core.run(.sequence([
+            .wait(forDuration: delay), .fadeIn(withDuration: 0.04),
+            .group([.scale(to: 1.6, duration: 0.18), .fadeOut(withDuration: 0.18)]),
+            .removeFromParent(),
+        ]))
+
+        for spoke in 0..<spokes {
+            let angle = CGFloat(spoke) * (2 * .pi / CGFloat(spokes)) + CGFloat(burst.index) * 0.21 + angleOffset
+            let reach = radius * (spoke.isMultiple(of: 2) ? 1 : 0.68)
+            let side = (spoke.isMultiple(of: 2) ? 4 : 3) * unit
+            let spark = SKSpriteNode(color: spoke.isMultiple(of: 3) ? cream : color,
+                                     size: CGSize(width: side, height: side))
+            spark.name = "home-run-firework-spark"
+            spark.position = origin
+            spark.alpha = 0
+            effects.addChild(spark)
+            let spread = SKAction.moveBy(x: cos(angle) * reach, y: sin(angle) * reach, duration: 0.73)
+            spread.timingMode = .easeOut
+            spark.run(.sequence([
+                .wait(forDuration: delay), .fadeIn(withDuration: 0.04),
+                .group([spread, .sequence([.wait(forDuration: 0.23), .fadeOut(withDuration: 0.50)])]),
+                .removeFromParent(),
+            ]))
         }
     }
 }

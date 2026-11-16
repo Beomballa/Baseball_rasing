@@ -61,16 +61,14 @@ struct CareerGameView: View {
     @State private var presenting = false
     @State private var judgment: ManualMatchResult?
     @State private var arrivedSnapshot: CareerMatch?
-    @State private var resultReplayPlay:MatchDetailedPlay?
-    @State private var resultReplayID=0
-    @State private var animateResultReplay=false
+    @State private var activeHighlights: MatchHighlights?
+    @State private var liveReplayPass = 0
     @State private var fieldResolved = false
     @State private var fieldHandoff:FieldContactHandoff?
     @State private var fieldPreparation:FieldReplayPreparation?
     @State private var arenaFrame:CGRect = .zero
     @State private var replay: MatchDetailedPlay?
     @State private var homeRunReplay:MatchHomeRun?
-    @State private var homeRunResultPlaying=false
     @State private var pulse: String?
     @State private var pulseAt = Date.distantPast
 
@@ -360,7 +358,7 @@ struct CareerGameView: View {
     private func cancelInput() {
         fieldPreparation?.cancel();fieldPreparation=nil
         commitTask?.cancel();commitTask=nil;commitID=nil
-        clock.stop(); pitchTarget = nil; battingSwipe = nil; battingGestureRevision = nil; attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;homeRunReplay=nil;homeRunResultPlaying=false;fieldHandoff=nil;fieldResolved=false;resultReplayPlay=nil;animateResultReplay=false;pulse = nil; scene.cancelDelivery()
+        clock.stop(); pitchTarget = nil; battingSwipe = nil; battingGestureRevision = nil; attempt = nil; judgment = nil; arrivedSnapshot = nil; presenting = false; visualSnapshot = nil; replay=nil;homeRunReplay=nil;fieldHandoff=nil;fieldResolved=false;pulse = nil; scene.cancelDelivery()
     }
     private func persist(_ record:CareerMatchRecord,revision:Int,input:MatchInput,pitchCode:String?,control:ManualMatchInput?) throws {
         if let assessmentID {
@@ -422,13 +420,18 @@ struct CareerGameView: View {
             }
         }
     }
-    private func broadcast(_ match: CareerMatch, record: CareerMatchRecord) -> some View {
+    private func teamNames(_ match: CareerMatch, record: CareerMatchRecord) -> (home: String, away: String) {
         let ownID = presentationTeamID ?? player.schoolID
         let ownName = assessmentID == nil ? CareerTeamDirectory.name(ownID, schools: schools) : "내 평가팀"
         let opponent = CareerTeamDirectory.name(record.opponentID, schools: schools)
         let home = match.playerRecords.map {CareerTeamDirectory.name($0.home.teamID, schools: schools)} ?? (match.isHome ? ownName : opponent)
         let away = match.playerRecords.map {CareerTeamDirectory.name($0.away.teamID, schools: schools)} ?? (match.isHome ? opponent : ownName)
-        return MatchBroadcastBoard(match: match, homeName: home, awayName: away, date: record.gameDate, pulse: pulse, pulseAt: pulseAt, stadium: stadium).equatable()
+        return (home, away)
+    }
+    private func broadcast(_ match: CareerMatch, record: CareerMatchRecord, inplay: MatchBroadcastBoard.Inplay? = nil) -> some View {
+        let (home, away) = teamNames(match, record: record)
+        return MatchBroadcastBoard(match: match, homeName: home, awayName: away, date: record.gameDate,
+                                   pulse: pulse, pulseAt: pulseAt, stadium: stadium, inplay: inplay).equatable()
     }
     private var battingTouchLocked: Bool { retrySave != nil || presenting || record?.completed != false || record?.appearance != true }
     private func tapBattingField() {
@@ -564,65 +567,128 @@ struct CareerGameView: View {
             }
         }.background(Color(hex: 0x123c3b)).accessibilityHidden(fieldCoversArena)
     }
-    private func inplayStage(_ play:MatchDetailedPlay,match:CareerMatch) -> some View {
-        GeometryReader { geometry in
-            ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing:16) {
-                    let header=typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:8)):AnyLayout(HStackLayout())
-                    header {
-                        Text(typeSize.isAccessibilitySize ? "인플레이":"IN PLAY · FIELD").font(.system(.title3,design:.monospaced,weight:.black))
-                        if !typeSize.isAccessibilitySize {Spacer()}
-                        Text(player.name + " #" + String(player.jerseyNumber)).font(.headline)
-                    }.foregroundStyle(GameTheme.gold).frame(maxWidth:.infinity,alignment:.leading)
-                    if typeSize.isAccessibilitySize {
-                        Button("경기장 보기") {proxy.scrollTo("fieldGraphic",anchor:.center)}
-                            .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("inplayJumpField")
-                    }
-                    DetailedFieldReplayBoard(play:play,appearance:renderAppearance,jerseyNumber:player.jerseyNumber,
-                        ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(play.half%2 == 0) == match.isHome,stadium:stadium,
-                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,preparation:fieldPreparation,onResolved:{
-                            #if DEBUG
-                            if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
-                            #endif
-                            fieldResolved=true
-                            if let call=UmpireCall.resolvedField(outsAdded:play.outsAdded) {GameSound.shared.announce(call)}
-                            if let updated=displaySnapshot.match {
-                                arrivedSnapshot=updated;pulse=MatchPresentation.countPulse(updated.lastManual?.outcome ?? "");pulseAt=Date()
+    private func liveReplayStage<Board: View>(_ event: InplayReplay, match: CareerMatch, identifier: String,
+                                               @ViewBuilder board: @escaping (CGFloat) -> Board) -> some View {
+        let half: Int
+        let runs: Int
+        let alreadySaved: Bool
+        let summary: String?
+        let emphasizesHit: Bool
+        switch event {
+        case .field(let play):
+            let hit = FieldReplayPresentation.confirmedHitLabel(play)
+            half = play.half
+            runs = play.runs
+            alreadySaved = match.fieldPlays?.contains { $0.eventID == play.eventID } == true
+            summary = hit ?? play.summary
+            emphasizesHit = hit != nil
+        case .homeRun(let homeRun):
+            half = homeRun.half
+            runs = homeRun.runs
+            alreadySaved = match.homeRuns?.contains { $0.eventID == homeRun.eventID } == true
+            summary = nil
+            emphasizesHit = false
+        }
+        let usesPlayContext = summary == nil || emphasizesHit
+        let battingHome = !half.isMultiple(of: 2)
+        let isOwnOffense = battingHome == match.isHome
+        let context = "\(half / 2 + 1)회 \(battingHome ? "말" : "초") · \(isOwnOffense ? "우리 팀 공격" : "상대 팀 공격")"
+        let scoringHome: Bool? = fieldResolved && runs > 0 && arrivedSnapshot != nil ? battingHome : nil
+
+        return GeometryReader { geometry in
+            let canvasWidth = max(1, min(geometry.size.width - 16, 500))
+            VStack(spacing: 0) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            let header = typeSize.isAccessibilitySize
+                                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout())
+                            header {
+                                Text("인플레이").font(.headline.monospaced())
+                                if !typeSize.isAccessibilitySize { Spacer() }
+                                Text(usesPlayContext ? context : player.name + " #" + String(player.jerseyNumber))
+                                    .font(.subheadline)
+                                    .foregroundStyle(usesPlayContext ? GameTheme.boardMuted : GameTheme.gold)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.foregroundStyle(GameTheme.gold).frame(maxWidth: .infinity, alignment: .leading)
+                            if usesPlayContext, !alreadySaved, let record {
+                                broadcast(arrivedSnapshot ?? match, record: record, inplay: .init(half: half, scoringHome: scoringHome))
+                                    .frame(width: canvasWidth)
                             }
-                        }) {
-                            replay=nil;fieldHandoff=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
-                        }
-                        .id(play.eventID)
-                        .frame(height:FieldReplayPresentation.stageHeight(width:geometry.size.width-16,available:geometry.size.height,accessibility:typeSize.isAccessibilitySize))
-                    Text(fieldResolved ? play.summary:"타구를 따라 수비가 진행됩니다")
-                        .font(.subheadline.monospaced()).foregroundStyle(GameTheme.boardMuted)
-                }.padding(.horizontal,8).padding(.vertical,16)
-            }.background(GameTheme.navy.ignoresSafeArea())
-                .accessibilityIdentifier("inplayFieldStage")
-            }
+                            if typeSize.isAccessibilitySize {
+                                Button("경기장 보기") { proxy.scrollTo("fieldGraphic", anchor: .center) }
+                                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("inplayJumpField")
+                            }
+                            board(canvasWidth)
+                        }.padding(.horizontal, 4).padding(.vertical, 8)
+                    }
+                }
+                if let summary {
+                    let showsHit = fieldResolved && emphasizesHit
+                    MatchLastPlayStrip(title: showsHit ? "직전 플레이" : "인플레이 판정",
+                                       summary: fieldResolved ? summary : "플레이 진행 중",
+                                       summaryID: "inplayLastPlaySummary", emphasizesHit: showsHit) {
+                        if fieldResolved { replayAgainButton }
+                    }.padding(.horizontal, 8).background(GameTheme.boardPanel)
+                } else if fieldResolved {
+                    replayAgainButton.frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.horizontal, 8)
+                        .background(GameTheme.boardPanel)
+                }
+            }.background(GameTheme.navy.ignoresSafeArea()).accessibilityIdentifier(identifier)
         }
     }
-    private func homeRunStage(_ event:MatchHomeRun,match:CareerMatch) -> some View {
-        GeometryReader {geometry in
-            ScrollView {
-                VStack(spacing:16) {
-                    Text("IN PLAY · BASE RUNNING").font(.title3.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                    HomeRunReplayBoard(event:event,appearance:renderAppearance,jerseyNumber:player.jerseyNumber,
-                        ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(event.half%2 == 0) == match.isHome,stadium:stadium,
-                        scoreText:"H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",handoff:fieldHandoff,
-                        playbackMode:fieldPlaybackMode,preparesMotion:preparesFieldMotion,preparation:fieldPreparation,playsSound:true,onResolved:{
-                            #if DEBUG
-                            if livePerformanceQA {MatchRenderMetrics.mark("career.inplay.resolved")}
-                            #endif
-                            fieldResolved=true;arrivedSnapshot=displaySnapshot.match}) {
-                            homeRunReplay=nil;fieldHandoff=nil;presenting=false;visualSnapshot=nil;arrivedSnapshot=nil;fieldResolved=false
-                        }.id(event.eventID)
-                        .frame(height:FieldReplayPresentation.stageHeight(width:geometry.size.width-16,available:geometry.size.height,accessibility:typeSize.isAccessibilitySize))
-                }.padding(.horizontal,8).padding(.vertical,16)
-            }.background(GameTheme.navy.ignoresSafeArea()).accessibilityIdentifier("homeRunStage")
+    private var replayAgainButton: some View {
+        Button("다시 보기") {
+            fieldHandoff = nil
+            arrivedSnapshot = nil
+            fieldResolved = false
+            liveReplayPass += 1
+        }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("inplayReplayAgain")
+    }
+    private func inplayStage(_ play: MatchDetailedPlay, match: CareerMatch) -> some View {
+        liveReplayStage(.field(play), match: match, identifier: "inplayFieldStage") { width in
+            DetailedFieldReplayBoard(play: play, appearance: renderAppearance, jerseyNumber: player.jerseyNumber,
+                ownPosition: player.role == .pitcher ? "P" : player.positionRaw, throwingHand: player.throwingHandRaw,
+                ownTeamFielding: (play.half % 2 == 0) == match.isHome, stadium: stadium,
+                scoreText: "H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",
+                handoff: fieldHandoff, playbackMode: fieldPlaybackMode, preparesMotion: preparesFieldMotion,
+                preparation: fieldPreparation, canvasWidth: width, showsHitReceipt: false, onResolved: {
+                    #if DEBUG
+                    if livePerformanceQA { MatchRenderMetrics.mark("career.inplay.resolved") }
+                    #endif
+                    fieldResolved = true
+                    if let call = UmpireCall.resolvedField(outsAdded: play.outsAdded) { GameSound.shared.announce(call) }
+                    if let updated = displaySnapshot.match {
+                        arrivedSnapshot = updated
+                        pulse = MatchPresentation.countPulse(updated.lastManual?.outcome ?? "")
+                        pulseAt = Date()
+                    }
+                }) {
+                    replay = nil; fieldHandoff = nil; presenting = false
+                    visualSnapshot = nil; arrivedSnapshot = nil; fieldResolved = false
+                }
+                .id(play.eventID + "/\(liveReplayPass)")
+        }
+    }
+    private func homeRunStage(_ event: MatchHomeRun, match: CareerMatch) -> some View {
+        liveReplayStage(.homeRun(event), match: match, identifier: "homeRunStage") { width in
+            HomeRunReplayBoard(event: event, appearance: renderAppearance, jerseyNumber: player.jerseyNumber,
+                ownPosition: player.role == .pitcher ? "P" : player.positionRaw, throwingHand: player.throwingHandRaw,
+                ownTeamFielding: (event.half % 2 == 0) == match.isHome, stadium: stadium,
+                scoreText: "H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",
+                handoff: fieldHandoff, playbackMode: fieldPlaybackMode, preparesMotion: preparesFieldMotion,
+                preparation: fieldPreparation, playsSound: true, canvasWidth: width, onResolved: {
+                    #if DEBUG
+                    if livePerformanceQA { MatchRenderMetrics.mark("career.inplay.resolved") }
+                    #endif
+                    fieldResolved = true
+                    arrivedSnapshot = displaySnapshot.match
+                }) {
+                    homeRunReplay = nil; fieldHandoff = nil; presenting = false
+                    visualSnapshot = nil; arrivedSnapshot = nil; fieldResolved = false
+                }
+                .id(event.eventID + "/\(liveReplayPass)")
         }
     }
     private func liveOpponentID(_ match: CareerMatch) -> String? {
@@ -696,6 +762,8 @@ struct CareerGameView: View {
     }
     private func results(_ match: CareerMatch, record: CareerMatchRecord) -> some View {
         let summary = MatchResultSummary(match: match, fatigueBefore: record.fatigueBefore, fatigueAfter: record.fatigueAfter)
+        let (home, away) = teamNames(match, record: record)
+        let highlights = MatchHighlights(match: match, homeName: home, awayName: away)
         return VStack(spacing: 10) {
             GamePanel(title: "FINAL · 팀 경기 결과", onBoard: true) {
                 let heading = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
@@ -720,6 +788,18 @@ struct CareerGameView: View {
                 } else {Text("투수 승패 미채점 · 이전 경기 기록 유지").managementFont(.helper)}
                 Text("결과 저장 완료 · 재열기는 기록·XP·피로 추가 반영 없음").font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
                     .accessibilityIdentifier("gameResultSaved")
+            }
+
+            GamePanel(title: "경기 하이라이트", onBoard: true) {
+                Text("홈런 \(highlights.homeRunCount)개 · 수비·주루 \(highlights.fieldCount)개")
+                    .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                Button("하이라이트 보기") { activeHighlights = highlights }
+                    .buttonStyle(MatchPixelButtonStyle(primary: true))
+                    .accessibilityIdentifier("openMatchHighlights")
+            }
+            .overlay {
+                Rectangle().strokeBorder(GameTheme.gold, lineWidth: ManagementTheme.Control.border)
+                    .allowsHitTesting(false).accessibilityHidden(true)
             }
 
             GamePanel(title: player.role == .batter ? "타자 경기 기록" : "투수 경기 기록", onBoard: true) {
@@ -805,48 +885,6 @@ struct CareerGameView: View {
                     PitcherChangePanel(change: change, finalRuns: match.line.runsAllowed, appearance: renderAppearance)
                 }.tint(GameTheme.gold).accessibilityIdentifier("pitcherChangeDetails")
             }
-            if let homeRun=match.homeRuns?.last {
-                GamePanel(title:"최근 홈런 · 비거리",onBoard:true) {
-                    HomeRunReplayBoard(event:homeRun,appearance:renderAppearance,jerseyNumber:player.jerseyNumber,
-                        ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(homeRun.half%2 == 0) == match.isHome,stadium:stadium,scoreText:"H \(match.homeScore) : \(match.awayScore) A",animated:homeRunResultPlaying) {homeRunResultPlaying=false}
-                        .id(resultReplayID).frame(height:650)
-                    Button("홈런 다시 보기") {homeRunResultPlaying=true;resultReplayID+=1}
-                        .buttonStyle(MatchPixelButtonStyle()).disabled(homeRunResultPlaying).accessibilityIdentifier("replayResultHomeRun")
-                }
-            }
-            if let play=resultReplayPlay ?? match.fieldPlays?.last {
-                GamePanel(title:resultReplayPlay == nil ? "마지막 타구 · 수비/주루" : resultReplayPlay?.misplay != nil ? "최근 실책 · 추가 진루" : resultReplayPlay?.relay != nil ? "최근 중계 송구" : resultReplayPlay?.fly != nil ? "최근 뜬공 · 태그업" : "최근 병살 시도",onBoard:true) {
-                    Text(animateResultReplay ? "인플레이 · 수비 재생 중":play.summary).font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("gameDetailedFieldSummary")
-                    DetailedFieldReplayBoard(play:play,appearance:renderAppearance,animated:animateResultReplay,
-                        jerseyNumber:player.jerseyNumber,ownPosition:player.role == .pitcher ? "P":player.positionRaw,throwingHand:player.throwingHandRaw,
-                        ownTeamFielding:(play.half%2 == 0) == match.isHome,stadium:stadium,scoreText:"H \(match.homeScore) : \(match.awayScore) A") { animateResultReplay=false }
-                        .id(resultReplayID).frame(height:600)
-                    if !animateResultReplay {FieldReplayDetails(play:play)}
-                    Button("수비·주루 재생") { animateResultReplay=true;resultReplayID += 1 }
-                        .buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayResultFieldPlay")
-                    if let error=match.fieldPlays?.last(where:{$0.misplay != nil}) {
-                        Button("최근 실책 다시 보기") {
-                            resultReplayPlay=error;animateResultReplay=true;resultReplayID += 1
-                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayMisplay")
-                    }
-                    if let relay=match.fieldPlays?.last(where:{ $0.relay != nil }) {
-                        Button("최근 중계 송구 다시 보기") {
-                            resultReplayPlay=relay;animateResultReplay=true;resultReplayID += 1
-                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayRelayPlay")
-                    }
-                    if let fly=match.fieldPlays?.last(where: { $0.fly?.caught == true && $0.targetRunner != nil && $0.misplay == nil }) ?? match.fieldPlays?.last(where:{ $0.fly?.caught == true && $0.misplay == nil }) ?? match.fieldPlays?.last(where:{ $0.fly != nil && $0.misplay == nil }) {
-                        Button("최근 뜬공·태그업 다시 보기") {
-                            resultReplayPlay=fly;animateResultReplay=true;resultReplayID += 1
-                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayFlyPlay")
-                    }
-                    if let doublePlay=match.fieldPlays?.last(where: { $0.secondThrow != nil }) {
-                        Button("최근 병살 시도 다시 보기") {
-                            resultReplayPlay=doublePlay;animateResultReplay=true;resultReplayID += 1
-                        }.buttonStyle(MatchPixelButtonStyle()).disabled(animateResultReplay).accessibilityIdentifier("replayDoublePlay")
-                    }
-                }
-            }
             MatchProjectFeedbackPanel(feedback:match.projectFeedback)
             CareerProjectNextActions(player:player,calendar:calendar)
             Button("경기 화면 닫기") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: completionNavigation == nil)).accessibilityIdentifier("gameReturnHome")
@@ -877,11 +915,19 @@ struct CareerGameView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .allowsHitTesting(activeHighlights == nil)
+        .accessibilityHidden(activeHighlights != nil)
         .overlay {
             if let replay,let saved=displaySnapshot.match {inplayStage(replay,match:visualSnapshot ?? saved)}
             if let homeRunReplay,let saved=displaySnapshot.match {homeRunStage(homeRunReplay,match:visualSnapshot ?? saved)}
+            if let activeHighlights, let saved = displaySnapshot.match {
+                MatchHighlightsView(highlights: activeHighlights, appearance: renderAppearance,
+                                    jerseyNumber: player.jerseyNumber, ownPosition: player.role == .pitcher ? "P" : player.positionRaw,
+                                    throwingHand: player.throwingHandRaw, isHome: saved.isHome, stadium: stadium,
+                                    playbackMode: fieldPlaybackMode) { self.activeHighlights = nil }
+            }
         }
-        .toolbar((replay != nil || homeRunReplay != nil) ? .hidden:.visible,for:.navigationBar)
+        .toolbar((replay != nil || homeRunReplay != nil || activeHighlights != nil) ? .hidden:.visible,for:.navigationBar)
         .background(Color(hex: 0x18334b)).foregroundStyle(Color(hex: 0xeee9cd))
         .navigationTitle(player.role.label+(assessmentID == nil ? " 경기":" 평가전")).navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color(hex: 0x18334b), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
@@ -1030,6 +1076,243 @@ struct CareerGameView: View {
             }
             Button("확인", role: .cancel) { error = nil }
         } message: { Text(error ?? "") }
+    }
+}
+
+private struct MatchHighlightsView: View {
+    let highlights: MatchHighlights
+    let appearance: PlayerAppearance
+    let jerseyNumber: Int
+    let ownPosition: String?
+    let throwingHand: String
+    let isHome: Bool
+    let stadium: StadiumIdentity
+    let playbackMode: FieldPlaybackMode
+    let close: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var filter = MatchHighlights.Filter.all
+    @State private var selectedRow: MatchHighlights.Row?
+    @AccessibilityFocusState(for: .voiceOver) private var focusedRow: String?
+
+    var body: some View {
+        let rows = highlights.rows(for: filter)
+        VStack(spacing: 0) {
+            MatchHighlightsHeader(title: "하이라이트", titleIdentifier: "matchHighlightsTitle", closeLabel: "결과로",
+                                  closeIdentifier: "closeMatchHighlights", close: close)
+            filterBar
+            HStack {
+                Text("\(rows.count)개").accessibilityIdentifier("matchHighlightsCount")
+                Spacer()
+                Text("경기 순서")
+            }
+            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            .padding(.horizontal, ManagementTheme.Space.compact)
+            .padding(.bottom, ManagementTheme.Space.inline)
+            Divider().overlay(GameTheme.boardLine)
+            ScrollView {
+                if rows.isEmpty {
+                    Text(filter == .all ? "이 경기에는 저장된 다시보기 장면이 없습니다." : "이 유형으로 저장된 장면이 없습니다.")
+                        .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(ManagementTheme.Space.screen)
+                        .accessibilityIdentifier("matchHighlightsEmpty")
+                } else {
+                    let innings = Dictionary(grouping: rows, by: \.half).sorted { $0.key < $1.key }
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(innings, id: \.key) { inning in
+                            if let first = inning.value.first {
+                                Text(first.inningLabel)
+                                    .font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(ManagementTheme.Space.inline)
+                                    .background(GameTheme.board)
+                                    .accessibilityAddTraits(.isHeader)
+                            }
+                            ForEach(inning.value) { row in
+                                rowButton(row)
+                            }
+                        }
+                    }
+                }
+            }
+            .id(filter)
+            .accessibilityIdentifier("matchHighlightsList")
+            .background(GameTheme.boardPanel)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(GameTheme.boardInk)
+        .background(GameTheme.board.ignoresSafeArea())
+        .allowsHitTesting(selectedRow == nil)
+        .accessibilityHidden(selectedRow != nil)
+        .overlay {
+            // Keep the filtered ScrollView mounted so closing a replay preserves its exact offset.
+            if let row = selectedRow {
+                MatchHighlightReplayScreen(row: row, appearance: appearance, jerseyNumber: jerseyNumber,
+                                           ownPosition: ownPosition, throwingHand: throwingHand,
+                                           ownTeamFielding: (row.half % 2 == 0) == isHome, stadium: stadium,
+                                           playbackMode: playbackMode) {
+                    selectedRow = nil
+                    focusedRow = row.id
+                }
+                .id(row.id)
+            }
+        }
+    }
+
+    private var filterBar: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: ManagementTheme.Space.micro))
+            : AnyLayout(HStackLayout(spacing: ManagementTheme.Space.micro))
+        return layout {
+            ForEach(MatchHighlights.Filter.allCases) { category in
+                Button(category.title) { filter = category }
+                    .buttonStyle(MatchPixelButtonStyle(primary: filter == category))
+                    .accessibilityAddTraits(filter == category ? .isSelected : [])
+                    .accessibilityIdentifier("matchHighlightsFilter-" + category.rawValue)
+            }
+        }.padding(ManagementTheme.Space.inline)
+    }
+
+    private func rowButton(_ row: MatchHighlights.Row) -> some View {
+        Button {
+            selectedRow = row
+        } label: {
+            VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                HStack(alignment: .firstTextBaseline, spacing: ManagementTheme.Space.inline) {
+                    Text(row.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Text("보기").font(.caption.bold()).foregroundStyle(GameTheme.gold)
+                }
+                if !row.detail.isEmpty {
+                    Text(row.detail).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                MatchHighlightTags(tags: row.tags)
+            }
+            .padding(.horizontal, ManagementTheme.Space.compact)
+            .padding(.vertical, ManagementTheme.Space.inline)
+            .frame(maxWidth: .infinity, minHeight: ManagementTheme.Control.hit, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(([row.inningLabel, row.title, row.detail] + row.tags).filter { !$0.isEmpty }.joined(separator: " · "))
+        .accessibilityHint("저장된 장면을 재생합니다.")
+        .accessibilityIdentifier("matchHighlight-" + row.id)
+        .accessibilityFocused($focusedRow, equals: row.id)
+        .overlay(alignment: .bottom) {
+            Divider().overlay(GameTheme.boardLine).allowsHitTesting(false).accessibilityHidden(true)
+        }
+    }
+}
+
+private struct MatchHighlightsHeader: View {
+    let title: String
+    let titleIdentifier: String
+    let closeLabel: String
+    let closeIdentifier: String
+    let close: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.micro))
+            : AnyLayout(HStackLayout(spacing: ManagementTheme.Space.inline))
+        layout {
+            Text(title).managementFont(.screenTitle).accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier(titleIdentifier)
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            Button(closeLabel, action: close)
+                .buttonStyle(MatchPixelButtonStyle())
+                .fixedSize(horizontal: !typeSize.isAccessibilitySize, vertical: false)
+                .accessibilityIdentifier(closeIdentifier)
+        }
+        .padding(ManagementTheme.Space.inline)
+        .overlay(alignment: .bottom) { Divider().overlay(GameTheme.boardLine) }
+    }
+}
+
+private struct MatchHighlightTags: View {
+    let tags: [String]
+
+    var body: some View {
+        if !tags.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: ManagementTheme.Space.micro) { badges }
+                VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) { badges }
+            }
+        }
+    }
+
+    private var badges: some View {
+        ForEach(tags, id: \.self) { tag in
+            Text(tag).font(.caption2.bold()).foregroundStyle(GameTheme.boardMuted)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, ManagementTheme.Space.micro)
+                .padding(.vertical, 2)
+                .overlay(Rectangle().strokeBorder(GameTheme.boardLine))
+        }
+    }
+}
+
+private struct MatchHighlightReplayScreen: View {
+    let row: MatchHighlights.Row
+    let appearance: PlayerAppearance
+    let jerseyNumber: Int
+    let ownPosition: String?
+    let throwingHand: String
+    let ownTeamFielding: Bool
+    let stadium: StadiumIdentity
+    let playbackMode: FieldPlaybackMode
+    let close: () -> Void
+    @State private var finished = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            MatchHighlightsHeader(title: "장면 다시보기", titleIdentifier: "matchHighlightReplay",
+                                  closeLabel: "목록으로", closeIdentifier: "closeMatchHighlightReplay", close: close)
+            ScrollView {
+                VStack(spacing: ManagementTheme.Space.inline) {
+                    GamePanel(title: row.inningLabel, onBoard: true) {
+                        Text(row.title).font(.headline).foregroundStyle(GameTheme.gold)
+                        if !row.detail.isEmpty {
+                            Text(row.detail).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        MatchHighlightTags(tags: row.tags)
+                        Text(finished ? "재생 완료" : "재생 중")
+                            .font(.caption.bold()).foregroundStyle(finished ? GameTheme.growth : GameTheme.boardMuted)
+                            .accessibilityIdentifier(finished ? "matchHighlightReplayFinished" : "matchHighlightReplayPlaying")
+                    }
+                    replayBoard
+                    if finished, case .field(let play) = row.play {
+                        FieldReplayDetails(play: play).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(ManagementTheme.Space.inline)
+                .frame(maxWidth: 500)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(GameTheme.boardInk)
+        .background(GameTheme.board.ignoresSafeArea())
+    }
+
+    @ViewBuilder private var replayBoard: some View {
+        switch row.play {
+        case .homeRun(let event):
+            HomeRunReplayBoard(event: event, appearance: appearance, jerseyNumber: jerseyNumber,
+                               ownPosition: ownPosition, throwingHand: throwingHand, ownTeamFielding: ownTeamFielding,
+                               stadium: stadium, scoreText: "REPLAY", playbackMode: playbackMode,
+                               complete: { finished = true })
+        case .field(let play):
+            DetailedFieldReplayBoard(play: play, appearance: appearance, jerseyNumber: jerseyNumber,
+                                     ownPosition: ownPosition, throwingHand: throwingHand, ownTeamFielding: ownTeamFielding,
+                                     stadium: stadium, scoreText: "REPLAY", playbackMode: playbackMode,
+                                     complete: { finished = true })
+        }
     }
 }
 

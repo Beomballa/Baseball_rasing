@@ -556,12 +556,156 @@ struct CareerPathVerification: View {
 
 #if DEBUG
 enum LiveCareerQA {
+    enum OpponentHomeRun: String {
+        case walkOff = "walk-off"
+        case goAhead = "go-ahead"
+        case grandSlam = "grand-slam"
+
+        var runs: Int {
+            switch self {
+            case .walkOff: 2
+            case .goAhead: 3
+            case .grandSlam: 4
+            }
+        }
+    }
+
     static func storeURL(arguments:[String],bundleID:String?) throws -> URL {
         guard bundleID == "dev.bm.career.performanceqa",let index=arguments.firstIndex(of:"-qa-session"),
               index+1<arguments.count,let session=UUID(uuidString:arguments[index+1]) else {
             throw NSError(domain:"BM.QA",code:1,userInfo:[NSLocalizedDescriptionKey:"실제 경기 QA는 별도 앱·세션이 필요합니다."])
         }
         return FileManager.default.temporaryDirectory.appendingPathComponent("live-career-\(session.uuidString).store")
+    }
+
+    private struct PitchBatch {
+        let seed: UInt64
+        let count: Int
+        let control: ManualMatchInput?
+    }
+
+    @MainActor static func prepareOpponentHomeRun(_ scenario: OpponentHomeRun, player: CareerPlayer,
+                                                  calendar: CareerCalendarState, in context: ModelContext) throws {
+        let record = try CareerMatchStore.start(player: player, state: calendar, in: context)
+        guard record.revision == 0 else { return }
+        var ready = try record.snapshot()
+        guard !ready.isHome, ready.ownPitcherActive, !ready.offense else { throw MatchError.noFixture }
+        let pitch = try PitchSelectionStore.resolve(player: player, available: Set(ready.mastery.keys))
+        let reserve = (scenario.runs - 1) * 4 + 1
+        let limit = MatchPitching.limit(stamina: ready.abilityStats?.stamina ?? 60) - 1
+        var batches: [PitchBatch] = []
+
+        // Simulate only to pick seeds. The same setup pitches are then stored through the usual match path.
+        if scenario == .walkOff {
+            while ready.half < 17 {
+                let remaining = (17 - ready.half) / 2
+                let budget = min(12, (limit - ready.line.pitches - reserve) / remaining)
+                let targetGap = remaining == 1 ? scenario.runs - 1 : max(scenario.runs - 1, ready.awayScore - ready.homeScore)
+                let result = try nextDefense(from: ready, pitch: pitch, budget: budget, allowedGap: 0...targetGap)
+                ready = result.match
+                batches.append(result.batch)
+            }
+        } else if scenario == .goAhead, !(1..<scenario.runs).contains(ready.awayScore - ready.homeScore) {
+            let result = try nextDefense(from: ready, pitch: pitch, budget: 18, allowedGap: 1...(scenario.runs - 1))
+            ready = result.match
+            batches.append(result.batch)
+        } else if scenario == .grandSlam, (1..<scenario.runs).contains(ready.awayScore - ready.homeScore) {
+            let result = try nextDefense(from: ready, pitch: pitch, budget: 18, allowedGap: Int.min...0)
+            ready = result.match
+            batches.append(result.batch)
+        }
+
+        let setup = try loadBases(from: ready, runners: scenario.runs - 1, pitch: pitch)
+        ready = setup.match
+        batches.append(setup.batch)
+        let half = ready.half, order = ready.homeOrder
+        let deliveryCode = ready.deliveryPitchCode(requested: pitch)
+        let phases = [0.40, ManualMatchRules.releaseCenter, 0.96]
+        for _ in 0..<8192 {
+            let delivery = ready.delivery(pitchCode: deliveryCode)
+            let target = PitchTarget(x: delivery.x, y: delivery.y)
+            let reachesFence = try phases.allSatisfy { phase in
+                var sample = ready
+                try sample.advance(.pitch, pitchCode: pitch, control: ManualMatchInput(release: phase, pitchTarget: target))
+                return sample.lastManual?.outcome == "홈런" && sample.awayScore == ready.awayScore
+                    && sample.homeScore == ready.homeScore + scenario.runs && sample.completed == (scenario == .walkOff)
+                    && sample.homeRuns?.last.map { $0.half == half && $0.order == order && !$0.batter.own && $0.runs == scenario.runs } == true
+            }
+            if reachesFence {
+                for batch in batches {
+                    var previous = try record.snapshot()
+                    previous.random = batch.seed
+                    record.payload = try JSONEncoder().encode(previous)
+                    try context.save()
+                    for _ in 0..<batch.count {
+                        try CareerMatchStore.advance(player: player, state: calendar, record: record, revision: record.revision,
+                                                     input: .pitch, pitchCode: pitch, control: batch.control, in: context)
+                    }
+                }
+                var saved = try record.snapshot()
+                saved.random = ready.random
+                guard saved == ready else { throw MatchError.invalidRecord }
+                record.payload = try JSONEncoder().encode(ready)
+                try context.save()
+                return
+            }
+            ready.random = nextSeed(ready.random)
+        }
+        throw MatchError.noFixture
+    }
+
+    private static func nextDefense(from initial: CareerMatch, pitch: String, budget: Int,
+                                    allowedGap: ClosedRange<Int>) throws -> (match: CareerMatch, batch: PitchBatch) {
+        guard budget > 0 else { throw MatchError.noFixture }
+        let target = max(allowedGap.lowerBound, min(0, allowedGap.upperBound))
+        var seed = initial.random
+        var best: (match: CareerMatch, batch: PitchBatch)?
+        for _ in 0..<768 {
+            defer { seed = nextSeed(seed) }
+            var sample = initial
+            sample.random = seed
+            for count in 1...budget {
+                try sample.advance(.pitch, pitchCode: pitch)
+                if sample.completed || !sample.ownPitcherActive { break }
+                if sample.half != initial.half {
+                    let gap = sample.awayScore - sample.homeScore
+                    if sample.half == initial.half + 2, allowedGap.contains(gap),
+                       best.map({ abs(gap - target) < abs($0.match.awayScore - $0.match.homeScore - target) }) ?? true {
+                        let candidate = (sample, PitchBatch(seed: seed, count: count, control: nil))
+                        if gap == target { return candidate }
+                        best = candidate
+                    }
+                    break
+                }
+            }
+        }
+        guard let best else { throw MatchError.noFixture }
+        return best
+    }
+
+    private static func loadBases(from initial: CareerMatch, runners: Int,
+                                  pitch: String) throws -> (match: CareerMatch, batch: PitchBatch) {
+        let control = ManualMatchInput(release: ManualMatchRules.releaseCenter, pitchTarget: PitchTarget(x: 0.1, y: 0.1))
+        var seed = initial.random
+        for _ in 0..<1024 {
+            defer { seed = nextSeed(seed) }
+            var sample = initial
+            sample.random = seed
+            for count in 1...(runners * 4) {
+                try sample.advance(.pitch, pitchCode: pitch, control: control)
+                guard !sample.completed, sample.ownPitcherActive, sample.half == initial.half,
+                      sample.homeScore == initial.homeScore, sample.awayScore == initial.awayScore,
+                      let outcome = sample.lastManual?.outcome, outcome == "볼" || outcome == "볼넷" else { break }
+                if sample.bases.filter({ $0 }).count == runners {
+                    return (sample, PitchBatch(seed: seed, count: count, control: control))
+                }
+            }
+        }
+        throw MatchError.noFixture
+    }
+
+    private static func nextSeed(_ seed: UInt64) -> UInt64 {
+        seed &* 6364136223846793005 &+ 1442695040888963407
     }
 }
 
@@ -582,6 +726,16 @@ private struct LiveCareerPerformanceRun:View {
             do {
                 let args=ProcessInfo.processInfo.arguments
                 let url=try LiveCareerQA.storeURL(arguments:args,bundleID:Bundle.main.bundleIdentifier)
+                let opponentHomeRun: LiveCareerQA.OpponentHomeRun?
+                if let index = args.firstIndex(of: "-qa-v191-opponent-homer") {
+                    guard args.indices.contains(index + 1), args.contains("-qa-pitcher"),
+                          let scenario = LiveCareerQA.OpponentHomeRun(rawValue: args[index + 1]) else {
+                        throw MatchError.invalidInput
+                    }
+                    opponentHomeRun = scenario
+                } else {
+                    opponentHomeRun = nil
+                }
                 let c=try CareerStore.makeContainer(url:url),catalog=try SchoolCatalog.load()
                 let p:CareerPlayer
                 if let saved=try c.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first {p=saved}
@@ -592,7 +746,23 @@ private struct LiveCareerPerformanceRun:View {
                     p=try CareerStore.create(draft,schools:catalog,in:c.mainContext)
                 }
                 let state=try c.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID==p.id}!
+                if let opponentHomeRun, state.actionDate == nil {
+                    let today = try GameDate(p.gameDate)
+                    guard p.role == .pitcher,
+                          let fixture = try state.fixtures(for: p, year: today.year).first(where: {
+                              $0.awayID == p.schoolID && $0.isAppearance(for: .pitcher)
+                          }) else { throw MatchError.noFixture }
+                    p.gameDate = fixture.date.description
+                    if opponentHomeRun == .walkOff,
+                       let profile = try PlayerAbilityStore.profile(playerID: p.id, in: c.mainContext) {
+                        try profile.grow(.stamina, to: 99)
+                    }
+                    try c.mainContext.save()
+                }
                 if state.actionDate != p.gameDate {try CalendarProgression.rest(player:p,state:state,revision:state.revision,in:c.mainContext)}
+                if let opponentHomeRun {
+                    try LiveCareerQA.prepareOpponentHomeRun(opponentHomeRun, player: p, calendar: state, in: c.mainContext)
+                }
                 schools=catalog;player=p;calendar=state;container=c
             } catch {failure=error.localizedDescription}
         }
