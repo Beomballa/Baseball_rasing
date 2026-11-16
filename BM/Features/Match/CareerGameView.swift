@@ -1066,7 +1066,15 @@ struct CareerGameView: View {
         }
         .managementConfirmationDialog("남은 경기를 자동으로 진행할까요?", isPresented: $confirmAutomatic, titleVisibility: .visible) {
             Button("진행하고 결과 저장", role: .destructive) { advance(.automatic) }
-        } message: { Text(assessmentID == nil ? "현재 카운트·주자에서 이어서 진행합니다. 실제 출전 성적과 피로를 반영하며 취소할 수 없습니다.":"현재 평가 경기의 카운트·주자에서 이어서 진행합니다. 자동 입력을 구분해 평가전 원장에 저장합니다.") }
+        } message: {
+            if assessmentID != nil {
+                Text("현재 평가 경기의 카운트·주자에서 이어서 진행합니다. 자동 입력을 구분해 평가전 원장에 저장합니다.")
+            } else if record?.appearance == false {
+                Text("팀 경기 결과만 저장합니다.")
+            } else {
+                Text("현재 카운트·주자에서 이어서 진행합니다. 실제 출전 성적과 피로를 반영하며 취소할 수 없습니다.")
+            }
+        }
         .managementAlert("경기를 저장하지 못했습니다", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } }), kind: .failure) {
             if let pending = retrySave {
                 Button("같은 입력 다시 저장") {
