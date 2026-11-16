@@ -578,6 +578,42 @@ enum LiveCareerQA {
         return FileManager.default.temporaryDirectory.appendingPathComponent("live-career-\(session.uuidString).store")
     }
 
+    @MainActor static func prepareProVenueHomeRun(player: CareerPlayer, calendar: CareerCalendarState,
+                                                 in context: ModelContext) throws {
+        let row = try CareerMatchStore.start(player: player, state: calendar, in: context)
+        guard row.revision == 0 else { return }
+        var match = try row.snapshot()
+        let pitcher = player.role == .pitcher
+        guard pitcher ? match.ownPitcherActive && !match.offense : match.ownAtBat else { throw MatchError.noFixture }
+        let requested = try PitchSelectionStore.resolve(player: player, available: Set(match.mastery.keys))
+        let pitch = match.deliveryPitchCode(requested: requested)
+        let order = match.half.isMultiple(of: 2) ? match.awayOrder : match.homeOrder
+        guard (0...1).contains(match.half), order == 0 else { throw MatchError.noFixture }
+        let timings = pitcher ? [0.40, ManualMatchRules.releaseCenter, 0.96] : [0.73, 0.82, 0.91]
+
+        // Copy one seed into the pre-input snapshot. The touch event still supplies the real swing or release.
+        for _ in 0..<8192 {
+            let delivery = match.delivery(pitchCode: pitch)
+            let target = PitchTarget(x: delivery.x, y: delivery.y)
+            let contacts = try timings.allSatisfy { timing in
+                var sample = match
+                let control = pitcher ? ManualMatchInput(release: timing, pitchTarget: target)
+                    : ManualMatchInput(x: 0.5, y: 0.5, timing: timing)
+                try sample.advance(pitcher ? .pitch : .swing, pitchCode: pitch, control: control)
+                return sample.homeRuns?.last.map {
+                    $0.half == match.half && $0.order == order && $0.batter.own == !pitcher
+                } == true
+            }
+            if contacts {
+                row.payload = try JSONEncoder().encode(match)
+                try context.save()
+                return
+            }
+            match.random = nextSeed(match.random)
+        }
+        throw MatchError.noFixture
+    }
+
     private struct PitchBatch {
         let seed: UInt64
         let count: Int
@@ -736,6 +772,23 @@ private struct LiveCareerPerformanceRun:View {
                 } else {
                     opponentHomeRun = nil
                 }
+                let proVenueID: String?
+                if let index = args.firstIndex(of: "-qa-v188-publish-venue") {
+                    guard opponentHomeRun == nil, args.indices.contains(index + 1),
+                          let venue = ProStadium.resolve(args[index + 1]), venue.club.id != args[index + 1] else {
+                        throw MatchError.invalidInput
+                    }
+                    proVenueID = args[index + 1]
+                    if !FileManager.default.fileExists(atPath: url.path) {
+                        let role: PlayerRole = args.contains("-qa-pitcher") ? .pitcher : .batter
+                        let source = FileManager.default.temporaryDirectory
+                            .appendingPathComponent("v188-publish-venue", isDirectory: true)
+                            .appendingPathComponent("\(venue.club.league.rawValue)-\(role.rawValue).store")
+                        try FileManager.default.copyItem(at: source, to: url)
+                    }
+                } else {
+                    proVenueID = nil
+                }
                 let c=try CareerStore.makeContainer(url:url),catalog=try SchoolCatalog.load()
                 let p:CareerPlayer
                 if let saved=try c.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first {p=saved}
@@ -746,6 +799,14 @@ private struct LiveCareerPerformanceRun:View {
                     p=try CareerStore.create(draft,schools:catalog,in:c.mainContext)
                 }
                 let state=try c.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID==p.id}!
+                if let proVenueID, state.actionDate == nil {
+                    let today = try GameDate(p.gameDate)
+                    guard let fixture = try state.fixtures(for: p, year: today.year).first(where: {
+                        $0.date >= today && $0.homeID == proVenueID && $0.isAppearance(for: p.role)
+                    }) else { throw MatchError.noFixture }
+                    p.gameDate = fixture.date.description
+                    try c.mainContext.save()
+                }
                 if let opponentHomeRun, state.actionDate == nil {
                     let today = try GameDate(p.gameDate)
                     guard p.role == .pitcher,
@@ -762,6 +823,9 @@ private struct LiveCareerPerformanceRun:View {
                 if state.actionDate != p.gameDate {try CalendarProgression.rest(player:p,state:state,revision:state.revision,in:c.mainContext)}
                 if let opponentHomeRun {
                     try LiveCareerQA.prepareOpponentHomeRun(opponentHomeRun, player: p, calendar: state, in: c.mainContext)
+                }
+                if proVenueID != nil {
+                    try LiveCareerQA.prepareProVenueHomeRun(player: p, calendar: state, in: c.mainContext)
                 }
                 schools=catalog;player=p;calendar=state;container=c
             } catch {failure=error.localizedDescription}

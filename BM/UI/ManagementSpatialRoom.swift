@@ -662,7 +662,7 @@ struct ManagementVenueBanner: View {
     var compact = true
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        if let venue = stadium.backdrop, let art = InplayStadiumArt.upperArt(venue) {
+        if let venue = stadium.backdrop, let art = InplayStadiumArt.upperArt(venue, stadium: stadium) {
             VStack(alignment: .leading, spacing: 0) {
                 Image(uiImage: art.image).resizable().interpolation(.none).scaledToFill()
                     .frame(maxWidth: .infinity).frame(height: compact ? 54 : 152).clipped().accessibilityHidden(true)
@@ -738,7 +738,7 @@ private struct StadiumLEDLettering: ViewModifier {
         let key = "v168-home-2:\(stadium.key):\(venue.imageName)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
         guard let original = UIImage(named: roomAsset), original.size == referenceSize,
-              let upper = InplayStadiumArt.upperArt(venue)?.image else { return nil }
+              let upper = InplayStadiumArt.upperArt(venue, stadium: stadium)?.image else { return nil }
         let scale = max(standsBounds.width / upper.size.width, standsBounds.height / upper.size.height)
         let size = CGSize(width: upper.size.width * scale, height: upper.size.height * scale)
         let target = CGRect(x: standsBounds.midX - size.width / 2, y: standsBounds.maxY - size.height,

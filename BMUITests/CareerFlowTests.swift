@@ -2897,6 +2897,123 @@ extension CareerFlowTests {
             app.terminate()
         }
     }
+    @MainActor func testV188PublishKBOVenueLiveAndSavedReplay() throws {
+        try verifyProVenueLiveAndSavedReplay(league: "KBO", id: "pro-tides", team: "부산 타이즈 1군")
+    }
+
+    @MainActor func testV188PublishNPBVenueLiveAndSavedReplay() throws {
+        try verifyProVenueLiveAndSavedReplay(league: "NPB", id: "jp-pro-0", team: "동도 스카이스")
+    }
+
+    @MainActor func testV188PublishMLBVenueLiveAndSavedReplay() throws {
+        try verifyProVenueLiveAndSavedReplay(league: "MLB", id: "us-pro-0", team: "퍼시픽 웨이브스")
+    }
+
+    @MainActor private func verifyProVenueLiveAndSavedReplay(league: String, id: String, team: String) throws {
+        guard ProcessInfo.processInfo.environment["BM_V188_PRO_VENUE_QA"] == "1" else {
+            throw XCTSkip("Requires isolated pro career fixtures under the BM-QA app's tmp/v188-publish-venue directory.")
+        }
+        continueAfterFailure = false
+        for pitcher in [true, false] {
+            let app = try launchIsolatedCareerQA(pitcher: pitcher, arguments: ["-qa-v188-publish-venue", id])
+            defer { app.terminate() }
+            let role = pitcher ? "pitcher" : "batter"
+            let title = "V188 publish \(league) \(role)"
+            let scoringSide = pitcher ? "상대 팀" : "우리 팀"
+
+            func element(_ identifier: String) -> XCUIElement {
+                app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+            }
+
+            func capture(_ phase: String) {
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "\(title) \(phase)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+
+            func waitForField(_ phase: String) {
+                let canvas = app.otherElements["homeRunCanvas"]
+                let label = app.staticTexts["homeRunPhase"]
+                XCTAssertTrue(canvas.waitForExistence(timeout: 12), title)
+                let runners = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "주자 일주"), object: label)
+                XCTAssertEqual(XCTWaiter.wait(for: [runners], timeout: 14), .completed, title)
+                XCTAssertGreaterThan(canvas.frame.width, app.windows.firstMatch.frame.width * 0.65, title)
+                XCTAssertEqual(app.staticTexts["homeRunScoringTeam"].label, "\(scoringSide) 홈런", title)
+                capture(phase)
+            }
+
+            let arena = element("careerMatchField")
+            XCTAssertTrue(arena.waitForExistence(timeout: 40), app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " / "))
+            let board = element("matchScoreboard")
+            let boardScore = board.descendants(matching: .any).matching(identifier: "careerGameScore").firstMatch.label
+            XCTAssertTrue(boardScore.contains(team + " 득점"), boardScore)
+            let inning = board.staticTexts["careerGameInning"].label
+            let openingHalf = try XCTUnwrap(["1회 초": 0, "1회 말": 1][inning], inning)
+            capture("before")
+
+            if pitcher {
+                let pitch = app.buttons["gamePitch"]
+                XCTAssertTrue(pitch.waitForExistence(timeout: 8) && pitch.isEnabled, title)
+                pitch.tap()
+                Thread.sleep(forTimeInterval: 0.80)
+                app.buttons["gameRelease"].tap()
+            } else {
+                app.buttons["gameInput-swing"].tap()
+                let touch = app.buttons["battingTouchSurface"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                touch.tap()
+                Thread.sleep(forTimeInterval: 0.86)
+                touch.tap()
+            }
+            waitForField("inplay")
+            let receipt = app.staticTexts["homeRunCelebration"]
+            XCTAssertTrue(receipt.waitForExistence(timeout: 20))
+            let liveReceipt = receipt.label
+            XCTAssertTrue(liveReceipt.hasPrefix(scoringSide) && liveReceipt.contains("비거리 "), liveReceipt)
+            let distance = try XCTUnwrap(liveReceipt.components(separatedBy: "비거리 ").last)
+            let runs = try XCTUnwrap(Int(liveReceipt.dropFirst(scoringSide.count + 1).prefix(while: \.isNumber)))
+            let headline = runs == 1 ? "SOLO HOME RUN" : runs == 4 ? "GRAND SLAM" : "\(runs)-RUN HOME RUN"
+
+            let stage = element("homeRunStage")
+            let liveFinished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: stage)
+            XCTAssertEqual(XCTWaiter.wait(for: [liveFinished], timeout: 15), .completed, title)
+            app.buttons["gameAutomatic"].tap()
+            app.buttons["진행하고 결과 저장"].tap()
+            XCTAssertTrue(element("gameResultSaved").waitForExistence(timeout: 60))
+            let resultIDs = ["gameFinalScore", "gameResultFatigue", pitcher ? "gameResult-runsAllowed" : "gameResult-homeRuns"]
+            let originalResult = resultIDs.map { element($0).label }
+
+            let highlights = app.buttons["openMatchHighlights"]
+            reveal(highlights, in: app); highlights.tap()
+            let filter = app.buttons["matchHighlightsFilter-homeRun"]
+            XCTAssertTrue(filter.waitForExistence(timeout: 8)); filter.tap()
+            // The pro fixture verifies the real pre-input snapshot is the first plate appearance in this half.
+            let rows = app.buttons.matching(identifier: "matchHighlight-\(openingHalf):0")
+            let row = rows.firstMatch
+            reveal(row, in: app)
+            XCTAssertEqual(rows.count, 1, liveReceipt)
+            let rowLabel = row.label
+            XCTAssertTrue(rowLabel.hasPrefix(inning) && rowLabel.contains(headline) && rowLabel.contains(distance), rowLabel)
+            XCTAssertEqual(rowLabel.contains("내 타석"), !pitcher, rowLabel)
+            row.tap()
+            XCTAssertTrue(element("matchHighlightReplay").waitForExistence(timeout: 12))
+            waitForField("highlight")
+            XCTAssertTrue(receipt.waitForExistence(timeout: 20))
+            XCTAssertEqual(receipt.label, liveReceipt)
+            XCTAssertTrue(app.staticTexts["matchHighlightReplayFinished"].waitForExistence(timeout: 15))
+            app.buttons["closeMatchHighlightReplay"].tap()
+            XCTAssertTrue(filter.isSelected && row.exists)
+            XCTAssertEqual(row.label, rowLabel)
+            app.buttons["closeMatchHighlights"].tap()
+            XCTAssertEqual(resultIDs.map { element($0).label }, originalResult)
+
+            let audit = XCTAttachment(string: "\(team) (\(id))\n\(boardScore)\n\(rowLabel)\n\(liveReceipt)")
+            audit.name = "\(title) audit"
+            audit.lifetime = .keepAlways
+            add(audit)
+        }
+    }
+
     @MainActor func testV191SavedFieldHighlightReturnsToUnchangedResult() throws {
         continueAfterFailure = false
         let app = try launchIsolatedCareerQA(pitcher: false)

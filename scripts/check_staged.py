@@ -289,6 +289,23 @@ ART_HASHES.update({
 })
 
 
+# V187 reviewed game turf overlays.
+ART_HASHES.update({
+    'BM/Resources/MatchArt/stadium-turf-v187-dome-batter.png': '0818b9c4a2a77a28b315191da439cb5e2aa9f58bb740340598664ce3f4580842',
+    'BM/Resources/MatchArt/stadium-turf-v187-dome-field.png': 'deddf1e5dca1d0ac09df3499596fb9e965f94fcf485e6727884a5c237e119d2b',
+    'BM/Resources/MatchArt/stadium-turf-v187-dome-pitcher.png': '758abc4a8d477d6a5c3ca4656d8fd4296b702931f9f758a42afd33d83a6975c4',
+    'BM/Resources/MatchArt/stadium-turf-v187-harbor-batter.png': '297b8f6d5e47abfa69645f5dbbb42e8584c67441d774e656b43c3aae0642de71',
+    'BM/Resources/MatchArt/stadium-turf-v187-harbor-field.png': '21ae78007d508dd48a1256b62144f07af575ed6070dde031d91ca59608fad9e8',
+    'BM/Resources/MatchArt/stadium-turf-v187-harbor-pitcher.png': '8d8c64e7e6f483d0c5450b1f4a1816b08f4abadc430219a9aedc0def4af76017',
+    'BM/Resources/MatchArt/stadium-turf-v187-pacific-batter.png': 'cbe7776fb7421eef908fb716020a58dcec8f7fc83224d46324164dc5666d9520',
+    'BM/Resources/MatchArt/stadium-turf-v187-pacific-field.png': '079cffeed18d48c21f13ce2c152faf28bf5499029a169eebbd1900ff78603d0d',
+    'BM/Resources/MatchArt/stadium-turf-v187-pacific-pitcher.png': '03f1ef417a113f0f3cd0588afc691dfbc1ac6f88e4115a02e82b61a5a31ee86e',
+    'BM/Resources/MatchArt/stadium-turf-v187-stone-batter.png': '9ee7b1bcab7f9964a1073394016c639fc6883d1d432de2ad14b041b3c3c195a6',
+    'BM/Resources/MatchArt/stadium-turf-v187-stone-field.png': '812340d11a57e1688ee09287269a4c879e5f1991be5fbcbb8e2b8a9a173f98f6',
+    'BM/Resources/MatchArt/stadium-turf-v187-stone-pitcher.png': '12855d2563b6a62ddc74ea24cec5e447e15defe3cb7d413c959f8c1324d59d23',
+})
+
+
 def allowed_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if any(part.lower() in BLOCKED_PARTS or part.lower().startswith(".env") for part in parts):

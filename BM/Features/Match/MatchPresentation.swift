@@ -1419,6 +1419,10 @@ enum InplayFieldProjection {
 @MainActor enum InplayStadiumArt {
     static let size=CGSize(width:1024,height:1536)
     static let image=MatchArt.image("inplay-stadium-arcade-v1")
+    static let baseTexture:SKTexture? = {
+        guard let image else {return nil}
+        let texture=SKTexture(image:image);texture.filteringMode = .nearest;return texture
+    }()
 
     @MainActor final class UpperArt {
         let image:UIImage
@@ -1432,12 +1436,53 @@ enum InplayFieldProjection {
         cache.totalCostLimit=6*1024*1024
         return cache
     }()
-    static func upperArt(_ venue:StadiumBackdrop) -> UpperArt? {
-        let key=venue.imageName as NSString
+    private static let turfCache: NSCache<NSString, UpperArt> = {
+        let cache = NSCache<NSString, UpperArt>()
+        cache.totalCostLimit = 24 * 1024 * 1024
+        cache.countLimit = 2
+        return cache
+    }()
+
+    static func turfName(_ stadium: StadiumIdentity) -> String? {
+        if let name = StadiumTurfArt.name(stadium: stadium, camera: .field) { return name }
+        return stadium.expandedAppearance.map { "stadium-turf-v188-\($0.id)-field" }
+    }
+
+    static func turfArt(_ stadium: StadiumIdentity) -> UpperArt? {
+        guard let name = turfName(stadium) else { return nil }
+        let key = name as NSString
+        if let artwork = turfCache.object(forKey: key) { return artwork }
+        let image: UIImage?
+        if let appearance = stadium.expandedAppearance, let venue = stadium.backdrop,
+           let base = Self.image, let upper = upperArt(venue, stadium: stadium) {
+            // The mask follows the painted grass across the shared base and venue seam.
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            format.preferredRange = .standard
+            let composition = UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+                renderer.cgContext.interpolationQuality = .none
+                base.draw(in: CGRect(origin: .zero, size: size))
+                upper.image.draw(in: CGRect(x: 0, y: 0, width: size.width, height: venue.height))
+            }
+            image = StadiumExpandedTurf.overlay(for: composition, camera: .field, appearance: appearance, venue: venue)
+        } else {
+            image = StadiumTurfArt.image(stadium: stadium, camera: .field)
+        }
+        guard let image else { return nil }
+        let artwork = UpperArt(image: image)
+        turfCache.setObject(artwork, forKey: key, cost: Int(size.width * size.height) * 8)
+        return artwork
+    }
+
+    static func upperArt(_ venue: StadiumBackdrop, stadium: StadiumIdentity? = nil) -> UpperArt? {
+        let appearance = stadium?.expandedAppearance
+        let key = (appearance.map { venue.imageName + ":" + $0.id } ?? venue.imageName) as NSString
         if let cached=upperArtCache.object(forKey:key) {return cached}
         guard let url=Bundle.main.url(forResource:venue.imageName,withExtension:"png",subdirectory:"MatchArt"),
               let image=UIImage(contentsOfFile:url.path),image.size == venue.pixelSize else {return nil}
-        let art=UpperArt(image:image)
+        let styled = appearance.map { StadiumCrowdArt.styled(image, in: venue, appearance: $0) } ?? image
+        let art = UpperArt(image: styled)
         upperArtCache.setObject(art,forKey:key,cost:Int(venue.pixelSize.width*venue.pixelSize.height)*8)
         return art
     }
@@ -1489,8 +1534,11 @@ enum InplayFieldProjection {
     }
     static func draw(in context:GraphicsContext,size:CGSize,stadium:StadiumIdentity) -> Scoreboard? {
         if let image {context.draw(Image(uiImage:image).interpolation(.none),in:InplayFieldProjection.viewport(size))}
-        guard let venue=stadium.backdrop,let upper=upperArt(venue) else {return nil}
+        guard let venue=stadium.backdrop,let upper=upperArt(venue, stadium: stadium) else {return nil}
         context.draw(Image(uiImage:upper.image).interpolation(.none),in:upperFrame(venue,in:size))
+        if let turf = turfArt(stadium) {
+            context.draw(Image(uiImage: turf.image).interpolation(.none), in: InplayFieldProjection.viewport(size))
+        }
         return scoreboard(venue,in:size)
     }
     static func drawScore(_ text:String,in context:GraphicsContext,size:CGSize,board:Scoreboard?,homeRun:Bool) {
@@ -2586,13 +2634,16 @@ struct InplayStartupReadiness {
         self.backupRoutes=backupRoutes ?? replay.backupRoutes
         super.init(size:Self.fieldSize)
         scaleMode = .aspectFit;backgroundColor=UIColor(GameTheme.board);addChild(content)
-        if let image=InplayStadiumArt.image {
-            let texture=SKTexture(image:image);texture.filteringMode = .nearest
+        if let texture=InplayStadiumArt.baseTexture {
             addBackdrop(texture,frame:InplayFieldProjection.viewport(size),depth:-1000,name:"inplay-field-base")
         }
-        if let venue=stadium.backdrop,let upper=InplayStadiumArt.upperArt(venue) {
+        if let venue=stadium.backdrop,let upper=InplayStadiumArt.upperArt(venue, stadium: stadium) {
             addBackdrop(upper.texture,frame:InplayStadiumArt.upperFrame(venue,in:size),depth:-999,name:venue.imageName)
             venueScoreboard=InplayStadiumArt.scoreboard(venue,in:size)
+            if let name = InplayStadiumArt.turfName(stadium),
+               let turf = InplayStadiumArt.turfArt(stadium) {
+                addBackdrop(turf.texture, frame: InplayFieldProjection.viewport(size), depth: -998, name: name)
+            }
         }
         let isHomeRun:Bool
         switch replay {case .field:isHomeRun=false;case .homeRun:isHomeRun=true}

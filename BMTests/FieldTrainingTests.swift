@@ -2844,6 +2844,148 @@ import SpriteKit
 }
 
 extension FieldTrainingTests {
+    private static let reviewedTurfStadiums = [
+        ("hs-ref-014", "stone"),
+        ("hs-ref-024", "harbor"),
+        ("kbo-3", "dome"),
+        ("mlb-0", "pacific")
+    ]
+
+    func testV187ApprovedTurfResolvesInAllCamerasAndSeasonAliases() throws {
+        let cameras: [(StadiumSceneDress.Camera, String, CGSize)] = [
+            (.batter, "batter", CGSize(width: 1254, height: 1254)),
+            (.pitcher, "pitcher", CGSize(width: 1219, height: 1290)),
+            (.field, "field", InplayStadiumArt.size)
+        ]
+        for (id, profile) in Self.reviewedTurfStadiums {
+            let stadium = StadiumIdentity(homeTeamID: id)
+            for (camera, suffix, size) in cameras {
+                let name = "stadium-turf-v187-\(profile)-\(suffix)"
+                XCTAssertEqual(StadiumTurfArt.name(stadium: stadium, camera: camera), name)
+                let image = try XCTUnwrap(StadiumTurfArt.image(stadium: stadium, camera: camera), name)
+                XCTAssertEqual(image.size, size, name)
+                let overlay = try stadiumPixelBytes(image)
+                let alphaSamples = stride(from: 3, to: overlay.count, by: 4 * 31).map { overlay[$0] }
+                XCTAssertGreaterThan(alphaSamples.filter { $0 == 255 }.count, 30, name)
+                XCTAssertGreaterThan(alphaSamples.filter { $0 == 0 }.count, 30, name)
+            }
+        }
+        for (alias, canonical) in [("pro-stars", "kbo-3"), ("us-pro-0", "mlb-0")] {
+            let stadium = StadiumIdentity(homeTeamID: alias)
+            let club = StadiumIdentity(homeTeamID: canonical)
+            XCTAssertEqual(stadium.pro?.club.id, canonical)
+            for (camera, _, _) in cameras {
+                XCTAssertEqual(StadiumTurfArt.name(stadium: stadium, camera: camera),
+                               StadiumTurfArt.name(stadium: club, camera: camera), alias)
+            }
+        }
+        let nonReviewed = StadiumIdentity(homeTeamID: "hs-ref-001")
+        XCTAssertNotNil(nonReviewed.backdrop)
+        for stadium in [StadiumIdentity.legacy, nonReviewed, StadiumIdentity(homeTeamID: "kbo-0")] {
+            for (camera, _, _) in cameras {
+                XCTAssertNil(StadiumTurfArt.name(stadium: stadium, camera: camera), stadium.key)
+                XCTAssertNil(StadiumTurfArt.image(stadium: stadium, camera: camera), stadium.key)
+            }
+        }
+    }
+
+    func testV187FixedCamerasCompositeTurfAndKeepInfieldDirt() throws {
+        let cameras: [(PlayerRole, StadiumSceneDress.Camera, String, Int)] = [
+            (.batter, .batter, "batter-field-v52", 340),
+            (.pitcher, .pitcher, "pitcher-field-v52", 660)
+        ]
+        for (id, profile) in Self.reviewedTurfStadiums {
+            let stadium = StadiumIdentity(homeTeamID: id)
+            for (role, camera, baseName, protectedFromY) in cameras {
+                let art = try XCTUnwrap(MatchStadiumBackdropArt.art(stadium: stadium, role: role), id)
+                let base = try XCTUnwrap(MatchArt.image(baseName))
+                let overlay = try XCTUnwrap(StadiumTurfArt.image(stadium: stadium, camera: camera))
+                XCTAssertEqual(art.image.size, base.size)
+                XCTAssertEqual(overlay.size, base.size)
+                XCTAssertEqual(art.texture.filteringMode, .nearest)
+
+                let rendered = try stadiumPixelBytes(art.image)
+                let original = try stadiumPixelBytes(base)
+                let turf = try stadiumPixelBytes(overlay)
+                let width = try XCTUnwrap(base.cgImage).width
+                let height = try XCTUnwrap(base.cgImage).height
+                var changedGrass = 0
+                var protectedDirt = 0
+                for y in stride(from: protectedFromY, to: height, by: 21) {
+                    for x in stride(from: 7, to: width, by: 23) {
+                        let offset = (y * width + x) * 4
+                        if turf[offset + 3] == 255 {
+                            let largestDifference = (0..<3).map { abs(Int(rendered[offset + $0]) - Int(turf[offset + $0])) }.max()
+                            XCTAssertLessThanOrEqual(largestDifference ?? 0, 2, "\(profile) \(role.rawValue) turf at \(x),\(y)")
+                            if original[offset..<(offset + 3)] != rendered[offset..<(offset + 3)] { changedGrass += 1 }
+                        }
+                        let red = Int(original[offset])
+                        if red > Int(original[offset + 1]) + 24, red > Int(original[offset + 2]) + 24 {
+                            XCTAssertEqual(turf[offset + 3], 0, "\(profile) \(role.rawValue) dirt at \(x),\(y)")
+                            XCTAssertEqual(rendered[offset..<(offset + 3)], original[offset..<(offset + 3)],
+                                           "\(profile) \(role.rawValue) dirt at \(x),\(y)")
+                            protectedDirt += 1
+                        }
+                    }
+                }
+                XCTAssertGreaterThan(changedGrass, 20, "\(profile) \(role.rawValue)")
+                XCTAssertGreaterThan(protectedDirt, 20, "\(profile) \(role.rawValue)")
+
+                let scene = BallparkScene(size: CGSize(width: 390, height: 420))
+                scene.configure(hand: "right", kit: 2, role: role)
+                let background = try XCTUnwrap(scene.childNode(withName: "fixedStadiumBackground") as? SKSpriteNode)
+                let originalFrame = background.frame
+                scene.setStadium(stadium)
+                let venueNode = try XCTUnwrap(background.childNode(withName: "clubStadiumBackdrop") as? SKSpriteNode)
+                XCTAssertTrue(venueNode.texture === art.texture)
+                XCTAssertEqual(background.frame, originalFrame)
+                try attachStadiumFrame(scene, name: "V187 \(profile) \(role.rawValue)")
+            }
+        }
+    }
+
+    func testV187InplayReusesTurfForFieldAndHomeRunWithExistingGeometry() throws {
+        let play = doublePlay()
+        let homeRun = try XCTUnwrap(MatchReplayFixture.make(pitcher: false).last?.homeRun)
+        let sprites = FieldReplaySprites(appearance: PlayerAppearance(kit: 1), jerseyNumber: 27,
+                                        ownPosition: "P", throwingHand: "left", ownTeamFielding: true)
+        let prepared = FieldRasterArt.Prepared(images: [:])
+        let fieldTexture = try XCTUnwrap(InplayStadiumArt.baseTexture)
+
+        for (id, profile) in Self.reviewedTurfStadiums {
+            let stadium = StadiumIdentity(homeTeamID: id)
+            let venue = try XCTUnwrap(stadium.backdrop)
+            let art = try XCTUnwrap(InplayStadiumArt.turfArt(stadium), id)
+            let turfName = try XCTUnwrap(StadiumTurfArt.name(stadium: stadium, camera: .field))
+            let expectedPixels = try stadiumPixelBytes(UIImage(cgImage: art.texture.cgImage()))
+            let replayCases: [(InplayReplay, Bool)] = [(.field(play), true), (.homeRun(homeRun), false)]
+            for (replay, capture) in replayCases {
+                let scene = InplayFieldScene(replay: replay, sprites: sprites, prepared: prepared,
+                                             scoreText: "H 3 : 2 A", stadium: stadium)
+                let base = try XCTUnwrap(scene.childNode(withName: "//inplay-field-base") as? SKSpriteNode)
+                let upper = try XCTUnwrap(scene.childNode(withName: "//" + venue.imageName) as? SKSpriteNode)
+                let turf = try XCTUnwrap(scene.childNode(withName: "//" + turfName) as? SKSpriteNode)
+                XCTAssertTrue(base.texture === fieldTexture)
+                let texture = try XCTUnwrap(turf.texture)
+                // NSCache may evict an artwork during screenshot capture. The resulting pixels must still match.
+                let actualPixels = try stadiumPixelBytes(UIImage(cgImage: texture.cgImage()))
+                XCTAssertTrue(actualPixels.elementsEqual(expectedPixels), id)
+                XCTAssertEqual(texture.filteringMode, .nearest)
+                XCTAssertEqual(turf.frame, base.frame)
+                XCTAssertGreaterThan(turf.zPosition, upper.zPosition)
+                if capture { try attachStadiumFrame(scene, name: "V187 \(profile) field") }
+            }
+        }
+        let fallback = StadiumIdentity.legacy
+        let scene = InplayFieldScene(replay: .field(play), sprites: sprites, prepared: prepared,
+                                     scoreText: "H 3 : 2 A", stadium: fallback)
+        XCTAssertNil(InplayStadiumArt.turfArt(fallback))
+        XCTAssertNil(scene.childNode(withName: "//stadium-turf-v187-*"))
+        XCTAssertTrue((scene.childNode(withName: "//inplay-field-base") as? SKSpriteNode)?.texture === fieldTexture)
+        XCTAssertNil(InplayStadiumArt.turfName(fallback))
+        XCTAssertNil(fallback.backdrop)
+    }
+
     func testV189HomeRunBannerAndFireworksClearEveryRegisteredScoreboard() throws {
         let size = InplayFieldScene.fieldSize
         let schoolIDs = try SchoolCatalog.load().map(\.id)
@@ -2887,20 +3029,25 @@ extension FieldTrainingTests {
             let size = InplayFieldScene.fieldSize
             let boardFrame = InplayStadiumArt.scoreboard(venue, in: size).frame
             let layout = StadiumSceneDress.HomeRunLayout(size: size, scoreboardFrame: boardFrame)
-            let venueArt = try XCTUnwrap(InplayStadiumArt.upperArt(venue), id)
+            let turfName = try XCTUnwrap(InplayStadiumArt.turfName(stadium), id)
+            let venueArt = try XCTUnwrap(InplayStadiumArt.upperArt(venue, stadium: stadium), id)
+            let turfArt = try XCTUnwrap(InplayStadiumArt.turfArt(stadium), id)
 
             for scoreText in ["H 3 : 2 A", "REPLAY"] {
                 let scene = InplayFieldScene(event: event, sprites: sprites, prepared: prepared,
                                              scoreText: scoreText, stadium: stadium)
                 let label = "\(id) \(scoreText)"
                 let upper = try XCTUnwrap(scene.childNode(withName: "//" + venue.imageName) as? SKSpriteNode, label)
-                let actual = try XCTUnwrap(upper.texture, label)
-                XCTAssertEqual(actual.size(), venue.pixelSize, label)
-                if actual !== venueArt.texture {
-                    // The cache can recreate a texture; compare both textures after the same pixel conversion.
-                    let actualPixels = try stadiumTexturePixels(actual)
-                    let expectedPixels = try stadiumTexturePixels(venueArt.texture)
-                    XCTAssertTrue(actualPixels.elementsEqual(expectedPixels), label)
+                let turf = try XCTUnwrap(scene.childNode(withName: "//" + turfName) as? SKSpriteNode, label)
+                let stands = try XCTUnwrap(upper.texture, label)
+                XCTAssertEqual(stands.size(), venue.pixelSize, label)
+                for (actual, expected) in [(stands, venueArt.texture), (try XCTUnwrap(turf.texture, label), turfArt.texture)] {
+                    if actual !== expected {
+                        // The cache can regenerate a texture. Compare the resulting pixels.
+                        let actualPixels = try stadiumPixelBytes(UIImage(cgImage: actual.cgImage()))
+                        let expectedPixels = try stadiumPixelBytes(UIImage(cgImage: expected.cgImage()))
+                        XCTAssertTrue(actualPixels.elementsEqual(expectedPixels), label)
+                    }
                 }
                 let board = try XCTUnwrap(scene.childNode(withName: "//inplay-scoreboard"), label)
                 let score = try XCTUnwrap(scene.childNode(withName: "//inplay-score") as? SKLabelNode, label)
@@ -2949,21 +3096,6 @@ extension FieldTrainingTests {
         }
     }
 
-    private func stadiumTexturePixels(_ texture: SKTexture) throws -> [UInt8] {
-        let image = texture.cgImage()
-        let bytesPerRow = image.width * 4
-        let format = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-        let colorSpace = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
-        var pixels = [UInt8](repeating: 0, count: bytesPerRow * image.height)
-        try pixels.withUnsafeMutableBytes { buffer in
-            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
-                                                 bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-                                                 space: colorSpace, bitmapInfo: format))
-            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        }
-        return pixels
-    }
-
     func testV191SpecialHomeRunEffectsGrowWithoutRestartingOrFlashingInReducedMotion() throws {
         let stadium = StadiumIdentity(homeTeamID: "pro-falcons")
         let venue = try XCTUnwrap(stadium.backdrop)
@@ -3008,6 +3140,212 @@ extension FieldTrainingTests {
             XCTAssertEqual(event.resultTitle, title)
             XCTAssertEqual(event.resultDistance, "DISTANCE \(event.distance) m")
         }
+    }
+
+    func testV188EveryRegisteredVenueHasTurfAndSeasonAliasesKeepTheSameDesign() throws {
+        let schoolIDs = try SchoolCatalog.load().map(\.id)
+        XCTAssertEqual(schoolIDs.count, 50)
+        let clubs = ClubIdentity.all
+        let leagues: [(ClubIdentity.League, [String], Int)] = [
+            (.kbo, CareerTeamDirectory.domesticFirstIDs + ["pro-gears", "pro-silverhorns", "pro-auroras", "pro-crowns"], 10),
+            (.npb, CareerTeamDirectory.japaneseExpandedFirstIDs, 15),
+            (.mlb, CareerTeamDirectory.americanExpandedFirstIDs, 15)
+        ]
+        let reviewedIDs = Set(Self.reviewedTurfStadiums.map { $0.0 })
+        var names = Set<String>()
+        for id in schoolIDs + clubs.map(\.id) {
+            let stadium = StadiumIdentity(homeTeamID: id)
+            XCTAssertNotNil(stadium.backdrop, id)
+            let name = try XCTUnwrap(InplayStadiumArt.turfName(stadium), id)
+            XCTAssertTrue(names.insert(name).inserted, id)
+            if reviewedIDs.contains(id) {
+                XCTAssertNil(stadium.expandedAppearance, id)
+                XCTAssertEqual(name, StadiumTurfArt.name(stadium: stadium, camera: .field), id)
+            } else {
+                let appearance = try XCTUnwrap(stadium.expandedAppearance, id)
+                XCTAssertEqual(appearance.id, id)
+                XCTAssertEqual(appearance.standTint, GameUniformPalette.color(teamID: id), id)
+                XCTAssertTrue(name.hasPrefix("stadium-turf-v188-"), id)
+            }
+        }
+        XCTAssertEqual(names.count, 90)
+
+        let brickSchool = StadiumIdentity(homeTeamID: "hs-ref-037")
+        let otherBrickSchool = StadiumIdentity(homeTeamID: "hs-ref-046")
+        let brickDesign = try XCTUnwrap(brickSchool.expandedAppearance)
+        let otherBrickDesign = try XCTUnwrap(otherBrickSchool.expandedAppearance)
+        XCTAssertEqual(brickSchool.backdrop?.imageName, otherBrickSchool.backdrop?.imageName)
+        XCTAssertEqual(brickDesign.family, otherBrickDesign.family)
+        XCTAssertEqual(brickDesign.standTint, otherBrickDesign.standTint)
+        XCTAssertNotEqual(brickDesign.baseColor, otherBrickDesign.baseColor)
+        XCTAssertNotEqual(brickDesign.bandWidth, otherBrickDesign.bandWidth)
+
+        for (league, aliases, count) in leagues {
+            XCTAssertEqual(clubs.filter { $0.league == league }.count, count)
+            XCTAssertEqual(aliases.count, count)
+            for (index, alias) in aliases.enumerated() {
+                let canonical = StadiumIdentity(homeTeamID: "\(league.id)-\(index)")
+                let actual = StadiumIdentity(homeTeamID: alias)
+                XCTAssertEqual(actual.pro?.club.id, canonical.key, alias)
+                XCTAssertEqual(actual.expandedAppearance, canonical.expandedAppearance, alias)
+                XCTAssertEqual(actual.backdrop?.imageName, canonical.backdrop?.imageName, alias)
+                XCTAssertEqual(InplayStadiumArt.turfName(actual), InplayStadiumArt.turfName(canonical), alias)
+            }
+        }
+        for id in ["legacy-ground", "dev-harbors", "us-dev-0"] {
+            let stadium = StadiumIdentity(homeTeamID: id)
+            XCTAssertNil(stadium.expandedAppearance, id)
+            XCTAssertNil(InplayStadiumArt.turfName(stadium), id)
+        }
+    }
+
+    func testV188RepresentativeVenuesKeepTheSameDesignAcrossCamerasAndPlaybackFrames() throws {
+        let play = doublePlay()
+        let sprites = FieldReplaySprites(appearance: PlayerAppearance(kit: 1), jerseyNumber: 27,
+                                        ownPosition: "P", throwingHand: "left", ownTeamFielding: true)
+        let prepared = FieldRasterArt.Prepared(images: [:])
+        for (label, id) in Self.expandedVenueExamples {
+            let stadium = StadiumIdentity(homeTeamID: id)
+            let venue = try XCTUnwrap(stadium.backdrop, id)
+            for role in [PlayerRole.pitcher, .batter] {
+                let fixed = BallparkScene(size: CGSize(width: 390, height: 420))
+                fixed.configure(hand: "right", kit: 2, role: role)
+                let background = try XCTUnwrap(fixed.childNode(withName: "fixedStadiumBackground") as? SKSpriteNode)
+                let originalFrame = background.frame
+                let art = try XCTUnwrap(MatchStadiumBackdropArt.art(stadium: stadium, role: role), id)
+                fixed.setStadium(stadium)
+                let node = try XCTUnwrap(background.childNode(withName: "clubStadiumBackdrop") as? SKSpriteNode)
+                XCTAssertTrue(node.texture === art.texture, "\(id)/\(role)")
+                XCTAssertEqual(node.texture?.filteringMode, .nearest, id)
+                XCTAssertEqual(background.frame, originalFrame, id)
+                try attachStadiumFrame(fixed, name: "V188 \(label) \(role.rawValue)")
+            }
+
+            let scene = InplayFieldScene(replay: .field(play), sprites: sprites, prepared: prepared,
+                                         scoreText: "H 3 : 2 A", stadium: stadium)
+            let turfName = try XCTUnwrap(InplayStadiumArt.turfName(stadium), id)
+            let base = try XCTUnwrap(scene.childNode(withName: "//inplay-field-base") as? SKSpriteNode)
+            let upper = try XCTUnwrap(scene.childNode(withName: "//" + venue.imageName) as? SKSpriteNode)
+            let turf = try XCTUnwrap(scene.childNode(withName: "//" + turfName) as? SKSpriteNode)
+            let upperTexture = try XCTUnwrap(upper.texture)
+            let turfTexture = try XCTUnwrap(turf.texture)
+            let score = try XCTUnwrap(scene.childNode(withName: "//inplay-score") as? SKLabelNode)
+            let teamNodeName = venue.logoAsset == nil ? "//inplay-school-name" : "//inplay-club-name"
+            let team = try XCTUnwrap(scene.childNode(withName: teamNodeName) as? SKLabelNode)
+            XCTAssertEqual(team.text, venue.name, id)
+            XCTAssertEqual(turf.frame, base.frame, id)
+            XCTAssertEqual(turfTexture.filteringMode, .nearest, id)
+            XCTAssertGreaterThan(turf.zPosition, upper.zPosition, id)
+            scene.display(time: 0, finished: false)
+            try attachStadiumFrame(scene, name: "V188 \(label) field")
+
+            let layers = try XCTUnwrap(turf.parent)
+            let nodeCount = layers.children.count
+            for time in [0.1, 0.2, 0.3] {
+                scene.display(time: time, finished: false)
+                scene.setScore("H 4 : 2 A")
+                XCTAssertTrue(scene.childNode(withName: "//" + turfName) === turf, id)
+                XCTAssertTrue(turf.texture === turfTexture, id)
+                XCTAssertTrue(upper.texture === upperTexture, id)
+                XCTAssertEqual(layers.children.count, nodeCount, id)
+                XCTAssertEqual(score.text, "H 4 : 2 A", id)
+            }
+        }
+    }
+
+    func testV188StandsAndTurfPreserveTheScoreboardChalkAndDirt() throws {
+        let base = try XCTUnwrap(InplayStadiumArt.image?.cgImage)
+        let originalField = try stadiumPixelBytes(UIImage(cgImage: base))
+        var sampledTurfPalettes = Set<[UInt8]>()
+        for (_, id) in Self.expandedVenueExamples {
+            let stadium = StadiumIdentity(homeTeamID: id)
+            let venue = try XCTUnwrap(stadium.backdrop)
+            let rawStand = try XCTUnwrap(InplayStadiumArt.upperArt(venue)?.image)
+            let styledStand = try XCTUnwrap(InplayStadiumArt.upperArt(venue, stadium: stadium)?.image)
+            let turf = try XCTUnwrap(InplayStadiumArt.turfArt(stadium)?.image)
+            XCTAssertEqual(styledStand.size, rawStand.size, id)
+            XCTAssertEqual(turf.size, InplayStadiumArt.size, id)
+            let originalStands = try stadiumPixelBytes(rawStand)
+            let styledStands = try stadiumPixelBytes(styledStand)
+            let overlay = try stadiumPixelBytes(turf)
+            XCTAssertFalse(originalStands.elementsEqual(styledStands), id)
+
+            let front = venue.board.insetBy(dx: 8, dy: 8)
+            let standWidth = try XCTUnwrap(rawStand.cgImage).width
+            let standHeight = try XCTUnwrap(rawStand.cgImage).height
+            for y in stride(from: Int(front.minY), to: Int(front.maxY), by: 7) {
+                for x in stride(from: Int(front.minX), to: Int(front.maxX), by: 7) {
+                    let standX = x * standWidth / base.width
+                    let standY = Int(CGFloat(y) * CGFloat(standHeight) / venue.height)
+                    let standOffset = (standY * standWidth + standX) * 4
+                    XCTAssertEqual(originalStands[standOffset..<(standOffset + 4)],
+                                   styledStands[standOffset..<(standOffset + 4)], "\(id) scoreboard")
+                    XCTAssertEqual(overlay[(y * base.width + x) * 4 + 3], 0, "\(id) turf on scoreboard")
+                }
+            }
+
+            var turfCoverage = 0
+            var protectedDirt = 0
+            var protectedChalk = 0
+            var leakedIntoMarks = 0
+            var paletteSample: [UInt8] = []
+            for y in stride(from: 520, to: base.height, by: 7) {
+                for x in stride(from: 4, to: base.width, by: 7) {
+                    let offset = (y * base.width + x) * 4
+                    let red = Int(originalField[offset])
+                    let green = Int(originalField[offset + 1])
+                    let blue = Int(originalField[offset + 2])
+                    let isDirt = red > green + 24 && red > blue + 24
+                    let isChalk = min(red, green, blue) > 180 && max(red, green, blue) - min(red, green, blue) < 24
+                    let alpha = overlay[offset + 3]
+                    if isDirt { protectedDirt += 1 }
+                    if isChalk { protectedChalk += 1 }
+                    if (isDirt || isChalk) && alpha > 0 { leakedIntoMarks += 1 }
+                    if alpha > 200 {
+                        turfCoverage += 1
+                        if paletteSample.count < 120 {
+                            paletteSample.append(contentsOf: overlay[offset..<(offset + 3)])
+                        }
+                    }
+                }
+            }
+            XCTAssertGreaterThan(protectedDirt, 100, id)
+            XCTAssertGreaterThan(protectedChalk, 5, id)
+            XCTAssertEqual(leakedIntoMarks, 0, id)
+            XCTAssertGreaterThan(turfCoverage, 100, id)
+            XCTAssertTrue(sampledTurfPalettes.insert(paletteSample).inserted, "\(id) has the same turf as another representative venue")
+        }
+    }
+
+    private static let expandedVenueExamples = [
+        ("school", "hs-ref-037"), ("kbo", "kbo-0"), ("npb", "npb-4"), ("mlb", "mlb-12")
+    ]
+
+    private func stadiumPixelBytes(_ image: UIImage) throws -> [UInt8] {
+        let source = try XCTUnwrap(image.cgImage)
+        let width = source.width
+        let height = source.height
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        let colorSpace = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        try bytes.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: width, height: height,
+                                                 bitsPerComponent: 8, bytesPerRow: width * 4,
+                                                 space: colorSpace, bitmapInfo: info))
+            context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        return bytes
+    }
+
+    private func attachStadiumFrame(_ scene: SKScene, name: String) throws {
+        let view = SKView(frame: CGRect(origin: .zero, size: scene.size))
+        view.presentScene(scene)
+        defer { view.presentScene(nil) }
+        let rendered = try XCTUnwrap(view.texture(from: scene)?.cgImage(), name)
+        let capture = XCTAttachment(image: UIImage(cgImage: rendered))
+        capture.name = name
+        capture.lifetime = .keepAlways
+        add(capture)
     }
 
     func testV144EverySchoolGetsItsBundledStructureAndOwnPalette() throws {

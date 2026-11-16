@@ -1,5 +1,6 @@
 import SpriteKit
 import SwiftUI
+import UIKit
 
 /// Measured on the shared 1024 × 1536 field art, with actors and bases on their existing projection.
 struct StadiumBackdrop {
@@ -163,10 +164,92 @@ struct ProStadium {
             guard let club = ClubIdentity.resolve(name: CareerTeamDirectory.name(id)) else { continue }
             venues[id] = venues[club.id]
         }
+        let additionalDomesticVenues = [
+            "pro-gears": "kbo-6", "pro-silverhorns": "kbo-7",
+            "pro-auroras": "kbo-8", "pro-crowns": "kbo-9"
+        ]
+        for (teamID, clubID) in additionalDomesticVenues { venues[teamID] = venues[clubID] }
         return venues
     }()
 
     @MainActor static func resolve(_ homeTeamID: String) -> Self? { venuesByHomeID[homeTeamID] }
+}
+
+struct StadiumVenueAppearance: Equatable {
+    enum Direction: String {
+        case horizontal, vertical, diagonal, crosshatch
+    }
+
+    enum Family: String {
+        case park, terrace, coastal, canopy, brick, woodland, sunlit
+
+        var palette: (color: Int, direction: Direction, bandWidth: Int, contrast: Int, trim: Int) {
+            switch self {
+            case .park: (0x4d8747, .horizontal, 92, 18, 0x778066)
+            case .terrace: (0x4b774c, .diagonal, 92, 14, 0x879087)
+            case .coastal: (0x418e67, .horizontal, 122, 16, 0x568381)
+            case .canopy: (0x2c775a, .vertical, 77, 18, 0x7a8494)
+            case .brick: (0x65923e, .diagonal, 112, 18, 0x9a6e56)
+            case .woodland: (0x3c8053, .crosshatch, 95, 12, 0x726f52)
+            case .sunlit: (0x789044, .diagonal, 153, 17, 0x9b8661)
+            }
+        }
+
+        init(school structure: SchoolStadium.Structure) {
+            switch structure {
+            case .manualWall, .schoolWall: self = .park
+            case .steelGantry, .canopyFascia, .backstopCrossbeam: self = .canopy
+            case .stoneTerrace, .basaltSide: self = .terrace
+            case .harborCorner: self = .coastal
+            case .forestTimber: self = .woodland
+            case .brickArch: self = .brick
+            }
+        }
+
+        // The roof, setting and materials are those of the bundled V145/V147 backdrops.
+        private static let proFamilies: [String: Family] = {
+            let groups: [(Family, [String])] = [
+                (.park, ["npb-0", "npb-11", "mlb-3", "mlb-5"]),
+                (.terrace, ["kbo-7", "npb-6", "npb-10", "mlb-1", "mlb-9"]),
+                (.coastal, ["kbo-0", "kbo-2", "npb-1", "npb-7", "npb-9", "npb-13", "mlb-4", "mlb-7"]),
+                (.canopy, ["kbo-1", "kbo-6", "kbo-8", "npb-3", "npb-4", "mlb-6"]),
+                (.brick, ["kbo-4", "kbo-9", "npb-2", "npb-12", "mlb-8", "mlb-10"]),
+                (.woodland, ["npb-8", "mlb-2", "mlb-11", "mlb-12"]),
+                (.sunlit, ["kbo-5", "npb-5", "npb-14", "mlb-13", "mlb-14"])
+            ]
+            return Dictionary(uniqueKeysWithValues: groups.flatMap { family, ids in ids.map { ($0, family) } })
+        }()
+
+        init?(clubID: String) {
+            guard let family = Self.proFamilies[clubID] else { return nil }
+            self = family
+        }
+    }
+
+    let id: String
+    let family: Family
+    let standTint: Int
+    private let turfVariation: Int
+
+    init(id: String, family: Family, standTint: Int) {
+        self.id = id
+        self.family = family
+        self.standTint = standTint
+        let number = id.split(separator: "-").last.flatMap { Int($0) } ?? 0
+        let offset = id.hasPrefix("npb-") ? 12 : id.hasPrefix("mlb-") ? 5 : 0
+        turfVariation = (number * 7 + offset) % 13 - 6
+    }
+
+    var baseColor: Int {
+        let color = family.palette.color
+        // Vary the color and band spacing between venues that share a backdrop and team palette.
+        func channel(_ shift: Int) -> Int { Int(UInt8(clamping: ((color >> shift) & 255) + turfVariation)) << shift }
+        return channel(16) | channel(8) | channel(0)
+    }
+    var direction: Direction { family.palette.direction }
+    var bandWidth: Int { family.palette.bandWidth + turfVariation * 3 }
+    var contrast: Int { family.palette.contrast }
+    var standTrim: Int { family.palette.trim }
 }
 
 extension StadiumIdentity {
@@ -176,6 +259,108 @@ extension StadiumIdentity {
     @MainActor var panelColor: Int { school?.panel ?? pro?.panel ?? theme.panel }
     @MainActor var trimColor: Int { school?.primary ?? pro?.primary ?? theme.trim }
     @MainActor var accentColor: Int { school?.primary ?? pro?.accent ?? theme.accent }
+
+    @MainActor var expandedAppearance: StadiumVenueAppearance? {
+        if let school, key != "hs-ref-014", key != "hs-ref-024" {
+            return StadiumVenueAppearance(id: key, family: .init(school: school.structure), standTint: school.primary)
+        }
+        if let pro, let family = StadiumVenueAppearance.Family(clubID: pro.club.id) {
+            return StadiumVenueAppearance(id: pro.club.id, family: family, standTint: pro.primary)
+        }
+        return nil
+    }
+}
+
+enum StadiumCrowdArt {
+    static func styled(_ source: UIImage, in venue: StadiumBackdrop, appearance: StadiumVenueAppearance) -> UIImage {
+        guard let image = source.cgImage, venue.height > 0 else { return source }
+        let width = image.width
+        let height = image.height
+        let rowBytes = width * 4
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: rowBytes,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+              ),
+              let pixels = context.data?.assumingMemoryBound(to: UInt8.self) else { return source }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Scoreboard geometry uses the shared 1024-wide field coordinates, even for 768-wide pro art.
+        let scaleX = CGFloat(width) / 1024
+        let scaleY = CGFloat(height) / venue.height
+        let board = venue.board.applying(CGAffineTransform(scaleX: scaleX, y: scaleY))
+            .insetBy(dx: -8 * scaleX, dy: -7 * scaleY).integral
+        let school = appearance.id.hasPrefix("hs-ref-")
+        let terrace = appearance.family == .terrace
+        let top = Int(Double(height) * (school ? (terrace ? 0.41 : 0.49) : 0.36))
+        let bottom = Int(Double(height) * (school ? 0.88 : 0.92))
+        let facade = Int(Double(height) * 0.73)
+        let railBottom = Int(Double(height) * (school ? 0.81 : 0.85))
+        let seaMargin = appearance.family == .coastal ? width / 9 : 0
+        let team = Tint(rgb: appearance.standTint)
+        let material = Tint(rgb: appearance.standTrim)
+        for y in top..<bottom {
+            let boardRow = y >= Int(board.minY) && y < Int(board.maxY)
+            let margin = y < facade ? seaMargin : 0
+            for x in margin..<(width - margin) {
+                if boardRow, x >= Int(board.minX), x < Int(board.maxX) { continue }
+                let pixel = pixels + y * rowBytes + x * 4
+                if pixel[3] != 255 { continue }
+                let r = Int(pixel[0]), g = Int(pixel[1]), b = Int(pixel[2])
+                let light = Tint.luminance(r, g, b)
+                let chroma = max(r, g, b) - min(r, g, b)
+                let green = g > r + 14 && g > b + 11
+                let railPaint = green && y >= facade - height / 16 && y < railBottom && b >= r && light < 112
+                // Keep daylight, bright crowd pixels, living greens and amber features in the original art.
+                if light < 28 || light > 165 || (green && !railPaint)
+                    || (b > r + 22 && g > 120 && b > 145)
+                    || (r > 128 && r > g + 18 && g > b + 22) { continue }
+
+                let coolPaint = b > r + 12 && b > g - 12
+                let warmPaint = r > g + 13 && b >= g - 23
+                let darkTeal = b > r + 12 && g > r + 12 && light < 105
+                let painted = coolPaint || warmPaint || darkTeal || railPaint
+                let fasciaPaint = y >= facade && chroma >= 18 && r <= 128
+                if painted || fasciaPaint {
+                    team.apply(to: pixel, light: light, amount: y >= facade ? 76 : 64)
+                } else if chroma <= 28 && light > 53 {
+                    material.apply(to: pixel, light: light, amount: y >= facade ? 41 : 27)
+                }
+            }
+        }
+
+        guard let shaded = context.makeImage() else { return source }
+        return UIImage(cgImage: shaded, scale: source.scale, orientation: source.imageOrientation)
+    }
+
+    private struct Tint {
+        let red: Int, green: Int, blue: Int
+        let light: Int
+
+        init(rgb: Int) {
+            red = (rgb >> 16) & 255
+            green = (rgb >> 8) & 255
+            blue = rgb & 255
+            light = Self.luminance(red, green, blue)
+        }
+
+        static func luminance(_ red: Int, _ green: Int, _ blue: Int) -> Int {
+            (54 * red + 183 * green + 19 * blue) >> 8
+        }
+
+        func apply(to pixel: UnsafeMutablePointer<UInt8>, light originalLight: Int, amount: Int) {
+            // Shade according to the authored pixel brightness so seat rows and fencing keep their contrast.
+            let targetLight = originalLight + (light - 96) / 7
+            func channel(_ original: UInt8, _ tint: Int) -> UInt8 {
+                let target = targetLight + (tint - light) * 4 / 5
+                return UInt8(clamping: (Int(original) * (100 - amount) + target * amount) / 100)
+            }
+            pixel[0] = channel(pixel[0], red)
+            pixel[1] = channel(pixel[1], green)
+            pixel[2] = channel(pixel[2], blue)
+        }
+    }
 }
 
 /// 구장 장식과 축하 효과만 담당한다. 판정·저장·경기 난수에는 관여하지 않는다.

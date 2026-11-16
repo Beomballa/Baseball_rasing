@@ -99,7 +99,7 @@ import SwiftData
         XCTAssertFalse(context.hasChanges)
     }
 
-    func testV166VenueCompositePreservesTheOriginalPlayingSurfaceBothRoles() throws {
+    func testV166VenueCompositePreservesTheOriginalPlayingMarksBothRoles() throws {
         for role in [PlayerRole.batter, .pitcher] {
             let original = try XCTUnwrap(MatchArt.image(role == .batter ? "batter-field-v52" : "pitcher-field-v52"))
             let source = try pixels(original)
@@ -108,9 +108,27 @@ import SwiftData
                 XCTAssertEqual(image.size, original.size)
                 let value = try pixels(image)
                 let protectedY = role == .pitcher ? 650 : 281
-                let start = protectedY * source.width * 4
                 XCTAssertEqual(value.width, source.width); XCTAssertEqual(value.height, source.height)
-                XCTAssertTrue(value.bytes[start...] == source.bytes[start...], "The plate, mound and playing surface changed for \(role.rawValue)/\(team)")
+                let start = protectedY * source.width * 4
+                var firstChangedNonGrass: Int?
+                var changedGrass = 0
+                for offset in stride(from: start, to: source.bytes.count, by: 4) {
+                    guard value.bytes[offset] != source.bytes[offset]
+                        || value.bytes[offset + 1] != source.bytes[offset + 1]
+                        || value.bytes[offset + 2] != source.bytes[offset + 2]
+                        || value.bytes[offset + 3] != source.bytes[offset + 3] else { continue }
+                    let red = Int(source.bytes[offset])
+                    let green = Int(source.bytes[offset + 1])
+                    let blue = Int(source.bytes[offset + 2])
+                    if green > max(red, blue) {
+                        changedGrass += 1
+                    } else {
+                        firstChangedNonGrass = offset
+                        break
+                    }
+                }
+                XCTAssertNil(firstChangedNonGrass, "The plate, mound, or chalk changed for \(role.rawValue)/\(team)")
+                XCTAssertGreaterThan(changedGrass, 100, "The venue turf was not connected for \(role.rawValue)/\(team)")
                 XCTAssertFalse(value.bytes[..<(100 * source.width * 4)] == source.bytes[..<(100 * source.width * 4)], "The team stands were not connected")
                 let attachment = XCTAttachment(image: image)
                 attachment.name = "v166-venue-\(role.rawValue)-\(team)"; attachment.lifetime = .keepAlways; add(attachment)
