@@ -13,7 +13,9 @@ struct ManagementCareerVerification: View {
             if let container { CareerRootView(schools: schools).modelContainer(protection?.container ?? container).environment(\.saveProtection, protection).id(protection?.generation) }
             else if let error { Text(error).accessibilityIdentifier("managementSeedError") }
             else { ProgressView("관리 화면 QA 준비") }
-        }.task {
+        }
+        .tint(ProcessInfo.processInfo.arguments.contains("-management-production-tint-verification") ? GameTheme.green : nil)
+        .task {
             guard container == nil && error == nil else { return }
             do {
                 let catalog = try SchoolCatalog.load()
@@ -22,6 +24,8 @@ struct ManagementCareerVerification: View {
                 if let index=args.firstIndex(of:"-v56-disk-session") {
                     guard index+1<args.count,let id=UUID(uuidString:args[index+1]) else {throw SaveProtectionError.invalid};diskSession=id
                 }
+                let testsConnectedFlow = args.contains("-v185-career-flow")
+                if testsConnectedFlow, diskSession == nil { throw SaveProtectionError.invalid }
                 let saveQA=args.contains("-save-protection-verification") || diskSession != nil
                 let base=FileManager.default.temporaryDirectory.appendingPathComponent(diskSession.map {"v56-resume-"+$0.uuidString} ?? ("save-qa-"+UUID().uuidString)).appendingPathComponent("Career.store")
                 if saveQA { try FileManager.default.createDirectory(at:base.deletingLastPathComponent(),withIntermediateDirectories:true) }
@@ -30,11 +34,28 @@ struct ManagementCareerVerification: View {
                 let existingCount=try memory.mainContext.fetchCount(FetchDescriptor<CareerPlayer>())
                 let reopening=diskSession != nil && existingCount>0
                 let roles: [PlayerRole] = reopening || ProcessInfo.processInfo.arguments.contains("-management-empty-verification") ? []
+                    : testsConnectedFlow ? [.pitcher]
                     : ProcessInfo.processInfo.arguments.contains("-management-single-role-verification") ? [.batter] : PlayerRole.allCases
                 for role in roles {
                     var draft = PlayerDraft(); draft.schoolID = catalog[0].id; draft.role = role
                     draft.name = role == .batter ? "CareerBat" : "CareerPitch"
                     let player = try CareerStore.create(draft, schools: catalog, in: memory.mainContext)
+                    if testsConnectedFlow {
+                        // The off-day precedes the next observation and the pitcher's scheduled fixture.
+                        player.gameDate = "2026-04-27"
+                        try memory.mainContext.save()
+                    }
+                    if args.contains("-v180-career-journal") || args.contains("-v183-result-journal") {
+                        guard diskSession != nil, roles == [.batter] else { throw SaveProtectionError.invalid }
+                        try seedCareerJournal(player: player, includeSecondTraining: args.contains("-v183-result-journal"), in: memory.mainContext)
+                    }
+                    if args.contains("-v182-scout-journal") {
+                        guard diskSession != nil, roles == [.batter] else { throw SaveProtectionError.invalid }
+                        try seedScoutJournal(player: player, in: memory.mainContext)
+                    }
+                    if role == .batter, let fixture = ClubhouseFixture.allCases.first(where: { args.contains($0.argument) }) {
+                        try seedClubhouse(fixture, player: player, catalog: catalog, in: memory.mainContext)
+                    }
                     if args.contains("-v100-league-names") {
                         let c = memory.mainContext
                         let state = try c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id }!
@@ -86,6 +107,20 @@ struct ManagementCareerVerification: View {
                     }
                     if ProcessInfo.processInfo.arguments.contains("-v53-calendar-save-failure") {
                         player.gameDate="2026-04-02";player.fatigue=90;try memory.mainContext.save()
+                    }
+                    if args.contains("-v175-calendar-observation") || args.contains("-v175-calendar-evaluation") {
+                        let context = memory.mainContext
+                        let states = try context.fetch(FetchDescriptor<CareerCalendarState>())
+                        guard let state = states.first(where: { $0.playerID == player.id }) else { throw CalendarError.staleState }
+                        if args.contains("-v175-calendar-evaluation") {
+                            player.gameDate = "2029-04-01"
+                            try CareerPathStore.synchronize(player: player, calendar: state, in: context)
+                            player.gameDate = "2030-06-30"
+                            try CareerPathStore.synchronize(player: player, calendar: state, in: context)
+                        } else {
+                            player.gameDate = "2026-04-27"
+                        }
+                        try context.save()
                     }
                     if ProcessInfo.processInfo.arguments.contains("-v53-season-records") {
                         let c=memory.mainContext,state=try c.fetch(FetchDescriptor<CareerCalendarState>()).first {$0.playerID == player.id}!
@@ -166,6 +201,179 @@ struct ManagementCareerVerification: View {
                 }
                 schools = catalog; container = memory
             } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private enum ClubhouseFixture: String, CaseIterable {
+        case game, away, offday, training, season
+        var argument: String { "-v172-home-qa-" + rawValue }
+    }
+
+    @MainActor private func seedScoutJournal(player: CareerPlayer, in context: ModelContext) throws {
+        let playerID = player.id
+        let descriptor = FetchDescriptor<CareerCalendarState>(predicate: #Predicate { $0.playerID == playerID })
+        guard let state = try context.fetch(descriptor).first,
+              let abilities = try PlayerAbilityStore.profile(playerID: playerID, in: context),
+              let initialReport = try ScoutingObservationStore.reports(player: player, calendar: state, in: context).first
+        else { throw ScoutingObservationError.invalid }
+
+        // Exercise an archived report from before interest tracking was written.
+        var legacyReport = try initialReport.snapshot()
+        legacyReport.version = 3
+        legacyReport.interests = nil
+        legacyReport.signingBonusForecasts = nil
+        try legacyReport.validate()
+        initialReport.payload = try JSONEncoder().encode(legacyReport)
+
+        func setAbilities(_ value: Double) throws {
+            player.contact = value
+            player.power = value
+            player.discipline = value
+            player.defense = value
+            try abilities.grow(.mental, to: value)
+        }
+
+        let fixtures = try state.fixtures(for: player, year: 2026).filter { $0.isAppearance(for: player.role) }
+        guard fixtures.count >= 13 else { throw CalendarError.invalidGroup }
+        func insertGame(_ fixture: SeasonFixture) throws {
+            player.gameDate = fixture.date.description
+            var match = ScoutingReferenceSimulation.fixture(role: player.role, position: player.positionRaw,
+                values: PlayerArchetype.initial(for: player.role).values, seed: UInt64(200 + fixture.number),
+                home: fixture.homeID == player.schoolID)
+            try match.advance(.automatic)
+            let row = try CareerMatchRecord(player: player, fixture: fixture, match: match)
+            row.completed = true
+            row.rulesVersion = "native-match-v2"
+            context.insert(row)
+        }
+
+        try setAbilities(75)
+        for fixture in fixtures.prefix(12) { try insertGame(fixture) }
+        player.gameDate = fixtures[11].date.adding(days: 1).description
+        guard player.gameDate == "2026-06-07" else { throw ScoutingObservationError.invalid }
+        try context.save()
+        try ScoutingObservationStore.ensureCurrent(player: player, calendar: state, in: context)
+        guard let historical = try ScoutingObservationStore.reports(player: player, calendar: state, in: context).first?.snapshot(),
+              historical.totals.games == 12, historical.interests?.entries.first?.level == .priority
+        else { throw ScoutingObservationError.invalid }
+
+        try insertGame(fixtures[12])
+        try setAbilities(10)
+        player.gameDate = historical.nextDate
+        guard player.gameDate == "2026-06-24" else { throw ScoutingObservationError.invalid }
+        try context.save()
+        try ScoutingObservationStore.ensureCurrent(player: player, calendar: state, in: context)
+        guard let later = try ScoutingObservationStore.reports(player: player, calendar: state, in: context).first?.snapshot(),
+              later.totals.games == 13, later.interests?.entries.isEmpty == true
+        else { throw ScoutingObservationError.invalid }
+
+        player.gameDate = try GameDate(later.observedDate).adding(days: 1).description
+        try context.save()
+    }
+
+    @MainActor private func seedCareerJournal(player: CareerPlayer, includeSecondTraining: Bool, in context: ModelContext) throws {
+        let playerID = player.id
+        let descriptor = FetchDescriptor<CareerCalendarState>(predicate: #Predicate { $0.playerID == playerID })
+        guard let state = try context.fetch(descriptor).first else { throw CalendarError.staleState }
+
+        try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context)
+        let match = try CareerMatchStore.start(player: player, state: state, in: context)
+        try CareerMatchStore.advance(player: player, state: state, record: match, revision: match.revision, input: .automatic, in: context)
+        try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context)
+
+        let training = try CareerTrainingStore.start(player: player, state: state, kind: .contact, in: context)
+        for _ in 0..<5 {
+            let round = try training.snapshot()
+            let target = round.targets[round.scores.count]
+            try CareerTrainingStore.attempt(player: player, state: state, record: training, revision: training.revision,
+                input: TrainingInput(x: target.x, y: target.y, timing: MatchDelivery.contactPhase), in: context)
+        }
+        if includeSecondTraining {
+            try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision, in: context)
+            let later = try CareerTrainingStore.start(player: player, state: state, kind: .contact, in: context)
+            for offset in [0.0, -0.04, -0.08, -0.12, -0.2] {
+                let snapshot = try later.snapshot()
+                let target = snapshot.targets[snapshot.scores.count]
+                try CareerTrainingStore.attempt(player: player, state: state, record: later, revision: later.revision,
+                    input: TrainingInput(x: target.x, y: target.y, timing: MatchDelivery.contactPhase + offset), in: context)
+            }
+        }
+
+        // Use the deterministic school sample from the domestic selection verification.
+        let appearances = try state.fixtures(for: player, year: 2028).filter { $0.isAppearance(for: player.role) }.prefix(12)
+        for (index, fixture) in appearances.enumerated() {
+            player.gameDate = fixture.date.description
+            var sample = ScoutingReferenceSimulation.fixture(role: player.role, position: player.positionRaw,
+                values: PlayerArchetype.initial(for: player.role).values, seed: UInt64(700 + index),
+                home: fixture.homeID == player.schoolID, tracked: true)
+            try sample.advance(.automatic)
+            let row = try CareerMatchRecord(player: player, fixture: fixture, match: sample)
+            row.completed = true
+            row.rulesVersion = "native-match-v2"
+            context.insert(row)
+        }
+
+        state.actionDate = nil
+        player.gameDate = "2029-04-01"
+        try CareerPathStore.synchronize(player: player, calendar: state, in: context)
+        player.gameDate = "2030-04-01"
+        try CareerPathStore.synchronize(player: player, calendar: state, in: context)
+        player.contact = 80; player.power = 80; player.discipline = 80; player.defense = 80
+        guard let abilities = try PlayerAbilityStore.profile(playerID: player.id, in: context) else { throw CalendarError.staleState }
+        try abilities.grow(.mental, to: 80)
+        try context.save()
+
+        try ScoutingObservationStore.ensureCurrent(player: player, calendar: state, in: context)
+        guard try ContractEvaluationStore.captureIfDue(player: player, calendar: state, in: context) else { throw ContractEvaluationError.invalid }
+        try context.save()
+        guard let evaluation = try ContractEvaluationStore.records(player: player, calendar: state, in: context).first,
+              let packet = try ContractOfferStore.records(player: player, calendar: state, in: context).first,
+              let offer = try packet.snapshot(evaluation: evaluation, player: player, calendar: state).offers.first(where: { $0.route == .rookie })
+        else { throw ContractRegistrationError.invalid }
+
+        player.gameDate = "2030-04-03"
+        try context.save()
+        try ContractRegistrationStore.decide(player: player, calendar: state, offerID: offer.id, accept: true,
+            date: player.gameDate, revision: state.revision, in: context)
+        player.gameDate = "2030-11-01"
+        try context.save()
+        guard try ContractEvaluationStore.captureIfDue(player: player, calendar: state, in: context) else { throw ContractEvaluationError.invalid }
+        try context.save()
+        player.gameDate = "2030-11-02"
+        try context.save()
+    }
+
+    @MainActor private func seedClubhouse(_ fixture: ClubhouseFixture, player: CareerPlayer,
+                                         catalog: [School], in context: ModelContext) throws {
+        let playerID = player.id
+        let descriptor = FetchDescriptor<CareerCalendarState>(predicate: #Predicate { $0.playerID == playerID })
+        let opponentID = "hs-ref-032"
+        guard let state = try context.fetch(descriptor).first,
+              catalog.contains(where: { $0.id == opponentID }) else { throw CalendarError.invalidGroup }
+        // A fixed six-school group makes the approved home and away pairing repeatable in QA.
+        let otherSchools = catalog.filter { $0.id != player.schoolID && $0.id != opponentID }.prefix(4)
+        state.schoolIDs = [player.schoolID] + otherSchools.map(\.id) + [opponentID]
+        let year = try GameDate(player.gameDate).year
+        let fixtures = try state.fixtures(for: player, year: year)
+        guard let opening = fixtures.first(where: { $0.homeID == player.schoolID && $0.awayID == opponentID }),
+              let away = fixtures.first(where: { $0.awayID == player.schoolID && $0.homeID == opponentID }),
+              let final = fixtures.last else { throw CalendarError.invalidGroup }
+        let date = switch fixture {
+        case .game: opening.date
+        case .away: away.date
+        case .offday, .training: opening.date.adding(days: 1)
+        case .season: final.date.adding(days: 1)
+        }
+        player.gameDate = date.description
+        try context.save()
+        if fixture == .training {
+            let record = try CareerTrainingStore.start(player: player, state: state, kind: .contact, in: context)
+            for _ in 0..<2 {
+                let training = try record.snapshot()
+                let target = training.targets[training.scores.count]
+                try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: record.revision,
+                    input: TrainingInput(x: target.x, y: target.y, timing: MatchDelivery.contactPhase), in: context)
+            }
         }
     }
 }

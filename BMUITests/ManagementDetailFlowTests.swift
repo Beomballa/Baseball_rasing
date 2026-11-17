@@ -2722,3 +2722,1383 @@ extension ManagementDetailFlowTests {
     }
 
 }
+
+extension ManagementDetailFlowTests {
+    @MainActor private func v151SelectRole(_ app:XCUIApplication,pitcher:Bool) {
+        app.buttons["roomProfile"].tap()
+        let choice=app.buttons[pitcher ? "homeRole-pitcher":"homeRole-batter"]
+        XCTAssertTrue(choice.waitForExistence(timeout:8));revealLocationChoice(choice,app);choice.tap()
+        if app.buttons["closeRoomDetail"].exists {close(app)}
+        let dismissed=XCTNSPredicateExpectation(predicate:NSPredicate {_,_ in
+            !app.buttons["homeRole-batter"].exists && !app.buttons["homeRole-pitcher"].exists && !app.buttons["closeRoomDetail"].exists
+        },object:app)
+        XCTAssertEqual(XCTWaiter.wait(for:[dismissed],timeout:5),.completed)
+        XCTAssertTrue(app.staticTexts["homeAge"].label.contains(pitcher ? "투수":"타자"))
+    }
+
+    @MainActor private func selectAbilityTraining(_ kind: String, _ app: XCUIApplication) {
+        let group = app.descendants(matching: .any).matching(identifier: "trainingEquipmentChoices").firstMatch
+        revealLocationChoice(group, app)
+        let toggle = group.elementType == .button ? group : group.buttons.firstMatch
+        XCTAssertTrue(toggle.exists)
+        revealLocationChoice(toggle, app); toggle.tap()
+        let shelf = app.scrollViews["trainingEquipmentShelf"]
+        XCTAssertTrue(shelf.waitForExistence(timeout: 5))
+        revealLocationChoice(shelf, app)
+        let choice = app.buttons["trainingKind-" + kind]
+        for _ in 0..<4 where !choice.isHittable { shelf.swipeLeft() }
+        XCTAssertTrue(choice.isHittable, kind)
+        choice.tap()
+    }
+
+    @MainActor private func revealScoutChoice(_ identifier:String,_ app:XCUIApplication) {
+        let prefix=String(identifier.split(separator:"-")[0])
+        if app.buttons[prefix+"Menu"].exists {app.buttons[prefix+"Menu"].tap()}
+        reveal(app.buttons[identifier],app)
+    }
+
+    @MainActor func testV174ControlAutoReadyResumesSavedAttemptsAndRewardOnce() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-v56-disk-session", UUID().uuidString]
+        let attempt = app.buttons["trainingAttempt"]
+        let next = app.buttons["trainingNext"]
+        let autoPrepare = app.switches["trainingControlAutoPrepare"]
+        let pending = app.descendants(matching: .any).matching(identifier: "trainingControlAutoPrepareStatus").firstMatch
+        let progress = app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch
+        let stored = app.staticTexts["trainingResultStored"]
+
+        func launchPitcher() {
+            app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+            v151SelectRole(app, pitcher: true)
+        }
+        func openSavedTraining() {
+            app.buttons["managementTab-training"].tap()
+            let entry = app.buttons["roomPrimary"]
+            XCTAssertTrue(entry.waitForExistence(timeout: 8))
+            entry.tap()
+        }
+        func ready(at round: Int) {
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"),
+                                                   object: attempt)
+            XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 8), .completed)
+            XCTAssertTrue(progress.label.contains("\(round) / 5"), progress.label)
+        }
+        func throwAndReview() {
+            reveal(attempt, app)
+            XCTAssertTrue(attempt.isHittable)
+            attempt.tap()
+            XCTAssertTrue(next.waitForExistence(timeout: 10))
+        }
+        func turnOnAutoPrepare() {
+            reveal(autoPrepare, app)
+            XCTAssertTrue(autoPrepare.isHittable)
+            XCTAssertEqual(autoPrepare.value as? String, "0")
+            autoPrepare.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+            XCTAssertTrue(pending.waitForExistence(timeout: 2))
+        }
+        func staysOffScreen(_ element: XCUIElement) {
+            let appears = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: element)
+            appears.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [appears], timeout: 3.5), .completed)
+        }
+        func fatigueValue(_ label: String) throws -> Int {
+            let digits = try XCTUnwrap(label.range(of: "[0-9]+", options: .regularExpression))
+            return try XCTUnwrap(Int(label[digits]))
+        }
+
+        launchPitcher()
+        defer { app.terminate() }
+        let initial = status(app)
+        app.buttons["managementTab-training"].tap()
+        app.buttons["facility-physical"].tap()
+        selectAbilityTraining("control", app)
+        let open = app.buttons["openTraining"]
+        reveal(open, app)
+        open.tap()
+        let start = app.buttons["startTraining"]
+        reveal(start, app)
+        start.tap()
+
+        ready(at: 1)
+        throwAndReview()
+        XCTAssertTrue(next.label.contains("2/5"))
+        XCTAssertFalse(pending.exists)
+        turnOnAutoPrepare()
+        capture(app, "V174 제구 자동 준비 대기")
+        ready(at: 2)
+        staysOffScreen(next)
+        XCTAssertTrue(progress.label.contains("2 / 5"))
+
+        throwAndReview()
+        XCTAssertTrue(pending.waitForExistence(timeout: 2))
+        app.terminate()
+        launchPitcher()
+        let resumed = status(app)
+        XCTAssertEqual(resumed[0], initial[0])
+        XCTAssertEqual(resumed[1], initial[1])
+        XCTAssertEqual(resumed[2], "훈련 이어하기")
+        openSavedTraining()
+        ready(at: 3)
+        XCTAssertFalse(pending.exists)
+        capture(app, "V174 두 번 저장 후 세 번째 제구 준비")
+
+        throwAndReview()
+        turnOnAutoPrepare()
+        let closeTraining = app.buttons["closeRoomDetail"]
+        XCTAssertTrue(closeTraining.isHittable)
+        closeTraining.tap()
+        staysOffScreen(next)
+        openSavedTraining()
+        ready(at: 4)
+
+        throwAndReview()
+        turnOnAutoPrepare()
+        reveal(next, app)
+        next.tap()
+        ready(at: 5)
+        throwAndReview()
+        XCTAssertEqual(next.label, "세트 결산 보기")
+        XCTAssertFalse(autoPrepare.exists)
+        XCTAssertFalse(pending.exists)
+        staysOffScreen(stored)
+        reveal(next, app)
+        next.tap()
+        XCTAssertTrue(stored.waitForExistence(timeout: 8))
+        let growth = app.staticTexts["trainingGrowth"].label
+        let fatigue = app.staticTexts["trainingFatigue"].label
+        capture(app, "V174 제구 다섯 회 저장 결과")
+
+        app.terminate()
+        launchPitcher()
+        let completed = status(app)
+        XCTAssertEqual(completed[0], initial[0])
+        XCTAssertEqual(try fatigueValue(completed[1]), min(100, try fatigueValue(initial[1]) + 6))
+        XCTAssertEqual(completed[2], "행동 0/1")
+        openSavedTraining()
+        XCTAssertTrue(stored.waitForExistence(timeout: 8))
+        XCTAssertEqual(app.staticTexts["trainingGrowth"].label, growth)
+        XCTAssertEqual(app.staticTexts["trainingFatigue"].label, fatigue)
+        XCTAssertFalse(attempt.exists)
+    }
+
+    @MainActor func testV175ObservationAndEvaluationReceiptOpenCorrectReadOnlyDestinations() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        for evaluation in [false, true] {
+            app.terminate()
+            app.launchArguments = ["-management-career-verification", "-management-single-role-verification",
+                                   "-management-reduced-motion-verification",
+                                   evaluation ? "-v175-calendar-evaluation" : "-v175-calendar-observation"]
+            app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+            let calendar = app.buttons["facility-calendar"]
+            reveal(calendar,app); calendar.tap()
+            let advance = app.buttons["advanceOffDays"]
+            reveal(advance,app); advance.tap()
+            let goal = app.buttons["calendarAdvanceGoalObservation"]
+            XCTAssertTrue(goal.waitForExistence(timeout: 5)); goal.tap()
+            let stop = app.staticTexts["calendarReceiptStop"]
+            XCTAssertTrue(stop.waitForExistence(timeout: 10))
+            XCTAssertTrue(stop.label.contains(evaluation ? "계약 평가" : "관찰일"), stop.label)
+            let date = app.scrollViews["calendarDetailScroll"].staticTexts["calendarDate"]
+            let saved = date.label
+            XCTAssertTrue(saved.contains(evaluation ? "7월 1일" : "4월 29일"), saved)
+            let destination = app.buttons[evaluation ? "calendarProgressOpenEvaluation" : "calendarProgressOpenObservation"]
+            reveal(destination,app); XCTAssertTrue(destination.isHittable)
+            capture(app, evaluation ? "V175 관찰일 전 계약 평가 정지" : "V175 관찰일 도착 결과")
+            destination.tap()
+            let title = evaluation ? "고정 평가 확인" : "확정 관찰 보고서"
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 8))
+            if !evaluation {
+                let frozen = app.staticTexts["scoutFrozenDate"]
+                XCTAssertTrue(frozen.waitForExistence(timeout: 8))
+                XCTAssertTrue(frozen.label.contains("4월 29일"), frozen.label)
+            }
+            app.navigationBars[title].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(date.waitForExistence(timeout: 5))
+            XCTAssertEqual(date.label,saved)
+            if evaluation {
+                reveal(destination,app); destination.tap()
+                let acknowledge = app.buttons["acknowledgeContractEvaluation"]
+                XCTAssertTrue(acknowledge.waitForExistence(timeout: 5))
+                reveal(acknowledge,app); acknowledge.tap()
+                XCTAssertTrue(app.staticTexts["contractEvaluationStatus"].label.contains("확인 완료"))
+                app.navigationBars[title].buttons.element(boundBy: 0).tap()
+                XCTAssertEqual(date.label,saved)
+                let resume = app.buttons["calendarProgressContinueObservation"]
+                XCTAssertTrue(resume.waitForExistence(timeout: 8))
+                reveal(resume,app); resume.tap()
+                let reached = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "7월 17일"), object: date)
+                XCTAssertEqual(XCTWaiter.wait(for: [reached], timeout: 12), .completed)
+                XCTAssertTrue(stop.label.contains("관찰일"), stop.label)
+            }
+        }
+    }
+
+    @MainActor func testV180CareerJournalOrdersSavedEventsAndOpensHistoryReadOnly() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        let session = ProcessInfo.processInfo.environment["BM_V180_JOURNAL_SESSION"] ?? UUID().uuidString
+        app.launchArguments = ["-management-career-verification", "-management-single-role-verification",
+                               "-management-reduced-motion-verification", "-v180-career-journal", "-v56-disk-session", session]
+        app.launch()
+        let seedError = app.staticTexts["managementSeedError"]
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60), seedError.exists ? seedError.label : "V180 journal fixture unavailable")
+        let homeBefore = status(app)
+        capture(app, "V180 journal before viewing")
+
+        func element(_ id: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(identifier: id).firstMatch
+        }
+        func openJournal() {
+            app.buttons["managementTab-player"].tap()
+            app.buttons["facility-records"].tap()
+            let entry = app.buttons["playerOpenCareerJournal"]
+            reveal(entry, app)
+            XCTAssertTrue(entry.isHittable)
+            capture(app, "V180 journal notebook records entry")
+            entry.tap()
+            XCTAssertTrue(app.scrollViews["careerJournalList"].waitForExistence(timeout: 10),
+                          app.staticTexts["careerJournalError"].exists ? app.staticTexts["careerJournalError"].label : "")
+        }
+        let list = app.scrollViews["careerJournalList"]
+        let eventPrefix = "careerJournalEvent-"
+        let datePrefix = "careerJournalDate-"
+        let dates = list.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", datePrefix))
+        let events = list.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", eventPrefix))
+        func choose(_ filter: String, count: Int) {
+            let control = app.buttons["careerJournalFilter-" + filter]
+            XCTAssertTrue(control.isHittable)
+            control.tap()
+            let counter = app.staticTexts["careerJournalCount"]
+            let expected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "\(count)건"), object: counter)
+            XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 5), .completed)
+        }
+        func detail(_ row: XCUIElement, date: String, checkpoint: String, verify: () -> Void) {
+            for _ in 0..<14 where !row.isHittable { list.swipeUp(velocity: .slow) }
+            XCTAssertTrue(row.isHittable, row.identifier)
+            row.tap()
+            let recordedDate = element("careerJournalDetailDate")
+            XCTAssertTrue(recordedDate.waitForExistence(timeout: 10), row.identifier)
+            XCTAssertEqual(recordedDate.value as? String, date)
+            verify()
+            capture(app, checkpoint)
+            app.buttons["closeCareerJournalDetail"].tap()
+            XCTAssertTrue(list.waitForExistence(timeout: 5))
+        }
+
+        openJournal()
+        let count = app.staticTexts["careerJournalCount"]
+        XCTAssertEqual(count.label, "19건")
+        let evaluationRows = events.matching(NSPredicate(format: "identifier BEGINSWITH %@", eventPrefix + "contract/evaluation/"))
+        let aprilReview = evaluationRows.matching(NSPredicate(format: "identifier ENDSWITH %@", ":2030-04")).firstMatch
+        let novemberReview = evaluationRows.matching(NSPredicate(format: "identifier ENDSWITH %@", ":2030-11")).firstMatch
+        let aprilDate = element(datePrefix + "2030-04-01")
+        let scoutRows = events.matching(NSPredicate(format: "identifier BEGINSWITH %@", eventPrefix + "scouting/"))
+        let aprilObservation = scoutRows.matching(NSPredicate(format: "identifier ENDSWITH %@", ":52")).firstMatch
+        for _ in 0..<4 where !aprilObservation.isHittable { list.swipeUp(velocity: .slow) }
+        XCTAssertTrue(aprilDate.exists)
+        XCTAssertEqual(dates.matching(identifier: datePrefix + "2030-04-01").count, 1)
+        XCTAssertTrue(aprilReview.exists)
+        XCTAssertTrue(aprilDate.frame.maxY <= aprilReview.frame.minY)
+        XCTAssertTrue(aprilDate.frame.maxY <= aprilObservation.frame.minY)
+        let aprilHeading = aprilDate.identifier, aprilHeadingTop = aprilDate.frame.minY
+        let aprilRowsBottom = max(aprilReview.frame.maxY, aprilObservation.frame.maxY)
+        XCTAssertFalse(dates.allElementsBoundByIndex.contains {
+            let start = $0.frame.minY
+            return $0.identifier != aprilHeading && start > aprilHeadingTop && start < aprilRowsBottom
+        })
+        XCTAssertTrue((aprilReview.value as? String ?? "").contains("핵심 기록"))
+        capture(app, "V180 journal same-day saved scout and offer")
+
+        // Walk the complete timeline since SwiftUI may only publish the portion it laid out.
+        choose("contract", count: 3)
+        choose("all", count: 19)
+        var seenDates = Set<String>()
+        var orderedDates: [String] = []
+        var seenRows = Set<String>()
+        for _ in 0..<18 {
+            let frame = list.frame
+            let timelineDates = dates.allElementsBoundByIndex.compactMap { day -> (XCUIElement, CGFloat)? in
+                let center = day.frame.midY
+                return (frame.minY..<frame.maxY).contains(center) ? (day, center) : nil
+            }.sorted { $0.1 < $1.1 }
+            for (day, _) in timelineDates {
+                let iso = String(day.identifier.dropFirst(datePrefix.count))
+                XCTAssertEqual(day.value as? String, iso)
+                if seenDates.insert(iso).inserted { orderedDates.append(iso) }
+            }
+            let visibleRows = events.allElementsBoundByIndex.filter { (frame.minY..<frame.maxY).contains($0.frame.midY) }
+                .map(\.identifier)
+            XCTAssertEqual(visibleRows.count, Set(visibleRows).count)
+            seenRows.formUnion(visibleRows)
+            if seenRows.count == 19 && seenDates.contains("2026-04-01") { break }
+            list.swipeUp(velocity: .slow)
+        }
+        XCTAssertEqual(seenRows.count, 19)
+        XCTAssertEqual(orderedDates, orderedDates.sorted(by: >))
+        XCTAssertEqual(orderedDates.first, "2030-11-01")
+        XCTAssertEqual(orderedDates.last, "2026-04-01")
+        XCTAssertTrue(orderedDates.contains("2026-04-02"))
+
+        choose("game", count: 13)
+        for _ in 0..<14 where !element(datePrefix + "2026-04-01").isHittable { list.swipeUp(velocity: .slow) }
+        let openingHeader = element(datePrefix + "2026-04-01")
+        XCTAssertTrue(openingHeader.isHittable)
+        let opening = try XCTUnwrap(events.allElementsBoundByIndex.first { $0.frame.minY >= openingHeader.frame.maxY })
+        let openingID = opening.identifier
+        XCTAssertTrue(openingID.hasPrefix(eventPrefix + "match/"))
+        var openingScore = ""
+        detail(opening, date: "2026-04-01", checkpoint: "V180 journal historical game") {
+            let score = app.staticTexts["gameFinalScore"]
+            XCTAssertTrue(score.waitForExistence(timeout: 5))
+            openingScore = score.label
+        }
+        choose("training", count: 1)
+        let training = events.matching(NSPredicate(format: "identifier ENDSWITH %@", ":2026-04-02")).firstMatch
+        detail(training, date: "2026-04-02", checkpoint: "V180 journal historical training") {
+            XCTAssertTrue(element("careerJournalTrainingScore").waitForExistence(timeout: 5))
+            let growth = element("trainingGrowth")
+            reveal(growth, app)
+            XCTAssertTrue(growth.exists)
+        }
+        choose("scout", count: 2)
+        detail(aprilObservation, date: "2030-04-01", checkpoint: "V180 journal historical scouting") {
+            XCTAssertTrue(element("careerJournalScoutTitle").waitForExistence(timeout: 5))
+            let frozen = element("careerJournalDetailDate")
+            XCTAssertTrue(frozen.label.contains("4월 1일"), frozen.label)
+            XCTAssertFalse(app.buttons["acknowledgeContractEvaluation"].exists)
+        }
+        choose("contract", count: 3)
+        let accepted = events.matching(NSPredicate(format: "identifier BEGINSWITH %@", eventPrefix + "contract/decision/")).firstMatch
+        for _ in 0..<4 where !accepted.isHittable { list.swipeUp(velocity: .slow) }
+        XCTAssertTrue(accepted.label.contains("계약 수락"), accepted.label)
+        XCTAssertTrue((accepted.value as? String ?? "").contains("핵심 기록"))
+        let acceptedLabel = accepted.label
+        let offerPrefix = "careerJournalContractOffer-"
+        let savedOfferID = String(accepted.identifier.dropFirst((eventPrefix + "contract/decision/").count))
+        let savedOffer = element(offerPrefix + savedOfferID)
+        let offerCards = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", offerPrefix))
+        let contractScroll = app.scrollViews["careerJournalContractScroll"]
+        let evaluationStatus = element("careerJournalContractStatus")
+        func inside(_ ancestor: XCUIElement, _ id: String) -> XCUIElement {
+            ancestor.descendants(matching: .any).matching(identifier: id).firstMatch
+        }
+        func revealContract(_ target: XCUIElement) {
+            for _ in 0..<8 where !target.isHittable { contractScroll.swipeUp(velocity: .slow) }
+            XCTAssertTrue(target.isHittable, target.identifier)
+        }
+        func assertArchiveActions() {
+            for id in ["acknowledgeContractEvaluation", "acceptLiveOffer", "rejectLiveOffer", "acceptRenewalOffer", "rejectRenewalOffer"] {
+                XCTAssertFalse(app.buttons[id].exists, id)
+            }
+        }
+        var clubLabel = ""
+        var indexLabel = ""
+        var bonusLabel = ""
+        detail(accepted, date: "2030-04-03", checkpoint: "V180 journal historical contract decision") {
+            XCTAssertEqual(element("careerJournalContractTitle").label, "계약 수락")
+            XCTAssertEqual(offerCards.count, 1)
+            XCTAssertTrue(savedOffer.exists)
+            let clubName = inside(savedOffer, "careerJournalContractClubName")
+            let crest = inside(savedOffer, "careerJournalContractCrest")
+            XCTAssertTrue(clubName.exists)
+            XCTAssertTrue(crest.exists)
+            clubLabel = clubName.label
+            XCTAssertTrue(acceptedLabel.contains(clubLabel), clubLabel)
+            XCTAssertEqual(crest.label, clubLabel + " 엠블럼")
+            let logoFrame = crest.frame, nameFrame = clubName.frame
+            XCTAssertTrue(nameFrame.minX >= logoFrame.maxX + 4 || nameFrame.minY >= logoFrame.maxY + 4,
+                          "Club name and crest should have independent space")
+            indexLabel = inside(savedOffer, "careerJournalContractMetric-index").label
+            bonusLabel = inside(savedOffer, "careerJournalContractMetric-bonus").label
+            XCTAssertTrue(indexLabel.contains("연봉지수") && indexLabel.contains(where: \.isNumber), indexLabel)
+            XCTAssertTrue(bonusLabel.contains("계약금") && bonusLabel.contains("원") && bonusLabel.contains(where: \.isNumber), bonusLabel)
+            XCTAssertTrue(inside(savedOffer, "careerJournalContractMetric-role").exists)
+            assertArchiveActions()
+            capture(app, "V181 contract accepted overview")
+
+            let decisionDate = element("careerJournalContractDate-2030-04-03")
+            revealContract(decisionDate)
+            XCTAssertEqual(decisionDate.value as? String, "2030-04-03")
+            XCTAssertTrue(element("careerJournalContractDates").exists)
+            for iso in ["2030-04-01", "2030-04-07"] {
+                XCTAssertEqual(element("careerJournalContractDate-" + iso).value as? String, iso)
+            }
+            capture(app, "V181 contract accepted dates")
+        }
+        detail(aprilReview, date: "2030-04-01", checkpoint: "V181 contract two saved offers") {
+            XCTAssertTrue(evaluationStatus.label.contains("제의 2건"), evaluationStatus.label)
+            XCTAssertEqual(offerCards.count, 2)
+            XCTAssertEqual(inside(savedOffer, "careerJournalContractClubName").label, clubLabel)
+            XCTAssertTrue(inside(savedOffer, "careerJournalContractCrest").exists)
+            XCTAssertEqual(inside(savedOffer, "careerJournalContractMetric-index").label, indexLabel)
+            XCTAssertEqual(inside(savedOffer, "careerJournalContractMetric-bonus").label, bonusLabel)
+            let collegeOffer = offerCards.matching(NSPredicate(format: "identifier CONTAINS %@", "/college/")).firstMatch
+            XCTAssertTrue(collegeOffer.exists)
+            XCTAssertFalse(inside(collegeOffer, "careerJournalContractCrest").exists)
+            XCTAssertTrue(inside(collegeOffer, "careerJournalContractMetric-index").label.contains("선발 지원지수"))
+            assertArchiveActions()
+        }
+        // Restore the top before checking the latest unread review from a potentially scrolled offer list.
+        choose("scout", count: 2)
+        choose("contract", count: 3)
+        detail(novemberReview, date: "2030-11-01", checkpoint: "V180 journal unread contract evaluation") {
+            XCTAssertTrue(evaluationStatus.label.contains("제의 없음"), evaluationStatus.label)
+            XCTAssertEqual(offerCards.count, 0)
+            XCTAssertFalse(element("careerJournalContractCrest").exists)
+            let reviewSubject = element("careerJournalContractReviewedClub")
+            XCTAssertTrue(reviewSubject.exists)
+            XCTAssertTrue(element("careerJournalContractReviewedCrest").exists)
+            let evidence = element("careerJournalContractEvidence")
+            let body = element("careerJournalContractEvidenceBody")
+            XCTAssertFalse(body.exists)
+            assertArchiveActions()
+            capture(app, "V181 contract unread review without offers")
+            revealContract(evidence)
+            XCTAssertEqual(evidence.value as? String, "접힘")
+            evidence.tap()
+            XCTAssertTrue(body.waitForExistence(timeout: 5))
+            XCTAssertEqual(evidence.value as? String, "펼침")
+            revealContract(body)
+            XCTAssertTrue(body.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "40타석 필요")).firstMatch.exists)
+            assertArchiveActions()
+            capture(app, "V181 contract unread evidence expanded")
+        }
+        app.buttons["closeCareerJournal"].tap()
+        close(app)
+        app.buttons["managementTab-home"].tap()
+        XCTAssertEqual(status(app), homeBefore)
+        capture(app, "V180 journal after viewing")
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 20))
+        XCTAssertEqual(status(app), homeBefore)
+        openJournal()
+        XCTAssertEqual(count.label, "19건")
+        let restored = events.matching(identifier: openingID).firstMatch
+        choose("game", count: 13)
+        detail(restored, date: "2026-04-01", checkpoint: "V180 journal reopened saved result") {
+            XCTAssertEqual(app.staticTexts["gameFinalScore"].label, openingScore)
+        }
+        let manifest = XCTAttachment(string: ([session] + orderedDates + seenRows.sorted() + homeBefore).joined(separator: "\n"))
+        manifest.name = "V180 journal isolated session and timeline proof"
+        manifest.lifetime = .keepAlways
+        add(manifest)
+    }
+
+    @MainActor func testV181CareerJournalContractLargeTextKeepsCrestAndSavedTermsReadable() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        let session = ProcessInfo.processInfo.environment["BM_V180_JOURNAL_SESSION"] ?? UUID().uuidString
+        app.launchArguments = ["-management-career-verification", "-management-single-role-verification",
+                               "-management-reduced-motion-verification", "-v180-career-journal", "-v56-disk-session", session,
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60))
+        app.buttons["managementLargeMenu"].tap()
+        app.buttons["managementMenu-player"].tap()
+        let records = app.buttons["facility-records"]
+        reveal(records, app)
+        records.tap()
+        let entry = app.buttons["playerOpenCareerJournal"]
+        reveal(entry, app)
+        entry.tap()
+        let list = app.scrollViews["careerJournalList"]
+        XCTAssertTrue(list.waitForExistence(timeout: 10))
+        app.buttons["careerJournalFilter-contract"].tap()
+        let accepted = list.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+                                                        "careerJournalEvent-contract/decision/")).firstMatch
+        for _ in 0..<6 where !accepted.isHittable { list.swipeUp(velocity: .slow) }
+        XCTAssertTrue(accepted.isHittable)
+        accepted.tap()
+
+        let scroll = app.scrollViews["careerJournalContractScroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+        func show(_ id: String) -> XCUIElement {
+            let target = scroll.descendants(matching: .any).matching(identifier: id).firstMatch
+            for _ in 0..<12 where !target.isHittable { scroll.swipeUp(velocity: .slow) }
+            XCTAssertTrue(target.isHittable, id)
+            return target
+        }
+        let crest = show("careerJournalContractCrest")
+        let name = show("careerJournalContractClubName")
+        XCTAssertGreaterThanOrEqual(name.frame.minY, crest.frame.maxY + 4)
+        XCTAssertLessThanOrEqual(name.frame.maxX, scroll.frame.maxX)
+        capture(app, "V181 contract large text identity")
+        XCTAssertTrue(show("careerJournalContractMetric-bonus").label.contains("계약금"))
+        XCTAssertFalse(show("careerJournalContractMetric-role").label.isEmpty)
+        let effectiveDate = show("careerJournalContractDate-2030-04-03")
+        XCTAssertEqual(effectiveDate.value as? String, "2030-04-03")
+        capture(app, "V181 contract large text dates")
+        app.buttons["closeCareerJournalDetail"].tap()
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
+    }
+
+    @MainActor func testV182CareerJournalScoutShowsTheSelectedArchivedReport() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        let environment = ProcessInfo.processInfo.environment
+        let session = environment["BM_V182_SCOUT_SESSION"] ?? UUID().uuidString
+        app.launchArguments = ["-management-career-verification", "-management-single-role-verification",
+                               "-management-reduced-motion-verification", "-v182-scout-journal", "-v56-disk-session", session]
+        app.launch()
+        let seedError = app.staticTexts["managementSeedError"]
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60),
+                      seedError.exists ? seedError.label : "V182 scout journal fixture unavailable")
+        let homeBefore = status(app)
+        let list = app.scrollViews["careerJournalList"]
+        let scroll = app.scrollViews["careerJournalScoutScroll"]
+        let clubs = scroll.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "careerJournalScoutClub-"))
+
+        func element(_ identifier: String, in root: XCUIElement) -> XCUIElement {
+            root.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        }
+        func openJournal() {
+            app.buttons["managementTab-player"].tap()
+            app.buttons["facility-records"].tap()
+            let entry = app.buttons["playerOpenCareerJournal"]
+            reveal(entry, app)
+            entry.tap()
+            XCTAssertTrue(list.waitForExistence(timeout: 10))
+            app.buttons["careerJournalFilter-scout"].tap()
+            let count = app.staticTexts["careerJournalCount"]
+            let savedReports = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "3건"), object: count)
+            XCTAssertEqual(XCTWaiter.wait(for: [savedReports], timeout: 5), .completed)
+        }
+        func openReport(_ period: Int, date: String) {
+            let rows = list.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+                                                          "careerJournalEvent-scouting/", ":\(period)"))
+            let row = rows.firstMatch
+            for _ in 0..<4 where !row.isHittable { list.swipeUp(velocity: .slow) }
+            XCTAssertTrue(row.isHittable, date)
+            row.tap()
+            XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+            XCTAssertEqual(element("careerJournalDetailDate", in: scroll).value as? String, date)
+        }
+        func closeReport() {
+            app.buttons["closeCareerJournalDetail"].tap()
+            XCTAssertTrue(list.waitForExistence(timeout: 5))
+        }
+        func show(_ identifier: String) -> XCUIElement {
+            let target = element(identifier, in: scroll)
+            for _ in 0..<9 where !target.isHittable { scroll.swipeUp(velocity: .slow) }
+            XCTAssertTrue(target.isHittable, identifier)
+            return target
+        }
+
+        openJournal()
+        openReport(2, date: "2026-06-07")
+        XCTAssertEqual(clubs.count, 3)
+        let firstClub = clubs.firstMatch
+        XCTAssertTrue(firstClub.exists)
+        let frozenClub = element("careerJournalScoutClubName", in: firstClub).label
+        let frozenStage = element("careerJournalScoutStage", in: firstClub).label
+        XCTAssertFalse(frozenClub.isEmpty)
+        XCTAssertEqual(frozenStage, "우선 관찰")
+        XCTAssertTrue(element("careerJournalScoutCrest", in: firstClub).label.contains(frozenClub))
+        if let expectedID = environment["BM_V182_SCOUT_EXPECTED_CLUB_ID"],
+           let expectedName = environment["BM_V182_SCOUT_EXPECTED_CLUB_NAME"] {
+            XCTAssertEqual(firstClub.identifier, "careerJournalScoutClub-" + expectedID)
+            XCTAssertEqual(frozenClub, expectedName)
+        }
+        capture(app, "V182 scout historical interest")
+        show("careerJournalScoutMoreClubs").tap()
+        XCTAssertEqual(clubs.count, 10)
+        show("careerJournalScoutMoreClubs").tap()
+        XCTAssertEqual(clubs.count, 3)
+
+        let sampleBody = element("careerJournalScoutSampleBody", in: scroll)
+        let evidenceBody = element("careerJournalScoutEvidenceBody", in: scroll)
+        XCTAssertFalse(sampleBody.exists)
+        XCTAssertFalse(evidenceBody.exists)
+        show("careerJournalScoutSample").tap()
+        XCTAssertTrue(sampleBody.waitForExistence(timeout: 5))
+        let historicalSample = show("careerJournalScoutSampleBodyFact-1").label
+        XCTAssertTrue(historicalSample.contains("12경기"), historicalSample)
+        let historicalPlateAppearances = show("careerJournalScoutSampleBodyFact-2").label
+        XCTAssertTrue(historicalPlateAppearances.contains("55타석"), historicalPlateAppearances)
+        XCTAssertFalse(evidenceBody.exists)
+        capture(app, "V182 scout saved sample")
+
+        show("careerJournalScoutEvidence").tap()
+        XCTAssertTrue(evidenceBody.waitForExistence(timeout: 5))
+        XCTAssertTrue(sampleBody.exists)
+        _ = show("careerJournalScoutEvidenceBodyFact-0")
+        let reasons = evidenceBody.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "20세 미만"))
+        XCTAssertTrue(reasons.firstMatch.exists)
+        let archivedFit = evidenceBody.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "역할 기량 75.0 / 구단 기준 64.0"))
+        XCTAssertTrue(archivedFit.firstMatch.exists)
+        XCTAssertFalse(app.buttons["acknowledgeContractEvaluation"].exists)
+        for _ in 0..<4 where archivedFit.firstMatch.frame.maxY > scroll.frame.maxY - 16 {
+            scroll.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(scroll.frame.contains(archivedFit.firstMatch.frame))
+        capture(app, "V182 scout saved evidence")
+        closeReport()
+
+        openReport(3, date: "2026-06-24")
+        XCTAssertFalse(clubs.firstMatch.exists)
+        XCTAssertEqual(element("careerJournalScoutStatus", in: scroll).label, "구단 관심 없음")
+        capture(app, "V182 scout later zero interest")
+        show("careerJournalScoutSample").tap()
+        let laterSample = show("careerJournalScoutSampleBodyFact-1").label
+        XCTAssertTrue(laterSample.contains("13경기"), laterSample)
+        let laterPlateAppearances = show("careerJournalScoutSampleBodyFact-2").label
+        XCTAssertTrue(laterPlateAppearances.contains("59타석"), laterPlateAppearances)
+        XCTAssertNotEqual(laterSample, historicalSample)
+        closeReport()
+
+        openReport(0, date: "2026-04-01")
+        XCTAssertFalse(clubs.firstMatch.exists)
+        XCTAssertEqual(element("careerJournalScoutStatus", in: scroll).label, "구단 관심 미기록")
+        capture(app, "V182 scout legacy interest unrecorded")
+        closeReport()
+        app.buttons["closeCareerJournal"].tap()
+        close(app)
+        app.buttons["managementTab-home"].tap()
+        XCTAssertEqual(status(app), homeBefore)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 20))
+        XCTAssertEqual(status(app), homeBefore)
+        openJournal()
+        openReport(2, date: "2026-06-07")
+        XCTAssertEqual(element("careerJournalScoutClubName", in: clubs.firstMatch).label, frozenClub)
+        XCTAssertEqual(element("careerJournalScoutStage", in: clubs.firstMatch).label, frozenStage)
+        closeReport()
+    }
+
+    @MainActor func testV183CareerJournalMatchAndTrainingShowSavedDetails() throws {
+        struct Archive: Decodable {
+            struct Match: Decodable {
+                let date: String
+                let key: String
+                let score: String
+                let personal: [String: String]
+                let innings: [String]?
+            }
+            struct Training: Decodable {
+                let date: String
+                let key: String
+                let average: String
+                let gain: String
+                let attempts: [String]
+            }
+            let fixtureDate: String
+            let matches: [Match]
+            let trainings: [Training]
+        }
+
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        let environment = ProcessInfo.processInfo.environment
+        let session = environment["BM_V183_RESULT_SESSION"] ?? UUID().uuidString
+        let archive = try environment["BM_V183_ARCHIVE_JSON"].map { try JSONDecoder().decode(Archive.self, from: Data($0.utf8)) }
+        app.launchArguments = ["-management-career-verification", "-management-single-role-verification",
+                               "-management-reduced-motion-verification", "-v183-result-journal", "-v56-disk-session", session]
+        app.launch()
+        let seedError = app.staticTexts["managementSeedError"]
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60),
+                      seedError.exists ? seedError.label : "V183 result journal fixture unavailable")
+        let homeBefore = status(app)
+        XCTAssertTrue(homeBefore[0].contains("11월 2일"), homeBefore[0])
+
+        let list = app.scrollViews["careerJournalList"]
+        let matchScroll = app.scrollViews["careerJournalMatchScroll"]
+        let trainingScroll = app.scrollViews["careerJournalTrainingScroll"]
+        let matchDate = "2026-04-01", legacyMatchDate = "2028-04-01"
+        let trainingDate = "2026-04-02", laterTrainingDate = "2026-04-03"
+        let archivedMatch = archive?.matches.first { $0.date == matchDate }
+        let legacyMatch = archive?.matches.first { $0.date == legacyMatchDate }
+        let archivedTraining = archive?.trainings.first { $0.date == trainingDate }
+        let laterTraining = archive?.trainings.first { $0.date == laterTrainingDate }
+        if let archive {
+            XCTAssertEqual(archive.fixtureDate, "2030-11-02")
+            XCTAssertEqual(archive.matches.map(\.date), [matchDate, legacyMatchDate])
+            XCTAssertEqual(archive.trainings.map(\.date), [trainingDate, laterTrainingDate])
+        }
+
+        func element(_ identifier: String, in root: XCUIElement) -> XCUIElement {
+            root.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        }
+        func openJournal() {
+            app.buttons["managementTab-player"].tap()
+            app.buttons["facility-records"].tap()
+            let entry = app.buttons["playerOpenCareerJournal"]
+            reveal(entry, app)
+            entry.tap()
+            XCTAssertTrue(list.waitForExistence(timeout: 10))
+        }
+        func choose(_ filter: String, count: String) {
+            app.buttons["careerJournalFilter-" + filter].tap()
+            let counter = app.staticTexts["careerJournalCount"]
+            let found = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", count), object: counter)
+            XCTAssertEqual(XCTWaiter.wait(for: [found], timeout: 5), .completed)
+        }
+        func openDetail(_ kind: String, date: String, key: String?, scroll: XCUIElement) {
+            let prefix = "careerJournalEvent-\(kind)/"
+            let row = if let key { list.buttons[prefix + key] } else {
+                list.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier CONTAINS %@", prefix, ":" + date)).firstMatch
+            }
+            for _ in 0..<14 where !row.isHittable { list.swipeUp(velocity: .slow) }
+            XCTAssertTrue(row.isHittable, date)
+            row.tap()
+            XCTAssertTrue(scroll.waitForExistence(timeout: 10), date)
+            let recordedDate = element("careerJournalDetailDate", in: scroll)
+            XCTAssertTrue(recordedDate.waitForExistence(timeout: 5), date)
+            XCTAssertEqual(recordedDate.value as? String, date)
+        }
+        func closeDetail() {
+            app.buttons["closeCareerJournalDetail"].tap()
+            XCTAssertTrue(list.waitForExistence(timeout: 5))
+        }
+        func show(_ target: XCUIElement, in scroll: XCUIElement) {
+            for _ in 0..<8 where !target.isHittable { scroll.swipeUp(velocity: .slow) }
+            XCTAssertTrue(target.isHittable, target.identifier)
+        }
+        func matchSummary(_ stored: Archive.Match?) throws -> String {
+            let score = matchScroll.staticTexts["gameFinalScore"]
+            XCTAssertTrue(score.isHittable, score.identifier)
+            let savedScore = try XCTUnwrap(score.value as? String)
+            if let stored { XCTAssertEqual(savedScore, stored.score) }
+            let personal = element("careerJournalMatchPersonal", in: matchScroll)
+            XCTAssertTrue(personal.exists)
+            for stat in ["atBats", "hits", "homeRuns", "rbi"] {
+                let metric = element("gameResult-" + stat, in: personal)
+                XCTAssertTrue(metric.isHittable, stat)
+                let value = try XCTUnwrap(metric.value as? String, stat)
+                XCTAssertNotNil(Int(value), stat)
+                if let stored { XCTAssertEqual(value, stored.personal[stat], stat) }
+            }
+            return savedScore
+        }
+        func trainingSummary(_ stored: Archive.Training?) throws -> (average: String, gain: String) {
+            let average = element("careerJournalTrainingScore", in: trainingScroll)
+            let growth = element("trainingGrowth", in: trainingScroll)
+            XCTAssertTrue(average.isHittable)
+            XCTAssertTrue(growth.isHittable)
+            let summary = (try XCTUnwrap(average.value as? String), try XCTUnwrap(growth.value as? String))
+            if let stored {
+                XCTAssertEqual(summary.0, stored.average)
+                XCTAssertEqual(summary.1, stored.gain)
+            }
+            return summary
+        }
+        func openTrainingAttempts(_ stored: Archive.Training?) throws -> [String] {
+            let toggle = trainingScroll.buttons["careerJournalTrainingAttempts"]
+            let body = element("careerJournalTrainingAttemptsBody", in: trainingScroll)
+            XCTAssertFalse(body.exists)
+            XCTAssertFalse(element("careerJournalTrainingAttempt-1", in: trainingScroll).exists)
+            show(toggle, in: trainingScroll)
+            toggle.tap()
+            XCTAssertTrue(body.waitForExistence(timeout: 5))
+            let scores = try (1...5).map { round in
+                try XCTUnwrap(element("careerJournalTrainingAttempt-\(round)", in: body).value as? String, "Round \(round)")
+            }
+            if let stored { XCTAssertEqual(scores, stored.attempts) }
+            return scores
+        }
+
+        openJournal()
+        choose("game", count: "13건")
+        openDetail("match", date: matchDate, key: archivedMatch?.key, scroll: matchScroll)
+        let originalScore = try matchSummary(archivedMatch)
+        let inningBody = element("careerJournalMatchInningsBody", in: matchScroll)
+        XCTAssertFalse(inningBody.exists)
+        XCTAssertFalse(element("careerJournalMatchInning-1", in: matchScroll).exists)
+        XCTAssertTrue(matchScroll.buttons["openMatchHighlights"].exists)
+        capture(app, "V183 match summary")
+        let innings = matchScroll.buttons["careerJournalMatchInnings"]
+        show(innings, in: matchScroll)
+        innings.tap()
+        XCTAssertTrue(inningBody.waitForExistence(timeout: 5))
+        let scoreByInning = try (1...9).map { number in
+            try XCTUnwrap(element("careerJournalMatchInning-\(number)", in: inningBody).value as? String, "Inning \(number)")
+        }
+        if let archivedMatch { XCTAssertEqual(scoreByInning, try XCTUnwrap(archivedMatch.innings)) }
+        show(element("careerJournalMatchInning-9", in: inningBody), in: matchScroll)
+        capture(app, "V183 match innings")
+        closeDetail()
+
+        choose("training", count: "2건")
+        openDetail("training", date: trainingDate, key: archivedTraining?.key, scroll: trainingScroll)
+        let originalTraining = try trainingSummary(archivedTraining)
+        XCTAssertEqual(originalTraining.average, "100.0")
+        capture(app, "V183 training summary")
+        XCTAssertEqual(try openTrainingAttempts(archivedTraining), Array(repeating: "100", count: 5))
+        show(element("careerJournalTrainingAttempt-5", in: trainingScroll), in: trainingScroll)
+        capture(app, "V183 training attempts")
+        closeDetail()
+        openDetail("training", date: laterTrainingDate, key: laterTraining?.key, scroll: trainingScroll)
+        let recentTraining = try trainingSummary(laterTraining)
+        XCTAssertNotEqual(recentTraining.average, originalTraining.average)
+        XCTAssertNotEqual(recentTraining.gain, originalTraining.gain)
+        capture(app, "V183 training varied summary")
+        let recentAttempts = try openTrainingAttempts(laterTraining)
+        XCTAssertGreaterThan(Set(recentAttempts).count, 1)
+        show(element("careerJournalTrainingAttempt-5", in: trainingScroll), in: trainingScroll)
+        capture(app, "V183 training varied attempts")
+        closeDetail()
+
+        choose("game", count: "13건")
+        openDetail("match", date: legacyMatchDate, key: legacyMatch?.key, scroll: matchScroll)
+        _ = try matchSummary(legacyMatch)
+        show(innings, in: matchScroll)
+        innings.tap()
+        XCTAssertTrue(element("careerJournalMatchInningsMissing", in: matchScroll).waitForExistence(timeout: 5))
+        XCTAssertFalse(element("careerJournalMatchInning-1", in: matchScroll).exists)
+        closeDetail()
+        app.buttons["closeCareerJournal"].tap()
+        close(app)
+        app.buttons["managementTab-home"].tap()
+        XCTAssertEqual(status(app), homeBefore)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 20))
+        XCTAssertEqual(status(app), homeBefore)
+        openJournal()
+        choose("game", count: "13건")
+        openDetail("match", date: matchDate, key: archivedMatch?.key, scroll: matchScroll)
+        XCTAssertEqual(try matchSummary(archivedMatch), originalScore)
+        XCTAssertFalse(inningBody.exists)
+        closeDetail()
+        choose("training", count: "2건")
+        openDetail("training", date: trainingDate, key: archivedTraining?.key, scroll: trainingScroll)
+        let reopenedTraining = try trainingSummary(archivedTraining)
+        XCTAssertEqual(reopenedTraining.average, originalTraining.average)
+        XCTAssertEqual(reopenedTraining.gain, originalTraining.gain)
+    }
+
+    @MainActor func testV184CareerJournalRestoresFiltersAndTimelinePosition() throws {
+        struct PositionedRow: Codable {
+            let id: String
+            let y: CGFloat
+        }
+        struct ReturnCheck: Codable {
+            let filter: String
+            let kind: String
+            let date: String
+            let count: String
+            let scrolled: Bool
+            let before: [PositionedRow]
+            let after: [PositionedRow]
+        }
+
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        let session = ProcessInfo.processInfo.environment["BM_V184_RESULT_SESSION"] ?? UUID().uuidString
+        app.launchArguments = ["-management-career-verification", "-management-single-role-verification",
+                               "-management-reduced-motion-verification", "-v183-result-journal", "-v56-disk-session", session]
+        app.launch()
+        let seedError = app.staticTexts["managementSeedError"]
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60),
+                      seedError.exists ? seedError.label : "V184 result journal fixture unavailable")
+        let homeBefore = status(app)
+        app.buttons["managementTab-player"].tap()
+        app.buttons["facility-records"].tap()
+        let entry = app.buttons["playerOpenCareerJournal"]
+        reveal(entry, app)
+        entry.tap()
+
+        let list = app.scrollViews["careerJournalList"]
+        XCTAssertTrue(list.waitForExistence(timeout: 10))
+        let allFilters = ["all", "game", "training", "scout", "contract"]
+        let counter = app.staticTexts["careerJournalCount"]
+        let eventPrefix = "careerJournalEvent-"
+        var checks: [ReturnCheck] = []
+
+        func button(_ filter: String) -> XCUIElement { app.buttons["careerJournalFilter-" + filter] }
+        func selection() -> [String] { allFilters.filter { button($0).isSelected } }
+        func choose(_ filter: String, count: String) {
+            if !button(filter).isSelected { button(filter).tap() }
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                button(filter).isSelected && counter.label == count
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, filter)
+            XCTAssertEqual(selection(), [filter])
+        }
+        func visibleRows() -> [PositionedRow] {
+            let viewport = list.frame
+            return list.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", eventPrefix))
+                .allElementsBoundByIndex.compactMap { row -> PositionedRow? in
+                    let frame = row.frame
+                    guard frame.height > 0, frame.maxY > viewport.minY + 2, frame.minY < viewport.maxY - 2 else { return nil }
+                    return PositionedRow(id: row.identifier, y: frame.minY - viewport.minY)
+                }.sorted { $0.y < $1.y }
+        }
+        func showRow(_ row: XCUIElement) {
+            for _ in 0..<14 where !row.isHittable { list.swipeUp(velocity: .slow) }
+            XCTAssertTrue(row.isHittable, row.debugDescription)
+        }
+        func roundTrip(filter: String, count: String, kind: String, prefix: String? = nil,
+                       suffix: String = "", date: String, detail: String, scrolled: Bool = false,
+                       moveNearTop: Bool = false, captureName: String? = nil) throws {
+            if filter == "all" { choose("game", count: "13건") }
+            choose(filter, count: count)
+            let initialRows = scrolled ? visibleRows() : []
+            let keyPrefix = eventPrefix + (prefix ?? kind + "/")
+            let route = suffix.isEmpty ? NSPredicate(format: "identifier BEGINSWITH %@", keyPrefix)
+                : NSPredicate(format: "identifier BEGINSWITH %@ AND identifier CONTAINS %@", keyPrefix, suffix)
+            let row = list.buttons.matching(route).firstMatch
+            if moveNearTop {
+                // Both rows are near the beginning, so move the viewport before opening them.
+                let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.68))
+                let end = list.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.43))
+                start.press(forDuration: 0.08, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.15)
+            }
+            showRow(row)
+            let tappedID = row.identifier
+            let before = visibleRows()
+            let beforeTap = try XCTUnwrap(before.first { $0.id == tappedID })
+            XCTAssertGreaterThanOrEqual(before.count, 2, kind)
+            if scrolled {
+                let sameStart = initialRows.first?.id == before.first?.id
+                    && abs((initialRows.first?.y ?? .zero) - (before.first?.y ?? .zero)) <= 10
+                XCTAssertFalse(sameStart, "No measured scroll before opening \(kind) in \(filter)")
+            }
+            if captureName == "game" { capture(app, "V184 game list before") }
+
+            row.tap()
+            let detailScroll = app.scrollViews[detail]
+            XCTAssertTrue(detailScroll.waitForExistence(timeout: 10), kind)
+            let sourceDate = detailScroll.descendants(matching: .any).matching(identifier: "careerJournalDetailDate").firstMatch
+            XCTAssertTrue(sourceDate.waitForExistence(timeout: 5), kind)
+            XCTAssertEqual(sourceDate.value as? String, date)
+            if let captureName { capture(app, "V184 \(captureName) detail") }
+
+            app.buttons["closeCareerJournalDetail"].tap()
+            let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                button(filter).isHittable && list.isHittable
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 8), .completed, kind)
+            XCTAssertEqual(selection(), [filter], kind)
+            XCTAssertEqual(counter.label, count, kind)
+            // Sample the viewport before any other gesture or scroll-to-item attempt.
+            let after = visibleRows()
+            let afterTap = try XCTUnwrap(after.first { $0.id == tappedID }, kind)
+            XCTAssertEqual(afterTap.y, beforeTap.y, accuracy: 1, kind)
+            XCTAssertEqual(after.map(\.id), before.map(\.id), kind)
+            for (expected, actual) in zip(before, after) {
+                XCTAssertEqual(actual.y, expected.y, accuracy: 1, "\(kind) / \(actual.id)")
+            }
+            checks.append(ReturnCheck(filter: filter, kind: kind, date: date, count: count, scrolled: scrolled,
+                                      before: before, after: after))
+            if captureName == "game" { capture(app, "V184 game list returned") }
+            if filter == "all", kind == "training" { capture(app, "V184 all list returned") }
+        }
+
+        try roundTrip(filter: "game", count: "13건", kind: "match", suffix: ":2026-04-01", date: "2026-04-01",
+                      detail: "careerJournalMatchScroll", scrolled: true, captureName: "game")
+        try roundTrip(filter: "training", count: "2건", kind: "training", suffix: ":2026-04-03", date: "2026-04-03",
+                      detail: "careerJournalTrainingScroll", captureName: "training")
+        try roundTrip(filter: "scout", count: "2건", kind: "scouting", suffix: ":observation-v1:52", date: "2030-04-01",
+                      detail: "careerJournalScoutScroll", captureName: "scout")
+        try roundTrip(filter: "contract", count: "3건", kind: "contract", prefix: "contract/decision/", date: "2030-04-03",
+                      detail: "careerJournalContractScroll", captureName: "contract")
+        try roundTrip(filter: "all", count: "20건", kind: "scouting", suffix: ":observation-v1:52", date: "2030-04-01",
+                      detail: "careerJournalScoutScroll", scrolled: true, moveNearTop: true)
+        try roundTrip(filter: "all", count: "20건", kind: "contract", prefix: "contract/evaluation/", suffix: ":2030-04", date: "2030-04-01",
+                      detail: "careerJournalContractScroll", scrolled: true, moveNearTop: true)
+        try roundTrip(filter: "all", count: "20건", kind: "training", suffix: ":2026-04-02", date: "2026-04-02",
+                      detail: "careerJournalTrainingScroll", scrolled: true)
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let report = XCTAttachment(data: try encoder.encode(checks), uniformTypeIdentifier: "public.json")
+        report.name = "V184 timeline return measurements"
+        report.lifetime = .keepAlways
+        add(report)
+
+        app.buttons["closeCareerJournal"].tap()
+        close(app)
+        app.buttons["managementTab-home"].tap()
+        XCTAssertEqual(status(app), homeBefore)
+    }
+
+    @MainActor func testV184CareerJournalReturnsFromScrolledTrainingAttempts() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        let session = ProcessInfo.processInfo.environment["BM_V184_RESULT_SESSION"] ?? UUID().uuidString
+        app.launchArguments = ["-management-career-verification", "-management-single-role-verification",
+                               "-management-reduced-motion-verification", "-v183-result-journal", "-v56-disk-session", session,
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 60))
+        app.buttons["managementLargeMenu"].tap()
+        app.buttons["managementMenu-player"].tap()
+        let records = app.buttons["facility-records"]
+        reveal(records, app)
+        records.tap()
+        let entry = app.buttons["playerOpenCareerJournal"]
+        reveal(entry, app)
+        entry.tap()
+
+        let list = app.scrollViews["careerJournalList"]
+        XCTAssertTrue(list.waitForExistence(timeout: 10))
+        let filter = app.buttons["careerJournalFilter-training"]
+        filter.tap()
+        XCTAssertTrue(filter.isSelected)
+        XCTAssertEqual(app.staticTexts["careerJournalCount"].label, "2건")
+        let row = list.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+            "careerJournalEvent-training/", ":2026-04-03")).firstMatch
+        for _ in 0..<4 where !row.isHittable { list.swipeUp(velocity: .slow) }
+        XCTAssertTrue(row.isHittable)
+        let rowID = row.identifier
+        let before = row.frame.minY - list.frame.minY
+        row.tap()
+
+        let detail = app.scrollViews["careerJournalTrainingScroll"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 10))
+        let attempts = detail.buttons["careerJournalTrainingAttempts"]
+        for _ in 0..<8 where !attempts.isHittable { detail.swipeUp(velocity: .slow) }
+        XCTAssertTrue(attempts.isHittable)
+        attempts.tap()
+        let last = detail.descendants(matching: .any).matching(identifier: "careerJournalTrainingAttempt-5").firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 5))
+        func lastAttemptIsVisible() -> Bool {
+            last.isHittable && detail.frame.contains(last.frame)
+        }
+        XCTAssertFalse(lastAttemptIsVisible(), "The fifth attempt must start outside the enlarged viewport")
+        for _ in 0..<8 where !lastAttemptIsVisible() { detail.swipeUp(velocity: .slow) }
+        XCTAssertTrue(lastAttemptIsVisible())
+        XCTAssertEqual(last.value as? String, "65")
+        capture(app, "V184 training attempts")
+
+        app.buttons["closeCareerJournalDetail"].tap()
+        let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            filter.isHittable && list.isHittable
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 8), .completed)
+        XCTAssertTrue(filter.isSelected)
+        XCTAssertEqual(app.staticTexts["careerJournalCount"].label, "2건")
+        XCTAssertEqual(row.identifier, rowID)
+        XCTAssertEqual(row.frame.minY - list.frame.minY, before, accuracy: 1)
+    }
+
+    @MainActor func testV185ConnectedCareerFlowResumesAndPaysOnce() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        let environment = ProcessInfo.processInfo.environment
+        let resumeAtGame = environment["BM_V185_RESUME_AT_GAME"] == "1"
+        let resumeAtJournal = environment["BM_V185_RESUME_AT_JOURNAL"] == "1"
+        XCTAssertFalse(resumeAtGame && resumeAtJournal, "Choose only one continuation stage")
+        let session = resumeAtGame || resumeAtJournal
+            ? try XCTUnwrap(environment["BM_V185_SESSION"], "A continuation requires its original QA session")
+            : environment["BM_V185_SESSION"] ?? UUID().uuidString
+        app.launchArguments = ["-management-career-verification", "-management-reduced-motion-verification",
+                               "-v185-career-flow", "-v56-disk-session", session]
+
+        func element(_ id: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(identifier: id).firstMatch
+        }
+        func tap(_ button: XCUIElement, timeout: TimeInterval = 8) {
+            XCTAssertTrue(button.waitForExistence(timeout: timeout), button.identifier)
+            if !button.isHittable { reveal(button, app) }
+            XCTAssertTrue(button.isHittable && button.isEnabled, button.identifier)
+            button.tap()
+        }
+        func waitForLabel(_ value: XCUIElement, containing text: String, timeout: TimeInterval = 12) {
+            let matches = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                value.exists && value.label.contains(text)
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [matches], timeout: timeout), .completed, text)
+        }
+        func checkpoint(_ name: String) {
+            guard environment["BM_V185_STORE_AUDIT"] == "1" else { return }
+            let marker = XCTAttachment(string: session)
+            marker.name = "V185 store " + name
+            marker.lifetime = .keepAlways
+            add(marker)
+            Thread.sleep(forTimeInterval: 2)
+        }
+        func launch(on date: String) {
+            app.launch()
+            let error = app.staticTexts["managementSeedError"]
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30),
+                          error.exists ? error.label : "Connected pitcher career must open")
+            waitForLabel(element("calendarDate"), containing: date)
+        }
+        func restart(on date: String) {
+            app.terminate()
+            launch(on: date)
+        }
+        let gameEntry = app.buttons["openCareerGame"]
+        let attempt = app.buttons["trainingAttempt"]
+        let next = app.buttons["trainingNext"]
+        let autoPrepare = app.switches["trainingControlAutoPrepare"]
+        let autoPending = element("trainingControlAutoPrepareStatus")
+        let trainingSaved = app.staticTexts["trainingResultStored"]
+
+        func openSavedTraining() {
+            tap(app.buttons["managementTab-training"])
+            tap(app.buttons["roomPrimary"])
+        }
+        func ready(at round: Int) {
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"),
+                                                   object: attempt)
+            XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 10), .completed)
+            waitForLabel(element("trainingProgress"), containing: "\(round) / 5")
+        }
+        func pitchInTraining() {
+            tap(attempt)
+            XCTAssertTrue(next.waitForExistence(timeout: 12))
+        }
+        func fatigue(_ value: String) throws -> Int {
+            let range = try XCTUnwrap(value.range(of: "[0-9]+", options: .regularExpression))
+            return try XCTUnwrap(Int(value[range]))
+        }
+
+        func verifyJournal(expectedScore: String) {
+            tap(app.buttons["managementTab-player"])
+            tap(app.buttons["facility-records"])
+            tap(app.buttons["playerOpenCareerJournal"])
+            let list = app.scrollViews["careerJournalList"]
+            XCTAssertTrue(list.waitForExistence(timeout: 10))
+            waitForLabel(app.staticTexts["careerJournalCount"], containing: "4건")
+            for (filter, kind, count, dates) in [("game", "match", 1, ["2026-05-01"]),
+                                                 ("training", "training", 1, ["2026-04-27"]),
+                                                 ("scout", "scouting", 2, ["2026-04-29", "2026-04-01"])] {
+                tap(app.buttons["careerJournalFilter-" + filter])
+                waitForLabel(app.staticTexts["careerJournalCount"], containing: "\(count)건")
+                let rows = list.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "careerJournalEvent-" + kind + "/"))
+                XCTAssertEqual(rows.count, count)
+                XCTAssertEqual(Set(rows.allElementsBoundByIndex.map(\.identifier)).count, count)
+                for date in dates {
+                    XCTAssertEqual(list.descendants(matching: .any).matching(identifier: "careerJournalDate-" + date).count, 1)
+                }
+                if filter == "game" {
+                    tap(rows.firstMatch)
+                    let details = app.scrollViews["careerJournalMatchScroll"]
+                    XCTAssertTrue(details.waitForExistence(timeout: 8))
+                    let date = element("careerJournalDetailDate")
+                    XCTAssertTrue(date.waitForExistence(timeout: 8))
+                    XCTAssertEqual(date.value as? String, dates[0])
+                    XCTAssertEqual(element("gameFinalScore").label, expectedScore)
+                    tap(app.buttons["closeCareerJournalDetail"])
+                    XCTAssertTrue(list.waitForExistence(timeout: 8))
+                }
+            }
+            tap(app.buttons["careerJournalFilter-all"])
+            waitForLabel(app.staticTexts["careerJournalCount"], containing: "4건")
+        }
+
+
+        func finishJournal(expectedScore: String) {
+            let completedHome = status(app)
+            verifyJournal(expectedScore: expectedScore)
+            checkpoint("journal-read")
+            capture(app, "V185 journal unique completed records")
+            restart(on: "5월 1일")
+            XCTAssertEqual(status(app), completedHome)
+            verifyJournal(expectedScore: expectedScore)
+            checkpoint("final-relaunch")
+        }
+
+        if resumeAtJournal {
+            let expectedScore = try XCTUnwrap(environment["BM_V185_EXPECTED_FINAL_SCORE"], "The completed score must come from the original QA session")
+            launch(on: "5월 1일")
+            XCTAssertEqual(try fatigue(status(app)[1]), 37)
+            finishJournal(expectedScore: expectedScore)
+            return
+        }
+
+        if resumeAtGame {
+            launch(on: "5월 1일")
+        } else {
+            launch(on: "4월 27일")
+            let initialHome = status(app)
+            checkpoint("training-before")
+            tap(app.buttons["managementTab-training"])
+            tap(app.buttons["facility-physical"])
+            selectAbilityTraining("control", app)
+            tap(app.buttons["openTraining"])
+            tap(app.buttons["startTraining"])
+            ready(at: 1)
+            pitchInTraining()
+            XCTAssertTrue(next.label.contains("2/5"), next.label)
+            XCTAssertFalse(autoPending.exists)
+            reveal(autoPrepare, app)
+            XCTAssertTrue(autoPrepare.isHittable)
+            XCTAssertEqual(autoPrepare.value as? String, "0")
+            autoPrepare.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+            XCTAssertTrue(autoPending.waitForExistence(timeout: 2))
+            ready(at: 2)
+            let extraAttempt = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: next)
+            extraAttempt.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [extraAttempt], timeout: 3.5), .completed)
+            pitchInTraining()
+            checkpoint("training-partial")
+            restart(on: "4월 27일")
+            XCTAssertEqual(Array(status(app).prefix(2)), Array(initialHome.prefix(2)))
+            XCTAssertEqual(status(app)[2], "훈련 이어하기")
+            openSavedTraining()
+            ready(at: 3)
+            XCTAssertFalse(autoPending.exists)
+            checkpoint("training-restored")
+            capture(app, "V185 training restored third attempt")
+            for round in 3...5 {
+                ready(at: round)
+                pitchInTraining()
+                if round == 5 { XCTAssertEqual(next.label, "세트 결산 보기") }
+                tap(next)
+            }
+            XCTAssertTrue(trainingSaved.waitForExistence(timeout: 10))
+            let trainingResult = [element("trainingGrowth").label, element("trainingFatigue").label]
+            XCTAssertFalse(trainingResult.contains(where: \.isEmpty))
+            checkpoint("training-completed")
+            capture(app, "V185 completed control training")
+            restart(on: "4월 27일")
+            XCTAssertEqual(try fatigue(status(app)[1]), min(100, try fatigue(initialHome[1]) + 6))
+            XCTAssertEqual(status(app)[2], "행동 0/1")
+            openSavedTraining()
+            XCTAssertTrue(trainingSaved.waitForExistence(timeout: 10))
+            XCTAssertEqual([element("trainingGrowth").label, element("trainingFatigue").label], trainingResult)
+            XCTAssertFalse(attempt.exists)
+            checkpoint("training-reopened")
+            close(app)
+            tap(app.buttons["managementTab-home"])
+
+            func startObservationAdvance() {
+                tap(app.buttons["advanceOffDays"])
+                tap(app.buttons["calendarAdvanceGoalObservation"])
+            }
+            let receiptStop = app.staticTexts["calendarReceiptStop"]
+            let receiptDate = app.staticTexts["calendarReceiptDate"]
+            tap(app.buttons["facility-calendar"])
+            startObservationAdvance()
+            waitForLabel(app.staticTexts["transitionDate"], containing: "2026.04.28")
+            XCTAssertFalse(receiptStop.exists)
+            checkpoint("schedule-partial")
+            capture(app, "V185 calendar mid-batch saved day")
+            restart(on: "4월 28일")
+            checkpoint("schedule-partial-restored")
+            tap(app.buttons["facility-calendar"])
+            startObservationAdvance()
+            waitForLabel(receiptStop, containing: "관찰일")
+            waitForLabel(receiptDate, containing: "4월 29일")
+            waitForLabel(app.staticTexts["calendarReceiptTotals"], containing: "완료 1일 · 자동 휴식 1회")
+            checkpoint("schedule-observation")
+            capture(app, "V185 calendar resumed to observation")
+            tap(app.buttons["calendarProgressOpenObservation"])
+            waitForLabel(app.staticTexts["scoutFrozenDate"], containing: "4월 29일")
+            restart(on: "4월 29일")
+            tap(app.buttons["facility-calendar"])
+            startObservationAdvance()
+            waitForLabel(receiptStop, containing: "경기일")
+            waitForLabel(receiptDate, containing: "5월 1일")
+            waitForLabel(app.staticTexts["calendarReceiptGoal"], containing: "5월 27일")
+            waitForLabel(app.staticTexts["calendarReceiptTotals"], containing: "완료 2일 · 자동 휴식 2회")
+            checkpoint("schedule-arrived")
+            capture(app, "V185 calendar stops before next observation for game")
+            tap(app.buttons["calendarProgressOpenMatch"])
+            XCTAssertTrue(gameEntry.waitForExistence(timeout: 8))
+            XCTAssertFalse(gameEntry.isEnabled)
+            restart(on: "5월 1일")
+            checkpoint("schedule-restored")
+
+            tap(app.buttons["clubhouse-rest"])
+            tap(app.buttons["confirmRest"])
+            tap(app.buttons["restDone"])
+        }
+        XCTAssertEqual(status(app)[2], "행동 0/1", "May 1 rest must already be saved")
+
+        let automatic = app.buttons["gameAutomatic"]
+        let gameSaved = element("gameResultSaved")
+        let boardIDs = ["careerGameInning", "careerGameCount", "careerGameScore", "boardPitchCount"]
+        let resultIDs = ["gameFinalScore", "gameResultFatigue", "gameAbilityXP", "gameAnnualAbilityXP"]
+        func labels(_ ids: [String]) -> [String] {
+            ids.map { id in
+                let value = element(id)
+                XCTAssertTrue(value.waitForExistence(timeout: 8), id)
+                XCTAssertFalse(value.label.isEmpty, id)
+                return value.label
+            }
+        }
+        func openGame(preparing: Bool) {
+            tap(app.buttons["homeTodayAction"])
+            tap(gameEntry)
+            if preparing {
+                tap(app.buttons["opponentTab-plan"])
+                tap(app.buttons["confirmGamePlan"])
+            }
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"),
+                                                   object: automatic)
+            XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 40), .completed)
+        }
+
+        let matchDayHome = status(app)
+        openGame(preparing: true)
+        let firstPitch = labels(boardIDs)
+        checkpoint("match-before")
+        tap(automatic)
+        let nextInning = app.buttons["gameAutomaticNextAppearance"]
+        waitForLabel(nextInning, containing: "다음 내 등판 이닝까지")
+        tap(nextInning)
+        waitForLabel(app.staticTexts["gameAutomaticBoundary"], containing: "첫 투구 대기", timeout: 30)
+        let inningBoundary = labels(boardIDs)
+        XCTAssertNotEqual(inningBoundary[0], firstPitch[0])
+        XCTAssertEqual(inningBoundary[1], "B 0 S 0 O 0")
+        XCTAssertNotEqual(inningBoundary[3], firstPitch[3])
+        XCTAssertFalse(gameSaved.exists)
+        checkpoint("match-partial")
+        capture(app, "V185 match saved next pitching inning")
+        restart(on: "5월 1일")
+        XCTAssertEqual(status(app), matchDayHome)
+        openGame(preparing: false)
+        XCTAssertEqual(labels(boardIDs), inningBoundary)
+        XCTAssertFalse(gameSaved.exists)
+        checkpoint("match-restored")
+        tap(automatic)
+        tap(app.buttons["진행하고 결과 저장"])
+        XCTAssertTrue(gameSaved.waitForExistence(timeout: 90))
+        let matchResult = labels(resultIDs)
+        checkpoint("match-completed")
+        capture(app, "V185 match completed once")
+
+        tap(app.buttons["openMatchHighlights"])
+        let highlights = app.scrollViews["matchHighlightsList"]
+        XCTAssertTrue(highlights.waitForExistence(timeout: 10))
+        let highlightRows = highlights.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "matchHighlight-"))
+        func replay(_ category: String, required: Bool) {
+            let filter = app.buttons["matchHighlightsFilter-" + category]
+            tap(filter)
+            let count = app.staticTexts["matchHighlightsCount"].label
+            if !required, count == "0개" { return }
+            let row = highlightRows.firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            let rowID = row.identifier
+            let beforeY = row.frame.midY - highlights.frame.minY
+            tap(row)
+            XCTAssertTrue(app.staticTexts["matchHighlightReplayFinished"].waitForExistence(timeout: 45))
+            capture(app, "V185 highlight replay completed " + category)
+            tap(app.buttons["closeMatchHighlightReplay"])
+            XCTAssertTrue(highlights.waitForExistence(timeout: 10))
+            XCTAssertTrue(filter.isSelected)
+            XCTAssertEqual(app.staticTexts["matchHighlightsCount"].label, count)
+            let returned = highlights.buttons[rowID]
+            XCTAssertTrue(returned.isHittable)
+            XCTAssertEqual(returned.frame.midY - highlights.frame.minY, beforeY, accuracy: 2)
+        }
+        replay("field", required: true)
+        replay("homeRun", required: false)
+        tap(app.buttons["closeMatchHighlights"])
+        XCTAssertEqual(labels(resultIDs), matchResult)
+        checkpoint("highlights-replayed")
+        restart(on: "5월 1일")
+        finishJournal(expectedScore: matchResult[0])
+    }
+}

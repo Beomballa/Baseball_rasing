@@ -406,6 +406,15 @@ struct CareerPathVerification: View {
                         if verifyDivisions {
                             let entry = try acceptProfessionalNPB(player:p,calendar:calendar,in:c.mainContext)
                             p.gameDate = entry.effective
+                            if args.contains("-v172-home-qa-long-pro") {
+                                let effective = try GameDate(entry.effective)
+                                let longOpponents: Set<String> = ["jp-pro-8", "jp-pro-10", "jp-pro-12", "jp-pro-14"]
+                                let fixtures = try calendar.fixtures(for: p, year: effective.year)
+                                guard let game = fixtures.first(where: {
+                                    $0.date >= effective && $0.homeID == entry.teamID && longOpponents.contains($0.awayID)
+                                }) else { throw CalendarError.invalidGroup }
+                                p.gameDate = game.date.description
+                            }
                             calendar.actionDate = nil
                             try c.mainContext.save()
                         }

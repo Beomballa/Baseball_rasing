@@ -4,7 +4,7 @@ final class ClubCareerVisualFlowTests: XCTestCase {
     @MainActor func testV146ProStadiumPreviewsInDirectoryPreserveCareerState() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-management-career-verification"]
+        app.launchArguments = ["-management-career-verification", "-management-production-tint-verification"]
         app.launch()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
         let before = status(app)
@@ -48,7 +48,9 @@ final class ClubCareerVisualFlowTests: XCTestCase {
                 uniform.lifetime = .keepAlways
                 add(uniform)
             }
-            app.buttons["clubStadiumClose"].tap()
+            let close = app.buttons["clubStadiumClose"]
+            XCTAssertTrue(close.isHittable)
+            close.tap()
             XCTAssertTrue(app.staticTexts["clubDirectorySummary"].exists)
         }
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -56,6 +58,38 @@ final class ClubCareerVisualFlowTests: XCTestCase {
         if app.buttons["closeRoomDetail"].exists { app.buttons["closeRoomDetail"].tap() }
         app.buttons["managementTab-home"].tap()
         XCTAssertEqual(status(app), before)
+    }
+
+    @MainActor func testV172ClubStadiumCloseRemainsReachableAtLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-management-production-tint-verification",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        openGoals(app, large: true)
+        let directory = app.buttons["openClubDirectory"]
+        reveal(directory, app); directory.tap()
+        let summary = app.staticTexts["clubDirectorySummary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 5))
+        let stadium = app.buttons["clubStadium-kbo-0"]
+        reveal(stadium, app); stadium.tap()
+        let title = app.staticTexts["clubStadiumPreview-kbo-0"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let close = app.buttons["clubStadiumClose"]
+        XCTAssertTrue(close.isHittable)
+        XCTAssertEqual(close.label, "닫기")
+        XCTAssertTrue(app.frame.contains(close.frame))
+        XCTAssertGreaterThanOrEqual(close.frame.width + 0.1, 44)
+        XCTAssertGreaterThanOrEqual(close.frame.height + 0.1, 44)
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = "V172 club stadium kbo-0 largest text"
+        image.lifetime = .keepAlways
+        add(image)
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(summary.exists)
     }
 
     @MainActor func testDirectoryTargetPickerAndProjectPreserveBothCareerStates() {
@@ -413,12 +447,18 @@ final class ClubCareerVisualFlowTests: XCTestCase {
             let first = app.buttons["calendarDay-2026-04-01"]
             XCTAssertTrue(first.waitForExistence(timeout: 8))
             XCTAssertTrue(first.label.contains(pitcher ? "등판" : "출전"))
+            XCTAssertGreaterThanOrEqual(first.frame.width + 0.1, 44)
+            XCTAssertGreaterThanOrEqual(first.frame.height + 0.1, 44)
             capture(app, pitcher ? "v88-pitcher-calendar" : "v88-batter-calendar")
             app.buttons["calendarDay-2026-04-02"].tap()
             let selected = app.staticTexts["calendarSelectedDate"]
             XCTAssertEqual(selected.label, "4월 2일 (목)")
             let next = app.buttons["advanceDay"]; reveal(next, app); XCTAssertFalse(next.isEnabled)
             capture(app, pitcher ? "v88-pitcher-actions" : "v88-batter-actions")
+            let list = app.buttons["calendarListToggle"]; reveal(list, app); list.tap()
+            XCTAssertEqual(selected.label, "4월 2일 (목)")
+            let today = app.buttons["calendarToday"]; reveal(today, app); today.tap()
+            XCTAssertEqual(selected.label, "4월 1일 (수)")
             app.buttons["closeCalendar"].tap(); app.buttons["managementTab-home"].tap()
             XCTAssertEqual(status(app), before)
         }
@@ -474,8 +514,15 @@ final class ClubCareerVisualFlowTests: XCTestCase {
         if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"] }
         app.launch(); XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 120)); return app
     }
-    @MainActor private func openGoals(_ app: XCUIApplication) {
-        app.buttons["managementTab-career"].tap(); app.buttons["facility-goals"].tap()
+    @MainActor private func openGoals(_ app: XCUIApplication, large: Bool = false) {
+        if large {
+            app.buttons["managementLargeMenu"].tap()
+            app.buttons["managementMenu-career"].tap()
+            reveal(app.buttons["facility-goals"], app)
+        } else {
+            app.buttons["managementTab-career"].tap()
+        }
+        app.buttons["facility-goals"].tap()
         let open = app.buttons["openCareerObjectives"]; reveal(open, app); open.tap()
     }
     @MainActor private func status(_ app: XCUIApplication) -> [String] {

@@ -2,6 +2,275 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV172ClubhouseGameDayAndAwayVenue() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        for away in [false, true] {
+            if away { app.terminate() }
+            launchClubhouse(app, scenario: away ? "away" : "game")
+            let action = checkClubhouseBoard(app, heading: nil, action: "경기 준비")
+            let venue = app.descendants(matching: .any).matching(identifier: "managementHomeVenue-hs-ref-001").firstMatch
+            XCTAssertTrue(venue.waitForExistence(timeout: 8))
+            XCTAssertEqual(venue.value as? String, "서울북악고", "원정 경기일에도 홈 화면은 소속팀 구장입니다.")
+            let own = app.staticTexts["homeTodayOwnTeam"]
+            let opponent = app.staticTexts["homeTodayOpponent"]
+            XCTAssertEqual(own.label, "서울북악고")
+            XCTAssertEqual(opponent.label, "청주직운고")
+            XCTAssertLessThan(own.frame.midY, opponent.frame.midY, "대진은 소속팀이 먼저입니다.")
+            XCTAssertEqual(own.frame.minX, opponent.frame.minX, accuracy: 1, "두 팀 이름의 시작점이 같아야 합니다.")
+            XCTAssertEqual(app.staticTexts["homeTodayOwnRole"].label, "내 팀")
+            XCTAssertEqual(app.staticTexts["homeTodayOpponentRole"].label, "상대 팀")
+            XCTAssertEqual(app.staticTexts["homeTodayOwnSide"].label, away ? "원정" : "홈")
+            XCTAssertEqual(app.staticTexts["homeTodayOpponentSide"].label, away ? "홈" : "원정")
+            for id in ["clubhouse-training", "clubhouse-rest", "facility-calendar", "clubhouse-player"] {
+                let shortcut = app.buttons[id]
+                revealClubhouseControl(shortcut, app: app)
+                v166CheckBounds(shortcut, app: app)
+            }
+            capture(app, away ? "v172-home-away" : "v172-home-game")
+            let before = labels(app)
+            revealClubhouseControl(action, app: app)
+            action.tap()
+            XCTAssertTrue(app.buttons["openCareerGame"].waitForExistence(timeout: 8))
+            closeDetail(app)
+            XCTAssertEqual(labels(app), before)
+        }
+    }
+
+    @MainActor func testV172ClubhouseLongProMatchup() {
+        checkClubhouseLongProMatchup(large: false)
+    }
+
+    @MainActor func testV172ClubhouseLongProMatchupAtLargestText() {
+        checkClubhouseLongProMatchup(large: true)
+    }
+
+    @MainActor private func checkClubhouseLongProMatchup(large: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["-career-path-verification", "-career-age20", "-selection-qualified",
+                               "-renewal-verification", "-pro-career-verification", "-v147-divisions-verification",
+                               "-v172-home-qa-long-pro"]
+        if large {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        }
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 100))
+
+        let action = app.buttons["homeTodayAction"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label IN %@",
+                                                                    ["경기 준비", "팀 경기 진행"]), object: action)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+        revealClubhouseControl(action, app: app)
+        v166CheckBounds(action, app: app)
+
+        let board = app.descendants(matching: .any).matching(identifier: "homeTodayPanel").firstMatch
+        let own = board.staticTexts["homeTodayOwnTeam"]
+        let opponent = board.staticTexts["homeTodayOpponent"]
+        let ownSide = board.staticTexts["homeTodayOwnSide"]
+        let opponentSide = board.staticTexts["homeTodayOpponentSide"]
+        let ownRole = board.staticTexts["homeTodayOwnRole"]
+        let opponentRole = board.staticTexts["homeTodayOpponentRole"]
+        XCTAssertTrue(["사이타마 실버울브스", "모리오카 아이언스", "히로시마 메이플스", "마쓰야마 시트러스"].contains(opponent.label), opponent.label)
+        XCTAssertEqual(ownSide.label, "홈")
+        XCTAssertEqual(opponentSide.label, "원정")
+        XCTAssertLessThan(own.frame.midY, opponent.frame.midY)
+        let safeBoard = board.frame.insetBy(dx: -1, dy: -1)
+        let elements = [own, opponent, ownSide, opponentSide, ownRole, opponentRole, action]
+        for element in elements {
+            XCTAssertTrue(element.exists && !element.frame.isEmpty && safeBoard.contains(element.frame), element.identifier)
+        }
+        for index in elements.indices {
+            for other in elements.indices where other > index {
+                XCTAssertFalse(elements[index].frame.intersects(elements[other].frame),
+                               "\(elements[index].identifier) / \(elements[other].identifier)")
+            }
+        }
+        XCTAssertEqual(own.frame.minX, opponent.frame.minX, accuracy: 1)
+        if large {
+            for (team, role, side) in [(own, ownRole, ownSide), (opponent, opponentRole, opponentSide)] {
+                XCTAssertGreaterThanOrEqual(team.frame.width, board.frame.width * 0.4, team.label)
+                XCTAssertGreaterThanOrEqual(team.frame.minY, max(role.frame.maxY, side.frame.maxY), team.label)
+            }
+        }
+        XCTAssertFalse(board.staticTexts["homeTodayStatus"].exists)
+        let venue = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "managementHomeVenue-jp-pro-")).firstMatch
+        XCTAssertTrue(venue.exists, "계약 발효 후 일본 1군 소속팀 구장이 표시되어야 합니다.")
+        XCTAssertEqual(venue.value as? String, own.label)
+        capture(app, large ? "v172-home-long-pro-largest" : "v172-home-long-pro-compact")
+        if large {
+            let scroll = app.scrollViews["roomFacilityList"]
+            for _ in 0..<4 {
+                let visible = scroll.frame.insetBy(dx: 0, dy: 4)
+                let names = own.frame.union(opponent.frame)
+                if visible.contains(names) { break }
+                let delta = names.maxY > visible.maxY ? visible.maxY - names.maxY : visible.minY - names.minY
+                let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                start.press(forDuration: 0.05,
+                            thenDragTo: start.withOffset(CGVector(dx: 0, dy: max(-140, min(140, delta)))),
+                            withVelocity: 100, thenHoldForDuration: 0.2)
+            }
+            XCTAssertTrue(scroll.frame.contains(own.frame.union(opponent.frame)), "두 구단 이름 전체가 화면에 표시되어야 합니다.")
+            capture(app, "v172-home-long-pro-largest-matchup")
+            revealClubhouseControl(action, app: app)
+        }
+        action.tap()
+        XCTAssertTrue(app.buttons["openCareerGame"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor func testV172ClubhouseOffDayAction() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        launchClubhouse(app, scenario: "offday")
+        let action = checkClubhouseBoard(app, heading: "오늘 경기 없음", action: "다음 일정")
+        XCTAssertFalse(app.staticTexts["homeTodayOwnTeam"].exists)
+        capture(app, "v172-home-offday")
+        action.tap()
+        XCTAssertTrue(app.scrollViews["calendarDetailScroll"].waitForExistence(timeout: 8))
+    }
+
+    @MainActor func testV172ClubhouseResumesPendingTraining() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        launchClubhouse(app, scenario: "training")
+        let action = checkClubhouseBoard(app, heading: "진행 중인 훈련", action: "컨택 이어하기")
+        let board = app.descendants(matching: .any).matching(identifier: "homeTodayPanel").firstMatch
+        XCTAssertTrue(board.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "2/5")).firstMatch.exists)
+        capture(app, "v172-home-training")
+        action.tap()
+        let progress = app.descendants(matching: .any).matching(identifier: "trainingProgress").firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 8))
+        XCTAssertTrue(progress.label.contains("3 / 5"), progress.label)
+    }
+
+    @MainActor func testV172ClubhouseCompletedSeasonAction() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        launchClubhouse(app, scenario: "season")
+        let action = checkClubhouseBoard(app, heading: "시즌 일정 종료", action: "시즌 결산")
+        XCTAssertFalse(app.staticTexts["homeTodayOwnTeam"].exists)
+        capture(app, "v172-home-season")
+        action.tap()
+        XCTAssertTrue(app.buttons["openAnnualLeague"].waitForExistence(timeout: 8))
+        let summary = app.buttons["openSeasonSummary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 8))
+        XCTAssertTrue(summary.label.contains("최종 성적"), summary.label)
+    }
+
+    @MainActor private func launchClubhouse(_ app: XCUIApplication, scenario: String) {
+        app.launchArguments = ["-management-career-verification", "-management-single-role-verification", "-v172-home-qa-" + scenario]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+    }
+
+    @MainActor private func checkClubhouseBoard(_ app: XCUIApplication, heading: String?, action title: String) -> XCUIElement {
+        let status = app.staticTexts["homeTodayStatus"]
+        let action = app.buttons["homeTodayAction"]
+        if let heading {
+            let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", heading), object: status)
+            XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 8), .completed, heading)
+        } else {
+            let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", title), object: action)
+            XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 8), .completed, title)
+            XCTAssertFalse(status.exists, "경기 준비 상태에서는 별도 상태 제목을 표시하지 않습니다.")
+        }
+        XCTAssertEqual(action.label, title)
+        revealClubhouseControl(action, app: app)
+        v166CheckBounds(action, app: app)
+        return action
+    }
+
+    @MainActor private func revealClubhouseControl(_ element: XCUIElement, app: XCUIApplication) {
+        let scroll = app.scrollViews["roomFacilityList"]
+        for _ in 0..<5 {
+            let visible = scroll.frame.insetBy(dx: -1, dy: -1)
+            if element.isHittable && visible.contains(element.frame) { return }
+            guard scroll.isHittable else { break }
+            if element.exists && element.frame.midY < visible.midY { scroll.swipeDown() }
+            else { scroll.swipeUp() }
+        }
+        XCTAssertTrue(element.isHittable && scroll.frame.insetBy(dx: -1, dy: -1).contains(element.frame), element.identifier)
+    }
+
+    @MainActor func testV169TrainingFacilityResetsPhysicalChoiceBothRoles() {
+        continueAfterFailure = false
+        let app = launch()
+        defer { app.terminate() }
+        for pitcher in [false, true] {
+            if pitcher { v166SwitchToPitcher(app) }
+            let before = labels(app)
+            v99Menu("training", title: "훈련", app: app)
+            v166Tap("facility-physical", app)
+            let preparation = app.buttons["openTraining"]
+            XCTAssertTrue(preparation.waitForExistence(timeout: 8))
+            XCTAssertTrue(preparation.label.contains("스피드 훈련 준비"))
+            v166CloseRoom(app)
+            v166Tap("facility-training", app)
+            XCTAssertTrue(preparation.waitForExistence(timeout: 8))
+            XCTAssertTrue(preparation.label.contains(pitcher ? "구종 훈련 준비" : "컨택 훈련 준비"), preparation.label)
+            reveal(preparation, app)
+            capture(app, pitcher ? "V169 불펜 기본 훈련" : "V169 타격 케이지 기본 훈련")
+            v166CloseRoom(app)
+            v99Menu("home", title: "홈", app: app)
+            XCTAssertEqual(labels(app), before)
+        }
+    }
+
+    @MainActor func testV169HomePrimaryAndDirectObservationAtLargestText() {
+        continueAfterFailure = false
+        let app = launch(large: true)
+        defer { app.terminate() }
+        let before = labels(app)
+        let action = app.buttons["homeTodayAction"]
+        XCTAssertTrue(action.waitForExistence(timeout: 8))
+        XCTAssertTrue(action.isHittable, "최대 글자 홈에서 오늘 행동이 바로 보입니다.")
+        XCTAssertGreaterThanOrEqual(action.frame.height, 44)
+        capture(app, "V169 큰 글자 홈 오늘 행동")
+        v99Menu("career", title: "커리어", app: app)
+        let observation = app.buttons["facility-observation-calendar"]
+        reveal(observation, app); observation.tap()
+        let calendar = app.descendants(matching: .any).matching(identifier: "homeObservationCalendar").firstMatch
+        XCTAssertTrue(calendar.waitForExistence(timeout: 8))
+        capture(app, "V169 관찰 일정 직행")
+        v166CloseRoom(app)
+        let growth = app.buttons["facility-review"]
+        reveal(growth, app); growth.tap()
+        XCTAssertTrue(app.scrollViews["observationReviewScroll"].waitForExistence(timeout: 8))
+        let sections = app.buttons["observationReviewSectionMenu"]
+        XCTAssertTrue(sections.waitForExistence(timeout: 8))
+        XCTAssertEqual(sections.value as? String, "능력 변화")
+        capture(app, "V169 성장 비교 직행")
+        v166CloseRoom(app)
+        v99Menu("home", title: "홈", app: app)
+        XCTAssertEqual(labels(app), before)
+    }
+
+    @MainActor func testV169PlayerNotebookKeepsCompactIdentityOutsideSummary() {
+        continueAfterFailure = false
+        let app = launch()
+        defer { app.terminate() }
+        let before = labels(app)
+        v99Menu("player", title: "선수", app: app)
+        v166Tap("facility-abilities", app)
+        let compact = app.descendants(matching: .any).matching(identifier: "notebookCompactIdentity").firstMatch
+        XCTAssertTrue(compact.waitForExistence(timeout: 8))
+        capture(app, "V169 선수 수첩 능력")
+        v166Tap("playerSection-summary", app)
+        let full = app.descendants(matching: .any).matching(identifier: "notebookIdentity").firstMatch
+        XCTAssertTrue(full.waitForExistence(timeout: 8))
+        XCTAssertFalse(compact.exists)
+        capture(app, "V169 선수 수첩 요약")
+        v166CloseRoom(app)
+        v99Menu("home", title: "홈", app: app)
+        XCTAssertEqual(labels(app), before)
+    }
+
     @MainActor func testV168HomeVenueStaysInsideClubhouseAndOtherMenusKeepTheirRooms() {
         v168RoomVenueBoundary(large: false)
     }
