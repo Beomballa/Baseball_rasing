@@ -448,7 +448,8 @@ import SwiftData
     private static func overseasContractEntries(_ career: OverseasCareerJournal, reports: [OverseasScoutingReport],
                                                 today: GameDate) throws -> [Entry] {
         var rows: [Entry] = []
-        var offers: [String: ContractTerms] = [:]
+        var offers: [String: (terms: ContractTerms, immediate: Bool)] = [:]
+        let effectiveDates = Dictionary(uniqueKeysWithValues: career.transitions.map { ($0.offerID, $0.destination.since) })
         let marketVersions = Dictionary(uniqueKeysWithValues: reports.compactMap { report in
             report.market.map { (report.id, $0.version) }
         })
@@ -456,17 +457,23 @@ import SwiftData
             let summary = evaluation.offers.isEmpty ? "저장된 제의 없음" : "해외 구단 제의 \(evaluation.offers.count)건"
             let source = evaluation.source ?? evaluation.mobility?.source
             let terms = evaluation.offers.map { overseasTerms($0, source: source, marketVersion: marketVersions[evaluation.reportID]) }
-            for offer in terms { offers[offer.id] = offer }
+            for (offer, archivedTerms) in zip(evaluation.offers, terms) {
+                let immediate = offer.startsOnAcceptance == true
+                let decisionTerms = immediate && effectiveDates[offer.id] != nil
+                    ? overseasTerms(offer, source: source, marketVersion: marketVersions[evaluation.reportID],
+                                    acceptedOn: effectiveDates[offer.id])
+                    : archivedTerms
+                offers[offer.id] = (decisionTerms, immediate)
+            }
             let detail = ContractDetail(title: "해외 계약 평가", status: offerStatus(terms), terms: terms,
                                         dates: [ContractDate(label: "평가일", date: evaluation.date)], evidence: reasonFacts(evaluation.reasons))
             rows.append(try contractEntry(id: "contract/evaluation/" + evaluation.id, date: evaluation.date,
                                           summary: summary, emphasis: terms.isEmpty ? nil : "해외 계약 제의", detail: detail))
         }
         for decision in career.decisions where decision.kind != .closed {
-            guard let terms = offers[decision.offerID] else { continue }
-            let effective = career.transitions.first { $0.offerID == decision.offerID }?.destination.since
-            rows += try decisionRows(terms: terms, date: decision.date, accepted: decision.kind == .accepted,
-                                     effective: effective, today: today)
+            guard let offer = offers[decision.offerID] else { continue }
+            rows += try decisionRows(terms: offer.terms, date: decision.date, accepted: decision.kind == .accepted,
+                                     effective: effectiveDates[decision.offerID], today: today, immediate: offer.immediate)
         }
         var renewalOffers: [String: (terms: ContractTerms, effective: String)] = [:]
         for review in career.renewalReviews ?? [] {
@@ -494,17 +501,18 @@ import SwiftData
     }
 
     private static func decisionRows(terms: ContractTerms, date: String, accepted: Bool, renewal: Bool = false,
-                                     effective: String? = nil, today: GameDate) throws -> [Entry] {
+                                     effective: String? = nil, today: GameDate, immediate: Bool = false) throws -> [Entry] {
         let type = renewal ? "재계약" : "계약"
-        let decision = accepted ? type + " 수락" : type + " 거절"
         let occurred = try GameDate(date)
         let effectiveDate = try accepted ? effective.map(GameDate.init) : nil
+        let combined = immediate && effectiveDate == occurred
+        let decision = accepted ? type + (combined ? " 수락·발효" : " 수락") : type + " 거절"
         let effectiveLabel = effectiveDate.map { $0 > today ? "발효 예정" : "발효일" } ?? ""
         let summary = effectiveDate.map { effectiveLabel + " " + $0.description } ?? "결정일 " + date
         let documentStatus = effectiveDate.map { $0 > today ? "수락 완료 · 발효 예정" : "수락 완료 · 발효 완료" } ?? decision
-        var schedule = [ContractDate(label: "결정일", date: date)]
+        var schedule = [ContractDate(label: combined ? "수락·발효일" : "결정일", date: date)]
         var archivedTerms = terms
-        if let effectiveDate {
+        if let effectiveDate, !combined {
             schedule.append(ContractDate(label: effectiveLabel, date: effectiveDate.description))
             let proposed = ContractDate(label: "제의상 발효일", date: effectiveDate.description)
             archivedTerms.dates.removeAll { $0 == proposed }
@@ -554,11 +562,14 @@ import SwiftData
     }
 
     private static func overseasTerms(_ offer: OverseasOffer, renewal: Bool = false, source: CareerMembership? = nil,
-                                      marketVersion: Int?) -> ContractTerms {
-        ContractTerms(id: offer.id, club: ContractClub(id: offer.teamID, name: offer.name), kind: offer.route.label + (renewal ? " 재계약" : " 계약"),
+                                      marketVersion: Int?, acceptedOn: String? = nil) -> ContractTerms {
+        let immediate = offer.startsOnAcceptance == true
+        let start = immediate ? acceptedOn ?? "수락한 날" : offer.effective
+        let term = "\(offer.years)\(immediate ? "시즌" : "년")"
+        return ContractTerms(id: offer.id, club: ContractClub(id: offer.teamID, name: offer.name), kind: offer.route.label + (renewal ? " 재계약" : " 계약"),
                       role: DomesticContractOffer.roleName(offer.roleID), economicLabel: "연봉지수", economicIndex: offer.economicIndex,
-                      signingBonusWon: offer.signingBonusWon, period: "\(offer.years)년 · \(offer.effective) ~ \(offer.economicEnd)",
-                      dates: termDates(issued: offer.issued, expires: offer.expires, proposed: offer.effective, end: offer.economicEnd),
+                      signingBonusWon: offer.signingBonusWon, period: "\(term) · \(start) ~ \(offer.economicEnd)",
+                      dates: termDates(issued: offer.issued, expires: offer.expires, proposed: immediate ? nil : offer.effective, end: offer.economicEnd),
                       origin: source?.teamID == offer.teamID ? nil : source?.name,
                       salaryStanding: offer.displayedSalaryStanding(archivedMarketVersion: marketVersion))
     }

@@ -46,18 +46,24 @@ struct ContractMarketView:View {
                         DisclosureGroup("경제 지수 · 수락 시 유의사항") {
                             Text("검토 가능 제의는 마감 순입니다. 마감·거절·제의 없음은 자동 방출이나 FA가 아닙니다.").font(.subheadline)
                             Text("연봉지수는 게임 내 비교값입니다. 계약 기간·역할·발효일을 함께 확인하세요. 대학 지원금과 연봉을 같은 금액으로 비교하지 않습니다.").font(.footnote).lineSpacing(4)
-                            Text("수락 시 다른 열린 제의를 닫고 발효일까지 현재 소속을 유지합니다.").font(.footnote).foregroundStyle(GameTheme.boardMuted)
+                            Text("수락 시 다른 열린 제의를 닫습니다. 당일 합류가 가능한 제의에는 수락 즉시 발효가 표시됩니다.").font(.footnote).foregroundStyle(GameTheme.boardMuted)
                         }.tint(GameTheme.gold)
                     }
                     Button(showHistory ? "이전 제의 접기":"이전 제의 이력 보기") {showHistory.toggle()}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketHistory")
                     if !focusKBOFA { kboPanel(kboResult) }
                     ForEach(entries.filter {showHistory || ["검토 가능","수락 · 발효 대기"].contains($0.status)}) {entry in
+                        let immediate = entry.offer.startsOnAcceptance == true
+                        let effectiveDate = immediate
+                            ? state.transitions.first { $0.offerID == entry.id }?.destination.since ?? "수락한 날"
+                            : entry.offer.effective
                         GamePanel(title:entry.retention ? "잔류 제의":"외부 제의",onBoard:true,contentSpacing:12) {
                             ClubFileHeader(name:entry.offer.name,subtitle:entry.offer.route.label+" · "+DomesticContractOffer.roleName(entry.offer.roleID))
-                            Text(entry.status).font(.headline).foregroundStyle(GameTheme.gold).padding(10).frame(maxWidth:.infinity,alignment:.leading)
+                            Text(immediate && entry.status == "검토 가능" ? "검토 가능 · 수락 즉시 발효" : entry.status)
+                                .font(.headline).foregroundStyle(GameTheme.gold).padding(10).frame(maxWidth:.infinity,alignment:.leading)
                                 .background(GameTheme.navy,in:ManagementStepFrame()).overlay {ManagementStepFrame().strokeBorder(GameTheme.gold,lineWidth:2)}.accessibilityIdentifier("marketOfferStatus")
-                            ContractTermsTimeline(issued:entry.offer.issued,expires:entry.offer.expires,effective:entry.offer.effective)
-                            ContractTermsMetric(title:"연봉지수",value:String(entry.offer.economicIndex),note:"\(entry.offer.years)년 · 실제 통화/출전 보장 아님")
+                            ContractTermsTimeline(issued:entry.offer.issued,expires:entry.offer.expires,effective:effectiveDate)
+                            ContractTermsMetric(title:"연봉지수",value:String(entry.offer.economicIndex),
+                                                note:"\(entry.offer.years)\(immediate ? "시즌" : "년") · 실제 통화/출전 보장 아님")
                             if let rank = state.displayedSalaryStanding(for: entry.offer, reports: owner.overseasReports ?? []) {
                                 ContractSalaryRankSummary(standing: rank, identifier: "overseasOffer", offerID: entry.id)
                             }

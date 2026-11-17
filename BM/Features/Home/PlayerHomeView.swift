@@ -2488,7 +2488,7 @@ struct OverseasContractsView:View {
                 Button("취소", role: .cancel) {command=nil}
             } message: {
                 if let selected=command {
-                    Text(decisionMessage(selected.offer, accept: selected.accept))
+                    Text(decisionMessage(selected.offer, accept: selected.accept, date: selected.date))
                         .accessibilityIdentifier("overseasDecisionTarget")
                 }
             }
@@ -2521,7 +2521,9 @@ struct OverseasContractsView:View {
                 let destination=transition.destination
                 Text("\(destination.since) · \(destination.name) / \(destination.label)")
                     .font(.subheadline).accessibilityIdentifier("overseasAffiliationTransition")
-                Text("발효일부터 해외 30경기 일정과 기록이 연결됩니다.").font(.caption)
+                Text(destination.since > player.gameDate
+                     ? "발효일부터 새 구단 일정이 열립니다."
+                     : "경기 탭에서 새 구단의 경기와 내 출전 차례를 확인하세요.").font(.caption)
             }
         }
     }
@@ -2554,14 +2556,16 @@ struct OverseasContractsView:View {
                     action:"현재 창의 평가를 보존합니다. 28일 보고서의 부족 조건·권리/경력을 준비하고 다음 창에서 자격을 확인하세요.",identifier:"overseasNoOfferNextStep")
             }
             ForEach(evaluation.offers) {offer in
+                let startingDate = offerStartingDate(offer, value: value)
                 GamePanel(title:offer.name,onBoard:true,contentSpacing:12) {
                     Text(offer.route.label+" · "+DomesticContractOffer.roleName(offer.roleID)).font(.headline).foregroundStyle(GameTheme.gold)
-                    ContractTermsMetric(title:"연봉지수",value:String(offer.economicIndex),note:"\(offer.years)년 · 출전·승격 보장 없음")
+                    ContractTermsMetric(title:"연봉지수",value:String(offer.economicIndex),
+                                        note:"\(offer.years)\(offer.startsOnAcceptance == true ? "시즌" : "년") · 출전·승격 보장 없음")
                     if let rank = offer.displayedSalaryStanding(archivedMarketVersion: marketVersion) {
                         ContractSalaryRankSummary(standing: rank, identifier: "overseasOffer", offerID: offer.id)
                     }
                     SigningBonusOfferAmount(amount: offer.signingBonusWon)
-                    ContractTermsTimeline(issued:offer.issued,expires:offer.expires,effective:offer.effective)
+                    ContractTermsTimeline(issued:offer.issued,expires:offer.expires,effective:startingDate)
                     Text("경제 기간 종료 · "+ManagementDisplay.date(offer.economicEnd)).font(.footnote.monospacedDigit())
                     DisclosureGroup("고정 심사 수치 · 기량과 구단 기준") { offerEvidence(offer) }.tint(GameTheme.gold)
                     decisionControls(offer, value: value)
@@ -2572,14 +2576,17 @@ struct OverseasContractsView:View {
 
     private func selectedContract(_ offer: OverseasOffer, evaluation: OverseasOfferEvaluation, value: OverseasCareerJournal,
                                   salaryStanding: LeagueSalaryStanding?) -> some View {
-        let status=value.marketEntries(on:player.gameDate).first(where:{$0.id == offer.id})?.status ?? "상태 확인 필요"
+        let startingDate = offerStartingDate(offer, value: value)
+        let status = value.marketEntries(on:player.gameDate).first(where:{$0.id == offer.id})?.status ?? "상태 확인 필요"
+        let termUnit = offer.startsOnAcceptance == true ? "시즌" : "년"
+        let statusText = offer.startsOnAcceptance == true && status == "검토 가능" ? "검토 가능 · 수락 즉시 발효" : status
         return VStack(alignment:.leading,spacing:16) {
             TransferContractDocument(terms:.init(clubID:offer.teamID,clubName:offer.name,league:offer.route.label,
-                role:DomesticContractOffer.roleName(offer.roleID),period:"\(offer.years)년 · \(offer.effective) ~ \(offer.economicEnd)",
+                role:DomesticContractOffer.roleName(offer.roleID),period:"\(offer.years)\(termUnit) · \(startingDate) ~ \(offer.economicEnd)",
                 economicLabel:"연봉지수",economicIndex:offer.economicIndex,signingBonusWon:offer.signingBonusWon,
                 origin:(evaluation.source ?? evaluation.mobility?.source)?.name,
-                dates:[.init(label:"발행",date:offer.issued),.init(label:"마감",date:offer.expires),.init(label:"소속 발효",date:offer.effective)],
-                status:status,salaryRank:salaryStanding.map(TransferContractDocument.SalaryRank.init)),identifier:"transferOffer")
+                dates:[.init(label:"발행",date:offer.issued),.init(label:"마감",date:offer.expires),.init(label:"소속 발효",date:startingDate)],
+                status:statusText,salaryRank:salaryStanding.map(TransferContractDocument.SalaryRank.init)),identifier:"transferOffer")
             decisionControls(offer, value: value)
             DisclosureGroup("고정 심사 수치 · 기량과 구단 기준") {
                 VStack(alignment:.leading,spacing:8) {
@@ -2588,6 +2595,13 @@ struct OverseasContractsView:View {
                 }
             }.tint(GameTheme.gold)
         }.accessibilityElement(children:.contain).accessibilityIdentifier("overseasOfferDetail-"+offer.id)
+    }
+
+    private func offerStartingDate(_ offer: OverseasOffer, value: OverseasCareerJournal) -> String {
+        if offer.startsOnAcceptance == true {
+            return value.transitions.first { $0.offerID == offer.id }?.destination.since ?? "수락한 날"
+        }
+        return offer.effective
     }
 
     @ViewBuilder private func evaluationHeader(_ evaluation: OverseasOfferEvaluation) -> some View {
@@ -2608,10 +2622,13 @@ struct OverseasContractsView:View {
 
     @ViewBuilder private func decisionControls(_ offer: OverseasOffer, value: OverseasCareerJournal) -> some View {
         if let decision=value.decisions.first(where:{$0.offerID == offer.id}) {
-            Text(decision.kind == .accepted ? (offer.effective > player.gameDate ? "수락 완료 · 해외 소속 전환 예약":"수락 완료 · 해외 소속 발효"):decision.kind == .rejected ? "거절 완료":"다른 제의 수락으로 종료")
+            let effective = offer.effective(onAcceptance: decision.date)
+            Text(decision.kind == .accepted ? (effective > player.gameDate ? "수락 완료 · 해외 소속 전환 예약":"수락 완료 · 해외 소속 발효"):decision.kind == .rejected ? "거절 완료":"다른 제의 수락으로 종료")
                 .font(.subheadline.bold()).foregroundStyle(GameTheme.growth).accessibilityIdentifier("overseasOfferDecision")
         } else if offer.expires >= player.gameDate {
-            Button("수락 · 해외 전환 예약") {command=(offer.id,offer,true,player.gameDate,calendar.revision)}
+            Button(offer.startsOnAcceptance == true ? "수락 · 새 구단 합류" : "수락 · 해외 전환 예약") {
+                command=(offer.id,offer,true,player.gameDate,calendar.revision)
+            }
                 .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptOverseasOffer")
             Button("제의 거절") {command=(offer.id,offer,false,player.gameDate,calendar.revision)}
                 .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("rejectOverseasOffer")
@@ -2620,14 +2637,17 @@ struct OverseasContractsView:View {
         }
     }
 
-    private func decisionMessage(_ offer: OverseasOffer, accept: Bool) -> String {
+    private func decisionMessage(_ offer: OverseasOffer, accept: Bool, date: String) -> String {
         let role = DomesticContractOffer.roleName(offer.roleID)
-        let effective = ManagementDisplay.date(offer.effective)
+        let effective = ManagementDisplay.date(offer.effective(onAcceptance: date), includeYear: true)
+        let term = "\(offer.years)\(offer.startsOnAcceptance == true ? "시즌" : "년")"
         let bonus = offer.signingBonusWon.map { "\n확정 계약금 \(SigningBonusDisplay.won($0))" } ?? ""
         let action = accept
-            ? "수락하면 소속 전환을 예약하고 다른 열린 제의를 닫습니다."
+            ? (offer.startsOnAcceptance == true
+                ? "수락 즉시 새 구단에 합류하고 다른 열린 제의를 닫습니다."
+                : "수락하면 소속 전환을 예약하고 다른 열린 제의를 닫습니다.")
             : "이 제의를 거절합니다."
-        return "\(offer.name) · \(role)\n발효 \(effective) · \(offer.years)년\(bonus)\n\n\(action)"
+        return "\(offer.name) · \(role)\n발효 \(effective) · \(term)\(bonus)\n\n\(action)"
     }
 
     private func run(_ action:() throws -> Void) {do {try action();failure=nil;refreshed += 1}catch{failure=error.localizedDescription}}

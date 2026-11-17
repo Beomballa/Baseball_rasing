@@ -916,14 +916,15 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
     }
     static func evaluate(player:CareerPlayer,calendar:CareerCalendarState,date:String,revision:Int,in context:ModelContext,save:CalendarProgression.Save = {try $0.save()}) throws {
         var owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),value=owner.overseasCareer ?? OverseasCareerJournal()
-        guard let window=ContractEvaluationWindow.containing(try GameDate(date)) else {throw OverseasProgressError.window}
+        let day = try GameDate(date)
+        guard let window=ContractEvaluationWindow.containing(day) else {throw OverseasProgressError.window}
         if value.evaluations.contains(where:{$0.window == window}) {return}
         try requireIdle(player:player,calendar:calendar,date:date,revision:revision,in:context)
         guard let report=try OverseasReportStore.current(player:player,calendar:calendar,in:context) else {throw OverseasProgressError.report}
-        let member=try owner.current(on:GameDate(date)),reserved=value.hasPending(on:date) || value.hasPendingRenewal(on:date) || owner.collegeTransitions?.contains {$0.source.effectiveDate > date} == true || owner.kboTransfers?.hasPending(on:date) == true || owner.kboTransfers?.hasPendingClubDecision(on: date) == true
+        let member=try owner.current(on:day),reserved=value.hasPending(on:date) || value.hasPendingRenewal(on:date) || owner.collegeTransitions?.contains {$0.source.effectiveDate > date} == true || owner.kboTransfers?.hasPending(on:date) == true || owner.kboTransfers?.hasPendingClubDecision(on: date) == true
         let evaluation:OverseasOfferEvaluation
-        if let proof=try value.mobility(owner:owner,on:GameDate(date)) {
-            evaluation=try OverseasOfferEvaluation.makeMobility(report:report,window:window,on:GameDate(date),registrationDate:value.registrationDate,member:member,context:proof,reserved:reserved)
+        if let proof=try value.mobility(owner:owner,on:day) {
+            evaluation=try OverseasOfferEvaluation.makeMobility(report:report,window:window,on:day,registrationDate:value.registrationDate,member:member,context:proof,reserved:reserved,expandedInSeason:calendar.isExpandedOverseas(year:day.year))
         } else if let member,["domestic-first-team","npb-first-team"].contains(member.level),let consent=value.consents?.last(where:{$0.sourceOfferID == member.offerID && $0.date <= date && $0.expires >= date}) {
             let proof=OverseasProContext(consent:consent,service:value.service ?? [])
             evaluation=try OverseasOfferEvaluation.makeProfessional(report:report,window:window,on:GameDate(date),registrationDate:value.registrationDate,member:member,context:proof,reserved:reserved || owner.renewals?.contains {$0.membershipOfferID == member.offerID && $0.terms.effectiveDate > date} == true)
@@ -950,8 +951,9 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
                   owner.kboTransfers?.hasPending(on:date) != true,
                   owner.kboTransfers?.hasPendingClubDecision(on: date) != true,
                   try owner.current(on:GameDate(date))?.offerID == evaluation.sourceMembershipID else {throw ContractRegistrationError.registered}
-            value.transitions.append(OverseasTransition(offerID:offerID,sourceMembershipID:evaluation.sourceMembershipID,acceptedDate:date,destination:offer.membership()))
-            try owner.scheduleSigningBonus(offerID: offer.id, name: offer.name, effectiveDate: offer.effective,
+            let destination = offer.membership(onAcceptance: date)
+            value.transitions.append(OverseasTransition(offerID:offerID,sourceMembershipID:evaluation.sourceMembershipID,acceptedDate:date,destination:destination))
+            try owner.scheduleSigningBonus(offerID: offer.id, name: offer.name, effectiveDate: destination.since,
                                            amountWon: offer.signingBonusWon)
             for other in value.evaluations.flatMap(\.offers) where other.id != offerID && !value.decisions.contains(where:{$0.offerID == other.id}) && other.issued <= date && other.expires >= date {
                 value.decisions.append(OverseasDecision(offerID:other.id,kind:.closed,date:date))

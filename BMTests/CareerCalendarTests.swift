@@ -4366,6 +4366,179 @@ extension CareerCalendarTests {
         try OverseasContractStore.decide(player:p,calendar:s,offerID:offer.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
         p.gameDate=offer.effective;try c.save();XCTAssertEqual(try s.registration(for:p)?.teamID,offer.teamID)
     }
+
+    private func v201ReleasedFA(_ route: OverseasRoute, month: Int = 4)
+        throws -> (ModelContainer, CareerPlayer, CareerCalendarState) {
+        let (store, player, calendar) = try faFixture(.pitcher, route: route)
+        let context = store.mainContext
+        try OverseasContractStore.declareFA(player: player, calendar: calendar, date: player.gameDate,
+            revision: calendar.revision, in: context)
+        try OverseasReportStore.capture(player: player, calendar: calendar, date: player.gameDate,
+            revision: calendar.revision, in: context)
+        let journal = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        let declaration = try XCTUnwrap(journal.overseasCareer?.faDeclarations?.last)
+        let year = try GameDate(declaration.effective).year
+        player.gameDate = ContractEvaluationWindow(year: year, month: month).start.description
+        calendar.actionDate = nil
+        try context.save()
+        XCTAssertNil(try calendar.registration(for: player))
+        try OverseasReportStore.capture(player: player, calendar: calendar, date: player.gameDate,
+            revision: calendar.revision, in: context)
+        return (store, player, calendar)
+    }
+
+    func testV201OverseasFAOpeningDayAcceptancePaysOnceAndUnlocksFirstGameInBothLeagues() throws {
+        for route in [OverseasRoute.npbFirstTeam, .mlbFirstTeam] {
+            let (store, player, calendar) = try v201ReleasedFA(route)
+            let context = store.mainContext
+            let date = player.gameDate
+            try OverseasContractStore.evaluate(player: player, calendar: calendar, date: date,
+                revision: calendar.revision, in: context)
+            let before = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+            let evaluation = try XCTUnwrap(before.overseasCareer?.evaluations.last)
+            let offer = try XCTUnwrap(evaluation.offers.first { $0.route == route },
+                evaluation.reasons.joined(separator: " / "))
+            XCTAssertEqual(evaluation.version, 4)
+            XCTAssertEqual(offer.startsOnAcceptance, true)
+            XCTAssertEqual(offer.effective, date)
+            XCTAssertNotEqual(offer.teamID, evaluation.mobility?.source.teamID)
+            XCTAssertEqual(offer.salaryStanding?.year, try GameDate(date).year)
+            let fee = try XCTUnwrap(offer.signingBonusWon)
+            let priorBalance = try before.finances(on: GameDate(date)).balanceWon
+            let row = try XCTUnwrap(ContractRegistrationStore.row(player: player, in: context))
+            let payload = row.payload
+            let revision = calendar.revision
+            XCTAssertThrowsError(try OverseasContractStore.decide(player: player, calendar: calendar, offerID: offer.id,
+                accept: true, date: date, revision: revision, in: context, save: { _ in throw MatchError.invalidRecord }))
+            XCTAssertEqual(row.payload, payload)
+            XCTAssertEqual(calendar.revision, revision)
+            XCTAssertNil(try calendar.registration(for: player))
+
+            try OverseasContractStore.decide(player: player, calendar: calendar, offerID: offer.id,
+                accept: true, date: date, revision: revision, in: context)
+            let member = try XCTUnwrap(calendar.registration(for: player))
+            XCTAssertEqual(member.teamID, offer.teamID)
+            XCTAssertEqual(member.since, date)
+            XCTAssertEqual(member.economicEnd, offer.economicEnd)
+            let fixture = try CareerMatchStore.today(player: player, state: calendar)
+            XCTAssertTrue(fixture.includes(offer.teamID))
+            try CalendarProgression.rest(player: player, state: calendar, revision: calendar.revision, in: context)
+            let match = try CareerMatchStore.start(player: player, state: calendar, in: context)
+            XCTAssertTrue(try match.snapshot().appearance)
+            try CareerMatchStore.advance(player: player, state: calendar, record: match, revision: match.revision,
+                input: .pitch, pitchCode: player.pitches.first?.code, in: context)
+            let played = match.payload
+
+            let reopened = ModelContext(store)
+            let savedPlayer = try XCTUnwrap(reopened.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == player.id })
+            let savedCalendar = try XCTUnwrap(reopened.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+            XCTAssertEqual(try savedCalendar.registration(for: savedPlayer), member)
+            XCTAssertEqual(try CareerMatchStore.start(player: savedPlayer, state: savedCalendar, in: reopened).payload, played)
+            try OverseasContractStore.decide(player: savedPlayer, calendar: savedCalendar, offerID: offer.id,
+                accept: true, date: date, revision: -1, in: reopened, save: { _ in XCTFail("Repeated acceptance wrote the store") })
+            let journal = try ContractRegistrationStore.journal(player: savedPlayer, calendar: savedCalendar, in: reopened)
+            XCTAssertEqual(journal.overseasCareer?.transitions.filter { $0.offerID == offer.id }.count, 1)
+            XCTAssertEqual(journal.overseasCareer?.evaluations.last, evaluation)
+            let money = try journal.finances(on: GameDate(date))
+            XCTAssertEqual(money.balanceWon, priorBalance + fee)
+            XCTAssertEqual(money.transactions.filter { $0.id == offer.id }.map(\.date), [date])
+            XCTAssertFalse(money.pending.contains { $0.id == offer.id })
+            let entries = try CareerJournal.load(player: savedPlayer, calendar: savedCalendar,
+                schools: SchoolCatalog.load(), in: reopened).flatMap(\.entries)
+            XCTAssertFalse(entries.contains { $0.id == "contract/effective/" + offer.id })
+            let decisions = entries.filter { $0.id == "contract/decision/" + offer.id }
+            XCTAssertEqual(decisions.map { $0.date.description }, [date])
+            guard case .contract(let decision) = try XCTUnwrap(decisions.first).destination else {
+                return XCTFail("The accepted agreement must open as a contract")
+            }
+            XCTAssertEqual(decision.title, "계약 수락·발효")
+            XCTAssertEqual(decision.documentStatus, "수락 완료 · 발효 완료")
+            XCTAssertEqual(decision.dates, [.init(label: "수락·발효일", date: date)])
+            XCTAssertFalse(reopened.hasChanges)
+        }
+    }
+
+    func testV201OverseasFALateAcceptanceUsesDecisionDateInJuly() throws {
+        let (store, player, calendar) = try v201ReleasedFA(.npbFirstTeam, month: 7)
+        let context = store.mainContext
+        try OverseasContractStore.evaluate(player: player, calendar: calendar, date: player.gameDate,
+            revision: calendar.revision, in: context)
+        let before = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        let evaluation = try XCTUnwrap(before.overseasCareer?.evaluations.last)
+        let offer = try XCTUnwrap(evaluation.offers.first { $0.route == .npbFirstTeam },
+            evaluation.reasons.joined(separator: " / "))
+        let issuance = try GameDate(offer.issued)
+        let acceptance = issuance.adding(days: 2)
+        XCTAssertEqual(evaluation.version, 4)
+        XCTAssertEqual(offer.effective, issuance.description)
+        XCTAssertLessThanOrEqual(acceptance.description, offer.expires)
+        player.gameDate = acceptance.description
+        try context.save()
+        try OverseasContractStore.decide(player: player, calendar: calendar, offerID: offer.id,
+            accept: true, date: player.gameDate, revision: calendar.revision, in: context)
+
+        let journal = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        XCTAssertEqual(journal.overseasCareer?.evaluations.last, evaluation)
+        XCTAssertNil(try journal.current(on: issuance))
+        let member = try XCTUnwrap(journal.current(on: acceptance))
+        XCTAssertEqual(member.offerID, offer.id)
+        XCTAssertEqual(member.since, acceptance.description)
+        XCTAssertEqual(member.economicEnd, offer.economicEnd)
+        XCTAssertFalse(try journal.finances(on: issuance).transactions.contains { $0.id == offer.id })
+        let posted = try journal.finances(on: acceptance).transactions.filter { $0.id == offer.id }
+        XCTAssertEqual(posted.map(\.date), [acceptance.description])
+        let rows = try CareerJournal.load(player: player, calendar: calendar, schools: SchoolCatalog.load(), in: context)
+            .flatMap(\.entries).filter { $0.id == "contract/decision/" + offer.id }
+        XCTAssertEqual(rows.map { $0.date.description }, [acceptance.description])
+        guard case .contract(let detail) = try XCTUnwrap(rows.first).destination else {
+            return XCTFail("The accepted agreement must open as a contract")
+        }
+        let terms = try XCTUnwrap(detail.terms.first)
+        XCTAssertEqual(terms.period, "\(offer.years)시즌 · \(acceptance.description) ~ \(offer.economicEnd)")
+    }
+
+    func testV201FrozenVersion3FAOfferAndBonusStillStartNextSeason() throws {
+        let (store, player, calendar) = try v201ReleasedFA(.mlbFirstTeam)
+        let context = store.mainContext
+        let gameDate = try GameDate(player.gameDate)
+        var journal = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        let state = try XCTUnwrap(journal.overseasCareer)
+        let mobility = try XCTUnwrap(state.mobility(owner: journal, on: gameDate))
+        let report = try XCTUnwrap(OverseasReportStore.current(player: player, calendar: calendar, in: context))
+        let evaluation = try OverseasOfferEvaluation.makeMobility(report: report,
+            window: XCTUnwrap(ContractEvaluationWindow.containing(gameDate)), on: gameDate,
+            registrationDate: state.registrationDate, member: nil, context: mobility, reserved: false, version: 3)
+            .limited(to: CareerLifecycleStore.horizon(player: player, calendar: calendar))
+            .withSigningBonuses(policy: SigningBonusPolicy.version)
+        let offer = try XCTUnwrap(evaluation.offers.first { $0.route == .mlbFirstTeam },
+            evaluation.reasons.joined(separator: " / "))
+        XCTAssertEqual(evaluation.version, 3)
+        XCTAssertNil(offer.startsOnAcceptance)
+        XCTAssertEqual(offer.effective, "\(gameDate.year + 1)-04-01")
+        journal.overseasCareer?.evaluations.append(evaluation)
+        journal.version = 2
+        let row = try XCTUnwrap(ContractRegistrationStore.row(player: player, in: context))
+        row.payload = try JSONEncoder().encode(journal)
+        try context.save()
+
+        try OverseasContractStore.decide(player: player, calendar: calendar, offerID: offer.id,
+            accept: true, date: player.gameDate, revision: calendar.revision, in: context)
+        let reopened = ModelContext(store)
+        let savedPlayer = try XCTUnwrap(reopened.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == player.id })
+        let savedCalendar = try XCTUnwrap(reopened.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+        let saved = try ContractRegistrationStore.journal(player: savedPlayer, calendar: savedCalendar, in: reopened)
+        XCTAssertEqual(saved.overseasCareer?.evaluations.last, evaluation)
+        XCTAssertEqual(saved.overseasCareer?.transitions.last?.destination.since, offer.effective)
+        XCTAssertNil(try savedCalendar.registration(for: savedPlayer))
+        let pending = try saved.finances(on: gameDate)
+        XCTAssertEqual(pending.pending.filter { $0.id == offer.id }.map(\.date), [offer.effective])
+        XCTAssertFalse(pending.transactions.contains { $0.id == offer.id })
+        let active = try saved.finances(on: GameDate(offer.effective))
+        XCTAssertEqual(active.transactions.filter { $0.id == offer.id }.map(\.date), [offer.effective])
+        XCTAssertFalse(active.pending.contains { $0.id == offer.id })
+        XCTAssertFalse(reopened.hasChanges)
+    }
+
     func testReleasedMajorLeaguerCanReceiveMajorOfferBeforeSixFASeasons() throws {
         let (store,p,s,_)=try overseasReleaseFixture(.pitcher,route:.mlbFirstTeam),c=store.mainContext
         p.gameDate=try CertificationStore.target(on:GameDate(p.gameDate)).start.description;try c.save()
