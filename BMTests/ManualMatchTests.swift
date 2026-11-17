@@ -243,12 +243,25 @@ extension ManualMatchTests {
         let scene=BallparkScene(size:CGSize(width:320,height:320));scene.configure(hand:"right",kit:1,role:.batter)
         let start=ProcessInfo.processInfo.systemUptime,timeline=MatchInputTimeline(startedAt:start,windup:0,duration:1)
         XCTAssertTrue(scene.demonstrate(reduceMotion:false,inputTimeline:timeline))
-        scene.awaitBatDecision()
-        scene.advanceDelivery(at:timeline.contactAt+0.1)
+        scene.awaitBatDecision(action: "swing", reduced: false)
+        let batter = try XCTUnwrap(scene.childNode(withName: "animatedBatter") as? SKSpriteNode)
+        let ball = try XCTUnwrap(scene.childNode(withName: "baseball"))
         let received=try XCTUnwrap(scene.childNode(withName:"receivedBaseball"))
+        scene.advanceDelivery(at: timeline.contactAt)
+        let planted = batter.position.x
+        scene.advanceDelivery(at: timeline.contactAt + 0.05)
+        XCTAssertGreaterThan(batter.position.x, planted, "저장 대기 중에도 타격 준비 자세는 앞으로 이어집니다.")
+        scene.advanceDelivery(at: timeline.contactAt + 0.10)
+        let turned = batter.position.x
+        XCTAssertGreaterThan(turned, planted)
+        scene.advanceDelivery(at: timeline.contactAt + 0.15)
+        XCTAssertEqual(batter.position.x, turned, accuracy: 0.001, "확정 전에는 접촉 직전 자세에서 멈춥니다.")
+        XCTAssertTrue(ball.isHidden, "확정 전 타구를 표시하면 안 됩니다.")
         XCTAssertTrue(received.isHidden,"백그라운드 확정 대기 중 포구 공을 미리 표시하면 안 됨")
         var arrivals=0,completions=0
         scene.finishBat(action:"swing",outcome:"안타",reduced:false,onArrival:{arrivals+=1}) {completions+=1}
+        XCTAssertEqual(batter.position.x, turned, accuracy: 0.001, "저장 성공 시 준비 자세로 되감지 않습니다.")
+        XCTAssertEqual(arrivals, 0)
         scene.advanceDelivery(at:timeline.contactAt+0.2)
         XCTAssertTrue(received.isHidden)
         scene.advanceDelivery(at:start+5);scene.advanceDelivery(at:start+6)
@@ -310,6 +323,44 @@ extension ManualMatchTests {
         job.cancel()
         do {_ = try await job.value;XCTFail("취소된 준비는 적용 결과를 반환하면 안 됨")} catch is CancellationError {}
         XCTAssertEqual(record.payload,payload);XCTAssertEqual(record.revision,0)
+    }
+
+    func testV172ManualPrevalidationReusesOnlyExactRecordAndFallsBackAfterCancellation() async throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player, calendar, record) = try fixture(in: context)
+        let original = try record.snapshot(), payload = record.payload, revision = record.revision
+        let wasEnabled = MatchRenderMetrics.enabled
+        MatchRenderMetrics.enabled = true
+        MatchRenderMetrics.reset()
+        defer { MatchRenderMetrics.enabled = wasEnabled; MatchRenderMetrics.reset() }
+
+        let warmed = try XCTUnwrap(CareerMatchStore.prevalidateManual(record: record))
+        let prepared = try await CareerMatchStore.prepareManual(player: player, state: calendar, record: record,
+            revision: revision, input: .watch, pitchCode: nil, control: ManualMatchInput(), prevalidation: warmed)
+        XCTAssertTrue(MatchRenderMetrics.lifecycle.contains { $0.name == "career.prepare.prevalidationUsed" })
+        XCTAssertEqual(record.payload, payload)
+        XCTAssertEqual(record.revision, revision)
+
+        MatchRenderMetrics.reset()
+        let cancelled = try XCTUnwrap(CareerMatchStore.prevalidateManual(record: record))
+        cancelled.cancel()
+        _ = try await CareerMatchStore.prepareManual(player: player, state: calendar, record: record,
+            revision: revision, input: .watch, pitchCode: nil, control: ManualMatchInput(), prevalidation: cancelled)
+        XCTAssertFalse(MatchRenderMetrics.lifecycle.contains { $0.name == "career.prepare.prevalidationUsed" })
+
+        // Revisions alone are insufficient: a changed ledger must be decoded and rejected.
+        record.payload = Data("damaged".utf8)
+        do {
+            _ = try await CareerMatchStore.prepareManual(player: player, state: calendar, record: record,
+                revision: revision, input: .watch, pitchCode: nil, control: ManualMatchInput(), prevalidation: warmed)
+            XCTFail("원장이 바뀌면 이전 검증 결과로 준비할 수 없습니다.")
+        } catch MatchError.invalidRecord {}
+        XCTAssertEqual(record.payload, Data("damaged".utf8))
+        XCTAssertEqual(record.revision, revision)
+        context.rollback()
+        let committed = try CareerMatchStore.commitManual(prepared, player: player, state: calendar, record: record, in: context)
+        XCTAssertEqual(committed.previous, original)
+        XCTAssertEqual(record.revision, revision + 1)
     }
 
     func testV121PreparedManualSaveFailureRetryAndCompletionRemainOnce() async throws {

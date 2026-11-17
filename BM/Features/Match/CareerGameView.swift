@@ -325,7 +325,9 @@ struct CareerGameView: View {
             return
         }
         let id=UUID();commitID=id
-        if player.role == .batter {scene.awaitBatDecision()}
+        if player.role == .batter {
+            scene.awaitBatDecision(action: pending.attempt.input.rawValue, reduced: reduced)
+        }
         commitTask=Task { @MainActor in
             defer {if commitID == id {commitID=nil;commitTask=nil}}
             do {

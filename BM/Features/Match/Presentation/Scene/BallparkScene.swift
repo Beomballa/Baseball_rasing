@@ -30,7 +30,12 @@ import SwiftUI
     enum PitchStage { case idle, preparing, flight, received }
     private(set) var pitchStage = PitchStage.idle
     private var contactAt = 0.0
-    private var awaitingBatDecision = false
+    private struct PendingBatDecision {
+        let animatesSwing: Bool
+        var reachedContact = false
+        var turnPhase = 1.7
+    }
+    private var pendingBatDecision: PendingBatDecision?
     private var destination = CGPoint.zero
     private struct PitchFlight {
         let start: CGPoint, end: CGPoint
@@ -95,6 +100,7 @@ import SwiftUI
         advanceWindup(at: now)
         advanceBatRecovery(at: now)
         advanceBatterFlight(at: now)
+        advancePendingBatDecision(at: now)
         advancePitcherFlight(at: now)
         advanceBatFinish(at: now)
         advanceContactFlight(at: now)
@@ -154,12 +160,30 @@ import SwiftUI
                     ball.position = flight.end
                     ball.isHidden = true
                     // 타격 확정은 뒤 단계가 접촉/포구를 구분한다. 같은 프레임에 미트 공을 먼저 표시하지 않는다.
-                    if batFinish == nil && !awaitingBatDecision { markArrival() }
+                    if batFinish == nil && pendingBatDecision == nil { markArrival() }
                     if flight.completion != nil { pitchReceipt = (now + flight.receipt, flight.completion) }
                     flight.arrival?()
                 }
             }
         }
+    }
+
+    /// 입력 동작만 이어 간다. 공의 결과와 소리는 저장이 끝난 뒤 확정 연출에서 처리한다.
+    private func advancePendingBatDecision(at now: Double) {
+        guard var decision = pendingBatDecision, contactAt > 0, now >= contactAt else { return }
+        if !decision.reachedContact {
+            decision.reachedContact = true
+            pendingBatDecision = decision
+            #if DEBUG
+            MatchRenderMetrics.mark("career.batter.awaitingAtContact")
+            #endif
+        }
+        guard decision.animatesSwing else { return }
+        let phase = 1.7 + 0.29 * min(1, (now - contactAt) / 0.10)
+        guard phase > decision.turnPhase else { return }
+        decision.turnPhase = phase
+        pendingBatDecision = decision
+        batterMotion(phase)
     }
 
     /// 투수 시점의 비행을 진행하고 도착 후 포구 또는 인플레이로 넘긴다.
@@ -561,7 +585,7 @@ import SwiftUI
         pitchFlight = nil
         batterFlight = nil
         batFinish = nil
-        awaitingBatDecision = false
+        pendingBatDecision = nil
         pitchReceipt = nil
         contactAt = 0
         preparationPhase = 0
@@ -706,9 +730,8 @@ import SwiftUI
             play: play, homeRun: homeRun, startedAt: startedAt ?? ProcessInfo.processInfo.systemUptime, origin: origin,
             reduced: reduced, arrival: arrival, completion: completion)
     }
-    /// 확정 입력의 연출을 공 접촉 시점 이후로 예약한다. 점수 계산은 호출자에서 끝난 상태다.
-    func awaitBatDecision() {
-        awaitingBatDecision = true
+    func awaitBatDecision(action: String, reduced: Bool) {
+        pendingBatDecision = PendingBatDecision(animatesSwing: action == "swing" && !reduced)
         receivedBall.isHidden = true
     }
 
@@ -717,10 +740,12 @@ import SwiftUI
         fieldPlay: MatchDetailedPlay? = nil, homeRun: MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil,
         completion: @escaping @MainActor () -> Void
     ) {
-        awaitingBatDecision = false
-        if action != "watch" { batterPose(action == "bunt" ? 4 : 1) }
+        let now = ProcessInfo.processInfo.systemUptime
+        let continuedSwing = pendingBatDecision.map { $0.animatesSwing && $0.reachedContact } ?? false
+        pendingBatDecision = nil
+        if action != "watch" && !(action == "swing" && continuedSwing) { batterPose(action == "bunt" ? 4 : 1) }
         batFinish = BatFinish(
-            at: max(contactAt, ProcessInfo.processInfo.systemUptime), action: action, outcome: outcome,
+            at: max(contactAt, now), action: action, outcome: outcome,
             reduced: reduced,
             receipt: DeliveryPresentation.receipt(reduced: reduced, match: matchJudgment), play: fieldPlay,
             homeRun: homeRun, arrival: onArrival, completion: completion)
