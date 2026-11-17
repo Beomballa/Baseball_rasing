@@ -3,6 +3,7 @@ import SwiftUI
 struct CreationAppearanceEditor: View {
     @Binding var draft: PlayerDraft
     let school: School?
+    var validationMessage: String? = nil
     let previous: () -> Void
     let next: () -> Void
     @Environment(\.dynamicTypeSize) private var type
@@ -20,9 +21,12 @@ struct CreationAppearanceEditor: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 0) {
-                    stage(height: min(240, max(190, geometry.size.width * 0.58)))
+                    stage(height: min(210, max(160, geometry.size.width * 0.51)))
                     VStack(alignment: .leading, spacing: 16) {
-                        portraitPresets
+                        if let validationMessage {
+                            Text(validationMessage).managementFont(.body)
+                                .foregroundStyle(Color(hex: 0x8b2c21)).accessibilityIdentifier("creationError")
+                        }
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: type.isAccessibilitySize ? 2 : 4), spacing: 4) {
                             ForEach(Tab.allCases, id: \.self) { item in
                                 Button { tab = item } label: {
@@ -35,6 +39,7 @@ struct CreationAppearanceEditor: View {
                         }
                         switch tab {
                         case .hair:
+                            portraitPresets
                             heading("머리 모양", detail: "8종")
                             LazyVGrid(columns: columns, spacing: 10) {
                                 ForEach(hairOrder, id: \.self) { index in
@@ -111,15 +116,16 @@ struct CreationAppearanceEditor: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
                 ForEach(0..<4) { index in
                     let look = preset(index)
+                    let title = ["얼굴 A · 스포츠컷", "얼굴 B · 옆가르마", "얼굴 C · 크루컷", "얼굴 D · 웨이브"][index]
                     Button { draft.appearance = look } label: {
                         VStack(spacing: 7) {
                             ManagementPortrait(appearance: look, role: draft.role, number: Int(draft.jerseyNumber) ?? 0)
                                 .frame(height: type.isAccessibilitySize ? 108 : 90)
-                            Text(["얼굴 A · 스포츠컷", "얼굴 B · 옆가르마", "얼굴 C · 크루컷", "얼굴 D · 웨이브"][index])
+                            Text(title)
                                 .font(ManagementPixelFont.readable(.helper)).fixedSize(horizontal: false, vertical: true)
                         }.frame(maxWidth: .infinity, minHeight: 120).padding(8)
                     }.buttonStyle(CreationPaperChoice(selected: draft.appearance == look))
-                        .accessibilityLabel("얼굴 스타일 " + ["A", "B", "C", "D"][index])
+                        .accessibilityLabel(title)
                         .accessibilityAddTraits(draft.appearance == look ? .isSelected : [])
                         .accessibilityIdentifier("appearancePreset-\(index)")
                 }
@@ -148,7 +154,7 @@ struct CreationAppearanceEditor: View {
                     .background(GameTheme.board)
                     .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("MY PLAYER").font(ManagementPixelFont.readable(.helper)).foregroundStyle(GameTheme.gold)
+                    Text("현재 외형").font(ManagementPixelFont.readable(.helper)).foregroundStyle(GameTheme.gold)
                     Text((draft.name.isEmpty ? "나의 선수" : draft.name) + " · #" + draft.jerseyNumber)
                         .font(.headline).fixedSize(horizontal: false, vertical: true)
                     Text((school?.name ?? "학교 미선택") + " · " + draft.role.label)

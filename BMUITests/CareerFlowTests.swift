@@ -748,6 +748,7 @@ final class CareerFlowTests: XCTestCase {
     }
 
     @MainActor private func chooseArchetype(_ app: XCUIApplication, pitcher: Bool) {
+        app.buttons["creationSection-abilities"].tap()
         let options = pitcher ? ["control", "stuff", "endurance"] : ["contact", "onBase", "slugger"]
         let labels = pitcher ? ["제구형", "구위형", "지구력형"] : ["컨택형", "출루형", "장타형"]
         for (code,label) in zip(options,labels) {
@@ -782,6 +783,7 @@ final class CareerFlowTests: XCTestCase {
         app.buttons["hs-ref-001"].tap()
         let creationShot = XCTAttachment(screenshot: app.screenshot()); creationShot.name = "Player creation"; creationShot.lifetime = .keepAlways; add(creationShot)
         chooseArchetype(app,pitcher:false)
+        app.buttons["creationSection-review"].tap()
         let start = app.buttons["createPlayer"]
         reveal(start,in:app)
         XCTAssertTrue(start.waitForExistence(timeout: 3)); start.tap()
@@ -872,6 +874,7 @@ final class CareerFlowTests: XCTestCase {
         app.buttons["hand-left"].tap()
         reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
         chooseArchetype(app,pitcher:true)
+        app.buttons["creationSection-review"].tap()
         reveal(app.buttons["createPlayer"],in:app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("LeftPitcher"))
@@ -1217,6 +1220,7 @@ extension CareerFlowTests {
             if pitcher { app.buttons["hand-left"].tap() }
             reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
             configureMotionStyle(app)
+            app.buttons["creationSection-review"].tap()
             reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
             let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", pitcher ? "BoardPitcher" : "BoardBatter"), object: app.staticTexts["homePlayerName"])
@@ -1749,6 +1753,7 @@ extension CareerFlowTests {
             let name = app.textFields["playerName"]; XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText(pitcher ? "CustomPitch" : "CustomBat")
             if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
             reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
+            app.buttons["creationSection-abilities"].tap()
             reveal(app.buttons["archetype-custom"], in: app); app.buttons["archetype-custom"].tap()
             XCTAssertTrue(app.buttons["archetype-custom"].isSelected)
             let kind = pitcher ? "velocity" : "contact"
@@ -1756,12 +1761,15 @@ extension CareerFlowTests {
             reveal(minus, in: app); minus.tap()
             reveal(app.staticTexts["allocationRemaining"], in: app)
             XCTAssertEqual(app.staticTexts["allocationRemaining"].label, pitcher ? "남은 1 / 459점" : "남은 1 / 388점")
-            reveal(app.buttons["createPlayer"], in: app); XCTAssertFalse(app.buttons["createPlayer"].isEnabled)
+            app.buttons["creationSection-review"].tap()
+            XCTAssertTrue(app.staticTexts["creationError"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["createPlayer"].exists)
             let mental = app.buttons["allocation-mental-plus"]; reveal(mental, in: app); mental.tap()
             XCTAssertFalse(mental.isEnabled)
             reveal(app.staticTexts["allocationRemaining"], in: app)
             XCTAssertEqual(app.staticTexts["allocationRemaining"].label, pitcher ? "남은 0 / 459점" : "남은 0 / 388점")
             let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = pitcher ? "Custom pitcher allocation large" : "Custom batter allocation"; shot.lifetime = .keepAlways; add(shot)
+            app.buttons["creationSection-review"].tap()
             reveal(app.buttons["createPlayer"], in: app); XCTAssertTrue(app.buttons["createPlayer"].isEnabled); app.buttons["createPlayer"].tap()
             // Successful persistence is followed by a short presentation-only registration state.
             let registered = app.descendants(matching: .any).matching(identifier: "creationRegistered").firstMatch
@@ -1791,7 +1799,7 @@ extension CareerFlowTests {
         XCTAssertTrue(app.textFields["schoolSearch"].waitForExistence(timeout: 3))
         app.buttons["닫기"].tap()
         XCTAssertTrue(app.buttons["schoolPicker"].waitForExistence(timeout: 3))
-        reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
+        app.buttons["creationNext-information"].tap()
         reveal(app.staticTexts["creationError"], in: app)
         XCTAssertTrue(app.staticTexts["creationError"].exists)
         reveal(app.textFields["playerName"], in: app)
@@ -1809,13 +1817,18 @@ extension CareerFlowTests {
         app.buttons["검색 지우기"].tap(); app.buttons["검색 완료"].tap()
         let schools = XCTAttachment(screenshot: app.screenshot()); schools.name = "Creation school board"; schools.lifetime = .keepAlways; add(schools)
         XCTAssertTrue(app.buttons["hs-ref-001"].waitForExistence(timeout: 3)); app.buttons["hs-ref-001"].tap()
+        app.buttons["creationSection-abilities"].tap()
         reveal(app.buttons["archetype-slugger"], in: app); app.buttons["archetype-slugger"].tap()
         XCTAssertTrue(app.staticTexts["archetypePreviewTitle"].label.contains("장타형"))
-        for label in ["피부 4", "머리색 3", "유니폼 5"] {
-            reveal(app.buttons[label], in: app); app.buttons[label].tap(); XCTAssertTrue(app.buttons[label].isSelected)
+        configureMotionStyle(app)
+        for (tab, id) in [("hair", "hairStyle-2"), ("expression", "expression-2")] {
+            let section = app.buttons["appearanceTab-" + tab]
+            reveal(section, in: app); section.tap()
+            let option = app.buttons[id]
+            reveal(option, in: app); option.tap(); XCTAssertTrue(option.isSelected)
         }
-        for id in ["hairStyle-2", "expression-2"] { reveal(app.buttons[id], in: app); app.buttons[id].tap(); XCTAssertTrue(app.buttons[id].isSelected) }
         let appearance = XCTAttachment(screenshot: app.screenshot()); appearance.name = "Creation appearance board"; appearance.lifetime = .keepAlways; add(appearance)
+        app.buttons["creationSection-review"].tap()
         reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["homePlayerName"].label, "BoardBatter  #27")
@@ -1841,8 +1854,10 @@ extension CareerFlowTests {
         XCTAssertLessThanOrEqual(app.buttons["hand-left"].frame.maxX, window.maxX)
         let large = XCTAttachment(screenshot: app.screenshot()); large.name = "Creation pitcher large text"; large.lifetime = .keepAlways; add(large)
         reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
+        app.buttons["creationSection-abilities"].tap()
         reveal(app.buttons["archetype-endurance"], in: app); app.buttons["archetype-endurance"].tap()
         XCTAssertTrue(app.buttons["archetype-endurance"].isSelected)
+        app.buttons["creationSection-review"].tap()
         reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("BoardPitcher"))
@@ -1904,15 +1919,20 @@ extension CareerFlowTests {
         if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
         reveal(app.buttons["randomSchool"], in: app); app.buttons["randomSchool"].tap()
         if motionStyle { configureMotionStyle(app) }
+        app.buttons["creationSection-review"].tap()
         reveal(app.buttons["createPlayer"], in: app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 5))
         let created = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", name), object: app.staticTexts["homePlayerName"])
         XCTAssertEqual(XCTWaiter.wait(for: [created], timeout: 5), .completed)
     }
     @MainActor private func configureMotionStyle(_ app: XCUIApplication) {
-        // Move down the sheet once; swiping back to the top can dismiss creation.
-        // Off-default numbers are covered pixel-by-pixel by the renderer tests.
-        for label in ["피부 4", "머리색 3", "유니폼 5"] { reveal(app.buttons[label],in:app);app.buttons[label].tap() }
+        app.buttons["creationSection-appearance"].tap()
+        let colors = app.buttons["appearanceTab-colors"]
+        reveal(colors, in: app); colors.tap()
+        for id in ["appearanceColor-skin-3", "appearanceColor-hair-2"] {
+            let color = app.buttons[id]
+            reveal(color, in: app); color.tap(); XCTAssertTrue(color.isSelected)
+        }
     }
     @MainActor func testHomeDashboardBothRolesAndLargeText() throws {
         let app = XCUIApplication(); app.launch()

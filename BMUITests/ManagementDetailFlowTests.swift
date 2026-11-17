@@ -1119,6 +1119,7 @@ final class ManagementDetailFlowTests: XCTestCase {
             if app.buttons["입력 완료"].exists { app.buttons["입력 완료"].tap() }
             reveal(app.buttons["role-pitcher"], app); app.buttons["role-pitcher"].tap()
             reveal(app.buttons["randomSchool"], app); app.buttons["randomSchool"].tap()
+            app.buttons["creationSection-abilities"].tap()
             for code in defaults {
                 let pitch = app.buttons["creationPitch-" + code]
                 reveal(pitch, app); XCTAssertTrue(pitch.isSelected)
@@ -1140,6 +1141,7 @@ final class ManagementDetailFlowTests: XCTestCase {
             }
             reveal(countBadge, app); XCTAssertTrue(countBadge.label.contains("보유 \(count) / 5"))
             capture(app, "v26-creation-\(count)-pitch-limits")
+            app.buttons["creationSection-review"].tap()
             reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
             XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("V26Pitch\(count)"))

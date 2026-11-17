@@ -368,7 +368,10 @@ final class ManagementCareerFlowTests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-empty-verification",
             "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-management-reduced-motion-verification"]; app.launch()
-        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 20))
+        let name = app.textFields["playerName"]
+        XCTAssertTrue(name.waitForExistence(timeout: 20))
+        name.tap(); name.typeText("LargeLook"); app.buttons["입력 완료"].tap()
+        reveal(app.buttons["randomSchool"], app); app.buttons["randomSchool"].tap()
         app.buttons["creationSection-appearance"].tap()
         let cap = app.buttons["appearanceCap"]; XCTAssertTrue(cap.waitForExistence(timeout: 10)); revealAppearance(cap, app)
         XCTAssertEqual(cap.value as? String, "벗음")
@@ -463,7 +466,8 @@ final class ManagementCareerFlowTests: XCTestCase {
             app.buttons["입력 완료"].tap()
             reveal(app.buttons["randomSchool"], app); app.buttons["randomSchool"].tap()
             let school = app.buttons["schoolPicker"].label
-            app.buttons["creationSection-abilities"].tap()
+            let next = app.buttons["creationNext-information"]
+            XCTAssertTrue(next.isHittable); next.tap()
             XCTAssertTrue(app.staticTexts["archetypePreviewTitle"].label.contains(pitcher ? "459 / 459" : "388 / 388"))
             capture(app, pitcher ? "v49-pitcher-budget" : "v49-batter-budget")
             app.buttons["creationSection-appearance"].tap()
@@ -503,11 +507,9 @@ final class ManagementCareerFlowTests: XCTestCase {
         capture(app, "v49-school-search")
         app.buttons["randomFilteredSchool"].tap()
         app.buttons["creationSection-review"].tap()
-        XCTAssertTrue(app.staticTexts["creationReadiness"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["creationReadiness"].label.contains("이름"))
-        reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
         XCTAssertTrue(app.staticTexts["creationError"].waitForExistence(timeout: 5))
-        app.buttons["creationSection-information"].tap()
+        XCTAssertTrue(app.staticTexts["creationError"].label.contains("이름"))
+        XCTAssertFalse(app.buttons["createPlayer"].exists)
         let name = app.textFields["playerName"]; name.tap(); name.typeText("RetryPlayer"); app.buttons["입력 완료"].tap()
         reveal(app.buttons["schoolPicker"], app); XCTAssertTrue(app.buttons["schoolPicker"].label.contains("서울북악고"))
         app.buttons["creationSection-review"].tap(); reveal(app.buttons["createPlayer"], app); app.buttons["createPlayer"].tap()
@@ -518,7 +520,10 @@ final class ManagementCareerFlowTests: XCTestCase {
     @MainActor func testV49LargestTextCreationShortcutsAndReviewRemainReachable() {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-management-empty-verification", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]; app.launch()
-        XCTAssertTrue(app.textFields["playerName"].waitForExistence(timeout: 15))
+        let name = app.textFields["playerName"]
+        XCTAssertTrue(name.waitForExistence(timeout: 15))
+        name.tap(); name.typeText("LargeDraft"); app.buttons["입력 완료"].tap()
+        reveal(app.buttons["randomSchool"], app); app.buttons["randomSchool"].tap()
         for target in ["abilities", "appearance", "review", "information"] {
             let shortcut = app.buttons["creationSection-" + target]
             XCTAssertTrue(shortcut.isHittable); XCTAssertGreaterThanOrEqual(shortcut.frame.height, 44)
@@ -966,6 +971,7 @@ final class ManagementCareerFlowTests: XCTestCase {
             app.buttons["creationSection-abilities"].tap()
             let archetype = app.buttons[pitcher ? "archetype-endurance" : "archetype-onBase"]
             reveal(archetype, app); XCTAssertTrue(archetype.isHittable); archetype.tap()
+            XCTAssertTrue(archetype.isSelected)
             let summary = app.staticTexts["archetypePreviewTitle"]
             reveal(summary, app)
             XCTAssertTrue(summary.label.contains(pitcher ? "지구력형" : "출루형"))
@@ -1253,7 +1259,8 @@ final class ManagementCareerFlowTests: XCTestCase {
             let shortcuts = ["information", "abilities", "appearance", "review"].map { app.buttons["creationSection-" + $0] }.filter(\.exists)
             let visibleTop = max(scroll.frame.minY, shortcuts.map(\.frame.maxY).max() ?? scroll.frame.minY)
             // SwiftUI may report a partially occluded button as hittable behind the fixed shortcuts.
-            if element.isHittable && (shortcuts.isEmpty || element.frame.midY > visibleTop + 8 && element.frame.midY < app.frame.maxY - 44) { return }
+            let pinnedAction = element.identifier == "createPlayer" || element.identifier.hasPrefix("creationNext-")
+            if element.isHittable && (pinnedAction || shortcuts.isEmpty || element.frame.midY > visibleTop + 8 && element.frame.midY < app.frame.maxY - 44) { return }
             if element.exists && element.frame.midY < visibleTop + 8 { scroll.swipeDown() }
             else { scroll.swipeUp() }
         }
