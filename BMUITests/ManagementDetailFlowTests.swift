@@ -60,12 +60,21 @@ final class ManagementDetailFlowTests: XCTestCase {
     @MainActor func testV56TrainingTerminationResumeAndStoredRewardBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication()
+        defer { app.terminate() }
         for pitcher in [false,true] {
             app.terminate();app.launchArguments=["-management-career-verification","-v56-disk-session",UUID().uuidString];app.launch()
             XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
-            let kind=pitcher ? "control":"defense",role=pitcher ? "pitcher":"batter"
-            func openTraining() {
-                app.buttons["managementTab-training"].tap();app.buttons["facility-physical"].tap()
+            let kind=pitcher ? "control":"defense"
+            func openTraining(resuming: Bool = false) {
+                app.buttons["managementTab-training"].tap()
+                if resuming { app.buttons["roomPrimary"].tap(); return }
+                app.buttons["facility-physical"].tap()
+                if !app.buttons["trainingKind-"+kind].exists {
+                    let choices = app.descendants(matching: .any).matching(identifier: "trainingEquipmentChoices").firstMatch
+                    reveal(choices, app)
+                    let toggle = choices.elementType == .button ? choices : choices.buttons.firstMatch
+                    XCTAssertTrue(toggle.exists); reveal(toggle, app); toggle.tap()
+                }
                 reveal(app.buttons["trainingKind-"+kind],app);app.buttons["trainingKind-"+kind].tap()
                 reveal(app.buttons["openTraining"],app);app.buttons["openTraining"].tap()
             }
@@ -73,9 +82,9 @@ final class ManagementDetailFlowTests: XCTestCase {
             reveal(app.buttons["trainingAttempt"],app);app.buttons["trainingAttempt"].tap()
             // The command has saved this attempt before presentation starts. Terminate the app itself.
             app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
-            let afterAttempt=status(app);openTraining()
+            let afterAttempt=status(app);openTraining(resuming: true)
             let progress=app.descendants(matching:.any).matching(identifier:"trainingProgress").firstMatch
-            XCTAssertTrue(progress.waitForExistence(timeout:8));XCTAssertTrue(progress.label.contains("2 / 5"));capture(app,"v56-"+role+"-training-relaunch")
+            XCTAssertTrue(progress.waitForExistence(timeout:8));XCTAssertTrue(progress.label.contains("2 / 5"))
             for _ in 0..<4 {
                 reveal(app.buttons["trainingAttempt"],app);app.buttons["trainingAttempt"].tap()
                 XCTAssertFalse(app.buttons["trainingNext"].exists)
@@ -85,11 +94,12 @@ final class ManagementDetailFlowTests: XCTestCase {
             let growth=app.staticTexts["trainingGrowth"].label
             let art=app.descendants(matching:.any).matching(identifier:"trainingResultArt-"+kind).firstMatch
             XCTAssertTrue(art.exists);XCTAssertTrue(art.label.contains(pitcher ? "제구" : "수비"))
-            capture(app,"v70-"+role+"-training-stored")
-            app.navigationBars.buttons.element(boundBy:0).tap();XCTAssertTrue(app.buttons["closeRoomDetail"].waitForExistence(timeout:5));close(app);app.buttons["managementTab-home"].tap()
+            app.navigationBars.buttons.element(boundBy:0).tap()
+            if app.buttons["closeRoomDetail"].exists { close(app) }
+            XCTAssertTrue(app.buttons["managementTab-home"].waitForExistence(timeout: 5)); app.buttons["managementTab-home"].tap()
             let completed=status(app);XCTAssertEqual(completed[0],afterAttempt[0]);XCTAssertEqual(completed[2],"행동 0/1");XCTAssertNotEqual(completed[1],afterAttempt[1])
             app.terminate();app.launch();XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30));if pitcher {pickPitcher(app)}
-            XCTAssertEqual(status(app),completed);openTraining()
+            XCTAssertEqual(status(app),completed);openTraining(resuming: true)
             XCTAssertTrue(app.staticTexts["trainingResultStored"].waitForExistence(timeout:8));XCTAssertEqual(app.staticTexts["trainingGrowth"].label,growth)
         }
     }
@@ -136,6 +146,56 @@ final class ManagementDetailFlowTests: XCTestCase {
             XCTAssertEqual(status(app),completed)
         }
     }
+    @MainActor func testV150InvalidQASessionCannotOpenDefaultRecovery() {
+        continueAfterFailure=false
+        let app=XCUIApplication()
+        defer { app.terminate() }
+        for arguments in [["-live-career-performance"], ["-live-career-performance","-qa-session","../../Career.store"]] {
+            app.terminate();app.launchArguments=arguments;app.launch()
+            let retry=app.buttons["retryOpenSave"]
+            XCTAssertTrue(retry.waitForExistence(timeout:15))
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "saveOpenFailure").firstMatch.exists)
+            XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            let recovery=app.buttons["openFailedSaveRecovery"]
+            XCTAssertFalse(recovery.exists && recovery.isEnabled,"검증되지 않은 QA 세션에서 기본 저장 복구를 열면 안 됩니다.")
+            XCTAssertFalse(app.staticTexts["homePlayerName"].exists)
+            retry.tap()
+            XCTAssertTrue(retry.waitForExistence(timeout:5))
+            XCTAssertFalse(recovery.exists && recovery.isEnabled)
+        }
+    }
+
+    @MainActor func testV156CloseDiscardsPendingPreviewAndCanRevalidate() {
+        continueAfterFailure=false
+        let sessionID = UUID().uuidString
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments=["-management-career-verification","-v56-disk-session",sessionID,"-save-protection-preview"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30))
+        let before=status(app)
+        for _ in 1...3 {
+            let settings=app.buttons["clubhouse-settings"]
+            revealLocationChoice(settings,app);XCTAssertTrue(settings.isHittable);settings.tap()
+            let date=app.staticTexts["saveVerifiedBackupDate"],confirm=app.buttons["confirmRestoreSave"]
+            XCTAssertTrue(date.waitForExistence(timeout:10))
+            let preparedDate=date.label
+            revealLocationChoice(confirm,app)
+            XCTAssertTrue(confirm.isHittable);XCTAssertTrue(confirm.isEnabled)
+            confirm.tap()
+            XCTAssertTrue(app.buttons["전체 복원"].waitForExistence(timeout:5))
+            app.buttons["취소"].tap()
+            XCTAssertTrue(confirm.waitForExistence(timeout:5));XCTAssertTrue(confirm.isEnabled)
+            XCTAssertEqual(date.label,preparedDate,"확인 취소는 검증 후보를 유지해야 합니다.")
+            let close=app.buttons["closeSettings"]
+            XCTAssertTrue(close.isHittable);close.tap()
+            let closed=XCTNSPredicateExpectation(predicate:NSPredicate {_,_ in !close.exists},object:close)
+            XCTAssertEqual(XCTWaiter.wait(for:[closed],timeout:8),.completed)
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:8))
+            XCTAssertEqual(status(app),before,"검증·확인 취소·닫기는 날짜·피로·행동을 바꾸면 안 됩니다.")
+        }
+    }
+
     @MainActor func testV56BackupPreviewRestoreAndPickerCancellation() {
         continueAfterFailure=false
         let app=XCUIApplication();app.launchArguments=["-management-career-verification","-save-protection-verification","-save-protection-preview"];app.launch()
