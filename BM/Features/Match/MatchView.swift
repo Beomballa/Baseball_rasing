@@ -232,16 +232,35 @@ private struct PositionPracticeDestination: View {
 enum FieldVerificationScenario:String,CaseIterable,Identifiable {
     case single="1루 세이프", groundOut="땅볼 아웃", doubleHit="2루 슬라이딩", doublePlay="병살"
     case tagUp="태그업", relay="중계", fieldError="포구 실책", throwError="악송구", bunt="번트"
+    case firstBasePopup="1루 뜬공", thirdBasePopup="3루 뜬공", deepGap="외야 사이 타구", catchBoundary="포구·낙구 경계"
     var id:String {rawValue}
     var position:String {
-        switch self {case .relay:"2B";case .tagUp:"CF";case .doubleHit:"LF";case .bunt:"P";default:"SS"}
+        switch self {case .relay:"2B";case .tagUp,.deepGap,.catchBoundary:"CF";case .doubleHit:"LF";case .bunt:"P";case .firstBasePopup:"1B";case .thirdBasePopup:"3B";default:"SS"}
     }
     var forcedError:Bool {self == .fieldError || self == .throwError}
     func make(ability:Double=60,ownBatter:Bool=false) throws -> MatchDetailedPlay {
         let stats=MatchFieldStats(version:3,speed:ability,defense:ability,arm:ability,position:position,activeTraits:[],positionMastery:100)
-        let airborne=self == .tagUp || self == .relay
-        let landing:FieldPoint=self == .doubleHit ? .init(x:-44,y:83):self == .relay ? .init(x:0,y:95):self == .tagUp ? .init(x:0,y:90):self == .doublePlay ? .init(x:-14,y:35):.init(x:-16,y:37)
-        let distance=hypot(landing.x,landing.y),flight=airborne ? (self == .relay ? 7.0:5.5):distance/(35*0.68)
+        let airborne=[Self.tagUp,.relay,.firstBasePopup,.thirdBasePopup,.deepGap,.catchBoundary].contains(self)
+        let landing:FieldPoint
+        switch self {
+        case .doubleHit:landing = .init(x:-44,y:83)
+        case .relay:landing = .init(x:0,y:95)
+        case .tagUp,.catchBoundary:landing = .init(x:0,y:90)
+        case .firstBasePopup:landing = .init(x:13,y:26)
+        case .thirdBasePopup:landing = .init(x:-13,y:26)
+        case .deepGap:landing = .init(x:-22,y:88)
+        case .doublePlay:landing = .init(x:-14,y:35)
+        default:landing = .init(x:-16,y:37)
+        }
+        let distance=hypot(landing.x,landing.y)
+        let flight:Double
+        switch self {
+        case .relay,.deepGap:flight=7
+        case .tagUp:flight=5.5
+        case .firstBasePopup,.thirdBasePopup:flight=3.4
+        case .catchBoundary:flight=3.5
+        default:flight=distance/(35*0.68)
+        }
         let shot:MatchBattedBall
         if self == .bunt {
             shot = .make(quality:0.85,contact:60,power:60,bunt:true,speedDraw:0.5,angleDraw:0.2,directionDraw:0.2)
@@ -250,7 +269,12 @@ enum FieldVerificationScenario:String,CaseIterable,Identifiable {
                 speed:airborne ? flight*9.81/(2*sin(Double.pi/3)):35,angle:airborne ? 60:0,
                 direction:atan2(landing.x,landing.y)*180 / .pi,distance:distance,flight:flight)
         }
-        let before:[FieldRunnerProfile?]=self == .doublePlay ? [FieldRunnerProfile(speed:60),nil,nil]:airborne ? [nil,nil,FieldRunnerProfile(speed:100)]:[nil,nil,nil]
+        let before:[FieldRunnerProfile?]
+        switch self {
+        case .doublePlay,.firstBasePopup:before=[FieldRunnerProfile(speed:60),nil,nil]
+        case .thirdBasePopup:before=[nil,FieldRunnerProfile(speed:60),nil]
+        default:before=airborne ? [nil,nil,FieldRunnerProfile(speed:100)]:[nil,nil,nil]
+        }
         let runner=FieldRunnerProfile(speed:forcedError ? 30:self == .groundOut || self == .doublePlay ? 60:100,own:ownBatter)
         var play=airborne ? DetailedFieldRules.resolveFly(half:0,order:0,landing:shot.landing,flight:shot.flight,runners:before,
             batter:runner,outs:0,stats:stats,defending:!ownBatter,ownBatter:ownBatter,relayEnabled:true):
@@ -266,13 +290,7 @@ enum FieldVerificationScenario:String,CaseIterable,Identifiable {
         try play.validate();return play
     }
     static func moments(_ play:MatchDetailedPlay) -> [Double] {
-        var events:[Double]=[0,play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration]
-        if let relay=play.relay {events += [relay.receiveAt,relay.releaseAt]}
-        if let second=play.secondThrow {events += [second.releaseAt,second.ballAt,second.controlAt]}
-        if let error=play.misplay {events += [error.at,error.scatteredAt,error.recoveredAt]}
-        events += FieldMisplayAnimation.moments(play)+FieldRelayTransfer.moments(play)
-        events += play.runners.flatMap {$0.nodes.map(\.at)}
-        return Array(Set(events)).sorted()
+        FieldReplayPresentation.stepTimes(play)
     }
 }
 

@@ -842,7 +842,12 @@ import SpriteKit
 
         let error = misplay(relay, stage: 0, position: "CF")
         XCTAssertNotNil(error.misplay)
-        XCTAssertTrue(FieldBackupRoutes.make(error).isEmpty)
+        let errorRoutes = FieldBackupRoutes.make(error)
+        let errorRecovery = try XCTUnwrap(error.misplay)
+        for participant in [error.fielder, errorRecovery.fielder, errorRecovery.recoverer, error.receiver, cutoff.fielder] {
+            XCTAssertNil(errorRoutes[participant], "Support cannot replace a catch, throw or recovery participant")
+        }
+        if let miss = FieldMisplayAnimation.missedReception(error) { XCTAssertNil(errorRoutes[miss.fielder]) }
         let sprites = FieldReplaySprites(appearance: PlayerAppearance(), jerseyNumber: 27, ownPosition: "CF", throwingHand: "right", ownTeamFielding: true)
         let recovery = try XCTUnwrap(error.misplay)
         let actors = InplayReplay.field(error).actors(sprites, time: recovery.recoveredAt, reduced: false, finished: false)
@@ -3841,5 +3846,218 @@ extension FieldTrainingTests {
             XCTAssertEqual(calls,1,"Repeated frames and final result cannot repeat the cheer")
             XCTAssertEqual(try encoder.encode(event),original)
         }}
+    }
+}
+
+extension FieldTrainingTests {
+    func testV153HomeAndTagUpBackupsKeepThrowParticipantsAndPayloads() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let sprites = FieldReplaySprites(appearance: PlayerAppearance(), jerseyNumber: 27, ownPosition: "CF", throwingHand: "left", ownTeamFielding: true)
+        for play in [fly(speed: 100), relayFly()] {
+            try play.validate()
+            XCTAssertEqual(play.targetBase, 4)
+            let bytes = try encoder.encode(play)
+            let routes = FieldBackupRoutes.make(play)
+            let pitcher = try XCTUnwrap(routes[0], "An idle pitcher backs up the home throw")
+            let start = try XCTUnwrap(play.fielders[0].first?.point)
+            let last = try XCTUnwrap(pitcher.nodes.last)
+            let home = DetailedFieldRules.bases[4]
+            XCTAssertEqual(pitcher.nodes.first?.point, start)
+            XCTAssertLessThan(last.point.distance(to: home), start.distance(to: home))
+            XCTAssertLessThan(last.point.y, home.y, "The pitcher is behind the receiver, not on the plate")
+            XCTAssertGreaterThan(last.point.distance(to: home), 3)
+            XCTAssertLessThanOrEqual(last.at, play.duration)
+            var participants = Set([play.fielder, play.receiver])
+            if let relay = play.relay { participants.insert(relay.fielder) }
+            if let second = play.secondThrow { participants.insert(second.receiver) }
+            for participant in participants { XCTAssertNil(routes[participant]) }
+            for time in [play.flight, play.releaseAt, play.ballAt, play.controlAt] {
+                let actors = sprites.actors(play, time: time, reduced: false, finished: false, backupRoutes: routes)
+                let originalActors = sprites.actors(play, time: time, reduced: false, finished: false, backupRoutes: [:])
+                for participant in participants { XCTAssertEqual(actors[participant].point, originalActors[participant].point) }
+                XCTAssertEqual(FieldNode.sample(play.ball, at: time), FieldNode.sample(try JSONDecoder().decode(MatchDetailedPlay.self, from: bytes).ball, at: time))
+            }
+            XCTAssertEqual(try encoder.encode(play), bytes)
+        }
+    }
+
+    func testV153DeepGapCoverUsesTwoSeparatedOutfieldersWithStaggeredReaction() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let play = relayFly(-22, 88)
+        try play.validate()
+        XCTAssertGreaterThanOrEqual(play.fielder, 6)
+        let bytes = try encoder.encode(play)
+        let routes = FieldBackupRoutes.make(play)
+        let outfield = [6, 7, 8].filter { routes[$0] != nil }
+        XCTAssertEqual(outfield.count, 2)
+        XCTAssertNil(routes[play.fielder])
+        let first = try XCTUnwrap(outfield.compactMap { routes[$0] }.min { $0.nodes[1].at < $1.nodes[1].at })
+        let second = try XCTUnwrap(outfield.compactMap { routes[$0] }.max { $0.nodes[1].at < $1.nodes[1].at })
+        XCTAssertLessThan(first.nodes[1].at, second.nodes[1].at)
+        let a = try XCTUnwrap(first.nodes.last), b = try XCTUnwrap(second.nodes.last)
+        XCTAssertGreaterThan(a.point.distance(to: b.point), 8, "Two cover paths must not converge on one spot")
+        for index in outfield {
+            let route = try XCTUnwrap(routes[index])
+            let start = try XCTUnwrap(route.nodes.first), end = try XCTUnwrap(route.nodes.last)
+            XCTAssertEqual(start.point, play.fielders[index].first?.point)
+            XCTAssertLessThan(end.point.distance(to: play.landing), start.point.distance(to: play.landing))
+            XCTAssertGreaterThan(end.point.distance(to: play.landing), 3)
+            XCTAssertLessThanOrEqual(end.at, play.duration)
+            XCTAssertEqual(route.nodes.map(\.at), route.nodes.map(\.at).sorted())
+            XCTAssertTrue(route.nodes.allSatisfy { $0.at.isFinite && $0.at >= 0 && $0.at <= play.duration })
+            XCTAssertEqual(route.motion(at: end.at + 0.01).stage, .ready)
+            XCTAssertEqual(route.motion(at: end.at + 0.01).facing, .direction(dx: route.focus.x - end.point.x, dy: route.focus.y - end.point.y))
+        }
+        XCTAssertEqual(try encoder.encode(play), bytes)
+    }
+
+    func testV153MisplaySupportPreservesRecoveryAndMissedReceptionPaths() throws {
+        let sprites = FieldReplaySprites(appearance: PlayerAppearance(), jerseyNumber: 27, ownPosition: "CF", throwingHand: "right", ownTeamFielding: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var sawSupport = false
+        let ordinaryHit = DetailedFieldRules.resolve(half: 0, order: 0, landing: FieldPoint(x: -45, y: 90), flight: 2,
+            runners: [nil, nil, nil], batter: FieldRunnerProfile(speed: 100), outs: 0, stats: nil,
+            defending: false, ownBatter: true, doublePlayEnabled: true, groundBall: false, relayEnabled: true)
+        let relayWithRunner = relayFly(before: [FieldRunnerProfile(speed: 60), nil, FieldRunnerProfile(speed: 100)])
+        for (clean, stage, position) in [(relayFly(), 0, "CF"), (ordinaryHit, 1, "LF"),
+                                         (doublePlay(position: "2B", outs: 1), 5, "2B"), (relayWithRunner, 3, "2B")] {
+            let play = misplay(clean, stage: stage, position: position)
+            let error = try XCTUnwrap(play.misplay)
+            try play.validate()
+            let bytes = try encoder.encode(play)
+            let routes = FieldBackupRoutes.make(play)
+            sawSupport = sawSupport || routes.values.contains { $0.focus == error.loosePoint }
+            var participants = Set([play.fielder, error.fielder, error.recoverer])
+            if play.ballAt > play.flight { participants.insert(play.receiver) }
+            if let relay = play.relay { participants.insert(relay.fielder) }
+            if let second = play.secondThrow { participants.insert(second.receiver) }
+            if let miss = FieldMisplayAnimation.missedReception(play) { participants.insert(miss.fielder) }
+            for participant in participants { XCTAssertNil(routes[participant]) }
+            for time in [error.at, error.scatteredAt, error.recoveredAt, play.controlAt] {
+                let actors = sprites.actors(play, time: time, reduced: false, finished: false, backupRoutes: routes)
+                let originalActors = sprites.actors(play, time: time, reduced: false, finished: false, backupRoutes: [:])
+                for participant in participants { XCTAssertEqual(actors[participant].point, originalActors[participant].point) }
+            }
+            for (index, route) in routes where route.focus == error.loosePoint {
+                XCTAssertTrue((6...8).contains(index), "Only idle outfielders converge on the loose ball")
+                XCTAssertGreaterThanOrEqual(route.nodes[1].at, error.scatteredAt)
+                XCTAssertLessThanOrEqual(try XCTUnwrap(route.nodes.last).at, min(play.duration, error.recoveredAt + 0.15))
+            }
+            XCTAssertEqual(FieldNode.sample(play.ball, at: error.recoveredAt), error.loosePoint)
+            XCTAssertEqual(try encoder.encode(play), bytes)
+        }
+        XCTAssertTrue(sawSupport, "At least one fixed error case must visibly receive support")
+    }
+
+    func testV153StepTimesExposeChaseAndSupportWithoutExpandingTextPhases() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let scenarios: [FieldVerificationScenario] = [.firstBasePopup, .thirdBasePopup, .deepGap, .catchBoundary]
+        for scenario in scenarios {
+            for ability in [30.0, 60, 85] {
+                let play = try scenario.make(ability: ability)
+                let bytes = try encoder.encode(play)
+                try play.validate()
+                XCTAssertEqual(play, try scenario.make(ability: ability), "Fixed menu cases do not redraw an outcome")
+                let times = FieldReplayPresentation.stepTimes(play)
+                XCTAssertEqual(times, times.sorted())
+                XCTAssertEqual(times.count, Set(times).count)
+                XCTAssertEqual(times.first, 0)
+                XCTAssertEqual(times.last, play.duration)
+                XCTAssertTrue(times.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= play.duration })
+                XCTAssertTrue(times.contains(play.controlAt))
+                XCTAssertEqual(FieldVerificationScenario.moments(play), times)
+                let chase = play.fielders[play.fielder]
+                for (start, end) in zip(chase, chase.dropFirst()) where start.point != end.point && end.at > start.at + 0.000001 {
+                    let middle = (start.at + end.at) / 2
+                    XCTAssertTrue(times.contains { abs($0 - middle) < 0.000001 }, "The primary chase must not jump from ready to catch")
+                    XCTAssertNotEqual(FieldNode.sample(chase, at: middle), start.point)
+                    XCTAssertNotEqual(FieldNode.sample(chase, at: middle), end.point)
+                }
+                for route in FieldBackupRoutes.make(play).values {
+                    for node in route.nodes {
+                        XCTAssertTrue(times.contains { abs($0 - node.at) < 0.000001 }, "Each support acceleration and arrival gets a still")
+                    }
+                }
+                for time in times {
+                    XCTAssertEqual(FieldReplayPresentation.time(play, elapsed: time, reduced: true, animated: true), time, accuracy: 0.000001)
+                    XCTAssertEqual(FieldReplayPresentation.time(play, elapsed: time, reduced: false, animated: true), time)
+                }
+                if ability == 60, scenario == .firstBasePopup { XCTAssertEqual(play.fielder, 2) }
+                if ability == 60, scenario == .thirdBasePopup { XCTAssertEqual(play.fielder, 4) }
+                XCTAssertEqual(try encoder.encode(play), bytes)
+            }
+        }
+        let popup = try FieldVerificationScenario.thirdBasePopup.make()
+        let route = try XCTUnwrap(FieldBackupRoutes.make(popup)[6])
+        let middle = route.nodes[2]
+        XCTAssertNotEqual(FieldNode.sample(route.nodes, at: middle.at), route.nodes[0].point)
+        XCTAssertNotEqual(FieldNode.sample(route.nodes, at: middle.at), route.nodes.last?.point)
+        XCTAssertLessThan(FieldReplayPhaseSchedule.moments(try FieldVerificationScenario.groundOut.make()).count, 8)
+        XCTAssertEqual(try FieldVerificationScenario.catchBoundary.make(ability: 0).fly?.caught, false)
+        XCTAssertEqual(try FieldVerificationScenario.catchBoundary.make(ability: 100).fly?.caught, true)
+    }
+
+    func testV153PreparedNativeFramesShareSupportPositionsAtStepTimes() async throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        for (label, play, homeBackup) in [("home-tag-up", fly(speed: 100), true), ("deep-gap", relayFly(-22, 88), false)] {
+            let bytes = try encoder.encode(play)
+            let replay = InplayReplay.field(play)
+            let routes = replay.backupRoutes
+            let supportedIndex: Int
+            if homeBackup { supportedIndex = 0 }
+            else { supportedIndex = try XCTUnwrap([6, 7, 8].first { routes[$0] != nil }) }
+            let route = try XCTUnwrap(routes[supportedIndex])
+            let position = DetailedFieldRules.names[play.fielder]
+            let sprites = FieldReplaySprites(appearance: PlayerAppearance(kit: 1).wearing(teamID: "kbo-3"), jerseyNumber: 27, ownPosition: position, throwingHand: "left", ownTeamFielding: true)
+            let leftIndex = try XCTUnwrap(DetailedFieldRules.names.firstIndex(of: position))
+            let requested = await sprites.requests(duration: replay.duration, reduced: false, actorsAt: {
+                replay.actors(sprites, time: $0, reduced: false, finished: false, backupRoutes: routes)
+            })
+            let requests = try XCTUnwrap(requested)
+            let generated = await FieldRasterArt.prepare(requests)
+            let prepared = try XCTUnwrap(generated)
+            let scene = InplayFieldScene(replay: replay, sprites: sprites, prepared: prepared, scoreText: "H 0 : 0 A", stadium: .legacy)
+            await scene.preload()
+            let view = SKView(frame: CGRect(x: 0, y: 0, width: 400, height: 600))
+            view.presentScene(scene)
+            defer { view.presentScene(nil) }
+            let actorIDs = scene.actorIDs
+            let steps = FieldReplayPresentation.stepTimes(play)
+            for (phase, time) in [("moving", route.nodes[2].at), ("arrived", try XCTUnwrap(route.nodes.last).at)] {
+                XCTAssertTrue(steps.contains { abs($0 - time) < 0.000001 })
+                scene.display(time: time, finished: false)
+                XCTAssertEqual(scene.actorIDs, actorIDs)
+                let expected = InplayFieldProjection.point(FieldNode.sample(route.nodes, at: time), size: scene.size)
+                XCTAssertEqual(scene.actorPositions[supportedIndex].x, expected.x, accuracy: 0.0001)
+                XCTAssertEqual(scene.actorPositions[supportedIndex].y, scene.size.height - expected.y, accuracy: 0.0001)
+                let actors = replay.actors(sprites, time: time, reduced: false, finished: false, backupRoutes: routes)
+                XCTAssertEqual(actors[supportedIndex].point, FieldNode.sample(route.nodes, at: time))
+                let primary = InplayFieldProjection.point(FieldNode.sample(play.fielders[play.fielder], at: time), size: scene.size)
+                XCTAssertEqual(scene.actorPositions[play.fielder].x, primary.x, accuracy: 0.0001)
+                XCTAssertEqual(scene.actorPositions[play.fielder].y, scene.size.height - primary.y, accuracy: 0.0001)
+                let ball = FieldBallPresentation.point(play, time: time, size: scene.size, leftIndex: leftIndex)
+                XCTAssertEqual(scene.ballPosition.x, ball.x, accuracy: 0.0001)
+                XCTAssertEqual(scene.ballPosition.y, scene.size.height - ball.y, accuracy: 0.0001)
+                XCTAssertFalse(scene.resultVisible)
+                let image = try XCTUnwrap(view.texture(from: scene)?.cgImage())
+                let attachment = XCTAttachment(image: UIImage(cgImage: image))
+                attachment.name = "v153-\(label)-\(phase)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                scene.setReduced(true)
+                scene.display(time: time, finished: false)
+                XCTAssertEqual(scene.actorPositions[supportedIndex].x, expected.x, accuracy: 0.0001)
+                XCTAssertEqual(scene.actorPositions[supportedIndex].y, scene.size.height - expected.y, accuracy: 0.0001)
+                scene.setReduced(false)
+            }
+            XCTAssertEqual(scene.fallbackTextures, 0)
+            view.presentScene(nil)
+            XCTAssertEqual(try encoder.encode(play), bytes)
+        }
     }
 }

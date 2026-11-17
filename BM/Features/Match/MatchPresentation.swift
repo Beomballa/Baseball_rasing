@@ -683,12 +683,29 @@ enum FieldReplayPresentation {
         let time=min(play.duration,max(0,elapsed))
         guard reduced else {return time}
         // Reduced motion uses readable, ordered stills instead of skipping to the result.
-        let moments=[0,play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration]
+        return stepTimes(play).last(where:{$0<=time}) ?? 0
+    }
+    static func stepTimes(_ play:MatchDetailedPlay) -> [Double] {
+        var moments=[0,play.flight,play.pickupAt,play.releaseAt,play.ballAt,play.controlAt,play.duration]
             + (play.relay.map {[$0.receiveAt,$0.releaseAt]} ?? [])
             + (play.secondThrow.map {[$0.releaseAt,$0.ballAt,$0.controlAt]} ?? [])
             + (play.misplay.map {[$0.at,$0.scatteredAt,$0.recoveredAt]} ?? [])
-        let runnerMoments=play.runners.flatMap {runner in runner.nodes.map(\.at)}
-        return (moments+runnerMoments+FieldMisplayAnimation.moments(play)+FieldRelayTransfer.moments(play)).filter {$0<=time}.max() ?? 0
+        moments += play.runners.flatMap {$0.nodes.map(\.at)}
+        moments += FieldMisplayAnimation.moments(play)+FieldRelayTransfer.moments(play)
+        var motionMoments:[Double]=[]
+        if play.fielders.indices.contains(play.fielder) {
+            for (start,end) in zip(play.fielders[play.fielder],play.fielders[play.fielder].dropFirst()) where start.point != end.point {
+                motionMoments += [start.at,(start.at+end.at)/2,end.at]
+            }
+        }
+        // Support stills share the derived paths used by Canvas and prepared SpriteKit actors.
+        motionMoments += FieldBackupRoutes.make(play).values.flatMap {$0.nodes.map(\.at)}
+        // Saved event times remain exact; nearby derived motion samples must not replace them.
+        var result=Array(Set(moments.filter(\.isFinite).map {min(play.duration,max(0,$0))})).sorted()
+        for time in motionMoments.filter(\.isFinite).map({min(play.duration,max(0,$0))}).sorted() {
+            if !result.contains(where:{abs($0-time)<=0.000001}) {result.append(time)}
+        }
+        return result.sorted()
     }
     static func retired(_ runner:DetailedRunner,finished:Bool) -> Bool {
         finished && runner.out
@@ -758,12 +775,14 @@ enum FieldBackupRoutes {
     }
 
     static func make(_ play: MatchDetailedPlay) -> [Int: Route] {
-        // An error already has its own missed reception and recovery choreography.
-        guard play.misplay == nil else { return [:] }
         var assigned: Set<Int> = [play.fielder]
         if play.ballAt > play.flight { assigned.insert(play.receiver) }
         if let relay = play.relay { assigned.insert(relay.fielder) }
         if let second = play.secondThrow { assigned.insert(second.receiver) }
+        if let error = play.misplay {
+            assigned.formUnion([error.fielder,error.recoverer])
+            if let reception=FieldMisplayAnimation.missedReception(play) {assigned.insert(reception.fielder)}
+        }
 
         func idleStart(_ index: Int) -> FieldPoint? {
             guard play.fielders.indices.contains(index), !assigned.contains(index),
@@ -771,8 +790,8 @@ enum FieldBackupRoutes {
             let nodes = play.fielders[index]
             if nodes.allSatisfy({ $0.point == first.point }) { return first.point }
             // Some saved grounders give all uninvolved fielders the same small shift toward the ball.
-            if nodes.count == 2, nodes[1].at == play.pickupAt,
-               nodes[1].point == first.point.towards(play.landing, fraction: 0.12) { return first.point }
+            let shift=first.point.towards(play.landing,fraction:0.12)
+            if nodes.allSatisfy({$0.point == first.point || $0.point == shift}) {return first.point}
             return nil
         }
 
@@ -793,7 +812,20 @@ enum FieldBackupRoutes {
             ], focus: focus)
         }
 
-        if let fly = play.fly {
+        if let error = play.misplay {
+            let loose=error.loosePoint
+            let candidates=[6,7,8].compactMap {index in idleStart(index).map {(index,$0)}}.sorted {
+                $0.1.distance(to:loose)<$1.1.distance(to:loose)
+            }
+            for (order,candidate) in candidates.prefix(2).enumerated() {
+                let (index,start)=candidate
+                let distance=start.distance(to:loose)
+                guard distance>8 else {continue}
+                let goal=start.towards(loose,fraction:max(0,(distance-(order == 0 ? 8:13))/distance))
+                add(index,toward:goal,focus:loose,reaction:error.scatteredAt+0.18+Double(order)*0.18,
+                    deadline:min(play.duration,error.recoveredAt+0.15))
+            }
+        } else if let fly = play.fly {
             let landing = play.landing
             let deadline = fly.caught ? play.flight : min(play.pickupAt, play.flight + 0.45)
             let preferred = landing.x < -8 ? 6 : landing.x > 8 ? 8 : 7
@@ -812,6 +844,15 @@ enum FieldBackupRoutes {
                 }
             }
 
+            if play.fielder >= 6,landing.y>=60 {
+                for index in [6,7,8] where routes[index] == nil {
+                    if let start=idleStart(index) {
+                        add(index,toward:start.towards(landing,fraction:0.4),focus:landing,
+                            reaction:0.48,deadline:deadline)
+                    }
+                }
+            }
+
             if (play.outsBefore ?? 0) < 2 {
                 if play.fielder == 4, play.runners.contains(where: { $0.from == 2 || $0.from == 3 }) {
                     let bag = DetailedFieldRules.bases[3]
@@ -823,8 +864,15 @@ enum FieldBackupRoutes {
                         reaction: 0.44, deadline: play.flight)
                 }
             }
-        } else if play.ballAt > play.flight {
+        }
+        if play.ballAt > play.flight {
             func backUpThrow(to base: Int, by arrival: Double) {
+                if base == 4 {
+                    let home=DetailedFieldRules.bases[4]
+                    add(0,toward:FieldPoint(x:play.landing.x<0 ? 6:-6,y:home.y-7),focus:home,
+                        reaction:0.42,deadline:min(play.duration,arrival+0.12))
+                    return
+                }
                 let outfielder: Int
                 let offsetX: Double
                 switch base {
