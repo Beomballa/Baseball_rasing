@@ -40,6 +40,7 @@ import SwiftData
 struct AppBootstrapView: View {
     @State private var container: ModelContainer?
     @State private var protection: SaveProtection?
+    @State private var recoveryBase: URL?
     @State private var showRecovery=false
     @State private var schools: [School] = []
     @State private var errorMessage: String?
@@ -54,22 +55,32 @@ struct AppBootstrapView: View {
                         .environment(\.saveProtection, protection).id(protection?.generation)
                 }
             } else if let errorMessage {
-                ContentUnavailableView {
-                    Label("저장을 열지 못했습니다", systemImage: "externaldrive.badge.exclamationmark")
-                } description: {
-                    Text("기존 데이터는 삭제하지 않았습니다.\n\(errorMessage)")
-                } actions: {
-                    Button("저장 다시 열기", action: load).buttonStyle(.borderedProminent).accessibilityIdentifier("retryOpenSave")
-                    Button("백업 선택·검증") { showRecovery=true }.accessibilityIdentifier("openFailedSaveRecovery")
-                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ManagementPanel("저장을 열 수 없습니다", surface: .paper) {
+                            Text("이 기기의 기록을 보존했습니다. 다시 열거나 백업 파일을 검증할 수 있습니다.")
+                                .managementFont(.body)
+                            DisclosureGroup("저장 오류 상세") {
+                                Text(errorMessage).managementFont(.helper).fixedSize(horizontal: false, vertical: true)
+                            }.tint(GameTheme.navy)
+                        }.accessibilityElement(children: .contain).accessibilityIdentifier("saveOpenFailure")
+                        Button("저장 다시 열기", action: load).buttonStyle(ManagementButtonStyle())
+                            .accessibilityIdentifier("retryOpenSave")
+                        Button("백업 선택·검증") { showRecovery = true }
+                            .buttonStyle(ManagementButtonStyle(variant: .secondary))
+                            .disabled(recoveryBase == nil).accessibilityIdentifier("openFailedSaveRecovery")
+                    }.frame(maxWidth: 480).padding(16).frame(maxWidth: .infinity, alignment: .center)
+                }.background(GameTheme.board.ignoresSafeArea()).foregroundStyle(GameTheme.boardInk)
             } else {
                 ProgressView("커리어 불러오는 중")
             }
         }
         .sheet(isPresented:$showRecovery) {
-            FailedSaveRecoveryView { session in
-                protection=session; container=session.container
-                schools=(try? SchoolCatalog.load()) ?? []; errorMessage=nil
+            if let recoveryBase {
+                FailedSaveRecoveryView(base: recoveryBase) { session in
+                    protection=session; container=session.container
+                    schools=(try? SchoolCatalog.load()) ?? []; errorMessage=nil
+                }
             }
         }
         .tint(GameTheme.green)
@@ -83,20 +94,23 @@ struct AppBootstrapView: View {
         false
         #endif
     }
+    @MainActor static func storeBaseURL(arguments: [String], bundleID: String?) throws -> URL {
+        #if DEBUG
+        if arguments.contains("-live-career-performance") {
+            return try LiveCareerQA.storeURL(arguments: arguments, bundleID: bundleID)
+        }
+        #endif
+        return SaveArchiveStore.defaultURL()
+    }
     @MainActor private func load() {
+        recoveryBase=nil
         do {
+            let base=try Self.storeBaseURL(arguments: ProcessInfo.processInfo.arguments, bundleID: Bundle.main.bundleIdentifier)
+            recoveryBase=base
             let catalog = try SchoolCatalog.load()
-            let store: ModelContainer
-            #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-live-career-performance") {
-                let url=try LiveCareerQA.storeURL(arguments:ProcessInfo.processInfo.arguments,bundleID:Bundle.main.bundleIdentifier)
-                store=try CareerStore.makeContainer(url:url)
-            } else { store=try CareerStore.makeContainer() }
-            #else
-            store=try CareerStore.makeContainer()
-            #endif
-            protection=SaveProtection(container: store, base: SaveArchiveStore.defaultURL())
-            schools = catalog; container = store; errorMessage = nil
+            let session=try SaveProtection.open(base: base)
+            protection=session
+            schools = catalog; container = session.container; errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
 }
@@ -901,7 +915,67 @@ struct SaveProtectionView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    ManagementFileHeader(eyebrow: "LOCAL SAVE", title: "이 기기의 커리어 보관", note: "내보내기 → 파일 검증 → 전체 복원 확인")
+                    if audioTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("백업·복원").managementFont(.sectionTitle).accessibilityAddTraits(.isHeader)
+                            Text("확정 전 진행 유지").managementFont(.helper)
+                        }.frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("saveCompactHeading")
+                    } else {
+                        ManagementFileHeader(eyebrow: "LOCAL SAVE", title: "이 기기의 커리어 보관", note: "내보내기 → 파일 검증 → 전체 복원 확인")
+                    }
+                    if let message {
+                        ManagementPanel("저장 작업 결과") {
+                            Text(message).managementFont(.body)
+                                .accessibilityLabel("저장 작업 결과 · " + message)
+                                .accessibilityIdentifier("saveProtectionMessage")
+                        }
+                    }
+                    ManagementPanel("1. 저장 내보내기") {
+                        if protection?.recoveryOnly == true {
+                            Text("현재 저장 열기 실패 · 선수 수 확인 필요").managementFont(.label).accessibilityIdentifier("saveCareerCountsUnavailable")
+                        } else {
+                            Text("진행 중 \(archivePlayers.filter {!$0.isRetired}.count)명 · 은퇴 보관 \(archivePlayers.filter(\.isRetired).count)명")
+                                .managementFont(.label).accessibilityIdentifier("saveCareerCounts")
+                        }
+                        Button("백업 파일 만들기",action:exportBackup)
+                            .buttonStyle(ManagementButtonStyle(variant:.secondary)).accessibilityIdentifier("exportSave").disabled(protection?.recoveryOnly == true)
+                        Text("모든 커리어를 파일로 보관하며 현재 진행은 유지합니다.").managementFont(.helper)
+                        if let exportBytes {
+                            Text("이번에 만든 백업 파일 · "+ByteCountFormatter.string(fromByteCount:Int64(exportBytes),countStyle:.file))
+                                .managementFont(.body).accessibilityIdentifier("saveExportSize")
+                        } else {
+                            Text("용량은 백업 생성 후 표시됩니다.").managementFont(.helper).accessibilityIdentifier("saveSizePending")
+                        }
+                        DisclosureGroup("백업 범위·개인정보·용량 안내") {
+                            Text("모든 선수·날짜·능력치·고정 보고서·진행 중인 경기와 훈련을 함께 보관합니다. 파일에는 선수 이름과 기록이 포함됩니다. 외부 서버로 자동 전송하지 않습니다.").managementFont(.body)
+                            Text("백업 용량은 파일 생성 후 실제 바이트 수로 표시합니다. 크기를 미리 추정하거나 자동으로 내보내지 않습니다.").managementFont(.helper)
+                            Text("은퇴 기록은 자동 삭제하지 않습니다. 표시된 백업 파일 크기와 아래 DB 복원 상한은 서로 다른 값입니다.").managementFont(.helper)
+                        }.tint(GameTheme.gold).accessibilityIdentifier("saveExportDetails")
+                    }
+                    ManagementPanel("2. 백업 선택·검증") {
+                        Button("백업 선택·검증") { importing=true }
+                            .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("importSave")
+                        Text("선택한 파일을 별도 저장소에서 검증합니다. 아직 현재 진행에 반영하지 않습니다.").managementFont(.helper)
+                        DisclosureGroup("백업 형식·파일 보관 안내") {
+                            Text("V15 백업 · DB 상한64MiB(67,108,864바이트). 파일은 암호화되지 않았고 해시는 무결성 확인용입니다. 위 백업 파일 크기와 DB 상한은 다릅니다.").managementFont(.helper)
+                        }.tint(GameTheme.gold).accessibilityIdentifier("saveFormatDetails")
+                    }
+                    if let prepared {
+                        ManagementPanel("3. 검증 완료·전체 복원") {
+                            Text("검증 완료 · " + prepared.created.formatted(date: .abbreviated, time: .shortened))
+                                .managementFont(.label).accessibilityIdentifier("saveVerifiedBackupDate")
+                            CareerManagementNote(title:"전체 복원 영향 · 모든 커리어",detail:"날짜·기록·진행 중 경기와 훈련이 백업 시점으로 바뀝니다. 현재 기록과 합치지 않으며 확정 전까지 기존 저장을 사용합니다.",identifier:"restoreScopeSummary")
+                            Text("현재 기기").managementFont(.label)
+                            if protection?.recoveryOnly == true {Text("현재 저장은 열리지 않아 날짜/선수를 비교할 수 없습니다.").managementFont(.body)}
+                            else {ForEach(archivePlayers) {p in Text(p.name+" · "+p.role.label+" · "+p.gameDate).managementFont(.body)}}
+                            Text("복원할 백업").managementFont(.label)
+                            ForEach(prepared.players, id: \.self) { Text($0).managementFont(.body) }
+                            if prepared.players.isEmpty { Text("선수가 없는 백업입니다.").managementFont(.body) }
+                            Button("이 백업으로 전체 복원 확인") { confirming=true }
+                                .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("confirmRestoreSave")
+                                .disabled(prepared.state == .discarded)
+                        }
+                    }
                     ManagementPanel("기기 설정") {
                         Toggle("경기·훈련 진동", isOn: $haptics).accessibilityIdentifier("settingHaptics")
                         Toggle("경기 소리", isOn: $sound).accessibilityIdentifier("settingSound")
@@ -943,46 +1017,11 @@ struct SaveProtectionView: View {
                         .buttonStyle(ManagementButtonStyle(variant: .secondary))
                         .accessibilityIdentifier("openSupportInformation")
                     }
-                    ManagementPanel("저장 내보내기") {
-                        if protection?.recoveryOnly == true {
-                            Text("현재 저장 열기 실패 · 선수 수 확인 필요").managementFont(.label).accessibilityIdentifier("saveCareerCountsUnavailable")
-                        } else {
-                            Text("진행 중 \(archivePlayers.filter {!$0.isRetired}.count)명 · 은퇴 보관 \(archivePlayers.filter(\.isRetired).count)명")
-                                .managementFont(.label).accessibilityIdentifier("saveCareerCounts")
-                        }
-                        Text("모든 선수·날짜·능력치·고정 보고서·진행 중인 경기와 훈련을 함께 보관합니다. 파일에는 선수 이름과 기록이 포함됩니다. 외부 서버로 자동 전송하지 않습니다.").managementFont(.body)
-                        Button("백업 파일 만들기",action:exportBackup)
-                            .buttonStyle(ManagementButtonStyle(variant:.secondary)).accessibilityIdentifier("exportSave").disabled(protection?.recoveryOnly == true)
-                        if let exportBytes {
-                            Text("이번에 만든 백업 파일 · "+ByteCountFormatter.string(fromByteCount:Int64(exportBytes),countStyle:.file))
-                                .managementFont(.body).accessibilityIdentifier("saveExportSize")
-                        } else {Text("백업 용량은 파일 생성 후 실제 바이트 수로 표시합니다. 크기를 미리 추정하거나 자동으로 내보내지 않습니다.").managementFont(.helper).accessibilityIdentifier("saveSizePending")}
-                        Text("은퇴 기록은 자동 삭제하지 않습니다. 표시된 백업 파일 크기와 아래 DB 복원 상한은 서로 다른 값입니다.").managementFont(.helper)
-                    }
-                    ManagementPanel("검증 후 전체 복원") {
-                        Text("파일을 선택하면 별도 저장소에서 먼저 검증합니다. 확정하면 현재 커리어 전체가 백업 시점으로 돌아갑니다. 기록을 합치지 않으며 복원 전 저장은 기기에 보관합니다.").managementFont(.body)
-                        Button("백업 선택·검증") { importing=true }
-                            .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("importSave")
-                        if let prepared {
-                            CareerManagementNote(title:"복원 전 비교 · 모든 커리어를 함께 되돌립니다",detail:"선수별 날짜·진행 중 경기/훈련·고정 보고서가 아래 백업 시점으로 바뀝니다. 현재 기록과 합치지 않으며 확정 전까지 기존 저장을 사용합니다.",identifier:"restoreScopeSummary")
-                            Text("현재 기기").managementFont(.label)
-                            if protection?.recoveryOnly == true {Text("현재 저장은 열리지 않아 날짜/선수를 비교할 수 없습니다.").managementFont(.body)}
-                            else {ForEach(archivePlayers) {p in Text(p.name+" · "+p.role.label+" · "+p.gameDate).managementFont(.body)}}
-                            Text("복원할 백업").managementFont(.label)
-                            Text("검증 완료 · " + prepared.created.formatted(date: .abbreviated, time: .shortened)).managementFont(.label)
-                            ForEach(prepared.players, id: \.self) { Text($0).managementFont(.body) }
-                            if prepared.players.isEmpty { Text("선수가 없는 백업입니다.").managementFont(.body) }
-                            Button("이 백업으로 전체 복원 확인") { confirming=true }
-                                .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("confirmRestoreSave")
-                        }
-                        Text("V15 백업 · DB 상한64MiB(67,108,864바이트). 파일은 암호화되지 않았고 해시는 무결성 확인용입니다. 위 백업 파일 크기와 DB 상한은 다릅니다.").managementFont(.helper)
-                    }
-                    if let message { Text(message).managementFont(.body).accessibilityIdentifier("saveProtectionMessage") }
                 }.padding(16).disabled(working != nil)
             }.safeAreaInset(edge:.bottom) {
                 if let working {HStack(spacing:12) {ProgressView();Text(working).font(.subheadline)}.padding(14).frame(maxWidth:.infinity).background(GameTheme.boardPanel).foregroundStyle(GameTheme.boardInk).accessibilityElement(children:.combine).accessibilityIdentifier("saveOperationProgress")}
             }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("설정 · 저장 보호")
-                .toolbar { ManagementToolbarAction(title: "닫기", identifier: "closeSettings", disabled: working != nil) { dismiss() } }
+                .toolbar { ManagementToolbarAction(title: "닫기", identifier: "closeSettings", disabled: working != nil) { if discardPrepared() {dismiss()} } }
         }
         .interactiveDismissDisabled(working != nil)
         .task {
@@ -993,7 +1032,10 @@ struct SaveProtectionView: View {
             }
             #endif
         }
-        .onDisappear { GameSound.shared.stop() }
+        .onDisappear {
+            GameSound.shared.stop()
+            if !importing && !exporting && !confirming && working == nil {discardPrepared()}
+        }
         .fileExporter(isPresented: $exporting, document: document, contentType: .data, defaultFilename: "BM-career.bmbackup") { result in
             switch result {case .success:message="백업 내보내기 완료 · 기기의 진행 기록은 유지됩니다.";case .failure(let error):message=isCancelled(error) ? "내보내기 취소 · 기존 저장은 유지됩니다.":error.localizedDescription}
         }
@@ -1013,6 +1055,18 @@ struct SaveProtectionView: View {
         } message: { Text("현재 데이터와 합치지 않습니다. 복원 전 저장은 삭제하지 않습니다. 백업 이후 진행한 내용은 새 활성 커리어에 표시되지 않습니다.") }
     }
     private func isCancelled(_ error:Error) -> Bool {(error as? CocoaError)?.code == .userCancelled}
+    @discardableResult private func discardPrepared() -> Bool {
+        guard let prepared else {return true}
+        do {
+            guard let protection else {throw SaveProtectionError.unavailable}
+            try protection.discard(prepared)
+            self.prepared=nil
+            return true
+        } catch {
+            message="검증 사본을 정리하지 못했습니다. 기존 저장은 유지됩니다. 다시 닫기를 눌러 정리를 재시도해 주세요."
+            return false
+        }
+    }
     private func exportBackup() {
         guard working == nil else {return}
         working="백업 파일 만드는 중 · 기존 저장 유지";message=nil
@@ -1030,7 +1084,8 @@ struct SaveProtectionView: View {
         let url:URL
         do {url=try result.get()}
         catch {message=isCancelled(error) ? "파일 선택 취소 · 기존 저장은 유지됩니다.":error.localizedDescription;return}
-        working="백업 검증 중 · 확정 전까지 기존 저장 유지";message=nil;prepared=nil
+        guard discardPrepared() else {return}
+        working="백업 검증 중 · 확정 전까지 기존 저장 유지";message=nil
         Task { @MainActor in
             let access=url.startAccessingSecurityScopedResource()
             defer {if access {url.stopAccessingSecurityScopedResource()};working=nil}
@@ -1045,6 +1100,7 @@ struct SaveProtectionView: View {
 }
 
 private struct FailedSaveRecoveryView: View {
+    let base: URL
     var restored: (SaveProtection) -> Void
     @State private var session: SaveProtection?
     @State private var error: String?
@@ -1054,7 +1110,7 @@ private struct FailedSaveRecoveryView: View {
             else if let error { Text(error) }
             else { ProgressView("복구 준비 중") }
         }.task {
-            do { session=SaveProtection(container:try CareerStore.makeContainer(inMemory:true),base:SaveArchiveStore.defaultURL(),recoveryOnly:true) }
+            do { session=SaveProtection(container:try CareerStore.makeContainer(inMemory:true),base:base,recoveryOnly:true) }
             catch { self.error=error.localizedDescription }
         }
     }

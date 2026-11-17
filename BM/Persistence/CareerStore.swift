@@ -151,8 +151,9 @@ enum SaveProtectionError: LocalizedError {
     static func activeURL(base: URL) throws -> URL {
         let file = pointer(base)
         guard FileManager.default.fileExists(atPath: file.path) else { return base }
-        let raw = try String(contentsOf: file, encoding: .utf8)
-        guard let id = UUID(uuidString: raw) else { throw SaveProtectionError.invalid }
+        let data = try Data(contentsOf: file)
+        guard let raw = String(data: data, encoding: .utf8),
+              let id = UUID(uuidString: raw) else { throw SaveProtectionError.invalid }
         let url = generationURL(id, base: base)
         guard FileManager.default.fileExists(atPath: url.path) else { throw SaveProtectionError.invalid }
         return url
@@ -218,7 +219,7 @@ enum SaveProtectionError: LocalizedError {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         do {
             try archive.database.write(to: url, options: .atomic); try checkSQLite(url)
-            return StagedSave(id:id,url:url,created:archive.created)
+            return StagedSave(id:id,url:url,originBase:base,created:archive.created)
         } catch {try? FileManager.default.removeItem(at:url.deletingLastPathComponent());throw error}
     }
     private static func open(_ staged:StagedSave) throws -> PreparedSave {
@@ -227,7 +228,7 @@ enum SaveProtectionError: LocalizedError {
             let schema = Schema(versionedSchema: CareerSchemaV15.self)
             let candidate = try ModelContainer(for: schema, configurations: [ModelConfiguration("Career", schema: schema, url: url, cloudKitDatabase: .none)])
             let players=try validate(candidate)
-            return PreparedSave(id:staged.id,url:url,container:candidate,created:staged.created,players:players)
+            return PreparedSave(id:staged.id,url:url,originBase:staged.originBase,container:candidate,created:staged.created,players:players)
         } catch {try? FileManager.default.removeItem(at:url.deletingLastPathComponent());throw error}
     }
     static func validate(_ candidate:ModelContainer) throws -> [String] {
@@ -245,6 +246,7 @@ enum SaveProtectionError: LocalizedError {
             for p in players {
                 guard let state = calendars.first(where: { $0.playerID == p.id }) else { throw SaveProtectionError.invalid }
                 _ = try p.lifecycle; _ = try state.age(of: p)
+                _ = try state.domesticExpansionYear; _ = try state.overseasExpansionYear
                 _ = try ContractRegistrationStore.journal(player: p, calendar: state, in: c)
             }
             func owner(_ id: UUID) throws -> (CareerPlayer, CareerCalendarState) {
@@ -269,7 +271,17 @@ enum SaveProtectionError: LocalizedError {
                 for kind in p.role == .pitcher ? [TrainingKind.mental,.velocity,.control,.stuff,.stamina]:[.mental] {_ = try row.value(for:kind)}
             }
             for row in try c.fetch(FetchDescriptor<CareerTrainingRecord>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
-            for row in try c.fetch(FetchDescriptor<CareerMatchRecord>()) { _ = try owner(row.playerID); _ = try row.snapshot() }
+            for row in try c.fetch(FetchDescriptor<CareerMatchRecord>()) {
+                let (player, state) = try owner(row.playerID)
+                let match = try row.snapshot()
+                if let number = match.clubSelection?.fixtureNumber {
+                    let plan = try state.competition(for: player, year: GameDate(row.gameDate).year)
+                    guard let fixture = plan.fixtures.first(where: { $0.id == row.fixtureID }),
+                          fixture.includes(plan.teamID), number == fixture.forTeam(plan.teamID).number else {
+                        throw SaveProtectionError.invalid
+                    }
+                }
+            }
             for row in try c.fetch(FetchDescriptor<CareerLeagueGameRecord>()) { _ = try row.snapshot() }
             for p in players {
                 let (_,state)=try owner(p.id)
@@ -284,17 +296,23 @@ enum SaveProtectionError: LocalizedError {
 private struct StagedSave:Sendable {
     let id:UUID
     let url:URL
+    let originBase:URL
     let created:Date
 }
 @MainActor final class PreparedSave {
+    enum State: Equatable { case pending, committed, discarded }
     let id: UUID
     let url: URL
-    let container: ModelContainer
+    let originBase: URL
+    private(set) var container: ModelContainer?
+    private(set) var state = State.pending
     let created: Date
     let players: [String]
-    init(id: UUID, url: URL, container: ModelContainer, created: Date, players: [String]) {
-        self.id=id; self.url=url; self.container=container; self.created=created; self.players=players
+    init(id: UUID, url: URL, originBase: URL, container: ModelContainer, created: Date, players: [String]) {
+        self.id=id; self.url=url; self.originBase=originBase; self.container=container; self.created=created; self.players=players
     }
+    fileprivate func markCommitted() { state = .committed }
+    fileprivate func releaseForDiscard() { state = .discarded; container=nil }
 }
 @MainActor @Observable final class SaveProtection {
     var container: ModelContainer
@@ -302,14 +320,44 @@ private struct StagedSave:Sendable {
     let base: URL
     private(set) var recoveryOnly: Bool
     init(container: ModelContainer, base: URL, recoveryOnly: Bool = false) { self.container=container; self.base=base; self.recoveryOnly=recoveryOnly }
+    static func open(base: URL) throws -> SaveProtection {
+        let active=try SaveArchiveStore.activeURL(base:base)
+        return SaveProtection(container:try CareerStore.makeContainer(url:active),base:base)
+    }
     func restore(_ prepared: PreparedSave, commit: (URL, Data) throws -> Void = { try $1.write(to: $0, options: .atomic) }) throws {
-        guard prepared.url == SaveArchiveStore.generationURL(prepared.id, base: base) else { throw SaveProtectionError.invalid }
-        if container === prepared.container {return}
-        guard !container.mainContext.hasChanges, !prepared.container.mainContext.hasChanges else { throw SaveProtectionError.busy }
+        // Flat QA session files share a parent, so the generation path alone does not identify its owner.
+        guard prepared.originBase == base,
+              prepared.url == SaveArchiveStore.generationURL(prepared.id, base: base),
+              prepared.state != .discarded, let candidate=prepared.container else { throw SaveProtectionError.invalid }
+        if container === candidate {return}
+        guard !container.mainContext.hasChanges, !candidate.mainContext.hasChanges else { throw SaveProtectionError.busy }
         try SaveArchiveStore.checkSQLite(prepared.url)
-        _ = try SaveArchiveStore.validate(prepared.container)
+        _ = try SaveArchiveStore.validate(candidate)
         try commit(SaveArchiveStore.pointer(base), Data(prepared.id.uuidString.utf8))
-        container=prepared.container;recoveryOnly=false;generation=UUID()
+        prepared.markCommitted()
+        container=candidate;recoveryOnly=false;generation=UUID()
+    }
+    // Only candidates returned by prepare belong to this cleanup operation.
+    func discard(_ prepared: PreparedSave, remove: (URL) throws -> Void = {try FileManager.default.removeItem(at:$0)}) throws {
+        guard prepared.originBase == base,
+              prepared.url == SaveArchiveStore.generationURL(prepared.id, base: base),
+              prepared.url != base else { throw SaveProtectionError.invalid }
+        // A previous committed generation remains a protected original even after a later restore.
+        guard prepared.state != .committed else { return }
+        let directory=prepared.url.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath:directory.path) else {
+            prepared.releaseForDiscard();return
+        }
+        let active: URL?
+        do { active = try SaveArchiveStore.activeURL(base: base) }
+        catch SaveProtectionError.invalid where recoveryOnly {
+            // A damaged or missing target cannot identify this existing recovery candidate.
+            active = nil
+        }
+        guard prepared.url != active, prepared.url != container.configurations.first?.url else {return}
+        if let candidate=prepared.container, container === candidate {return}
+        prepared.releaseForDiscard()
+        try remove(directory)
     }
 }
 

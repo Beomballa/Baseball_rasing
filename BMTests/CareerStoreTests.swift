@@ -387,6 +387,208 @@ import UIKit
         return value
     }
 
+    #if DEBUG
+    func testQARestoreLaunchSelectionRequiresValidExplicitSession() throws {
+        let normal = try AppBootstrapView.storeBaseURL(arguments: [], bundleID: "dev.bm.career")
+        XCTAssertEqual(normal, SaveArchiveStore.defaultURL())
+        let arguments = ["-live-career-performance", "-qa-session", UUID().uuidString]
+        let qa = try AppBootstrapView.storeBaseURL(arguments: arguments, bundleID: "dev.bm.career.performanceqa")
+        XCTAssertNotEqual(qa, normal)
+        XCTAssertEqual(qa, try LiveCareerQA.storeURL(arguments: arguments, bundleID: "dev.bm.career.performanceqa"))
+        XCTAssertThrowsError(try AppBootstrapView.storeBaseURL(arguments: arguments, bundleID: "dev.bm.career"))
+        XCTAssertThrowsError(try AppBootstrapView.storeBaseURL(arguments: arguments, bundleID: "other.bundle"))
+        for invalid in [["-live-career-performance"], ["-live-career-performance", "-qa-session", "../../Career.store"]] {
+            XCTAssertThrowsError(try AppBootstrapView.storeBaseURL(arguments: invalid, bundleID: "dev.bm.career.performanceqa"))
+        }
+    }
+    #endif
+
+    func testQARestoreReopenSelectsSessionGenerationAndPreservesOtherStores() throws {
+        let directory = try qaRestoreDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let original = try qaRestoreSeed(directory.appendingPathComponent("default-copy.store"), name: "기본원본")
+        let other = try qaRestoreSeed(directory.appendingPathComponent("session-b.store"), name: "세션B")
+        let protected = [original, other]
+        defer { withExtendedLifetime(protected) {} }
+        for session in protected {
+            let backup = try SaveArchiveStore.export(container: session.container)
+            try session.restore(SaveArchiveStore.prepare(backup, base: session.base))
+        }
+        let protectedURLs = try protected.flatMap { [$0.base, try SaveArchiveStore.activeURL(base: $0.base)] }
+        let before = try qaRestoreDigests(protectedURLs)
+        let session = try qaRestoreSeed(directory.appendingPathComponent("session-a.store"), name: "세션A")
+        // Compare the old store while its SQLite connection remains open, before close-time checkpointing.
+        let originalContainer = session.container
+        defer { withExtendedLifetime(originalContainer) {} }
+        let source = try qaRestoreSeed(directory.appendingPathComponent("incoming.store"), name: "복원투수", role: .pitcher)
+        let player = try XCTUnwrap(source.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first)
+        let state = try XCTUnwrap(source.container.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: source.container.mainContext)
+        let game = try CareerMatchStore.start(player: player, state: state, in: source.container.mainContext)
+        try CareerMatchStore.advance(player: player, state: state, record: game, revision: game.revision,
+                                     input: .pitch, pitchCode: player.pitches[0].code, in: source.container.mainContext)
+        let payload = game.payload, playerID = player.id
+        XCTAssertFalse(game.completed)
+        let baseBefore = try qaRestoreDigests([session.base])
+        let archive = try SaveArchiveStore.export(container: source.container)
+        let prepared = try SaveArchiveStore.prepare(archive, base: session.base)
+        try session.restore(prepared)
+        let reopened = try SaveProtection.open(base: session.base)
+        XCTAssertEqual(reopened.base, session.base)
+        XCTAssertEqual(reopened.container.configurations.first?.url, prepared.url)
+        XCTAssertEqual(try reopened.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.id, playerID)
+        XCTAssertEqual(try reopened.container.mainContext.fetch(FetchDescriptor<CareerMatchRecord>()).first?.payload, payload)
+        let originalFiles = baseBefore.filter { !$0.key.hasSuffix(".active-generation") }
+        XCTAssertEqual(try qaRestoreDigests([session.base]).filter { !$0.key.hasSuffix(".active-generation") }, originalFiles)
+        let after = try qaRestoreDigests(protectedURLs)
+        XCTAssertEqual(after, before)
+        qaRestoreEvidence("QA restore protects default copy and session B", before: before, after: after)
+    }
+
+    func testQARestoreCancelValidationAndCommitFailureKeepSelectionAndBytes() throws {
+        let directory = try qaRestoreDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = try qaRestoreSeed(directory.appendingPathComponent("session-a.store"), name: "세션A")
+        let initial = try SaveArchiveStore.export(container: session.container)
+        try session.restore(SaveArchiveStore.prepare(initial, base: session.base))
+        let active = try SaveArchiveStore.activeURL(base: session.base)
+        let before = try qaRestoreDigests([session.base, active])
+        let container = session.container, generation = session.generation
+        let source = try qaRestoreSeed(directory.appendingPathComponent("incoming.store"), name: "복원원본")
+        let archive = try SaveArchiveStore.export(container: source.container)
+        let cancelled = try SaveArchiveStore.prepare(archive, base: session.base)
+        XCTAssertNotEqual(cancelled.url, active)
+        XCTAssertEqual(try qaRestoreDigests([session.base, active]), before, "Preparing without confirmation must not select a generation")
+        XCTAssertThrowsError(try SaveArchiveStore.prepare(Data("invalid-backup".utf8), base: session.base))
+        let prepared = try SaveArchiveStore.prepare(archive, base: session.base)
+        XCTAssertThrowsError(try session.restore(prepared, commit: { url, _ in
+            XCTAssertEqual(url, SaveArchiveStore.pointer(session.base))
+            throw SaveProtectionError.busy
+        }))
+        XCTAssertTrue(session.container === container)
+        XCTAssertEqual(session.generation, generation)
+        XCTAssertEqual(try SaveArchiveStore.activeURL(base: session.base), active)
+        let after = try qaRestoreDigests([session.base, active])
+        XCTAssertEqual(after, before)
+        qaRestoreEvidence("QA cancel and failed commit preserve active files", before: before, after: after)
+        try session.restore(prepared)
+        XCTAssertEqual(try SaveArchiveStore.activeURL(base: session.base), prepared.url)
+    }
+
+    func testQARestoreRejectsOtherSessionCandidatesAcrossAllPreparePaths() async throws {
+        let directory = try qaRestoreDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = try qaRestoreSeed(directory.appendingPathComponent("session-a.store"), name: "세션A")
+        let second = try qaRestoreSeed(directory.appendingPathComponent("session-b.store"), name: "세션B")
+        let before = try qaRestoreDigests([second.base]), container = second.container, generation = second.generation
+        let archive = try SaveArchiveStore.export(container: first.container)
+        let file = directory.appendingPathComponent("incoming.bmbackup")
+        try archive.write(to: file)
+        let synchronous = try SaveArchiveStore.prepare(archive, base: first.base)
+        let asynchronous = try await SaveArchiveStore.prepareAsync(archive, base: first.base)
+        let fromFile = try await SaveArchiveStore.prepareFileAsync(file, base: first.base)
+        for prepared in [synchronous, asynchronous, fromFile] {
+            XCTAssertEqual(prepared.originBase, first.base)
+            XCTAssertEqual(prepared.url, SaveArchiveStore.generationURL(prepared.id, base: second.base),
+                           "Both session files share a parent; generation path alone cannot enforce ownership")
+            XCTAssertThrowsError(try second.restore(prepared, commit: { _, _ in XCTFail("Cross-session restore reached commit") }))
+            XCTAssertTrue(second.container === container)
+            XCTAssertEqual(second.generation, generation)
+            XCTAssertEqual(try qaRestoreDigests([second.base]), before)
+        }
+        try first.restore(synchronous)
+        XCTAssertEqual(try SaveArchiveStore.activeURL(base: first.base), synchronous.url)
+        XCTAssertEqual(try qaRestoreDigests([second.base]), before)
+    }
+
+    func testQARestoreInvalidPointerRecoveryStaysInFailedSession() throws {
+        let directory = try qaRestoreDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try qaRestoreSeed(directory.appendingPathComponent("source.store"), name: "복원원본")
+        let archive = try SaveArchiveStore.export(container: source.container)
+        let base = directory.appendingPathComponent("session-a.store")
+        let broken = Data("unreadable-session-original".utf8), invalidPointer = Data("invalid-generation".utf8)
+        try broken.write(to: base)
+        try invalidPointer.write(to: SaveArchiveStore.pointer(base))
+        let other = try qaRestoreSeed(directory.appendingPathComponent("session-b.store"), name: "세션B")
+        let before = try qaRestoreDigests([other.base])
+        XCTAssertThrowsError(try SaveProtection.open(base: base))
+        XCTAssertEqual(try Data(contentsOf: base), broken)
+        XCTAssertEqual(try Data(contentsOf: SaveArchiveStore.pointer(base)), invalidPointer)
+        let recovery = SaveProtection(container: try CareerStore.makeContainer(inMemory: true), base: base, recoveryOnly: true)
+        let cancelled = try SaveArchiveStore.prepare(archive, base: recovery.base)
+        try recovery.discard(cancelled)
+        XCTAssertEqual(cancelled.state, .discarded)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cancelled.url.deletingLastPathComponent().path))
+        XCTAssertEqual(try Data(contentsOf: SaveArchiveStore.pointer(base)), invalidPointer)
+        XCTAssertEqual(try Data(contentsOf: base), broken)
+        let prepared = try SaveArchiveStore.prepare(archive, base: recovery.base)
+        XCTAssertThrowsError(try recovery.restore(prepared, commit: { _, _ in throw SaveProtectionError.busy }))
+        XCTAssertTrue(recovery.recoveryOnly)
+        XCTAssertEqual(try Data(contentsOf: SaveArchiveStore.pointer(base)), invalidPointer)
+        try recovery.restore(prepared)
+        XCTAssertFalse(recovery.recoveryOnly)
+        let reopened = try SaveProtection.open(base: base)
+        XCTAssertEqual(reopened.base, base)
+        XCTAssertEqual(try reopened.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.name, "복원원본")
+        XCTAssertEqual(try Data(contentsOf: base), broken)
+        XCTAssertEqual(try qaRestoreDigests([other.base]), before)
+        withExtendedLifetime(other) {}
+    }
+
+    func testQARestoreOpenSupportsExistingGenerationPointerLayout() throws {
+        let directory = try qaRestoreDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let original = try qaRestoreSeed(directory.appendingPathComponent("Career.store"), name: "옛원본")
+        let source = try qaRestoreSeed(directory.appendingPathComponent("source.store"), name: "기존복원")
+        let id = UUID(), folder = directory.appendingPathComponent("restored-" + id.uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let existing = folder.appendingPathComponent("Career.store")
+        try SaveArchiveStore.snapshot(from: source.base, to: existing)
+        let pointer = original.base.appendingPathExtension("active-generation"), pointerBytes = Data(id.uuidString.utf8)
+        try pointerBytes.write(to: pointer)
+        let before = try qaRestoreDigests([original.base])
+        let reopened = try SaveProtection.open(base: original.base)
+        XCTAssertEqual(reopened.container.configurations.first?.url, existing)
+        XCTAssertEqual(try reopened.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.name, "기존복원")
+        XCTAssertEqual(try qaRestoreDigests([original.base]), before)
+        withExtendedLifetime(original) {}
+    }
+
+    private func qaRestoreDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("qa-restore-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func qaRestoreSeed(_ base: URL, name: String, role: PlayerRole = .batter) throws -> SaveProtection {
+        let session = try SaveProtection.open(base: base)
+        var value = draft(role); value.name = name
+        _ = try CareerStore.create(value, schools: SchoolCatalog.load(), in: session.container.mainContext)
+        return session
+    }
+
+    private func qaRestoreDigests(_ stores: [URL]) throws -> [String: String] {
+        var result = [String: String]()
+        for store in stores {
+            let files = [store, SaveArchiveStore.pointer(store), store.appendingPathExtension("v15-ready"),
+                         URL(fileURLWithPath: store.path + "-wal"), URL(fileURLWithPath: store.path + "-shm")]
+            for file in files {
+                result[file.path] = FileManager.default.fileExists(atPath: file.path)
+                    ? SaveArchiveStore.hash(try Data(contentsOf: file)) : "missing"
+            }
+        }
+        return result
+    }
+
+    private func qaRestoreEvidence(_ name: String, before: [String: String], after: [String: String]) {
+        let proof = ["before": before, "after": after]
+        if let data = try? JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys]) {
+            let attachment = XCTAttachment(string: String(decoding: data, as: UTF8.self))
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+    }
+
     func testV44ArchiveRoundTripKeepsBothPendingRecordsReportsAndOneReward() throws {
         let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
@@ -419,7 +621,7 @@ import UIKit
         try session.restore(candidate)
         XCTAssertEqual(try SaveArchiveStore.activeURL(base:base),candidate.url)
         XCTAssertTrue(FileManager.default.fileExists(atPath:base.path))
-        let rc=candidate.container.mainContext
+        let rc=try XCTUnwrap(candidate.container).mainContext
         XCTAssertEqual(try rc.fetch(FetchDescriptor<CareerTrainingRecord>()).first?.payload,originalTraining)
         XCTAssertEqual(try rc.fetch(FetchDescriptor<CareerMatchRecord>()).first?.payload,originalGame)
         XCTAssertEqual(try rc.fetch(FetchDescriptor<CareerScoutingReport>()).map(\.payload),reports)
@@ -623,7 +825,7 @@ extension CareerStoreTests {
         let base=dir.appendingPathComponent("original.store"),db=try CareerStore.makeContainer(url:base),c=db.mainContext
         let p=try CareerStore.create(draft(),schools:SchoolCatalog.load(),in:c)
         let archive=try SaveArchiveStore.export(container:db),session=SaveProtection(container:db,base:base)
-        let prepared=try SaveArchiveStore.prepare(archive,base:base),pc=prepared.container.mainContext
+        let prepared=try SaveArchiveStore.prepare(archive,base:base),pc=try XCTUnwrap(prepared.container).mainContext
         let slot=try XCTUnwrap(pc.fetch(FetchDescriptor<ActiveCareerSlot>()).first);slot.roleRaw="pitcher";try pc.save()
         XCTAssertThrowsError(try session.restore(prepared));XCTAssertTrue(session.container === db)
         XCTAssertEqual(try SaveArchiveStore.activeURL(base:base),base)
@@ -711,5 +913,247 @@ extension CareerStoreTests {
             XCTAssertEqual(try v56PayloadDigests(url),first);XCTAssertEqual(try Data(contentsOf:input),original)
             print("V56_EXISTING_COPY kind=\(name) payloadTables=\(before.count) preserved=true")
         }
+    }
+}
+
+extension CareerStoreTests {
+    func testV156DiscardPendingCandidatePreservesDefaultAndOtherSessionBytes() throws {
+        let directory=try qaRestoreDirectory()
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let original=try qaRestoreSeed(directory.appendingPathComponent("default-copy.store"),name:"기본원본")
+        let other=try qaRestoreSeed(directory.appendingPathComponent("session-b.store"),name:"보호B",role:.pitcher)
+        let session=try qaRestoreSeed(directory.appendingPathComponent("session-a.store"),name:"세션A")
+        let protected=[original,other]
+        let originalContainers=(protected+[session]).map(\.container)
+        defer {withExtendedLifetime(originalContainers) {}}
+        for store in protected {
+            try store.restore(SaveArchiveStore.prepare(SaveArchiveStore.export(container:store.container),base:store.base))
+        }
+        let protectedURLs=try protected.flatMap {[$0.base,try SaveArchiveStore.activeURL(base:$0.base)]}+[session.base]
+        let before=try qaRestoreDigests(protectedURLs)
+        let container=session.container,generation=session.generation
+        let prepared=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:session.container),base:session.base)
+        let candidateDirectory=prepared.url.deletingLastPathComponent()
+        XCTAssertEqual(prepared.state,.pending)
+        XCTAssertNotNil(prepared.container)
+        XCTAssertTrue(FileManager.default.fileExists(atPath:candidateDirectory.path))
+        try session.discard(prepared)
+        XCTAssertEqual(prepared.state,.discarded)
+        XCTAssertNil(prepared.container,"The candidate must release its owned container before deleting its directory")
+        XCTAssertFalse(FileManager.default.fileExists(atPath:candidateDirectory.path))
+        XCTAssertTrue(session.container === container)
+        XCTAssertEqual(session.generation,generation)
+        XCTAssertEqual(try SaveArchiveStore.activeURL(base:session.base),session.base)
+        let after=try qaRestoreDigests(protectedURLs)
+        XCTAssertEqual(after,before)
+        qaRestoreEvidence("V156 discard preserves temporary default copy and session B DB WAL SHM pointers",before:before,after:after)
+    }
+
+    func testV156DiscardedCandidateCannotRestoreAndDiscardIsIdempotent() throws {
+        let directory=try qaRestoreDirectory()
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let session=try qaRestoreSeed(directory.appendingPathComponent("session.store"),name:"기존선수")
+        let container=session.container,generation=session.generation
+        let before=try qaRestoreDigests([session.base])
+        let prepared=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:container),base:session.base)
+        try session.discard(prepared)
+        try session.discard(prepared)
+        XCTAssertEqual(prepared.state,.discarded)
+        XCTAssertNil(prepared.container)
+        XCTAssertFalse(FileManager.default.fileExists(atPath:prepared.url.deletingLastPathComponent().path))
+        XCTAssertThrowsError(try session.restore(prepared,commit:{_,_ in XCTFail("Discarded candidate reached pointer commit")}))
+        XCTAssertTrue(session.container === container)
+        XCTAssertEqual(session.generation,generation)
+        XCTAssertEqual(try qaRestoreDigests([session.base]),before)
+        let reopened=try SaveProtection.open(base:session.base)
+        XCTAssertEqual(try reopened.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.name,"기존선수")
+        withExtendedLifetime(container) {}
+    }
+
+    func testV156FailedDiscardKeepsOriginalAndRetriesOnlyOwnedCandidate() throws {
+        let directory=try qaRestoreDirectory()
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let session=try qaRestoreSeed(directory.appendingPathComponent("session.store"),name:"기존선수")
+        let original=session.container,generation=session.generation
+        defer {withExtendedLifetime(original) {}}
+        let prepared=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:original),base:session.base)
+        let candidateDirectory=prepared.url.deletingLastPathComponent()
+        let before=try qaRestoreDigests([session.base])
+        var removalAttempts=0
+        XCTAssertThrowsError(try session.discard(prepared,remove:{url in
+            removalAttempts += 1
+            XCTAssertEqual(url,candidateDirectory)
+            XCTAssertEqual(prepared.state,.discarded)
+            XCTAssertNil(prepared.container,"Release the owned container even when file deletion fails")
+            throw SaveProtectionError.busy
+        }))
+        XCTAssertEqual(removalAttempts,1)
+        XCTAssertEqual(prepared.state,.discarded)
+        XCTAssertNil(prepared.container)
+        XCTAssertTrue(FileManager.default.fileExists(atPath:candidateDirectory.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath:prepared.url.path))
+        XCTAssertThrowsError(try session.restore(prepared,commit:{_,_ in XCTFail("Failed cleanup candidate reached restore commit")}))
+        XCTAssertTrue(session.container === original)
+        XCTAssertEqual(session.generation,generation)
+        XCTAssertEqual(try SaveArchiveStore.activeURL(base:session.base),session.base)
+        XCTAssertEqual(try qaRestoreDigests([session.base]),before)
+        try session.discard(prepared)
+        XCTAssertFalse(FileManager.default.fileExists(atPath:candidateDirectory.path))
+        XCTAssertEqual(prepared.state,.discarded)
+        XCTAssertNil(prepared.container)
+        try session.discard(prepared,remove:{_ in XCTFail("Already removed candidate retried file deletion")})
+        XCTAssertTrue(session.container === original)
+        XCTAssertEqual(session.generation,generation)
+        let after=try qaRestoreDigests([session.base])
+        XCTAssertEqual(after,before)
+        qaRestoreEvidence("V156 failed discard retry preserves original DB WAL SHM pointer",before:before,after:after)
+    }
+
+    func testV156DiscardPreservesCommittedCurrentAndPreviousGenerations() throws {
+        let directory=try qaRestoreDirectory()
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let session=try qaRestoreSeed(directory.appendingPathComponent("session.store"),name:"최초원본")
+        let originalContainer=session.container
+        defer {withExtendedLifetime(originalContainer) {}}
+        let firstSource=try qaRestoreSeed(directory.appendingPathComponent("first-source.store"),name:"첫복원")
+        let secondSource=try qaRestoreSeed(directory.appendingPathComponent("second-source.store"),name:"다음복원",role:.pitcher)
+        let first=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:firstSource.container),base:session.base)
+        try session.restore(first)
+        XCTAssertEqual(first.state,.committed)
+        let second=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:secondSource.container),base:session.base)
+        try session.restore(second)
+        XCTAssertEqual(second.state,.committed)
+        XCTAssertEqual(try SaveArchiveStore.activeURL(base:session.base),second.url)
+        let protectedURLs=[session.base,first.url,second.url]
+        let before=try qaRestoreDigests(protectedURLs),generation=session.generation
+        try session.discard(first)
+        try session.discard(second)
+        XCTAssertEqual(first.state,.committed)
+        XCTAssertEqual(second.state,.committed)
+        XCTAssertNotNil(first.container)
+        XCTAssertNotNil(second.container)
+        XCTAssertTrue(FileManager.default.fileExists(atPath:first.url.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath:second.url.path))
+        XCTAssertTrue(session.container === second.container)
+        XCTAssertEqual(session.generation,generation)
+        let after=try qaRestoreDigests(protectedURLs)
+        XCTAssertEqual(after,before)
+        qaRestoreEvidence("V156 discard preserves current and previous committed generations",before:before,after:after)
+        let reopened=try SaveProtection.open(base:session.base)
+        XCTAssertEqual(try reopened.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.name,"다음복원")
+        let previous=try CareerStore.makeContainer(url:first.url)
+        XCTAssertEqual(try previous.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.name,"첫복원")
+    }
+
+    func testV156DiscardRejectsForeignAndForgedCandidatesWithoutTouchingPaths() throws {
+        let directory=try qaRestoreDirectory()
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let first=try qaRestoreSeed(directory.appendingPathComponent("session-a.store"),name:"세션A")
+        let second=try qaRestoreSeed(directory.appendingPathComponent("session-b.store"),name:"세션B",role:.pitcher)
+        let prepared=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:first.container),base:first.base)
+        let protectedURLs=[first.base,second.base,prepared.url]
+        let before=try qaRestoreDigests(protectedURLs)
+        let original=first.container,other=second.container,otherGeneration=second.generation
+        XCTAssertEqual(prepared.url,SaveArchiveStore.generationURL(prepared.id,base:second.base),
+                       "Sibling session files share generation paths; ownership needs originBase too")
+        XCTAssertThrowsError(try second.discard(prepared))
+        XCTAssertThrowsError(try second.restore(prepared,commit:{_,_ in XCTFail("Foreign candidate reached pointer commit")}))
+        let candidate=try XCTUnwrap(prepared.container)
+        let wrongID=PreparedSave(id:UUID(),url:prepared.url,originBase:first.base,container:candidate,created:prepared.created,players:prepared.players)
+        let originalPath=PreparedSave(id:prepared.id,url:first.base,originBase:first.base,container:candidate,created:prepared.created,players:prepared.players)
+        for forged in [wrongID,originalPath] {
+            XCTAssertThrowsError(try first.discard(forged))
+            XCTAssertThrowsError(try first.restore(forged,commit:{_,_ in XCTFail("Forged path reached pointer commit")}))
+            XCTAssertEqual(forged.state,.pending)
+            XCTAssertTrue(forged.container === candidate)
+        }
+        XCTAssertEqual(prepared.state,.pending)
+        XCTAssertTrue(first.container === original)
+        XCTAssertTrue(second.container === other)
+        XCTAssertEqual(second.generation,otherGeneration)
+        let after=try qaRestoreDigests(protectedURLs)
+        XCTAssertEqual(after,before)
+        qaRestoreEvidence("V156 foreign ownership and forged generation paths preserve all stores",before:before,after:after)
+    }
+
+    func testV156FailedCommitKeepsCandidateForRetryAndRepeatedRestore() throws {
+        let directory=try qaRestoreDirectory()
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let session=try qaRestoreSeed(directory.appendingPathComponent("session.store"),name:"원본선수")
+        let original=session.container,generation=session.generation
+        defer {withExtendedLifetime(original) {}}
+        let source=try qaRestoreSeed(directory.appendingPathComponent("source.store"),name:"복원선수",role:.pitcher)
+        let prepared=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:source.container),base:session.base)
+        let before=try qaRestoreDigests([session.base])
+        XCTAssertThrowsError(try session.restore(prepared,commit:{url,_ in
+            XCTAssertEqual(url,SaveArchiveStore.pointer(session.base))
+            XCTAssertEqual(prepared.state,.pending)
+            throw SaveProtectionError.busy
+        }))
+        XCTAssertEqual(prepared.state,.pending)
+        XCTAssertNotNil(prepared.container)
+        XCTAssertTrue(FileManager.default.fileExists(atPath:prepared.url.path))
+        XCTAssertTrue(session.container === original)
+        XCTAssertEqual(session.generation,generation)
+        XCTAssertEqual(try qaRestoreDigests([session.base]),before)
+        try session.restore(prepared,commit:{url,data in
+            XCTAssertEqual(prepared.state,.pending,"Only a successful pointer commit may mark the candidate committed")
+            try data.write(to:url,options:.atomic)
+        })
+        XCTAssertEqual(prepared.state,.committed)
+        let committedGeneration=session.generation,after=try qaRestoreDigests([session.base,prepared.url])
+        try session.restore(prepared,commit:{_,_ in XCTFail("Repeated restore wrote the pointer again")})
+        try session.discard(prepared)
+        XCTAssertEqual(prepared.state,.committed)
+        XCTAssertEqual(session.generation,committedGeneration)
+        XCTAssertTrue(session.container === prepared.container)
+        XCTAssertEqual(try qaRestoreDigests([session.base,prepared.url]),after)
+        let originalFiles=before.filter {!$0.key.hasSuffix(".active-generation")}
+        XCTAssertEqual(try qaRestoreDigests([session.base]).filter {!$0.key.hasSuffix(".active-generation")},originalFiles)
+        let reopened=try SaveProtection.open(base:session.base)
+        XCTAssertEqual(try reopened.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.name,"복원선수")
+    }
+
+    func testV156AllPreparePathsDiscardWithoutAccumulatingCopies() async throws {
+        let directory=try qaRestoreDirectory()
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let session=try qaRestoreSeed(directory.appendingPathComponent("session.store"),name:"원본선수")
+        let source=try qaRestoreSeed(directory.appendingPathComponent("source.store"),name:"복원자료",role:.pitcher)
+        let archive=try SaveArchiveStore.export(container:source.container)
+        let file=directory.appendingPathComponent("incoming.bmbackup")
+        try archive.write(to:file)
+        let preservedDirectory=directory.appendingPathComponent("restored-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:preservedDirectory,withIntermediateDirectories:true)
+        let preservedFile=preservedDirectory.appendingPathComponent("unowned-evidence")
+        let preservedBytes=Data("must-not-scan-or-delete-other-folders".utf8)
+        try preservedBytes.write(to:preservedFile)
+        let originalNames=try v156GenerationDirectoryNames(directory)
+        let protectedURLs=[session.base,source.base]
+        let before=try qaRestoreDigests(protectedURLs)
+        for cycle in 0..<3 {
+            let synchronous=try SaveArchiveStore.prepare(archive,base:session.base)
+            let asynchronous=try await SaveArchiveStore.prepareAsync(archive,base:session.base)
+            let fromFile=try await SaveArchiveStore.prepareFileAsync(file,base:session.base)
+            XCTAssertEqual(try v156GenerationDirectoryNames(directory).count,originalNames.count+3)
+            for prepared in [synchronous,asynchronous,fromFile] {
+                XCTAssertEqual(prepared.originBase,session.base)
+                XCTAssertEqual(prepared.state,.pending)
+                XCTAssertNotNil(prepared.container)
+                try session.discard(prepared)
+                XCTAssertEqual(prepared.state,.discarded)
+                XCTAssertNil(prepared.container)
+                XCTAssertFalse(FileManager.default.fileExists(atPath:prepared.url.deletingLastPathComponent().path))
+            }
+            XCTAssertEqual(try v156GenerationDirectoryNames(directory),originalNames,"Uncommitted copies accumulated in cycle \(cycle)")
+            XCTAssertEqual(try qaRestoreDigests(protectedURLs),before)
+            XCTAssertEqual(try Data(contentsOf:file),archive)
+            XCTAssertEqual(try Data(contentsOf:preservedFile),preservedBytes)
+        }
+        qaRestoreEvidence("V156 three prepare paths three cleanup cycles preserve original DBs",before:before,after:try qaRestoreDigests(protectedURLs))
+    }
+
+    private func v156GenerationDirectoryNames(_ directory:URL) throws -> Set<String> {
+        Set(try FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:nil)
+            .filter {$0.lastPathComponent.hasPrefix("restored-")}.map(\.lastPathComponent))
     }
 }
