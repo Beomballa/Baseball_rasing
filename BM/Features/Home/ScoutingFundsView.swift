@@ -72,6 +72,8 @@ struct ScoutingFundsPanel: View {
     @State private var snapshot: Snapshot?
     @State private var failure: String?
     @State private var saved = false
+    @State private var showBudget = false
+    @State private var showTransactions = false
 
     private struct Snapshot {
         let finances: CareerFinances
@@ -89,11 +91,9 @@ struct ScoutingFundsPanel: View {
             if let snapshot {
                 let finances = snapshot.finances
                 balance(finances.balanceWon)
-                payments("확정 입금 예정", entries: finances.pending, pending: true)
-                payments("거래 내역", entries: Array(finances.transactions.reversed()), pending: false)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("scoutingFundsLedger")
-                allocation(snapshot)
+                if showBudget && finances.balanceWon > 0 { allocation(snapshot) }
+                pendingPayments(finances.pending)
+                transactions(finances.transactions.reversed())
                 DisclosureGroup("예상액과 입금 기준") {
                     Text("관심 구단의 예상액은 관찰일 기준입니다. 수락한 신규 계약은 소속 발효일에 한 번 입금됩니다. 지난 계약은 발행 당시 조건을 따릅니다.")
                         .managementFont(.helper).padding(.top, 8)
@@ -118,31 +118,54 @@ struct ScoutingFundsPanel: View {
             Text(SigningBonusDisplay.won(amount))
                 .managementFont(.sectionTitle).bold().monospacedDigit()
                 .foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutingFundsBalance")
-            Text("발효를 마친 입금이 반영된 게임 내 자금입니다.").managementFont(.helper)
+            Button(showBudget && amount > 0 ? "예산 배정 접기" : "예산 배정") {
+                showBudget.toggle()
+            }.buttonStyle(ManagementButtonStyle())
+                .disabled(amount <= 0)
+                .accessibilityValue(showBudget && amount > 0 ? "펼침" : "접힘")
+                .accessibilityIdentifier("scoutingFundsBudgetToggle")
+            if amount <= 0 {
+                Text("입금 이후 예산을 배정할 수 있습니다.").managementFont(.helper)
+            }
         }
     }
 
-    private func payments(_ title: String, entries: [SigningBonusTransaction], pending: Bool) -> some View {
-        ManagementPanel(title, surface: .paper) {
+    private func pendingPayments(_ entries: [SigningBonusTransaction]) -> some View {
+        ManagementPanel("확정 입금 예정", surface: .paper) {
             if entries.isEmpty {
-                Text(pending ? "발효를 기다리는 계약금이 없습니다." : "입금된 계약금이 없습니다.")
-                    .managementFont(.body)
+                Text("발효를 기다리는 계약금이 없습니다.").managementFont(.body)
             } else {
-                ForEach(entries, id: \.id) { entry in
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(entry.name).managementFont(.body).bold()
-                        Text(ManagementDisplay.date(entry.date) + (pending ? " 발효 예정" : " 계약금 입금"))
-                            .managementFont(.helper)
-                        Text("+" + SigningBonusDisplay.won(entry.amountWon))
-                            .managementFont(.label).bold().monospacedDigit().foregroundStyle(ScoutDossierInk.green)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 6)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier((pending ? "scoutFundsPending-" : "scoutFundsTransaction-") + entry.id)
-                }
+                ForEach(entries, id: \.id) { payment($0, pending: true) }
             }
         }
+    }
+
+    private func transactions(_ entries: ReversedCollection<[SigningBonusTransaction]>) -> some View {
+        ManagementPanel("최근 거래", surface: .paper) {
+            if entries.isEmpty {
+                Text("입금된 계약금이 없습니다.").managementFont(.body)
+            } else {
+                ForEach(Array(entries.prefix(3)), id: \.id) { payment($0, pending: false) }
+                if entries.count > 3 {
+                    DisclosureGroup("이전 거래 \(entries.count - 3)건", isExpanded: $showTransactions) {
+                        ForEach(Array(entries.dropFirst(3)), id: \.id) { payment($0, pending: false) }
+                    }.tint(ScoutDossierInk.green).accessibilityIdentifier("scoutingFundsOlderTransactions")
+                }
+            }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("scoutingFundsLedger")
+    }
+
+    private func payment(_ entry: SigningBonusTransaction, pending: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(entry.name).managementFont(.body).bold()
+            Text(ManagementDisplay.date(entry.date) + (pending ? " 발효 예정" : " 계약금 입금"))
+                .managementFont(.helper)
+            Text("+" + SigningBonusDisplay.won(entry.amountWon))
+                .managementFont(.label).bold().monospacedDigit().foregroundStyle(ScoutDossierInk.green)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier((pending ? "scoutFundsPending-" : "scoutFundsTransaction-") + entry.id)
     }
 
     private func allocation(_ snapshot: Snapshot) -> some View {

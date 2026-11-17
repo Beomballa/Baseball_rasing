@@ -2479,7 +2479,7 @@ extension CareerFlowTests {
         v168ScoutTap("facility-contracts", app: app)
         v168ScoutTap("openDomesticOffers", app: app)
         v168ScoutTap("liveOfferDetail-rookie", app: app)
-        let term = app.descendants(matching: .any).matching(identifier: "signingBonusOfferAmount").firstMatch
+        let term = app.descendants(matching: .any).matching(identifier: "transferOfferMetric-bonus").firstMatch
         XCTAssertTrue(term.waitForExistence(timeout: 8))
         let amountRange = try XCTUnwrap(term.label.range(of: #"[0-9][0-9,]*\s*원"#, options: .regularExpression))
         let amount = term.label[amountRange].filter { !$0.isWhitespace }
@@ -2514,6 +2514,7 @@ extension CareerFlowTests {
         v168ScoutCapture("V168 국내 계약금 입금과 잔액", app: app)
         let credited = balance.label.filter { !$0.isWhitespace }
         XCTAssertTrue(credited.contains(amount), balance.label)
+        v168ScoutTap("scoutingFundsBudgetToggle", app: app)
         v168ScoutReveal(reserve, app: app)
         let before = reserve.label
         v168ScoutTap("scoutingFundsTrainingIncrease", app: app)
@@ -2531,6 +2532,7 @@ extension CareerFlowTests {
         openFunds()
         XCTAssertTrue(balance.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertEqual(balance.label.filter { !$0.isWhitespace }, credited)
+        v168ScoutTap("scoutingFundsBudgetToggle", app: app)
         v168ScoutReveal(reserve, app: app)
         XCTAssertEqual(reserve.label, allocated)
         let transactions = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "scoutFundsTransaction-"))
@@ -2586,7 +2588,9 @@ extension CareerFlowTests {
         XCTAssertTrue(pending.waitForExistence(timeout: 8))
         XCTAssertTrue(pending.label.filter { !$0.isWhitespace }.contains(amount), pending.label)
         v168ScoutCapture("V168 해외 계약금 발효 대기", app: app)
-        XCTAssertFalse(app.buttons["scoutingFundsTrainingIncrease"].isEnabled)
+        let budget = app.buttons["scoutingFundsBudgetToggle"]
+        XCTAssertTrue(budget.exists)
+        XCTAssertFalse(budget.isEnabled)
     }
 
     @MainActor func testClubInterestLargeTextAndEmptyFirstReportBothRoles() throws {
