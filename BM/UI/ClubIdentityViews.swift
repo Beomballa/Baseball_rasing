@@ -15,6 +15,34 @@ struct ClubBadge: View {
     }
 }
 
+struct ContractSalaryRankSummary: View {
+    let standing: LeagueSalaryStanding
+    let identifier: String
+    let offerID: String
+
+    var body: some View {
+        let rank = TransferContractDocument.SalaryRank(standing)
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+            HStack(spacing: ManagementTheme.Space.micro) {
+                if rank.isPremium {
+                    Image(systemName: "medal.fill").accessibilityHidden(true)
+                }
+                Text(rank.title)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(identifier + "Salary-" + offerID)
+            }
+            .font(rank.isPremium ? .footnote.bold() : .footnote.weight(.medium))
+            .foregroundStyle(rank.isPremium ? GameTheme.growth : GameTheme.boardInk)
+            Text(rank.comparison)
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier + "SalaryComparison-" + offerID)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier + rank.presentationIdentifier + "-" + offerID)
+    }
+}
+
 struct TransferContractDocument: View {
     struct TermDate: Hashable {
         let label: String

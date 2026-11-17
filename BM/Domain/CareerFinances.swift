@@ -14,6 +14,7 @@ struct SigningBonusTerms: Codable, Equatable {
 }
 
 struct LeagueSalaryStanding: Codable, Equatable {
+    static let policyVersion = 1
     let version: Int
     let competition: String
     let year: Int
@@ -22,7 +23,19 @@ struct LeagueSalaryStanding: Codable, Equatable {
     let rank: Int
 
     var topPercent: Int { (100 * rank + sampleCount - 1) / sampleCount }
-    var comparison: String { "\(year)년 BM 가상 KBO 1군 선수 \(sampleCount - 1)명과 비교 · 동률 공동 순위" }
+    var comparison: String {
+        let league = Self.leagueName(competition) ?? "리그"
+        return "\(year)년 BM 가상 \(league) 선수 \(sampleCount - 1)명과 비교 · 동률 공동 순위"
+    }
+
+    private static func leagueName(_ competition: String) -> String? {
+        switch competition {
+        case "domestic-first-team": "KBO 1군"
+        case "npb-first-team": "NPB 1군"
+        case "mlb-first-team": "MLB 메이저"
+        default: nil
+        }
+    }
 
     struct Benchmark {
         let competition: String
@@ -32,13 +45,13 @@ struct LeagueSalaryStanding: Codable, Equatable {
 
         func standing(economicIndex: Int) -> LeagueSalaryStanding? {
             guard economicIndex > 0 else { return nil }
-            return LeagueSalaryStanding(version: 1, competition: competition, year: year, teamCount: teamCount,
+            return LeagueSalaryStanding(version: LeagueSalaryStanding.policyVersion, competition: competition, year: year, teamCount: teamCount,
                 sampleCount: indices.count + 1, rank: indices.count { $0 > economicIndex } + 1)
         }
     }
 
     static func benchmark(competition: String, year: Int, expanded: Bool) -> Benchmark? {
-        guard competition == "domestic-first-team", (1...9999).contains(year) else { return nil }
+        guard leagueName(competition) != nil, (1...9999).contains(year) else { return nil }
         let clubs = CareerTeamDirectory.teams(level: competition, expanded: expanded)
         guard clubs.count >= 2 else { return nil }
         let indices = clubs.enumerated().flatMap { index, club -> [Int] in
@@ -59,9 +72,30 @@ struct LeagueSalaryStanding: Codable, Equatable {
         return Benchmark(competition: competition, year: year, teamCount: clubs.count, indices: indices)
     }
 
+    // Keep this V1 model stable when reconstructing previously issued comparisons.
     private static func referenceIndex(rating: Double, id: String) -> Int {
         let adjustment = Int(MatchNPCFielders.hash(id + "/salary-v1") % 25) - 12
         return max(50, 110 + Int((7 * (rating - 63)).rounded()) + adjustment)
+    }
+}
+
+extension OverseasOffer {
+    func displayedSalaryStanding(archivedMarketVersion: Int?) -> LeagueSalaryStanding? {
+        if let salaryStanding { return salaryStanding }
+        guard route != .mlbDevelopment, let archivedMarketVersion,
+              let year = (try? GameDate(effective))?.year else { return nil }
+        return LeagueSalaryStanding.benchmark(competition: membership().level, year: year,
+            expanded: archivedMarketVersion == 3)?.standing(economicIndex: economicIndex)
+    }
+}
+
+extension OverseasCareerJournal {
+    func displayedSalaryStanding(for offer: OverseasOffer, reports: [OverseasScoutingReport]) -> LeagueSalaryStanding? {
+        if let standing = offer.salaryStanding { return standing }
+        let reportID = evaluations.first { evaluation in evaluation.offers.contains { $0.id == offer.id } }?.reportID
+            ?? renewalReviews?.first { $0.offer?.id == offer.id }?.reportID
+        let marketVersion = reports.first { $0.id == reportID }?.market?.version
+        return offer.displayedSalaryStanding(archivedMarketVersion: marketVersion)
     }
 }
 

@@ -3,6 +3,40 @@ import UIKit
 @testable import BM
 
 final class ClubIdentityTests: XCTestCase {
+    func testV198OverseasSalaryRanksUseTheirOwnArchivedLeagueCohort() throws {
+        for (route, competition, name, teamID): (OverseasRoute, String, String, String) in [
+            (.npbFirstTeam, "npb-first-team", "NPB 1군", "jp-pro-0"),
+            (.mlbFirstTeam, "mlb-first-team", "MLB 메이저", "us-pro-0"),
+        ] {
+            let archived = OverseasOffer(id: "historical/" + route.id, clubID: route.id + "/0/starter",
+                teamID: teamID, name: "QA 구단", route: route, roleID: "starter", issued: "2038-11-01",
+                expires: "2038-11-07", effective: "2039-04-01", economicEnd: "2040-03-31",
+                economicIndex: 155, years: 1, h: 92, c: 80, p: 0, margin: 12)
+            let original = try JSONEncoder().encode(archived)
+            let decoded = try JSONDecoder().decode(OverseasOffer.self, from: original)
+            XCTAssertNil(decoded.salaryStanding)
+            XCTAssertNil(decoded.displayedSalaryStanding(archivedMarketVersion: nil))
+            let legacy = try XCTUnwrap(decoded.displayedSalaryStanding(archivedMarketVersion: 2))
+            let expanded = try XCTUnwrap(decoded.displayedSalaryStanding(archivedMarketVersion: 3))
+            XCTAssertEqual(legacy.competition, competition)
+            XCTAssertEqual(expanded.competition, competition)
+            XCTAssertEqual(expanded.year, 2039)
+            XCTAssertEqual(legacy.sampleCount, 61)
+            XCTAssertEqual(expanded.sampleCount, 151)
+            XCTAssertEqual(legacy.comparison, "2039년 BM 가상 \(name) 선수 60명과 비교 · 동률 공동 순위")
+            XCTAssertEqual(expanded.comparison, "2039년 BM 가상 \(name) 선수 150명과 비교 · 동률 공동 순위")
+            XCTAssertEqual(decoded, archived)
+
+            var issued = decoded
+            issued.salaryStanding = expanded
+            let reopened = try JSONDecoder().decode(OverseasOffer.self, from: JSONEncoder().encode(issued))
+            XCTAssertEqual(reopened.displayedSalaryStanding(archivedMarketVersion: 2), expanded)
+        }
+        let japanese = LeagueSalaryStanding.benchmark(competition: "npb-first-team", year: 2039, expanded: true)
+        let american = LeagueSalaryStanding.benchmark(competition: "mlb-first-team", year: 2039, expanded: true)
+        XCTAssertNotEqual(japanese?.indices, american?.indices)
+    }
+
     @MainActor func testV197OnlyTopTenPercentReceivesPremiumSalaryPresentation() {
         for (position, isPremium) in [(1, true), (10, true), (11, false), (70, false), (100, false)] {
             let standing = LeagueSalaryStanding(version: 1, competition: "domestic-first-team",
@@ -22,7 +56,7 @@ final class ClubIdentityTests: XCTestCase {
         XCTAssertEqual(expanded.teamCount, 10)
         XCTAssertEqual(expanded.indices.count, 100)
         XCTAssertEqual(legacy.indices.count, 60)
-        XCTAssertNil(LeagueSalaryStanding.benchmark(competition: "npb-first-team", year: 2039, expanded: true))
+        XCTAssertNil(LeagueSalaryStanding.benchmark(competition: "mlb-development", year: 2039, expanded: true))
         XCTAssertEqual(expanded.indices, LeagueSalaryStanding.benchmark(competition: league, year: 2039, expanded: true)?.indices)
         XCTAssertNotEqual(expanded.indices, LeagueSalaryStanding.benchmark(competition: league, year: 2040, expanded: true)?.indices)
 

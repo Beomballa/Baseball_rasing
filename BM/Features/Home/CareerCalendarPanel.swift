@@ -254,11 +254,11 @@ struct CareerCalendarPanel: View {
                     .buttonStyle(MatchPixelButtonStyle(primary: true))
                     .accessibilityIdentifier("calendarProgressOpenRecords")
             }
-        case .kboFA:
+        case .kboFA, .overseasFA:
             let targetPending = receipt.goal.observationDate
                 .map { $0.description > player.gameDate } ?? true
-            CalendarKBOFANotice(player: player, calendar: state, date: receipt.lastSavedDate,
-                                canContinue: canRetry && targetPending) {
+            CalendarFANotice(player: player, calendar: state, date: receipt.lastSavedDate,
+                             overseas: receipt.stop == .overseasFA, canContinue: canRetry && targetPending) {
                 advanceBatch(goal: receipt.goal)
             }
         case .anniversary:
@@ -569,14 +569,70 @@ struct CalendarProgressReceipt:View {
     }
 }
 
-struct CalendarKBOFANotice: View {
+struct CalendarFANotice: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
     let date: String
+    var overseas = false
     let canContinue: Bool
     let proceed: () -> Void
+    @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        if overseas {
+            overseasNotice
+        } else {
+            kboNotice
+        }
+    }
+
+    private var overseasNotice: some View {
+        let route = try? OverseasContractStore.deliveredFANotice(player: player, calendar: calendar, in: context)
+        let league = route?.leagueName ?? "해외"
+        let deadline = route.map { ManagementDisplay.date($0.deadline.description) } ?? "11월 14일"
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.micro))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: ManagementTheme.Space.compact))
+        return layout {
+            NavigationLink {
+                ContractMarketView(player: player, calendar: calendar, focusOverseasFA: true)
+            } label: {
+                HStack(spacing: ManagementTheme.Space.inline) {
+                    VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                        Text("내 \(league) FA 확인").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
+                        Text("마감 " + deadline).font(.caption.monospacedDigit()).foregroundStyle(GameTheme.boardMuted)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                        .foregroundStyle(GameTheme.gold).accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: ManagementTheme.Control.hit, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("calendarOpenOverseasFANotice")
+            if canContinue {
+                Button(action: proceed) {
+                    Text("이어서 진행").font(.footnote.weight(.semibold)).foregroundStyle(GameTheme.boardInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minHeight: ManagementTheme.Control.hit)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("calendarProgressContinueOverseasFA")
+            }
+        }
+        .padding(.horizontal, ManagementTheme.Space.compact)
+        .padding(.vertical, ManagementTheme.Space.micro)
+        .background(GameTheme.navy, in: ManagementStepFrame())
+        .overlay {
+            ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: ManagementTheme.Control.border)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var kboNotice: some View {
         VStack(alignment: .leading, spacing: 10) {
             NavigationLink {
                 ContractMarketView(player: player, calendar: calendar, focusKBOFA: true)

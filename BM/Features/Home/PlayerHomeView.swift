@@ -1598,9 +1598,9 @@ struct SeasonOffseasonPanel: View {
                 CalendarProgressReceipt(summary:receipt,failure:receiptFailure,
                     retryEnabled:plan != nil && transition.display == nil && receipt.lastSavedDate == player.gameDate,retry:{proceed()})
                     .accessibilityIdentifier("offseasonSummary")
-                if receipt.stop == .kboFA, receipt.lastSavedDate == player.gameDate, transition.display == nil {
-                    CalendarKBOFANotice(player: player, calendar: state, date: receipt.lastSavedDate,
-                                        canContinue: plan != nil) { proceed() }
+                if [.kboFA, .overseasFA].contains(receipt.stop), receipt.lastSavedDate == player.gameDate, transition.display == nil {
+                    CalendarFANotice(player: player, calendar: state, date: receipt.lastSavedDate,
+                                     overseas: receipt.stop == .overseasFA, canContinue: plan != nil) { proceed() }
                 }
             }
         }
@@ -1656,7 +1656,7 @@ struct CareerPathHomePanel: View {
                             .font(.caption.monospaced()).accessibilityIdentifier("careerAffiliationHistory")
                     }
                     if let journal=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context) {
-                        ForEach(journal.retryReleases,id:\.membershipOfferID) {release in
+                        ForEach(journal.retryReleases.filter { $0.date <= player.gameDate },id:\.membershipOfferID) {release in
                             Text(release.date+" · 방출 확정 / 보유권리 해제 · 무소속").font(.caption).accessibilityIdentifier("careerReleaseHistory")
                         }
                         ForEach(journal.collegeTransitions ?? [],id:\.offerID) {item in
@@ -2064,7 +2064,7 @@ struct DomesticReleasePanel:View {
                                 .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("confirmClubRelease")
                         } else {Text("아직 방출 확정 조건을 충족하지 않았습니다.").font(.caption).accessibilityIdentifier("releaseNotEligible")}
                     }
-                } else if state.2,let released=state.0.activeRetryRelease {
+                } else if state.2,let released=state.0.activeRetryRelease(on: player.gameDate) {
                     GamePanel(title:"무소속 · 국내 육성팀 재도전",onBoard:true) {
                         Text("방출 확정 · "+released.date+" / 보유권리 해제").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("releasedUnsignedStatus")
                         ContractNextStep(title:"무소속 재입단 준비 · 신인 지명과 별도",
@@ -2503,16 +2503,19 @@ struct OverseasContractsView:View {
             Text(error.localizedDescription).font(.caption)
         case .success(let owner):
             let value=owner.overseasCareer ?? OverseasCareerJournal()
+            let reports = owner.overseasReports ?? []
             if let selectedOfferID {
                 if let evaluation=value.evaluations.first(where:{$0.offers.contains(where:{$0.id == selectedOfferID})}),
                    let offer=evaluation.offers.first(where:{$0.id == selectedOfferID}) {
-                    selectedContract(offer, evaluation: evaluation, value: value)
+                    let marketVersion = reports.first { $0.id == evaluation.reportID }?.market?.version
+                    selectedContract(offer, evaluation: evaluation, value: value,
+                                     salaryStanding: offer.displayedSalaryStanding(archivedMarketVersion: marketVersion))
                 } else {
                     Text("선택한 제의를 찾을 수 없습니다. 계약 시장으로 돌아가 현재 제의를 다시 확인하세요.")
                         .font(.subheadline).accessibilityIdentifier("overseasOfferMissing")
                 }
             } else {
-                offerList(value)
+                offerList(value, reports: reports)
             }
             if let transition=value.transitions.last(where:{selectedOfferID == nil || $0.offerID == selectedOfferID}) {
                 let destination=transition.destination
@@ -2523,7 +2526,7 @@ struct OverseasContractsView:View {
         }
     }
 
-    @ViewBuilder private func offerList(_ value: OverseasCareerJournal) -> some View {
+    @ViewBuilder private func offerList(_ value: OverseasCareerJournal, reports: [OverseasScoutingReport]) -> some View {
         if let registration=value.registrationDate {
             Text("지원자 등록 · "+registration).font(.caption).accessibilityIdentifier("overseasRegistered")
         } else {
@@ -2542,6 +2545,7 @@ struct OverseasContractsView:View {
             Text("다음4·7·11월1~14일에 실제 심사를 신청할 수 있습니다.").font(.caption)
         }
         ForEach(value.evaluations.reversed()) {evaluation in
+            let marketVersion = reports.first { $0.id == evaluation.reportID }?.market?.version
             evaluationHeader(evaluation)
             if evaluation.offers.isEmpty {
                 Text("제의 없음 · "+evaluation.reasons.joined(separator:" / ")).font(.caption).accessibilityIdentifier("overseasOffersEmpty")
@@ -2553,6 +2557,9 @@ struct OverseasContractsView:View {
                 GamePanel(title:offer.name,onBoard:true,contentSpacing:12) {
                     Text(offer.route.label+" · "+DomesticContractOffer.roleName(offer.roleID)).font(.headline).foregroundStyle(GameTheme.gold)
                     ContractTermsMetric(title:"연봉지수",value:String(offer.economicIndex),note:"\(offer.years)년 · 출전·승격 보장 없음")
+                    if let rank = offer.displayedSalaryStanding(archivedMarketVersion: marketVersion) {
+                        ContractSalaryRankSummary(standing: rank, identifier: "overseasOffer", offerID: offer.id)
+                    }
                     SigningBonusOfferAmount(amount: offer.signingBonusWon)
                     ContractTermsTimeline(issued:offer.issued,expires:offer.expires,effective:offer.effective)
                     Text("경제 기간 종료 · "+ManagementDisplay.date(offer.economicEnd)).font(.footnote.monospacedDigit())
@@ -2563,7 +2570,8 @@ struct OverseasContractsView:View {
         }
     }
 
-    private func selectedContract(_ offer: OverseasOffer, evaluation: OverseasOfferEvaluation, value: OverseasCareerJournal) -> some View {
+    private func selectedContract(_ offer: OverseasOffer, evaluation: OverseasOfferEvaluation, value: OverseasCareerJournal,
+                                  salaryStanding: LeagueSalaryStanding?) -> some View {
         let status=value.marketEntries(on:player.gameDate).first(where:{$0.id == offer.id})?.status ?? "상태 확인 필요"
         return VStack(alignment:.leading,spacing:16) {
             TransferContractDocument(terms:.init(clubID:offer.teamID,clubName:offer.name,league:offer.route.label,
@@ -2571,7 +2579,7 @@ struct OverseasContractsView:View {
                 economicLabel:"연봉지수",economicIndex:offer.economicIndex,signingBonusWon:offer.signingBonusWon,
                 origin:(evaluation.source ?? evaluation.mobility?.source)?.name,
                 dates:[.init(label:"발행",date:offer.issued),.init(label:"마감",date:offer.expires),.init(label:"소속 발효",date:offer.effective)],
-                status:status),identifier:"transferOffer")
+                status:status,salaryRank:salaryStanding.map(TransferContractDocument.SalaryRank.init)),identifier:"transferOffer")
             decisionControls(offer, value: value)
             DisclosureGroup("고정 심사 수치 · 기량과 구단 기준") {
                 VStack(alignment:.leading,spacing:8) {
@@ -2764,6 +2772,10 @@ struct OverseasRenewalView:View {
                                     }
                                 }
                                 ContractTermsMetric(title:"잔류 제의 · 연봉지수",value:String(offer.economicIndex),note:"계약 기간 \(offer.years)년")
+                                let marketVersion = owner.overseasReports?.first { $0.id == review.reportID }?.market?.version
+                                if let rank = offer.displayedSalaryStanding(archivedMarketVersion: marketVersion) {
+                                    ContractSalaryRankSummary(standing: rank, identifier: "overseasRenewal", offerID: offer.id)
+                                }
                                 ContractTermsTimeline(issued:offer.issued,expires:offer.expires,effective:offer.effective)
                                 Text("경제 기간 종료 · "+ManagementDisplay.date(offer.economicEnd)).font(.footnote.monospacedDigit())
                                 if selectedOfferID != nil {
@@ -2831,7 +2843,7 @@ struct OverseasReleasePanel:View {
                             Button("구단 방출 통지 확인 · 권리 해제") {command=(member.offerID,player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("confirmOverseasRelease")
                         } else {ContractNextStep(title:"보유권리 유지 · 방출 확정 대기",timing:"경제 종료 · "+member.economicEnd+" / 통지 기간 11월15일~다음4월1일",action:"11월 재계약 결과와 수락된 갱신/이적/승격 예약을 확인하세요. 만료·거절은 권리 해제가 아닙니다.",identifier:"overseasReleasePending")}
                     }
-                } else if state.1 == nil,let released=state.0.overseasCareer?.releases?.last,state.0.activeRetryRelease?.membershipOfferID == released.source.offerID {
+                } else if state.1 == nil,let released=state.0.overseasCareer?.releases?.last,state.0.activeRetryRelease(on: player.gameDate)?.membershipOfferID == released.source.offerID {
                     GamePanel(title:"해외 방출 · 무소속 재도전",onBoard:true,contentSpacing:12) {
                         Text(released.source.name+" · "+released.date+" 권리 해제").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasReleasedUnsigned")
                         Text("원 입단·경제 계약·경기 이력 보존 / 정식 FA 자격 취득과 구분").font(.caption)
@@ -2855,7 +2867,9 @@ struct OverseasReleasePanel:View {
 struct FAManagementPanel:View {
     let player:CareerPlayer
     let calendar:CareerCalendarState
+    var focused = false
     @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var failure:String?
     @State private var command:(date:String,revision:Int)?
     var body:some View {
@@ -2863,24 +2877,53 @@ struct FAManagementPanel:View {
         if let owner=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context),
            owner.membershipHistory().contains(where:{OverseasRenewalReview.route($0) != nil}) {
             let state=owner.overseasCareer ?? OverseasCareerJournal()
-            GamePanel(title:"FA 사무국 · 해외1군 경력",onBoard:true,contentSpacing:12) {
+            let date = try? GameDate(player.gameDate)
+            let member = date.flatMap { try? owner.current(on: $0) }
+            VStack(alignment: .leading, spacing: ManagementTheme.Space.inline) {
+                if focused, let member, let date, FADeclaration.eligibleLevels.contains(member.level) {
+                    declarationPaper(member: member, state: state, date: date)
+                } else {
+                    officePanel(owner: owner, state: state, date: date, member: member)
+                }
+            }
+            .managementConfirmationDialog(focused ? "내 FA 선언을 확정할까요?" : "정식 FA를 선언할까요?",
+                isPresented: Binding(get: { command != nil }, set: { if !$0 { command = nil } }),
+                titleVisibility: .visible, showsCancel: false,
+                identifier: focused ? "overseasFADecisionDialog" : "managementDialog") {
+                    Button("FA 선언 확정") {
+                        guard let item = command else { return }
+                        command = nil
+                        run { try OverseasContractStore.declareFA(player: player, calendar: calendar,
+                            date: item.date, revision: item.revision, in: context) }
+                    }
+                    .accessibilityIdentifier("confirmFADeclaration")
+                    Button("취소", role: .cancel) { command = nil }
+                } message: {
+                    if focused, let member, let date, let effective = try? CollegeProReview.effective(after: date) {
+                        Text("권리 해제일은 \(calendarDate(effective))이에요. 그 전까지 \(member.name) 소속을 유지해요.")
+                    } else {
+                        Text("자격과 계약 종료를 확인해 다음4월1일 권리 해제를 예약합니다. 방출 원장과 구분하며 원 계약·기록을 보존합니다.")
+                    }
+                }
+        }
+    }
+
+    private func officePanel(owner: CareerContractJournal, state: OverseasCareerJournal,
+                             date: GameDate?, member: CareerMembership?) -> some View {
+        GamePanel(title:"FA 사무국 · 해외1군 경력",onBoard:true,contentSpacing:12) {
                 Text("게임 FA · 단축 시즌 보정 MLB6 / NPB 해외9").font(.headline).foregroundStyle(GameTheme.gold)
-                Text("실제 리그의 등록일수·NPB 국내 FA·보상 규정과 다릅니다.").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-                Text("1군 개막~마지막 경기 등록 + 공식 개인100타석/25이닝. 리그별로 따로 누적하며 대학·육성·국내 경력은 제외합니다.").font(.caption).lineSpacing(5)
                 if let service=state.faService {
                     Text("MLB \(Set(service.filter {$0.level == "mlb-first-team"}.map(\.year)).count) / 6시즌 · NPB \(Set(service.filter {$0.level == "npb-first-team"}.map(\.year)).count) / 9시즌").font(.subheadline.monospaced()).accessibilityIdentifier("faServiceProgress")
                     ManagementProgress(title:"MLB 인정 시즌",value:ManagementProgressValue(current:Double(Set(service.filter {$0.level == "mlb-first-team"}.map(\.year)).count),target:6))
                     ManagementProgress(title:"NPB 해외 FA 인정 시즌",value:ManagementProgressValue(current:Double(Set(service.filter {$0.level == "npb-first-team"}.map(\.year)).count),target:9))
-                    ForEach(Array(service.enumerated()),id:\.offset) {_,row in
-                        Text("\(row.year) · "+(row.level == "mlb-first-team" ? "MLB":"NPB")+" · 근거 \(row.matchKeys.count)경기").font(.caption)
-                    }
+                    seasonEvidence(service)
                 } else {Text("FA 경력 미확인 · 실제 저장 경기로 확인하세요.").font(.caption)}
-                Button("FA 경력 근거 확인") {run {try OverseasContractStore.collectFAService(player:player,calendar:calendar,date:player.gameDate,revision:calendar.revision,in:context)}}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("collectFAService")
-                if let date=try? GameDate(player.gameDate),let member=try? owner.current(on:date),["npb-first-team","mlb-first-team"].contains(member.level),!(state.faDeclarations ?? []).contains(where:{$0.source.offerID == member.offerID}) {
+                if let date, let member, FADeclaration.eligibleLevels.contains(member.level),!(state.faDeclarations ?? []).contains(where:{$0.source.offerID == member.offerID}) {
                     let guide=FAQualificationPresentation(member:member,service:state.faService,on:date)
                     ContractNextStep(title:guide.title,timing:guide.timing,action:guide.action,identifier:"faQualificationGuide")
                     Button("정식 FA 선언 · 조건 확인") {command=(player.gameDate,calendar.revision)}.buttonStyle(MatchPixelButtonStyle(primary:true)).disabled(!guide.canDeclare).accessibilityIdentifier("declareFA")
                 }
+                collectServiceButton
                 ForEach(state.faDeclarations ?? []) {fa in
                     Text(fa.source.name+" · FA 선언 "+fa.date+" / "+fa.effective+(fa.effective > player.gameDate ? " 권리 해제 예정":" 권리 해제 발효")).font(.subheadline).foregroundStyle(GameTheme.growth).accessibilityIdentifier("faDeclarationStatus")
                 }
@@ -2889,12 +2932,161 @@ struct FAManagementPanel:View {
                 }
                 Text("방출은 별도 권리 해제 사유이며 FA 경력을 채우지 않습니다. 전력 제의는 최근 동일 환경 표본·기량/역할·자리·예산 심사를 통과해야 합니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold).accessibilityIdentifier("faManagementError")}
-            }.managementConfirmationDialog("정식 FA를 선언할까요?",isPresented:Binding(get:{command != nil},set:{if !$0 {command=nil}}),titleVisibility:.visible, showsCancel: false) {
-                Button("FA 선언 확정") {guard let item=command else {return};command=nil;run {try OverseasContractStore.declareFA(player:player,calendar:calendar,date:item.date,revision:item.revision,in:context)}}.accessibilityIdentifier("confirmFADeclaration")
-                Button("취소", role: .cancel) {command=nil}
-            } message: {Text("자격과 계약 종료를 확인해 다음4월1일 권리 해제를 예약합니다. 방출 원장과 구분하며 원 계약·기록을 보존합니다.")}
         }
     }
+    private func declarationPaper(member: CareerMembership, state: OverseasCareerJournal, date: GameDate) -> some View {
+        let league = member.level == "mlb-first-team" ? "MLB" : "NPB"
+        let declaration = state.faDeclarations?.first { $0.source.offerID == member.offerID }
+        let service = state.faService?.filter { $0.level == member.level && $0.year <= date.year }
+        let count = service.map { Set($0.map(\.year)).count }
+        let required = FADeclaration.minimum(member.level)
+        let progress = count.map { "\(league) \($0) / \(required)시즌" } ?? "경기 근거 확인 필요"
+        let guide = FAQualificationPresentation(member: member, service: service, on: date)
+        let deadline = ContractEvaluationWindow(year: date.year, month: 11).end
+        let effective = declaration.flatMap { try? GameDate($0.effective) } ?? (try? CollegeProReview.effective(after: date))
+        let promotionRole = state.promotions?.last { $0.sourceOfferID == member.offerID && $0.effective <= date.description }?.roleID
+        let offerRole = state.evaluations.lazy.flatMap(\.offers).first { $0.id == member.offerID }?.roleID
+        let role = (promotionRole ?? offerRole).map(DomesticContractOffer.roleName)
+            ?? (player.role == .pitcher ? player.role.label : player.roleDetail)
+        let header = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.inline))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: ManagementTheme.Space.compact))
+        let facts = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.inline))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: ManagementTheme.Space.compact))
+
+        return VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
+            header {
+                ClubBadge(name: member.name, size: 52).background(GameTheme.navy, in: ManagementStepFrame())
+                VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                    Text("내 \(league) FA 선언서").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                    Text("\(player.name) · \(role)").font(.subheadline.weight(.semibold))
+                        .accessibilityIdentifier("overseasFAPlayerIdentity")
+                    Text(member.name).font(.footnote).foregroundStyle(ScoutDossierInk.muted)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Rectangle().fill(ScoutDossierInk.rule).frame(height: 1).accessibilityHidden(true)
+            facts {
+                declarationFact("인정 시즌", value: progress, identifier: "faServiceProgress")
+                declarationFact(declaration == nil ? "선언 시 권리 해제" : "권리 해제일",
+                                value: effective.map(calendarDate) ?? "확인 필요", identifier: "overseasFAReleaseDate")
+            }
+            if let declaration {
+                VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                    Text(declaration.effective > date.description ? "FA 선언 완료 · 권리 해제 예정" : "FA 권리 해제 완료")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(ScoutDossierInk.green)
+                        .accessibilityIdentifier("faDeclarationStatus")
+                    Text("선언일 " + ManagementDisplay.date(declaration.date, includeYear: true))
+                        .font(.footnote.monospacedDigit()).foregroundStyle(ScoutDossierInk.muted)
+                        .accessibilityValue(declaration.date)
+                        .accessibilityIdentifier("overseasFASignedDate")
+                }
+            } else {
+                VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                    Text("선언 마감 " + ManagementDisplay.date(deadline.description))
+                        .font(.caption.monospacedDigit()).foregroundStyle(ScoutDossierInk.muted)
+                    Text(guide.canDeclare ? "권리 해제일까지 현재 구단 소속을 유지해요." : "인정 시즌과 계약 종료일을 확인해 주세요.")
+                        .font(.footnote)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("faQualificationGuide")
+                Button("내 FA 선언하기") { command = (player.gameDate, calendar.revision) }
+                    .buttonStyle(ManagementButtonStyle(compact: true))
+                    .disabled(!guide.canDeclare)
+                    .accessibilityIdentifier("declareFA")
+            }
+            if let service {
+                seasonEvidence(service)
+                    .disclosureGroupStyle(DeclarationEvidenceDisclosureStyle())
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("overseasFASeasonEvidence")
+            } else {
+                collectServiceButton
+            }
+            if let failure {
+                Text(failure).font(.caption).accessibilityIdentifier("faManagementError")
+            }
+        }
+        .padding(ManagementTheme.Space.screen)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(ScoutDossierInk.ink)
+        .background(ScoutDossierInk.paper, in: ManagementStepFrame())
+        .overlay {
+            ManagementStepFrame().strokeBorder(ScoutDossierInk.rule, lineWidth: ManagementTheme.Control.border)
+                .allowsHitTesting(false)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("overseasFADeclarationPaper")
+    }
+
+    private func declarationFact(_ label: String, value: String, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+            Text(label).font(.caption).foregroundStyle(ScoutDossierInk.muted)
+            Text(value).font(.subheadline.monospacedDigit().weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var collectServiceButton: some View {
+        Button("FA 경력 근거 확인") {
+            run { try OverseasContractStore.collectFAService(player: player, calendar: calendar,
+                date: player.gameDate, revision: calendar.revision, in: context) }
+        }
+        .buttonStyle(MatchPixelButtonStyle())
+        .accessibilityIdentifier("collectFAService")
+    }
+
+    private func seasonEvidence(_ service: [FASeasonEvidence]) -> some View {
+        DisclosureGroup("인정 시즌 근거") {
+            VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                Text("1군 개막부터 마지막 경기까지 등록하고 공식 경기에서 100타석 또는 25이닝을 채운 시즌을 인정합니다.")
+                ForEach(Array(service.enumerated()), id: \.offset) { _, row in
+                    Text("\(row.year)년 · \(row.level == "mlb-first-team" ? "MLB" : "NPB") · 근거 \(row.matchKeys.count)경기")
+                }
+            }
+            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, ManagementTheme.Space.micro)
+        }
+        .font(.footnote)
+    }
+
+    private struct DeclarationEvidenceDisclosureStyle: DisclosureGroupStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    configuration.isExpanded.toggle()
+                } label: {
+                    HStack(spacing: ManagementTheme.Space.inline) {
+                        configuration.label
+                        Spacer(minLength: 0)
+                        Image(systemName: configuration.isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.footnote.bold())
+                            .accessibilityHidden(true)
+                    }
+                    .foregroundStyle(ScoutDossierInk.ink)
+                    .frame(minHeight: ManagementTheme.Control.hit)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(configuration.isExpanded ? "펼침" : "접힘")
+                .accessibilityIdentifier("overseasFASeasonEvidenceToggle")
+
+                if configuration.isExpanded {
+                    configuration.content
+                }
+            }
+        }
+    }
+
+    private func calendarDate(_ date: GameDate) -> String {
+        ManagementDisplay.date(date.description, includeYear: true)
+    }
+
     private func run(_ action:() throws -> Void) {do {try action();failure=nil}catch{failure=error.localizedDescription}}
 }
 

@@ -3320,7 +3320,8 @@ extension CareerCalendarTests {
 
 extension CareerCalendarTests {
     private func proCareerFixture(_ role:PlayerRole,seasons:Int=1,rating:Double=80,legacyURL:URL?=nil,legacyVersion:Int=12,
-                                  captureFinalReport: Bool = true) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+                                  captureFinalReport: Bool = true,
+                                  batterSwingControl: ManualMatchInput? = nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
         let (store,p,s)=try renewalFixture(role,legacyURL:legacyURL,legacyVersion:legacyVersion),c=store.mainContext
         try OverseasReportStore.capture(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
         let promotionYear=try GameDate(p.gameDate).year
@@ -3333,7 +3334,12 @@ extension CareerCalendarTests {
                 var values=PlayerInitialValues(contact:88,power:88,discipline:88,speed:75,defense:80,arm:80)
                 values.velocity=88;values.control=88;values.stuff=88;values.stamina=88
                 var match=ScoutingReferenceSimulation.fixture(role:role,position:role == .batter ? p.positionRaw:"P",values:values,seed:UInt64(year*100+index),home:fixture.homeID == plan.teamID,tracked:true)
-                match.competition="domestic-first-team";try match.advance(.automatic)
+                match.competition = "domestic-first-team"
+                if role == .batter, let batterSwingControl {
+                    while !match.completed { try match.advance(.swing, control: batterSwingControl) }
+                } else {
+                    try match.advance(.automatic)
+                }
                 let row=try CareerMatchRecord(player:p,fixture:fixture,match:match);row.completed=true;row.rulesVersion="native-match-v2";c.insert(row)
             }
         }
@@ -3478,6 +3484,136 @@ extension CareerCalendarTests {
         XCTAssertEqual(owner.kboTransfers?.lastDeclarationNoticeDate, firstDay)
         XCTAssertEqual(owner.kboTransfers?.declarations.count, 0)
         XCTAssertEqual(owner.kboTransfers?.decisions.count, 0)
+    }
+
+    func testV198KBOClubReviewUsesShortSeasonPerformanceAndMinimumSamples() throws {
+        let date = try GameDate("2036-11-01")
+        var source = CareerMembership(offerID: "kbo-source", route: .rookie, teamID: "pro-stars", name: "서울 스타즈 1군",
+            since: "2036-04-01", economicEnd: "2037-03-31", enrollmentEnd: nil, economicIndex: 120)
+        source.competitionLevel = "domestic-first-team"
+        let pitches = try [(35, 0, KBOClubReview.Outcome.deferred), (36, 7, .renew), (36, 8, .release)].map { outs, runs, expected in
+            var sample = PersonalSeasonTotals()
+            try sample.add(MatchLine(pitchingOuts: outs, runsAllowed: runs))
+            let review = try KBOClubReview.make(source: source, role: .pitcher, sample: sample, on: date, horizon: nil)
+            XCTAssertEqual(review.outcome, expected)
+            return review
+        }
+        XCTAssertEqual(pitches[1].economicEnd, "2038-03-31")
+        XCTAssertEqual(pitches[1].economicIndex, 126)
+        XCTAssertNil(pitches[2].economicEnd)
+        var hitter = PersonalSeasonTotals()
+        try hitter.add(MatchLine(plateAppearances: 40, atBats: 36, hits: 12, walks: 4))
+        let review = try KBOClubReview.make(source: source, role: .batter, sample: hitter, on: date, horizon: nil)
+        XCTAssertEqual(review.outcome, .renew)
+        XCTAssertEqual(review.economicIndex, 138)
+        XCTAssertEqual(review.economicEnd, "2039-03-31")
+        XCTAssertEqual(try KBOClubReview.make(source: source, role: .batter, sample: hitter, on: date,
+                                             horizon: "2038-03-01").outcome, .deferred)
+    }
+
+    func testV198KBOClubDecisionIsAtomicAndKeepsItsEffectiveDateOnDisk() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("kbo-club-review.store")
+        let (store, player, calendar) = try proCareerFixture(.pitcher, seasons: 1, legacyURL: url, legacyVersion: 15)
+        let context = store.mainContext, date = player.gameDate
+        let source = try XCTUnwrap(calendar.registration(for: player))
+        let originalBalance = try ContractRegistrationStore.finances(player: player, calendar: calendar, in: context).balanceWon
+        try KBOTransferStore.reviewClub(player: player, calendar: calendar, date: date, revision: calendar.revision, in: context)
+        let saved = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        let review = try XCTUnwrap(saved.kboTransfers?.clubReviews?.first)
+        XCTAssertNotEqual(review.outcome, .deferred)
+        XCTAssertGreaterThanOrEqual(review.count, 36)
+        let revision = calendar.revision
+        XCTAssertThrowsError(try KBOTransferStore.decideClub(player: player, calendar: calendar, reviewID: review.id, date: date,
+            revision: revision, in: context, save: { _ in throw MatchError.invalidRecord }))
+        XCTAssertEqual(calendar.revision, revision)
+        XCTAssertNil(try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context).kboTransfers?.clubDecisions)
+        try KBOTransferStore.decideClub(player: player, calendar: calendar, reviewID: review.id, date: date,
+            revision: revision, in: context)
+        try KBOTransferStore.decideClub(player: player, calendar: calendar, reviewID: review.id, date: date,
+            revision: revision, in: context, save: { _ in XCTFail("Repeated decision wrote the store") })
+        player.gameDate = try GameDate(review.effective).adding(days: -1).description
+        try context.save()
+        XCTAssertEqual(try calendar.registration(for: player), source)
+        try CalendarProgression.advanceDay(player: player, state: calendar, revision: calendar.revision,
+            automaticRest: true, confirmAnniversary: true, in: context)
+        let reopened = try CareerStore.makeContainer(url: url), reopenedContext = reopened.mainContext
+        let restored = try XCTUnwrap(reopenedContext.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == player.id })
+        let state = try XCTUnwrap(reopenedContext.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+        let market = try ContractRegistrationStore.journal(player: restored, calendar: state, in: reopenedContext).kboTransfers
+        XCTAssertEqual(restored.gameDate, review.effective)
+        XCTAssertEqual(market?.confirmedClubReviews, [review])
+        let active = try state.registration(for: restored)
+        if review.outcome == .renew {
+            XCTAssertEqual(active?.offerID, source.offerID)
+            XCTAssertEqual(active?.economicEnd, review.economicEnd)
+            XCTAssertEqual(active?.economicIndex, review.economicIndex)
+        } else {
+            XCTAssertNil(active)
+        }
+        XCTAssertEqual(try ContractRegistrationStore.finances(player: restored, calendar: state, in: reopenedContext).balanceWon, originalBalance)
+        let entries = try CareerJournal.load(player: restored, calendar: state, schools: SchoolCatalog.load(), in: reopenedContext).flatMap(\.entries)
+        for prefix in ["contract/evaluation/", "contract/decision/", "contract/effective/"] {
+            XCTAssertEqual(entries.filter { $0.id == prefix + review.id }.count, 1)
+        }
+    }
+
+    func testV198KBOReleaseOpensReentryOnlyOnOpeningDayAndPersistsOnce() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("kbo-release.store")
+        let (store, player, calendar) = try proCareerFixture(.batter, seasons: 0, legacyURL: url,
+            legacyVersion: 15, captureFinalReport: false, batterSwingControl: ManualMatchInput(timing: 0))
+        let context = store.mainContext
+        let source = try XCTUnwrap(calendar.registration(for: player))
+        let originalGames = try context.fetch(FetchDescriptor<CareerMatchRecord>()).sorted { $0.key < $1.key }.map(\.payload)
+        let originalBalance = try ContractRegistrationStore.finances(player: player, calendar: calendar, in: context).balanceWon
+
+        try KBOTransferStore.reviewClub(player: player, calendar: calendar,
+            date: player.gameDate, revision: calendar.revision, in: context)
+        let owner = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        let review = try XCTUnwrap(owner.kboTransfers?.clubReviews?.first)
+        XCTAssertEqual(review.outcome, .release)
+        XCTAssertGreaterThanOrEqual(review.count, 40)
+        XCTAssertLessThan(review.performance, 0.300)
+        XCTAssertNil(owner.activeRetryRelease(on: player.gameDate))
+        try KBOTransferStore.decideClub(player: player, calendar: calendar, reviewID: review.id,
+            date: player.gameDate, revision: calendar.revision, in: context)
+        let decisionDate = player.gameDate
+        let effective = try GameDate(review.effective)
+        XCTAssertEqual(review.effective, "\(try GameDate(decisionDate).year + 1)-04-01")
+
+        player.gameDate = effective.adding(days: -1).description
+        try context.save()
+        XCTAssertEqual(try calendar.registration(for: player), source)
+        let pending = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        XCTAssertNil(pending.activeRetryRelease(on: player.gameDate))
+        XCTAssertTrue(pending.kboTransfers?.hasPendingClubDecision(on: player.gameDate) == true)
+        try CalendarProgression.advanceDay(player: player, state: calendar, revision: calendar.revision,
+            automaticRest: true, confirmAnniversary: true, in: context)
+
+        let reopened = try CareerStore.makeContainer(url: url), fresh = reopened.mainContext
+        let restored = try XCTUnwrap(fresh.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == player.id })
+        let state = try XCTUnwrap(fresh.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+        let history = try ContractRegistrationStore.journal(player: restored, calendar: state, in: fresh)
+        XCTAssertEqual(restored.gameDate, review.effective)
+        XCTAssertNil(try state.registration(for: restored))
+        XCTAssertEqual(history.activeRetryRelease(on: restored.gameDate), DomesticRelease(
+            membershipOfferID: source.offerID, date: review.effective, evaluationKey: review.id))
+        XCTAssertEqual(history.kboTransfers?.clubDecisions, [KBOClubDecision(reviewID: review.id, date: decisionDate)])
+        XCTAssertEqual(history.kboTransfers?.confirmedClubReviews, [review])
+        XCTAssertEqual(try fresh.fetch(FetchDescriptor<CareerMatchRecord>()).sorted { $0.key < $1.key }.map(\.payload), originalGames)
+        XCTAssertEqual(try ContractRegistrationStore.finances(player: restored, calendar: state, in: fresh).balanceWon, originalBalance)
+        let schools = try SchoolCatalog.load()
+        for _ in 0..<2 {
+            let entries = try CareerJournal.load(player: restored, calendar: state, schools: schools, in: fresh).flatMap(\.entries)
+            XCTAssertEqual(entries.filter { $0.id == "contract/decision/" + review.id }.map(\.date.description), [decisionDate])
+            XCTAssertEqual(entries.filter { $0.id == "contract/effective/" + review.id }.map(\.date.description), [review.effective])
+        }
+        XCTAssertFalse(fresh.hasChanges)
     }
 
     func testV196KBOSignedOfferAndSalaryStandingSurviveEffectiveDayAndDiskReopen() throws {
@@ -4027,7 +4163,8 @@ extension CareerCalendarTests {
 }
 
 extension CareerCalendarTests {
-    private func faFixture(_ role:PlayerRole,route:OverseasRoute = .npbFirstTeam,legacyURL:URL?=nil) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
+    private func faFixture(_ role:PlayerRole,route:OverseasRoute = .npbFirstTeam,legacyURL:URL?=nil,
+                           collectService: Bool = true) throws -> (ModelContainer,CareerPlayer,CareerCalendarState) {
         let (store,p,s,_)=try overseasRenewalFixture(role,route:route,legacyURL:legacyURL),c=store.mainContext
         let owner=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),member=try XCTUnwrap(s.registration(for:p)),start=try GameDate(p.gameDate).year+1
         let existing=try FASeasonEvidence.collect(owner:owner,role:role,on:GameDate(p.gameDate),rows:c.fetch(FetchDescriptor<CareerMatchRecord>())).filter {$0.level == member.level}.count
@@ -4046,9 +4183,83 @@ extension CareerCalendarTests {
             }
         }
         p.gameDate="\(start+missing-1)-11-01";try c.save()
-        try OverseasContractStore.collectFAService(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        if collectService {
+            try OverseasContractStore.collectFAService(player:p,calendar:s,date:p.gameDate,revision:s.revision,in:c)
+        }
         return (store,p,s)
     }
+
+    func testV198OverseasFANoticeReplacesTheWindowPauseAndResumesForBothLeagues() async throws {
+        for route in [OverseasRoute.npbFirstTeam, .mlbFirstTeam] {
+            let (store, player, calendar) = try faFixture(.pitcher, route: route, collectService: false)
+            let context = store.mainContext
+            let date = try GameDate(player.gameDate)
+            let initial = try XCTUnwrap(ContractRegistrationStore.journal(player: player, calendar: calendar, in: context).overseasCareer)
+            let member = try XCTUnwrap(calendar.registration(for: player))
+            let row = try XCTUnwrap(ContractRegistrationStore.row(player: player, in: context))
+            let original = row.payload
+            let revision = calendar.revision
+            let originalFatigue = player.fatigue
+            XCTAssertNil(initial.faService)
+            XCTAssertTrue(try OverseasContractStore.needsEvaluation(player: player, calendar: calendar, in: context))
+
+            do {
+                _ = try await CalendarProgression.advanceOffDays(player: player, state: calendar, in: context,
+                    save: { _ in throw MatchError.invalidRecord })
+                XCTFail("Failed notice save must not pause successfully")
+            } catch let failure as CalendarAdvanceFailure {
+                XCTAssertEqual(failure.summary.stop, .failed)
+                XCTAssertEqual(failure.summary.lastSavedDate, date.description)
+            }
+            XCTAssertEqual(row.payload, original)
+            XCTAssertEqual(calendar.revision, revision)
+
+            let paused = try await CalendarProgression.advanceOffDays(player: player, state: calendar, in: context)
+            XCTAssertEqual(paused.stop, .overseasFA)
+            XCTAssertEqual(paused.days, 0)
+            XCTAssertEqual(paused.lastSavedDate, date.description)
+            XCTAssertEqual(player.fatigue, originalFatigue)
+
+            let fresh = ModelContext(store)
+            let reopenedPlayer = try XCTUnwrap(fresh.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == player.id })
+            let reopenedCalendar = try XCTUnwrap(fresh.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+            let reopened = try XCTUnwrap(ContractRegistrationStore.journal(player: reopenedPlayer, calendar: reopenedCalendar,
+                                                                            in: fresh).overseasCareer)
+            let notice = try XCTUnwrap(OverseasContractStore.deliveredFANotice(player: reopenedPlayer, calendar: reopenedCalendar, in: fresh))
+            XCTAssertEqual(reopened.faNotices, [notice])
+            XCTAssertEqual(notice.level, member.level)
+            XCTAssertEqual(notice.sourceOfferID, member.offerID)
+            XCTAssertEqual(notice.deadline, date.adding(days: 13))
+            XCTAssertEqual(reopened.faService?.filter { $0.level == member.level }.count, FADeclaration.minimum(member.level))
+            XCTAssertEqual(reopened.service, initial.service)
+            XCTAssertEqual(reopened.renewalReviews, initial.renewalReviews)
+            XCTAssertNil(reopened.faDeclarations)
+            XCTAssertFalse(try OverseasContractStore.needsEvaluation(player: reopenedPlayer, calendar: reopenedCalendar, in: fresh))
+            XCTAssertFalse(try OverseasContractStore.recordFANoticeIfDue(player: reopenedPlayer, calendar: reopenedCalendar,
+                in: fresh, save: { _ in XCTFail("A repeated pause must not write") }))
+
+            let resumed = try await Task { @MainActor in
+                try await CalendarProgression.advanceOffDays(player: reopenedPlayer, state: reopenedCalendar,
+                    in: fresh, onDaySaved: { _ in withUnsafeCurrentTask { $0?.cancel() } })
+            }.value
+            XCTAssertEqual(resumed.stop, .cancelled)
+            XCTAssertEqual(resumed.lastSavedDate, date.adding(days: 1).description)
+            XCTAssertEqual(resumed.days, 1)
+            XCTAssertFalse(try OverseasContractStore.needsEvaluation(player: reopenedPlayer, calendar: reopenedCalendar, in: fresh))
+
+            try OverseasContractStore.declareFA(player: reopenedPlayer, calendar: reopenedCalendar,
+                date: reopenedPlayer.gameDate, revision: reopenedCalendar.revision, in: fresh)
+            XCTAssertTrue(try OverseasContractStore.needsEvaluation(player: reopenedPlayer, calendar: reopenedCalendar, in: fresh))
+            let declared = try XCTUnwrap(ContractRegistrationStore.journal(player: reopenedPlayer,
+                calendar: reopenedCalendar, in: fresh).overseasCareer?.faDeclarations?.first)
+            reopenedPlayer.gameDate = try GameDate(declared.effective).adding(days: 214).description
+            try fresh.save()
+            XCTAssertNil(try reopenedCalendar.registration(for: reopenedPlayer))
+            XCTAssertFalse(try OverseasContractStore.recordFANoticeIfDue(player: reopenedPlayer, calendar: reopenedCalendar,
+                in: fresh, save: { _ in XCTFail("An unaffiliated player must not receive a league notice") }))
+        }
+    }
+
     func testFAServiceSeparatesLeaguesRequiresRegistrationSampleAndExactThreshold() throws {
         let (store,p,s)=try faFixture(.pitcher,route:.mlbFirstTeam),c=store.mainContext
         let journal=try ContractRegistrationStore.journal(player:p,calendar:s,in:c),member=try XCTUnwrap(s.registration(for:p)),service=try XCTUnwrap(journal.overseasCareer?.faService)

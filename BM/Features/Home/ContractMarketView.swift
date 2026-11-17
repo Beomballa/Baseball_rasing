@@ -5,6 +5,7 @@ struct ContractMarketView:View {
     let player:CareerPlayer
     let calendar:CareerCalendarState
     var focusKBOFA = false
+    var focusOverseasFA = false
     @Environment(\.modelContext) private var context
     @State private var showHistory=false
     var body:some View {
@@ -28,6 +29,11 @@ struct ContractMarketView:View {
                     let hasPending=entries.contains {$0.status == "수락 · 발효 대기"} || domestic.contains {$0.status == "수락 · 발효 대기"}
                         || kbo?.offers.contains {$0.status == "수락 · 발효 대기"} == true
                     if focusKBOFA { kboPanel(kboResult) }
+                    if focusOverseasFA {
+                        FAManagementPanel(player: player, calendar: calendar, focused: true)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier("overseasFAMarket")
+                    }
                     GamePanel(title:"CONTRACT MARKET · 계약 시장",onBoard:true,contentSpacing:12) {
                         Text("기준일 "+ManagementDisplay.date(player.gameDate)).font(.footnote.monospacedDigit())
                         Text("검토 가능 \(available)건 · 잔류 / 외부 조건 비교").font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("marketSummary")
@@ -52,6 +58,9 @@ struct ContractMarketView:View {
                                 .background(GameTheme.navy,in:ManagementStepFrame()).overlay {ManagementStepFrame().strokeBorder(GameTheme.gold,lineWidth:2)}.accessibilityIdentifier("marketOfferStatus")
                             ContractTermsTimeline(issued:entry.offer.issued,expires:entry.offer.expires,effective:entry.offer.effective)
                             ContractTermsMetric(title:"연봉지수",value:String(entry.offer.economicIndex),note:"\(entry.offer.years)년 · 실제 통화/출전 보장 아님")
+                            if let rank = state.displayedSalaryStanding(for: entry.offer, reports: owner.overseasReports ?? []) {
+                                ContractSalaryRankSummary(standing: rank, identifier: "overseasOffer", offerID: entry.id)
+                            }
                             if let amount = entry.offer.signingBonusWon { SigningBonusOfferAmount(amount: amount) }
                             Text("경제 기간 종료 · "+ManagementDisplay.date(entry.offer.economicEnd)).font(.footnote.monospacedDigit())
                             if (state.renewalReviews ?? []).contains(where:{$0.offer?.id == entry.id}) {
@@ -84,7 +93,7 @@ struct ContractMarketView:View {
                         Text("평가 창: 4·7·11월 1~14일. 국내 재입단은 4·7월, 재학생 프로 지원·프로 갱신/이적은 11월에 자격을 확인합니다. 날짜는 홈에서 진행합니다.").font(.caption).lineSpacing(5)
                         OverseasReleasePanel(player:player,calendar:calendar)
                         DomesticReleasePanel(player:player,calendar:calendar)
-                        FAManagementPanel(player:player,calendar:calendar)
+                        if !focusOverseasFA { FAManagementPanel(player:player,calendar:calendar) }
                     }
                 }
             }.padding(12)
@@ -159,6 +168,9 @@ private struct KBOFirstTeamMarketPanel: View {
                 Text(failure).font(.footnote).foregroundStyle(GameTheme.gold)
                     .accessibilityIdentifier("kboFAMarketError")
             }
+            if market.canReviewClub || market.clubReview != nil {
+                KBOClubReviewPanel(player: player, calendar: calendar, market: market)
+            }
             ForEach(market.offers.filter { showHistory || $0.canDecide || $0.status == "수락 · 발효 대기" }, id: \.offer.id) { entry in
                 let offer = entry.offer
                 VStack(alignment: .leading, spacing: ManagementTheme.Space.inline) {
@@ -168,25 +180,7 @@ private struct KBOFirstTeamMarketPanel: View {
                     Text("연봉지수 \(offer.economicIndex) · \(offer.years)년")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(GameTheme.boardInk)
                     if let standing = offer.salaryStanding {
-                        let rank = TransferContractDocument.SalaryRank(standing)
-                        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
-                            HStack(spacing: ManagementTheme.Space.micro) {
-                                if rank.isPremium {
-                                    Image(systemName: "medal.fill").accessibilityHidden(true)
-                                }
-                                Text(rank.title)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .accessibilityIdentifier("kboFAOfferSalary-" + offer.id)
-                            }
-                            .font(rank.isPremium ? .footnote.bold() : .footnote.weight(.medium))
-                            .foregroundStyle(rank.isPremium ? GameTheme.growth : GameTheme.boardInk)
-                            Text(rank.comparison)
-                                .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityIdentifier("kboFAOfferSalaryComparison-" + offer.id)
-                        }
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier("kboFAOffer" + rank.presentationIdentifier + "-" + offer.id)
+                        ContractSalaryRankSummary(standing: standing, identifier: "kboFAOffer", offerID: offer.id)
                     }
                     NavigationLink {
                         KBOFirstTeamOfferDetail(player: player, calendar: calendar, offerID: offer.id)
@@ -232,6 +226,80 @@ private struct KBOFirstTeamMarketPanel: View {
         } catch {
             failure = error.localizedDescription
         }
+    }
+}
+
+private struct KBOClubReviewPanel: View {
+    let player: CareerPlayer
+    let calendar: CareerCalendarState
+    let market: KBOTransferStore.Snapshot
+    @Environment(\.modelContext) private var context
+    @State private var confirmation = false
+    @State private var failure: String?
+
+    var body: some View {
+        GamePanel(title: "KBO 1군 · 시즌 잔류 심사", onBoard: true) {
+            if let review = market.clubReview {
+                Text(review.outcome.label).font(.headline).foregroundStyle(GameTheme.gold)
+                    .accessibilityIdentifier("kboClubReviewStatus")
+                let sample = review.role == .pitcher ? review.sample.innings + "이닝" : "\(review.count)타석"
+                Text("\(review.sample.games)경기 · \(sample)").font(.subheadline.monospacedDigit())
+                if review.count < review.minimum {
+                    Text("표본 부족 · 심사 기준 \(review.role == .pitcher ? "12이닝" : "40타석")")
+                        .font(.footnote)
+                } else {
+                    Text(review.role == .pitcher
+                         ? "9이닝당 실점 \(String(format: "%.2f", review.performance)) · 잔류 기준 5.50 이하"
+                         : "출루율 \(String(format: "%.3f", review.performance)) · 잔류 기준 0.300 이상")
+                        .font(.footnote)
+                }
+                if let end = review.economicEnd, let index = review.economicIndex {
+                    Text("연봉지수 \(index) · \(review.effective) ~ \(end)").font(.subheadline)
+                    if let standing = review.salaryStanding {
+                        ContractSalaryRankSummary(standing: standing, identifier: "kboClubReview", offerID: review.id)
+                    }
+                } else if review.outcome == .release {
+                    Text("소속 해제 예정일 · " + ManagementDisplay.date(review.effective, includeYear: true)).font(.subheadline)
+                } else if review.count >= review.minimum {
+                    Text("커리어 종료일 이전으로 계약 기간을 정할 수 없습니다.").font(.footnote)
+                }
+                if market.clubReviewConfirmed {
+                    Text("결정 저장 · " + ManagementDisplay.date(review.effective, includeYear: true) + " 발효")
+                        .font(.footnote.bold()).foregroundStyle(GameTheme.growth)
+                } else if market.canDecideClub {
+                    Button(review.outcome == .renew ? "재계약 수락" : "방출 통지 확인") { confirmation = true }
+                        .buttonStyle(MatchPixelButtonStyle(primary: true))
+                        .accessibilityIdentifier("kboClubOpenDecision")
+                }
+            } else {
+                Text("이번 시즌 공식 경기 성적으로 잔류 조건을 확인합니다.").font(.footnote)
+                Button("잔류 심사 열기") {
+                    run {
+                        try KBOTransferStore.reviewClub(player: player, calendar: calendar, date: player.gameDate,
+                            revision: calendar.revision, in: context)
+                    }
+                }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("kboClubReview")
+            }
+            if let failure { Text(failure).font(.footnote).foregroundStyle(GameTheme.gold) }
+        }
+        .managementConfirmationDialog("잔류 심사 결정을 확정할까요?", isPresented: $confirmation, titleVisibility: .visible) {
+            if let review = market.clubReview {
+                Button(review.outcome == .renew ? "재계약 확정" : "방출 확정",
+                       role: review.outcome == .release ? .destructive : nil) {
+                    run {
+                        try KBOTransferStore.decideClub(player: player, calendar: calendar, reviewID: review.id,
+                            date: player.gameDate, revision: calendar.revision, in: context)
+                    }
+                }.accessibilityIdentifier("kboClubConfirmDecision")
+            }
+        } message: {
+            Text("다음 시즌 개막일에 결정한 조건이 적용됩니다.")
+        }
+    }
+
+    private func run(_ command: () throws -> Void) {
+        do { try command(); failure = nil }
+        catch { failure = error.localizedDescription }
     }
 }
 

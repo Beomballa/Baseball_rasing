@@ -13,6 +13,7 @@ enum CalendarAdvanceGoal: Equatable, Sendable {
 
 struct CalendarAdvanceSummary: Equatable, Sendable {
     enum Stop: String, Sendable {
+        case overseasFA = "해외 FA 선언 기간 · 자격과 마감일 확인"
         case traitChange = "특성 유지 경고·상실 전 · 하루 진행으로 확인"
         case retirement = "은퇴 완료 · 기록 열람 가능"
         case evaluation = "계약 평가 자료 도착 · 평가 확인 후 계속"
@@ -121,8 +122,9 @@ struct CalendarScoutNotice: Identifiable {
 
     private static func automaticContractStop(player: CareerPlayer, state: CareerCalendarState,
                                               in context: ModelContext, save: Save) throws -> CalendarAdvanceSummary.Stop? {
-        if try ContractEvaluationStore.unread(player: player, calendar: state, in: context) != nil
-            || OverseasContractStore.needsEvaluation(player: player, calendar: state, in: context) { return .evaluation }
+        if try ContractEvaluationStore.unread(player: player, calendar: state, in: context) != nil { return .evaluation }
+        if try OverseasContractStore.recordFANoticeIfDue(player: player, calendar: state, in: context, save: save) { return .overseasFA }
+        if try OverseasContractStore.needsEvaluation(player: player, calendar: state, in: context) { return .evaluation }
         return try KBOTransferStore.recordDeclarationNoticeIfDue(player: player, calendar: state, in: context, save: save)
             ? .kboFA : nil
     }
