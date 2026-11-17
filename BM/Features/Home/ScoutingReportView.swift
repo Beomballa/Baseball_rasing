@@ -95,8 +95,9 @@ struct ScoutingObservationHomePanel: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 24 : 16) {
-            ScoutDeskHeading(title: archive ? "관찰 파일 · 지난 이력" : "스카우트 데스크", subtitle: "28일마다 남기는 선수의 발자취")
-            if !archive {
+            if archive {
+                ScoutDeskHeading(title: "관찰 파일 · 지난 이력", subtitle: "28일마다 남기는 선수의 발자취")
+            } else {
                 V166ScoutSections(options: ScoutDeskSection.allCases, selection: $section,
                                   title: { $0.title }, identifier: "scoutDeskSection")
             }
@@ -176,6 +177,7 @@ struct ScoutingInterestList: View {
     let value: ScoutingObservation
     var compact = false
     var seasons = ScoutClubSeasonContext()
+    var historical = false
     @State private var showAll = false
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
@@ -188,7 +190,8 @@ struct ScoutingInterestList: View {
                 }
                 if interests.entries.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("아직 도착하지 않은 관찰 카드").font(.headline).accessibilityIdentifier("scoutInterestEmpty")
+                        Text(historical ? "당시 관심 구단 없음" : "아직 도착하지 않은 관찰 카드")
+                            .font(.headline).accessibilityIdentifier("scoutInterestEmpty")
                         if let reason = interests.pendingReasons.first { Text(reason).font(.subheadline).foregroundStyle(GameTheme.boardMuted) }
                         if interests.pendingReasons.count > 1 {
                             DisclosureGroup("추가 확인 조건 \(interests.pendingReasons.count - 1)개") {
@@ -206,10 +209,10 @@ struct ScoutingInterestList: View {
                         HomeDetailButton(title: showAll ? "관심 구단 접기" : "관심 구단 더보기 · 나머지 \(interests.entries.count - 2)곳", expanded: $showAll, identifier: "scoutInterestDetails")
                     }
                 }
-                Text("\(ManagementDisplay.date(value.observedDate)) 확정 · 다음 \(ManagementDisplay.date(value.nextDate))")
+                Text("\(ManagementDisplay.date(value.observedDate)) 확정 · \(historical ? "당시 다음 관찰 예정" : "다음") \(ManagementDisplay.date(value.nextDate))")
                     .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
             } else {
-                Text("이전 보고서는 구단 관심을 기록하지 않았습니다. 다음 관찰부터 확인할 수 있습니다.")
+                Text(historical ? "당시 보고서에는 구단 관심 항목이 없습니다." : "이전 보고서는 구단 관심을 기록하지 않았습니다. 다음 관찰부터 확인할 수 있습니다.")
                     .font(.subheadline).accessibilityIdentifier("scoutInterestLegacy")
             }
             ScoutStatusTag(text: value.age < 20 ? "진로 준비 · 정식 제의는 20세부터" : "관찰 관심 ≠ 정식 제의", color: GameTheme.gold)
@@ -221,11 +224,23 @@ struct SavedScoutingObservationView: View {
     let value: ScoutingObservation
     let schoolID: String?
     let legacySchoolName: String?
+    let showsCurrentActions: Bool
     var seasons = ScoutClubSeasonContext()
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var showOriginals = false
     @State private var showClubs = false
-    @State private var section: FrozenScoutSection = .summary
+    @State private var section: FrozenScoutSection
+
+    init(value: ScoutingObservation, schoolID: String?, legacySchoolName: String?,
+         seasons: ScoutClubSeasonContext = ScoutClubSeasonContext(), initialSection: FrozenScoutSection = .summary,
+         showsCurrentActions: Bool = true) {
+        self.value = value
+        self.schoolID = schoolID
+        self.legacySchoolName = legacySchoolName
+        self.seasons = seasons
+        self.showsCurrentActions = showsCurrentActions
+        _section = State(initialValue: initialSection)
+    }
     var body: some View {
         VStack(spacing: 0) {
             V166ScoutSections(options: FrozenScoutSection.allCases, selection: $section,
@@ -254,7 +269,7 @@ struct SavedScoutingObservationView: View {
                         v166FrozenCompactIdentity
                     }
                     if section == .clubs {
-                        ScoutingInterestList(value: value, seasons: seasons)
+                        ScoutingInterestList(value: value, seasons: seasons, historical: !showsCurrentActions)
                         if let fit = value.contractFit { clubBoard(fit) }
                     }
                     if section == .abilities { roleBoard }
@@ -272,7 +287,8 @@ struct SavedScoutingObservationView: View {
                             ScoutNote(title: "이전 버전 파일", message: "이 보고서는 확정 당시 구단/비교 성적을 기록하지 않았습니다. 원문을 유지하며 다음 관찰부터 새 자료를 확인합니다.", messageIdentifier: "scoutLegacyFit")
                         }
                         DisclosureGroup("선수 프로젝트 · 관찰 근거") {
-                            CareerProjectReportEvidence(playerID: value.playerID, period: value.period).padding(.top, 12)
+                            CareerProjectReportEvidence(playerID: value.playerID, period: value.period,
+                                                        showsCurrentActions: showsCurrentActions).padding(.top, 12)
                         }.font(.headline).tint(GameTheme.gold)
                     }
                 }.padding(16).fixedSize(horizontal: false, vertical: true)
@@ -495,14 +511,18 @@ enum ScoutingReportError: LocalizedError {
             throw ScoutingReportError.abilities
         }
         // Validate the original league/fixture identity, duplicates, role and saved payload before counting.
+        var validatedMatches: [String: CareerMatch] = [:]
         for year in start.year...date.year {
-            _ = try AnnualLeagueStore.snapshot(player: player, state: calendar, year: year, records: records)
+            let validated = try AnnualLeagueStore.validatedSnapshot(player: player, state: calendar, year: year, records: records)
+            for entry in validated.matches {
+                guard validatedMatches.updateValue(entry.match,forKey:entry.key) == nil else {throw LeagueError.invalidRecord}
+            }
         }
         var bySource: [String: ScoutingSampleGroup] = [:], total = PersonalSeasonTotals(), pending = 0
         for record in records where record.playerID == player.id {
             let day = try GameDate(record.gameDate)
             guard day >= start && day <= date else { continue }
-            let match = try record.snapshot()
+            guard let match = validatedMatches[record.key] else {throw LeagueError.invalidRecord}
             if !record.completed { pending += 1; continue }
             guard record.appearance else { continue }
             // Keep legacy/control/training/field/substitution environments separate. No Vref is invented.
@@ -639,17 +659,36 @@ struct ScoutingReportView: View {
             Text("현재 저장 자료 · 성장/날짜 변경 없는 조회").font(.subheadline).foregroundStyle(ScoutDossierInk.muted)
         }
     }
+    private func compactCurrentSummary(_ report: ScoutingReportSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("현재 자료 · 기준일 \(ManagementDisplay.date(report.date.description))")
+                .font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("scoutCurrentDate")
+            HStack(alignment: .center, spacing: 12) {
+                ManagementPortrait(appearance: affiliation?.appearance ?? player.appearance, role: player.role,
+                                   number: player.jerseyNumber)
+                    .frame(width: 44, height: 48).accessibilityHidden(true)
+                Text("\(player.name)  #\(player.jerseyNumber)").font(.headline)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("scoutActualPlayer")
+            }
+            Text("\(report.age)세 · " + (player.role == .batter ? "타자 / \(FieldPosition(rawValue: player.positionRaw)?.label ?? player.positionRaw)" : "투수 / \(player.throwingHandRaw == "left" ? "좌투" : "우투")"))
+                .font(.subheadline).accessibilityIdentifier("scoutActualRole")
+            Text(affiliation?.name ?? (report.age <= 18 ? player.displaySchoolName : SeasonSchedule.academicStatus(age: report.age)))
+                .font(.subheadline).accessibilityIdentifier("scoutActualAffiliation")
+            Text("현재 저장 자료 · 성장/날짜 변경 없는 조회").font(.caption).foregroundStyle(GameTheme.boardMuted)
+        }.fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("scoutCurrentSummary")
+    }
     private func identity(_ report: ScoutingReportSnapshot) -> some View {
         ScoutDossier(title: "선수 관찰 파일", code: "PLAYER RECORD / READ ONLY", stamp: "현재 자료", isPreview: false) {
             (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 18)) : AnyLayout(HStackLayout(alignment: .top, spacing: 18))) {
                 ManagementPortrait(appearance: affiliation?.appearance ?? player.appearance, role: player.role,
                                    number: player.jerseyNumber).frame(width: 76, height: 84).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("\(player.name)  #\(player.jerseyNumber)").font(.title3.bold()).accessibilityIdentifier("scoutActualPlayer")
+                    Text("\(player.name)  #\(player.jerseyNumber)").font(.title3.bold()).accessibilityIdentifier(typeSize.isAccessibilitySize ? "scoutDetailPlayer" : "scoutActualPlayer")
                     Text("\(report.age)세 · " + (player.role == .batter ? "타자 / \(FieldPosition(rawValue: player.positionRaw)?.label ?? player.positionRaw)" : "투수 / \(player.throwingHandRaw == "left" ? "좌투" : "우투")"))
-                        .font(.subheadline).accessibilityIdentifier("scoutActualRole")
+                        .font(.subheadline).accessibilityIdentifier(typeSize.isAccessibilitySize ? "scoutDetailRole" : "scoutActualRole")
                     Text(affiliation?.name ?? (report.age <= 18 ? player.displaySchoolName : SeasonSchedule.academicStatus(age: report.age)))
-                        .font(.subheadline).accessibilityIdentifier("scoutActualAffiliation")
+                        .font(.subheadline).accessibilityIdentifier(typeSize.isAccessibilitySize ? "scoutDetailAffiliation" : "scoutActualAffiliation")
                     if report.age > 18 {
                         Text(SeasonSchedule.academicStatus(age: report.age)).font(.subheadline)
                         Text("등록 학교 · " + player.displaySchoolName).font(.subheadline)
@@ -978,43 +1017,54 @@ private struct ScoutRoleEvidence: View {
     let correction: Double
     let fit: Double?
     let need: String
-    let caution: String?
-    let identifier: String?
+    let identifier: String
 
-    private var difference: Double? {
-        guard let mine, let criterion else { return nil }
-        return mine - criterion
-    }
-
-    private var strength: String {
-        if let difference, difference >= 0 { return "내 역할 기량이 구단 기준에 도달했습니다." }
-        if correction > 0 { return "같은 환경의 성적에서 \(ScoutDeskFormat.signed(correction))점 보정을 받았습니다." }
-        return need
-    }
-
-    private var concern: String {
-        if let difference, difference < 0 {
-            return "구단의 역할 기준까지 \(ScoutDeskFormat.number(-difference))점이 필요합니다."
-        }
-        return caution ?? "기량 확인 후 구단별 등록·계약 조건을 심사합니다."
+    private func comparison(_ difference: Double) -> String {
+        if difference == 0 { return "내 기량과 구단 기준이 같습니다." }
+        let points = ScoutDeskFormat.number(abs(difference))
+        return difference > 0 ? "구단 기준보다 \(points)점 높습니다." : "구단 기준까지 \(points)점이 필요합니다."
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text("내 기량 \(ScoutDeskFormat.number(mine)) / 구단 기준 \(ScoutDeskFormat.number(criterion))")
-                .managementFont(.label).monospacedDigit().accessibilityIdentifier(identifier ?? "")
             Text("관찰 적합도 F · " + (fit.map(ScoutDeskFormat.signed) ?? "평가 대기"))
                 .managementFont(.label).bold().monospacedDigit()
-            assessment("강점", strength)
-            assessment("주의점", concern)
+            Divider().overlay(ScoutDossierInk.rule)
+            Text("기량 비교와 평가 근거").managementFont(.label).bold()
+            Text("내 기량 \(ScoutDeskFormat.number(mine)) · 구단 기준 \(ScoutDeskFormat.number(criterion))")
+                .managementFont(.label).monospacedDigit().accessibilityIdentifier(identifier)
+            if let mine, let criterion, mine.isFinite, criterion.isFinite {
+                ScoutRoleComparisonBar(mine: mine, criterion: criterion)
+                Text(comparison(mine - criterion)).managementFont(.helper)
+            } else {
+                Text(need).managementFont(.helper)
+            }
+            if correction != 0 {
+                Text("동일 환경 성적 보정 \(ScoutDeskFormat.signed(correction))점").managementFont(.helper)
+            }
         }
     }
+}
 
-    private func assessment(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption.bold()).foregroundStyle(ScoutDossierInk.green)
-            Text(text).managementFont(.helper)
-        }
+struct ScoutRoleComparisonBar: View {
+    let mine: Double
+    let criterion: Double
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = max(0, geometry.size.width)
+            let scale = max(100, mine, criterion)
+            let marker = min(2, width)
+            ZStack(alignment: .leading) {
+                Rectangle().fill(ScoutDossierInk.rule.opacity(0.35))
+                Rectangle().fill(ScoutDossierInk.green)
+                    .frame(width: width * max(0, mine) / scale)
+                Rectangle().fill(ScoutDossierInk.paper)
+                    .overlay(Rectangle().strokeBorder(ScoutDossierInk.ink, lineWidth: 0.5))
+                    .frame(width: marker)
+                    .offset(x: max(0, (width - marker) * max(0, criterion) / scale))
+            }.overlay(Rectangle().strokeBorder(ScoutDossierInk.rule, lineWidth: 1))
+        }.frame(height: 12).accessibilityHidden(true)
     }
 }
 
@@ -1032,12 +1082,12 @@ private struct ScoutInterestCard: View {
             if let presentation {
                 let club = presentation.club
                 ScoutRoleEvidence(mine: club.h, criterion: club.c, correction: club.p, fit: club.f,
-                    need: presentation.recruitmentContext, caution: presentation.recordedImprovementConditions.first,
+                    need: presentation.recruitmentContext,
                     identifier: "scoutInterestBasis-" + entry.id)
             } else if let first = entry.reasons.first {
                 Text(first).managementFont(.helper)
             }
-            HomeDetailButton(title: "보완할 조건과 평가 근거", expanded: $expanded,
+            HomeDetailButton(title: "추가 확인 조건", expanded: $expanded,
                              identifier: "scoutInterestEvidence-" + entry.id, onPaper: true)
             if expanded {
                 VStack(alignment: .leading, spacing: 9) {
@@ -1081,8 +1131,8 @@ struct OverseasScoutInterestCard: View {
             status: row.interest?.label ?? "관찰 대기", statusIdentifier: "overseasClubInterest",
             forecast: forecast, quoteIdentifier: "overseasInterestQuote-" + row.id, teamIDs: teamIDs, seasons: seasons) {
             ScoutRoleEvidence(mine: row.h, criterion: row.criterion, correction: row.p, fit: row.f,
-                              need: row.demand.label, caution: row.blockers.first, identifier: "overseasClubBasis-" + row.id)
-            HomeDetailButton(title: "보완할 조건과 평가 근거", expanded: $expanded,
+                              need: row.demand.label, identifier: "overseasClubBasis-" + row.id)
+            HomeDetailButton(title: "추가 확인 조건", expanded: $expanded,
                              identifier: "overseasClubEvidence-" + row.id, onPaper: true)
             if expanded {
                 VStack(alignment: .leading, spacing: 9) {

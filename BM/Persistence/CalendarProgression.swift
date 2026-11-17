@@ -63,8 +63,30 @@ struct CalendarAdvanceFailure: LocalizedError {
     var errorDescription: String? { "\(summary.message)\n중단 원인: \(reason)" }
 }
 
+/// A saved observation is an event source; this value is never itself persisted.
+struct CalendarScoutNotice: Identifiable {
+    let key: String
+    let observation: ScoutingObservation
+    var previousClubIDs: Set<String>? = nil
+    var id: String { key }
+    var newClubIDs: Set<String>? {
+        guard let previousClubIDs, let interests = observation.interests else { return nil }
+        return Set(interests.entries.map(\.id)).subtracting(previousClubIDs)
+    }
+}
+
 @MainActor enum CalendarProgression {
     typealias Save = @MainActor (ModelContext) throws -> Void
+
+    /// Only newly committed reports in the completed interval can produce an interest notice.
+    static func newScoutNotices(beforeKeys: Set<String>, after: [CalendarScoutNotice],
+                                startDate: String, lastSavedDate: String) -> [CalendarScoutNotice] {
+        after.filter { item in
+            !beforeKeys.contains(item.key) && item.observation.observedDate > startDate &&
+            item.observation.observedDate <= lastSavedDate &&
+            (item.observation.interests?.entries.isEmpty == false)
+        }.sorted { $0.observation.observedDate < $1.observation.observedDate }
+    }
     private static func validate(_ player: CareerPlayer, _ state: CareerCalendarState, revision: Int) throws {
         guard state.playerID == player.id, state.revision == revision else { throw CalendarError.staleState }
         _ = try state.fixtures(for: player, year: GameDate(player.gameDate).year)
@@ -118,7 +140,7 @@ struct CalendarAdvanceFailure: LocalizedError {
             != ScoutingPeriod(origin: GameDate(state.originDate), today: GameDate(nextDate)).index
         do {
             try AutomaticLeagueStore.completeDay(player:player,state:state,date:today,in:context)
-            try state.adoptOverseasExpansion(after: today)
+            try state.adoptProfessionalExpansion(after: today)
             if !prepared { player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest) }
             player.fatigue = DailyRecovery.recover(player.fatigue, by: DailyRecovery.sleep)
             player.gameDate = nextDate

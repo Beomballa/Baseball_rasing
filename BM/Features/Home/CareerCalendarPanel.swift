@@ -24,6 +24,8 @@ struct CareerCalendarPanel: View {
     @State private var advancing = false
     @State private var receipt: CalendarAdvanceSummary?
     @State private var receiptFailure: String?
+    @State private var scoutNotices: [CalendarScoutNotice] = []
+    @State private var scoutNoticeError: String?
     #if DEBUG
     @State private var verificationSaveCount=0
     @State private var verificationFailureUsed=false
@@ -45,19 +47,56 @@ struct CareerCalendarPanel: View {
     private func run(_ action: () throws -> Void) {
         do { try action() } catch { errorMessage = error.localizedDescription }
     }
+    /// Notice tracking is optional: an unreadable report must not block normal date progression.
+    private func scoutBaseline() -> Set<String>? {
+        do {
+            let rows = try ScoutingObservationStore.reports(player: player, calendar: state, in: context)
+            scoutNoticeError = nil
+            return Set(rows.map(\.key))
+        } catch {
+            scoutNoticeError = "관찰 알림을 확인하지 못했습니다. 관찰 보고서에서 직접 확인해 주세요."
+            return nil
+        }
+    }
+    private func updateScoutNotices(before: Set<String>?, startDate: String, lastSavedDate: String) {
+        guard let before, lastSavedDate > startDate else { return }
+        do {
+            let rows = try ScoutingObservationStore.reports(player: player, calendar: state, in: context)
+            let after = try rows.map { CalendarScoutNotice(key: $0.key, observation: try $0.snapshot()) }
+            let added = CalendarProgression.newScoutNotices(beforeKeys: before, after: after,
+                                                            startDate: startDate, lastSavedDate: lastSavedDate).map { notice in
+                var enriched = notice
+                if let previous = after.first(where: {
+                    $0.observation.playerID == notice.observation.playerID &&
+                    $0.observation.period == notice.observation.period - 1
+                }), let interests = previous.observation.interests {
+                    enriched.previousClubIDs = Set(interests.entries.map(\.id))
+                }
+                return enriched
+            }
+            let known = Set(scoutNotices.map(\.key))
+            scoutNotices.append(contentsOf: added.filter { !known.contains($0.key) })
+        } catch {
+            scoutNoticeError = "관찰 알림을 확인하지 못했습니다. 관찰 보고서에서 직접 확인해 주세요."
+        }
+    }
     private func nextDay(confirmed: Bool = false) {
         run {
             if try CalendarProgression.isAnniversaryTomorrow(player: player, state: state), !confirmed {
                 confirmBirthday = true
             } else {
                 let revision = state.revision
+                let startDate = player.gameDate
+                let fatigueBefore = player.fatigue
+                let before = scoutBaseline()
                 transition.perform(date: player.gameDate, label: "하루를 마무리하는 중", reduced: reduced) {
                     run {
                         try CalendarProgression.advanceDay(player: player, state: state, revision: revision,
                                                            confirmAnniversary: confirmed, in: context)
+                        updateScoutNotices(before: before, startDate: startDate, lastSavedDate: player.gameDate)
                         transition.arrive(on: player.gameDate, reduced: reduced)
                         receipt=nil;receiptFailure=nil
-                        summary = "하루 진행 완료 · 수면 회복 −\(DailyRecovery.sleep) · \(player.gameDate) 저장"
+                        summary = "하루 진행 완료 · 피로 \(fatigueBefore) → \(player.fatigue) · \(player.gameDate) 저장"
                     }
                 }
             }
@@ -91,6 +130,8 @@ struct CareerCalendarPanel: View {
 
     private func advanceBatch(goal: CalendarAdvanceGoal) {
         guard !advancing,transition.display == nil else {return}
+        let startDate = player.gameDate
+        let before = scoutBaseline()
         let label = goal.observationDate == nil ? "다음 팀 경기까지" : "다음 관찰일까지"
         transition.perform(date:player.gameDate,label:label,reduced:reduced,cancellable:true) {
             advancing=true;summary="";receiptFailure=nil
@@ -98,10 +139,19 @@ struct CareerCalendarPanel: View {
             do {
                 receipt=try await CalendarProgression.advanceOffDays(player:player,state:state,goal:goal,in:context,save:saveDay,onDaySaved:{date in
                     transition.arrive(on:date,reduced:reduced)
+                    #if DEBUG
+                    // Keep this committed boundary open long enough for XCTest to terminate the app.
+                    let arguments = ProcessInfo.processInfo.arguments
+                    if date == "2026-04-28", arguments.contains("-management-career-verification"), arguments.contains("-v185-career-flow") {
+                        try? await Task.sleep(for: .seconds(30))
+                    }
+                    #endif
                     try? await Task.sleep(for:.milliseconds(reduced ? 0:100))
                 })
+                if let receipt { updateScoutNotices(before: before, startDate: startDate, lastSavedDate: receipt.lastSavedDate) }
             } catch let failure as CalendarAdvanceFailure {
                 receipt=failure.summary;receiptFailure=failure.reason
+                updateScoutNotices(before: before, startDate: startDate, lastSavedDate: failure.summary.lastSavedDate)
                 transition.arrive(on:failure.summary.lastSavedDate,reduced:reduced)
             } catch {errorMessage=error.localizedDescription}
         }
@@ -235,11 +285,7 @@ struct CareerCalendarPanel: View {
         }()
         let todayState=CalendarDayPresentation(role:player.role,fixture:today,saved:CalendarSavedMatch.read(savedGame),
             starter:selection.starter,selectionFailed:selection.failed,actionUsed:hasAction,trainingPending:trainingPending)
-        return GamePanel(title: progressionOnly ? "다음 행동 · 일정" : "오늘 일정", onBoard: true) {
-            if !concise, let schedule {
-                CareerMonthBoard(player: player, state: state, schools: schools,
-                                 fixtures: schedule.annual, records: gameRecords)
-            }
+        let actions = GamePanel(title: progressionOnly ? "다음 행동 · 일정" : "오늘 일정", onBoard: true) {
             if let life=try? player.lifecycle,!life.traitRisk.isEmpty {
                 Text("! 특성 유지 주의 · 커리어의 변화 기록을 확인하세요").font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("calendarTraitWarning")
             }
@@ -354,6 +400,62 @@ struct CareerCalendarPanel: View {
                                    canRetry: canRetry)
                 }
             }
+            if !advancing {
+                ForEach(scoutNotices.filter { $0.observation.playerID == player.id }) { notice in
+                    let interests = notice.observation.interests?.entries ?? []
+                    let newIDs = notice.newClubIDs
+                    let featured = interests.first(where: { newIDs?.contains($0.id) == true }) ?? interests.first
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("관찰 보고 도착 · 관심 구단 \(interests.count)곳")
+                            .font(.headline).foregroundStyle(Color(hex: 0x24513e))
+                            .accessibilityIdentifier("calendarScoutNotice")
+                        Text("관찰일 \(ManagementDisplay.date(notice.observation.observedDate)) · 관심은 정식 제의가 아닙니다.")
+                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                        if let newIDs, !newIDs.isEmpty {
+                            Text("이전 관찰 대비 신규 관심 \(newIDs.count)곳")
+                                .font(.caption.bold()).accessibilityIdentifier("calendarNewScoutCount")
+                        }
+                        if let interest = featured {
+                            HStack(alignment: .center, spacing: 10) {
+                                ClubBadge(name: interest.name, size: 46)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(interest.name).font(.headline)
+                                    Text("\(interest.roleLabel) · \(interest.level.label)")
+                                        .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            if let reason = interest.reasons.first {
+                                Text(reason).font(.caption).fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let club = ScoutingClubPresentation.matching(interest, in: notice.observation.contractFit)?.club,
+                               let mine = club.h, let criterion = club.c, mine.isFinite, criterion.isFinite {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("관찰일 기준 · 역할 기량 / 구단 기준").font(.caption)
+                                    Text(String(format: "%.1f / %.1f", mine, criterion))
+                                        .font(.subheadline.monospacedDigit().bold())
+                                    ScoutRoleComparisonBar(mine: mine, criterion: criterion)
+                                }.accessibilityElement(children: .combine)
+                                    .accessibilityIdentifier("calendarScoutComparison")
+                            }
+                        }
+                        NavigationLink {
+                            SavedScoutingObservationView(value: notice.observation, schoolID: player.schoolID,
+                                                         legacySchoolName: player.schoolName, initialSection: .clubs)
+                        } label: { Text("이 확정 보고서 보기") }
+                            .buttonStyle(MatchPixelButtonStyle(primary: true))
+                            .accessibilityIdentifier("calendarOpenScoutNotice")
+                        Button("알림 닫기") { scoutNotices.removeAll { $0.key == notice.key } }
+                            .buttonStyle(ManagementButtonStyle(variant: .secondary))
+                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(ScoutDossierInk.ink)
+                        .background(ScoutDossierInk.paper, in: ManagementStepFrame())
+                        .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+                        .accessibilityElement(children: .contain)
+                }
+                if let scoutNoticeError {
+                    Text(scoutNoticeError).font(.caption).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if evaluationUnread {
                 Text("새 계약 평가 미확인 · 날짜 진행이 잠겨 있습니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractEvaluationDateGate")
                 NavigationLink {ContractEvaluationReviewScreen(player:player,calendar:state)} label: {Text("고정 평가 확인 · 날짜 진행 잠금 해제")}
@@ -375,6 +477,15 @@ struct CareerCalendarPanel: View {
             if !summary.isEmpty {
                 Text(summary).font(.caption).accessibilityIdentifier("calendarSummary")
             }
+        }
+        return VStack(alignment: .leading, spacing: 12) {
+            let showResultsFirst = receipt != nil || scoutNotices.contains { $0.observation.playerID == player.id }
+            if showResultsFirst { actions }
+            if !concise, let schedule {
+                CareerMonthBoard(player: player, state: state, schools: schools,
+                                 fixtures: schedule.annual, records: gameRecords)
+            }
+            if !showResultsFirst { actions }
         }
         .onDisappear { transition.requestCancel() }
         .managementConfirmationDialog("어디까지 진행할까요?", isPresented: $chooseAdvanceGoal,
@@ -465,7 +576,7 @@ struct CalendarAnnualScheduleView:View {
         LazyVStack(alignment:.leading,spacing:12) {
             GamePanel(title:"SEASON CALENDAR · "+String(player.gameDate.prefix(4)),onBoard:true) {
                 Text("게임 1년 · 팀당 30경기").font(.title3.bold()).foregroundStyle(GameTheme.gold)
-                Text(plan?.teamIDs.count == 15 ? "동부·서부 15구단 · 홈 15경기 / 원정 15경기" : "6팀 조별리그 · 상대별 6회 / 홈·원정 각 3회").font(.subheadline)
+                Text(plan?.teamIDs.count == 15 ? "동부·서부 15구단 · 홈 15경기 / 원정 15경기" : plan?.teamIDs.count == 10 ? "10구단 단일리그 · 상대별 3~4회 / 홈 15경기·원정 15경기" : "6팀 조별리그 · 상대별 6회 / 홈·원정 각 3회").font(.subheadline)
                 if schedule.annual.count < 30 {
                     Text("내 등록 대상 \(schedule.annual.count)경기 · 부분 시즌").font(.subheadline.bold()).foregroundStyle(GameTheme.gold)
                 }
@@ -514,8 +625,11 @@ struct CareerMonthBoard: View {
     let records: [CareerMatchRecord]
     @State private var month: String?
     @State private var selected: String?
+    @State private var prefersList = false
     @State private var showAllDays = false
     @Environment(\.dynamicTypeSize) private var typeSize
+    private let daySpacing: CGFloat = 2
+    private let minimumDayWidth: CGFloat = 44
     private var key: String { month ?? String(player.gameDate.prefix(7)) }
     private var first: GameDate? { try? GameDate(key + "-01") }
     private var days: [GameDate] {
@@ -541,7 +655,9 @@ struct CareerMonthBoard: View {
         guard let first else { return }
         let date = step < 0 ? first.adding(days: -1) : first.adding(days: days.count)
         guard date.year == first.year else { return }
-        month = String(date.description.prefix(7)); selected = month! + "-01"
+        let nextMonth = String(date.description.prefix(7))
+        month = nextMonth
+        selected = nextMonth + "-01"
     }
     var body: some View {
         VStack(spacing: 12) {
@@ -555,22 +671,9 @@ struct CareerMonthBoard: View {
                 Button { move(1) } label: { Text("›").frame(minWidth: 44, minHeight: 44) }
                     .accessibilityLabel("다음 달").disabled(key.hasSuffix("-12"))
             }.foregroundStyle(ScoutDossierInk.paper).background(GameTheme.boardPanel)
-            if typeSize.isAccessibilitySize {
-                ForEach(days.filter { showAllDays || !marker($0.description).isEmpty || $0.description == player.gameDate || $0.description == selectedDate }, id: \.self) { day in dayButton(day) }
-                Button(showAllDays ? "경기일·오늘만 보기" : "비경기일 포함 모든 날짜 보기") { showAllDays.toggle() }
-                    .font(.body.bold()).frame(minHeight: 44).accessibilityIdentifier("calendarAllDays")
-            } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 4) {
-                    ForEach(["월", "화", "수", "목", "금", "토", "일"], id: \.self) {
-                        Text($0).font(.caption.bold()).frame(maxWidth: .infinity).accessibilityHidden(true)
-                    }
-                    ForEach(0..<offset, id: \.self) { _ in Color.clear.frame(height: 1).accessibilityHidden(true) }
-                    ForEach(days, id: \.self) { day in dayButton(day) }
-                }
-            }
-            Text(player.role == .pitcher ? "등판: 기본 선발 차례 · 팀: 비등판 차례" : "출전: 기본 출전 차례 · 완료: 저장된 경기")
-                .font(.caption).fixedSize(horizontal: false, vertical: true)
-            Text("실제 기용은 경기 준비에서 확인").font(.caption.bold())
+            Button("오늘") { month = nil; selected = nil }
+                .buttonStyle(ManagementButtonStyle(variant: .paper))
+                .accessibilityIdentifier("calendarToday")
             VStack(alignment: .leading, spacing: 8) {
                 Text(ManagementDisplay.date(selectedDate)).font(.headline).accessibilityIdentifier("calendarSelectedDate")
                 if let match = fixture(selectedDate) {
@@ -582,19 +685,65 @@ struct CareerMonthBoard: View {
                 if selectedDate != player.gameDate { Text("조회 중 · 실제 오늘은 " + ManagementDisplay.date(player.gameDate)).font(.caption) }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                 .background(ScoutDossierInk.rule.opacity(0.18))
+            if typeSize.isAccessibilitySize {
+                dateList
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    VStack(spacing: 8) {
+                        Button(prefersList ? "달력 보기" : "목록 보기") { prefersList.toggle() }
+                            .buttonStyle(ManagementButtonStyle(variant: .paper))
+                            .accessibilityIdentifier("calendarListToggle")
+                        if prefersList { dateList } else { monthGrid }
+                    }.frame(minWidth: 7 * minimumDayWidth + 6 * daySpacing)
+                    dateList
+                }
+            }
+            Text(player.role == .pitcher ? "등판: 기본 선발 차례 · 팀: 비등판 차례" : "출전: 기본 출전 차례 · 완료: 저장된 경기")
+                .font(.caption).fixedSize(horizontal: false, vertical: true)
+            Text("실제 기용은 경기 준비에서 확인").font(.caption.bold())
         }.padding(10).foregroundStyle(ScoutDossierInk.ink).background(ScoutDossierInk.paper)
             .overlay(ManagementStepFrame().strokeBorder(ScoutDossierInk.rule, lineWidth: 2))
             .accessibilityElement(children: .contain).accessibilityIdentifier("careerMonthBoard")
             .onChange(of: player.gameDate) { _, date in month = nil; selected = date }
     }
-    private func dayButton(_ day: GameDate) -> some View {
+    private var monthGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: minimumDayWidth), spacing: daySpacing), count: 7), spacing: 4) {
+            ForEach(["월", "화", "수", "목", "금", "토", "일"], id: \.self) {
+                Text($0).font(.caption.bold()).frame(maxWidth: .infinity).accessibilityHidden(true)
+            }
+            ForEach(0..<offset, id: \.self) { _ in Color.clear.frame(height: 1).accessibilityHidden(true) }
+            ForEach(days, id: \.self) { dayButton($0) }
+        }
+    }
+
+    private var dateList: some View {
+        VStack(spacing: 6) {
+            ForEach(days.filter { showAllDays || !marker($0.description).isEmpty || $0.description == player.gameDate || $0.description == selectedDate }, id: \.self) {
+                dayButton($0, list: true)
+            }
+            Button(showAllDays ? "경기일·오늘만 보기" : "비경기일 포함 모든 날짜 보기") { showAllDays.toggle() }
+                .buttonStyle(ManagementButtonStyle(variant: .paper))
+                .accessibilityIdentifier("calendarAllDays")
+        }
+    }
+
+    private func dayButton(_ day: GameDate, list: Bool = false) -> some View {
         let date = day.description, mark = marker(date), today = date == player.gameDate
         return Button { selected = date } label: {
-            VStack(spacing: 3) {
-                Text(String(Int(date.suffix(2)) ?? 0)).font(.system(.subheadline, design: .monospaced).bold())
-                Text(today ? "오늘" : mark.isEmpty ? "·" : mark).font(.caption2.bold())
-                if today && !mark.isEmpty { Text(mark).font(.caption2.bold()) }
-            }.frame(maxWidth: .infinity, minHeight: 52)
+            Group {
+                if list {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(ManagementDisplay.date(date)).font(.subheadline.bold())
+                        Text((today ? "오늘 · " : "") + (mark.isEmpty ? "팀 경기 없음" : mark)).font(.caption)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6)
+                } else {
+                    VStack(spacing: 3) {
+                        Text(String(Int(date.suffix(2)) ?? 0)).font(.system(.subheadline, design: .monospaced).bold())
+                        Text(today ? "오늘" : mark.isEmpty ? "·" : mark).font(.caption2.bold())
+                        if today && !mark.isEmpty { Text(mark).font(.caption2.bold()) }
+                    }.frame(maxWidth: .infinity)
+                }
+            }.frame(minWidth: minimumDayWidth, minHeight: 52)
                 .foregroundStyle(date == selectedDate ? ScoutDossierInk.paper : ScoutDossierInk.ink)
                 .background(date == selectedDate ? GameTheme.boardPanel : mark.isEmpty ? Color.clear : ScoutDossierInk.rule.opacity(0.22))
                 .overlay(Rectangle().strokeBorder(today ? ScoutDossierInk.green : ScoutDossierInk.rule.opacity(0.4), lineWidth: today ? 2 : 1))

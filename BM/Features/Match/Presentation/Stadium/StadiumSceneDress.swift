@@ -159,16 +159,11 @@ struct ProStadium {
             guard let art = venueArt[club.id], let primary = GameUniformPalette.color(teamID: club.id) else { return nil }
             return (club.id, Self(club: club, primary: primary, accent: art.accent, board: art.board))
         })
-        let seasonTeams = CareerTeamDirectory.domesticFirstIDs + CareerTeamDirectory.japaneseExpandedFirstIDs + CareerTeamDirectory.americanExpandedFirstIDs
+        let seasonTeams = CareerTeamDirectory.expandedDomesticFirstIDs + CareerTeamDirectory.japaneseExpandedFirstIDs + CareerTeamDirectory.americanExpandedFirstIDs
         for id in seasonTeams {
             guard let club = ClubIdentity.resolve(name: CareerTeamDirectory.name(id)) else { continue }
             venues[id] = venues[club.id]
         }
-        let additionalDomesticVenues = [
-            "pro-gears": "kbo-6", "pro-silverhorns": "kbo-7",
-            "pro-auroras": "kbo-8", "pro-crowns": "kbo-9"
-        ]
-        for (teamID, clubID) in additionalDomesticVenues { venues[teamID] = venues[clubID] }
         return venues
     }()
 

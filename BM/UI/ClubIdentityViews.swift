@@ -195,7 +195,14 @@ private struct ClubStadiumPreview: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            Button("닫기") { dismiss() }
+                .buttonStyle(ManagementButtonStyle(variant: .secondary, compact: true))
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityIdentifier("clubStadiumClose")
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(club.name + " " + artwork.label).font(.title2.bold())
@@ -216,13 +223,8 @@ private struct ClubStadiumPreview: View {
                         uniformArtwork
                     }
                 }.padding(16)
-            }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("닫기") { dismiss() }.accessibilityIdentifier("clubStadiumClose")
-                    }
-                }
-        }
+            }
+        }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
     }
 
     @ViewBuilder private var uniformArtwork: some View {

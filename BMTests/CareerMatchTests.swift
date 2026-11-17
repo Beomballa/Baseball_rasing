@@ -315,15 +315,6 @@ import AVFoundation
         XCTAssertTrue(try XCTUnwrap(second.fetch(FetchDescriptor<CareerMatchRecord>()).first).completed)
     }
 
-    func testPitchCostRoundingUsesFourDigitPrecisionBeforeIntegerStorage() {
-        var match = CareerMatch(random: 1, isHome: true, role: "pitcher", appearance: true,
-                                contact: 65, power: 75, discipline: 60, mastery: ["four-seam": 72])
-        match.fatigueCost = 19.00000000000001
-        XCTAssertEqual(match.appliedFatigueCost, 19)
-        match.fatigueCost = 19.38
-        XCTAssertEqual(match.appliedFatigueCost, 20)
-    }
-
     func testV176BatterAutomaticStopsBeforeNextPlateAppearance() throws {
         for home in [false, true] {
             for midCount in [false, true] {
@@ -543,6 +534,15 @@ import AVFoundation
             XCTAssertEqual(player.fatigue, min(100, setupFatigue + actual.appliedFatigueCost))
             XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID: player.id, year: 2026, in: context), reward.rawXP)
         }
+    }
+
+    func testPitchCostRoundingUsesFourDigitPrecisionBeforeIntegerStorage() {
+        var match = CareerMatch(random: 1, isHome: true, role: "pitcher", appearance: true,
+                                contact: 65, power: 75, discipline: 60, mastery: ["four-seam": 72])
+        match.fatigueCost = 19.00000000000001
+        XCTAssertEqual(match.appliedFatigueCost, 19)
+        match.fatigueCost = 19.38
+        XCTAssertEqual(match.appliedFatigueCost, 20)
     }
 
     func testDirectAndAutomaticUseIdenticalEngineAndValidBaseballTotals() throws {

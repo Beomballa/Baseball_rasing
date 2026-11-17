@@ -103,6 +103,30 @@ struct PlayerNotebookIdentity: View {
     }
 }
 
+struct PlayerNotebookCompactIdentity: View {
+    let player: CareerPlayer
+    let affiliation: String
+    let appearance: PlayerAppearance
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            ManagementPortrait(appearance: appearance, role: player.role, number: player.jerseyNumber)
+                .frame(width: 42, height: 42)
+                .background(GameTheme.board)
+                .overlay(Rectangle().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(player.name + " · #" + String(player.jerseyNumber)).font(.subheadline.bold())
+                Text(affiliation + " · " + player.role.label + " · " + player.roleDetail)
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }.fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }.padding(8).foregroundStyle(GameTheme.boardInk)
+            .background(GameTheme.boardPanel)
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
+            .accessibilityElement(children: .combine).accessibilityIdentifier("notebookCompactIdentity")
+    }
+}
+
 struct PlayerNotebookHighlights: View {
     let values: [HomeAbilityValue]
     @Environment(\.dynamicTypeSize) private var typeSize

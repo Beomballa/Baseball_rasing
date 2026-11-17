@@ -92,6 +92,55 @@ enum SeasonSchedule {
         return result
     }
 
+    static func domesticExpandedFixtures(year: Int, teamIDs: [String]) throws -> [SeasonFixture] {
+        guard teamIDs.count == 10, Set(teamIDs).count == 10 else { throw CalendarError.invalidGroup }
+        let opening = try GameDate(String(format: "%04d-04-01", year))
+        typealias Pair = (a: Int, b: Int)
+        var ring = Array(teamIDs.indices)
+        var rounds: [[Pair]] = []
+        for _ in 0..<9 {
+            rounds.append((0..<5).map { (ring[$0], ring[9 - $0]) })
+            ring.insert(ring.removeLast(), at: 1)
+        }
+
+        // Three extra matching rounds are reversed pairs. Orient the remaining even-degree
+        // graph as closed trails so every team also splits its six other games 3 home / 3 away.
+        let balancedPairs = rounds.dropFirst(3).flatMap { $0 }
+        var unused = Set(balancedPairs.indices)
+        var thirdLegHome: [Int: Int] = [:]
+        func pairKey(_ a: Int, _ b: Int) -> Int { min(a, b) * 10 + max(a, b) }
+        for start in teamIDs.indices {
+            var current = start
+            while let edge = balancedPairs.indices.first(where: {
+                unused.contains($0) && (balancedPairs[$0].a == current || balancedPairs[$0].b == current)
+            }) {
+                let pair = balancedPairs[edge]
+                unused.remove(edge)
+                thirdLegHome[pairKey(pair.a, pair.b)] = current
+                current = pair.a == current ? pair.b : pair.a
+            }
+        }
+
+        typealias Game = (home: Int, away: Int)
+        let first: [[Game]] = rounds.map { $0.map { ($0.a, $0.b) } }
+        let reverse = first.map { $0.map { (home: $0.away, away: $0.home) } }
+        let third: [[Game]] = rounds.enumerated().map { index, games in
+            games.map { pair in
+                let home = index < 3 ? pair.a : thirdLegHome[pairKey(pair.a, pair.b)]!
+                return (home, home == pair.a ? pair.b : pair.a)
+            }
+        }
+        let extra = third.prefix(3).map { $0.map { (home: $0.away, away: $0.home) } }
+        return (first + reverse + third + extra).enumerated().flatMap { index, games in
+            let number = index + 1
+            return games.map { game in
+                SeasonFixture(number: number, date: opening.adding(days: index * 6),
+                              homeID: teamIDs[game.home], awayID: teamIDs[game.away],
+                              homeNumber: number, awayNumber: number)
+            }
+        }
+    }
+
     static func expandedFixtures(year: Int, east: [String], west: [String]) throws -> [SeasonFixture] {
         guard [east.count, west.count].sorted() == [7, 8], Set(east + west).count == 15 else {
             throw CalendarError.invalidGroup
@@ -666,37 +715,14 @@ struct MatchClubSelection: Codable, Equatable {
     var appearance: Bool { rotationDay && review.isStarter }
     func validate(fixtureID: String, playerID: UUID, date: String, competition: String?, appearance: Bool, role: String) throws {
         try review.own.validate(); try review.rival.validate();try review.validateRivalBasis()
-        let day = try GameDate(date)
-        guard review.version == 1, review.week == day.monday.description,
+        let day=try GameDate(date), opening=try GameDate("\(day.year)-04-01")
+        guard fixtureNumber.map({ (1...30).contains($0) }) ?? true else { throw MatchError.invalidRecord }
+        let expectedTurn=role == "batter" || (fixtureNumber.map { ($0-1).isMultiple(of:5) }
+            ?? (opening.days(to:day)/6).isMultiple(of:5))
+        guard review.version == 1, review.week == day.monday.description, rotationDay == expectedTurn,
               [review.own.id,review.rival.id].contains(review.selected),
               self.fixtureID == fixtureID, review.own.id == playerID.uuidString, review.date <= date,
-              review.level == competition, self.appearance == appearance,
-              fixtureNumber.map({ (1...30).contains($0) }) ?? true else { throw MatchError.invalidRecord }
-        let expectedTurn = try role == "batter" || (pitchingFixtureNumber(on: day) - 1).isMultiple(of: 5)
-        guard rotationDay == expectedTurn else { throw MatchError.invalidRecord }
-    }
-
-    func validateScheduledFixture(_ fixture: SeasonFixture) throws {
-        guard fixture.id == fixtureID,
-              fixtureNumber.map({ $0 == fixture.number }) ?? true else { throw MatchError.invalidRecord }
-    }
-
-    private func pitchingFixtureNumber(on day: GameDate) throws -> Int {
-        if let fixtureNumber { return fixtureNumber }
-        // Old overseas saves can come from either schedule. A bye can change the order for each team.
-        if ["npb-first-team", "mlb-first-team"].contains(review.level) {
-            for expanded in [false, true] {
-                let fixtures = try CareerTeamDirectory.fixtures(level: review.level, year: day.year, expanded: expanded)
-                if let fixture = fixtures.first(where: {
-                    $0.date == day && $0.id == fixtureID && $0.includes(review.teamID)
-                }) {
-                    return fixture.forTeam(review.teamID).number
-                }
-            }
-            throw MatchError.invalidRecord
-        }
-        let opening = try GameDate("\(day.year)-04-01")
-        return opening.days(to: day) / 6 + 1
+              review.level == competition, self.appearance == appearance else { throw MatchError.invalidRecord }
     }
 }
 struct ClubOpportunitySummary: Codable, Equatable {
@@ -951,7 +977,7 @@ struct PersonalSeasonCoverage: Equatable {
 
 extension AnnualLeague {
     var hasFullSchedule: Bool {
-        guard [6, 15].contains(standings.count), fixtures.count == standings.count * 15 else { return false }
+        guard [6, 10, 15].contains(standings.count), fixtures.count == standings.count * 15 else { return false }
         let scheduled = Dictionary(grouping: fixtures.flatMap { [$0.homeID, $0.awayID] }, by: { $0 })
         return standings.allSatisfy { scheduled[$0.id]?.count == 30 }
     }

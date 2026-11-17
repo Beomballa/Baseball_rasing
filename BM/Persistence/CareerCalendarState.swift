@@ -17,8 +17,9 @@ enum CareerSchemaV2: VersionedSchema {
         var rulesVersion: String
         private static let baseRules = "career-core-v1"
         private static let overseasRulesPrefix = "career-core-v1+overseas-v147:"
+        private static let domesticRulesSeparator = "+domestic-v162:"
 
-        init(player: CareerPlayer, schools: [School], legacySave: Bool) {
+        init(player: CareerPlayer, schools: [School], legacySave: Bool, currentLeagueRules: Bool = false) {
             playerID = player.id
             originDate = player.gameDate
             schoolIDs = SeasonSchedule.group(for: player.id, schoolID: player.schoolID, schools: schools)
@@ -26,22 +27,44 @@ enum CareerSchemaV2: VersionedSchema {
             revision = 0
             self.legacySave = legacySave
             rulesVersion = Self.baseRules
-        }
-
-        var overseasExpansionYear: Int? {
-            get throws {
-                if rulesVersion == Self.baseRules { return nil }
-                guard rulesVersion.hasPrefix(Self.overseasRulesPrefix) else { throw CalendarError.invalidGroup }
-                let suffix = rulesVersion.dropFirst(Self.overseasRulesPrefix.count)
-                guard let year = Int(suffix), (1...9998).contains(year), String(year) == suffix else {
-                    throw CalendarError.invalidGroup
-                }
-                return year
+            if currentLeagueRules, !legacySave, let date = try? GameDate(player.gameDate) {
+                rulesVersion = Self.overseasRulesPrefix + String(date.year) + Self.domesticRulesSeparator + String(date.year)
             }
         }
 
+        private var expansionYears: (overseas: Int?, domestic: Int?) {
+            get throws {
+                if rulesVersion == Self.baseRules { return (nil, nil) }
+                let parts = rulesVersion.components(separatedBy: Self.domesticRulesSeparator)
+                guard (1...2).contains(parts.count), let overseasPart = parts.first,
+                      overseasPart.hasPrefix(Self.overseasRulesPrefix) else { throw CalendarError.invalidGroup }
+                func year(_ text: String) throws -> Int {
+                    guard let value = Int(text), (1...9998).contains(value), String(value) == text else {
+                        throw CalendarError.invalidGroup
+                    }
+                    return value
+                }
+                let overseas = try year(String(overseasPart.dropFirst(Self.overseasRulesPrefix.count)))
+                let domestic = try parts.count == 2 ? year(parts[1]) : nil
+                return (overseas, domestic)
+            }
+        }
+
+        var overseasExpansionYear: Int? { get throws { try expansionYears.overseas } }
+        var domesticExpansionYear: Int? { get throws { try expansionYears.domestic } }
+
         func isExpandedOverseas(year: Int) throws -> Bool {
             try overseasExpansionYear.map { year >= $0 } ?? false
+        }
+        func isExpandedDomestic(year: Int) throws -> Bool {
+            try domesticExpansionYear.map { year >= $0 } ?? false
+        }
+        func isExpandedCompetition(level: String, year: Int) throws -> Bool {
+            switch level {
+            case "domestic-development", "domestic-first-team": try isExpandedDomestic(year: year)
+            case "npb-first-team", "mlb-first-team": try isExpandedOverseas(year: year)
+            default: false
+            }
         }
 
         /// First successful day advancement fixes the next season's rules without changing any earlier fixtures.
@@ -53,16 +76,40 @@ enum CareerSchemaV2: VersionedSchema {
             rulesVersion = Self.overseasRulesPrefix + String(firstExpandedYear)
         }
 
+        func adoptProfessionalExpansion(after date: GameDate) throws {
+            let years = try expansionYears
+            guard years.domestic == nil else { return }
+            let april = try GameDate(String(format: "%04d-04-01", date.year))
+            let firstExpandedYear = date < april ? date.year : date.year + 1
+            guard firstExpandedYear <= 9998 else { return }
+            rulesVersion = Self.overseasRulesPrefix + String(years.overseas ?? firstExpandedYear)
+                + Self.domesticRulesSeparator + String(firstExpandedYear)
+        }
+
         func age(of player: CareerPlayer) throws -> Int {
             try GameDate(originDate).age(startingAt: player.startAge, on: GameDate(player.gameDate))
         }
         @MainActor func registration(for player:CareerPlayer) throws -> CareerMembership? {
+            try registration(for:player,on:GameDate(player.gameDate))
+        }
+        @MainActor func registration(for player:CareerPlayer,on date:GameDate) throws -> CareerMembership? {
             guard let context=modelContext else {return nil}
-            return try ContractRegistrationStore.journal(player:player,calendar:self,in:context).current(on:GameDate(player.gameDate))
+            return try ContractRegistrationStore.journal(player:player,calendar:self,in:context).current(on:date)
+        }
+        @MainActor func displayTeamID(for player:CareerPlayer,on date:GameDate) throws -> String? {
+            if let member=try registration(for:player,on:date) {return member.teamID}
+            let age=try GameDate(originDate).age(startingAt:player.startAge,on:date)
+            return age <= 18 ? player.schoolID:nil
+        }
+        @MainActor func presentationAppearance(for player:CareerPlayer,on date:GameDate,uniformTeamID:String?=nil) throws -> PlayerAppearance {
+            let team=try uniformTeamID ?? displayTeamID(for:player,on:date)
+            var appearance=player.appearance.wearing(teamID:team)
+            // An unaffiliated adult keeps the personal kit, not the saved creation-school uniform.
+            if team == nil {appearance.schoolKitID=nil}
+            return appearance
         }
         @MainActor func competition(for player:CareerPlayer,year:Int) throws -> CareerCompetitionPlan {
             guard playerID == player.id,schoolIDs.contains(player.schoolID) else {throw CalendarError.invalidGroup}
-            let expanded = try isExpandedOverseas(year: year)
             if let context=modelContext {
                 let journal=try ContractRegistrationStore.journal(player:player,calendar:self,in:context)
                 let first=try GameDate(String(format:"%04d-04-01",year)),last=first.adding(days:174)
@@ -72,6 +119,7 @@ enum CareerSchemaV2: VersionedSchema {
                 guard members.count <= 1 else {throw ContractRegistrationError.invalid}
                 if let original=members.first {
                     let member=try journal.projected(original,on:first)
+                    let expanded = try isExpandedCompetition(level: member.level, year: year)
                     let ids = CareerTeamDirectory.teams(level: member.level, expanded: expanded)
                     guard ids.contains(member.teamID) else { throw CalendarError.invalidGroup }
                     let fixtures = try CareerTeamDirectory.fixtures(level: member.level, year: year, expanded: expanded)
@@ -129,51 +177,85 @@ typealias CareerCalendarState = CareerSchemaV2.CalendarState
 }
 
 @MainActor enum AnnualLeagueStore {
+    struct ValidatedMatch {
+        let key: String
+        let completed: Bool
+        let appearance: Bool
+        let match: CareerMatch
+    }
+    struct ValidatedSnapshot {
+        let league: AnnualLeague
+        let matches: [ValidatedMatch]
+        let teamID: String
+    }
     static func load(player:CareerPlayer,state:CareerCalendarState,year:Int,in context:ModelContext) throws -> AnnualLeague {
         let id=player.id
         let records=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == id}))
         return try snapshot(player:player,state:state,year:year,records:records)
     }
     static func snapshot(player:CareerPlayer,state:CareerCalendarState,year:Int,records:[CareerMatchRecord]) throws -> AnnualLeague {
+        try makeSnapshot(player:player,state:state,year:year,records:records,retainMatches:false).league
+    }
+    static func validatedSnapshot(player:CareerPlayer,state:CareerCalendarState,year:Int,records:[CareerMatchRecord]) throws -> ValidatedSnapshot {
+        try makeSnapshot(player:player,state:state,year:year,records:records,retainMatches:true)
+    }
+    private static func makeSnapshot(player:CareerPlayer,state:CareerCalendarState,year:Int,records:[CareerMatchRecord],retainMatches:Bool) throws -> ValidatedSnapshot {
         guard state.playerID == player.id,state.schoolIDs.contains(player.schoolID) else {throw LeagueError.invalidRecord}
         let today=try GameDate(player.gameDate),origin=try GameDate(state.originDate)
         let plan=try state.competition(for:player,year:year),fixtures=plan.fixtures
         let byID=Dictionary(uniqueKeysWithValues:fixtures.map {($0.id,$0)})
         var official:[LeagueOfficialResult]=[],pending:Set<String>=[]
-        var seen:Set<String>=[]
+        var seen:Set<String>=[],matches:[ValidatedMatch]=[]
         for record in records where record.playerID == player.id {
             guard try GameDate(record.gameDate).year == year else {continue}
             guard let fixture=byID[record.fixtureID],fixture.includes(plan.teamID),fixture.date.description == record.gameDate,
                   record.key == CareerMatchRecord.key(player.id,fixture.id),record.opponentID == fixture.opponent(of:plan.teamID),
                   seen.insert(record.fixtureID).inserted else {throw LeagueError.invalidRecord}
             let match=try record.snapshot()
+            guard match.clubSelection?.fixtureNumber.map({ $0 == fixture.forTeam(plan.teamID).number }) ?? true else {
+                throw LeagueError.invalidRecord
+            }
             guard match.isHome == (fixture.homeID == plan.teamID),match.role == player.roleRaw else {throw LeagueError.invalidRecord}
             guard match.competition == plan.membership?.level else {throw LeagueError.invalidRecord}
             if let member=plan.membership {guard try member.contains(fixture.date) else {throw LeagueError.invalidRecord}}
+            if retainMatches {
+                matches.append(ValidatedMatch(key:record.key,completed:record.completed,appearance:record.appearance,match:match))
+            }
             if record.completed {
                 official.append(LeagueOfficialResult(fixtureID:fixture.id,homeScore:match.homeScore,awayScore:match.awayScore))
             } else {pending.insert(fixture.id)}
         }
         let automatic=try state.modelContext.map {try AutomaticLeagueStore.scores(player:player,state:state,year:year,in:$0)} ?? []
-        return try AnnualLeague.make(playerID:player.id,schoolIDs:plan.teamIDs,origin:origin,startAge:player.startAge,today:today,year:year,official:official,pending:pending,competitionFixtures:fixtures,automatic:automatic)
+        let league=try AnnualLeague.make(playerID:player.id,schoolIDs:plan.teamIDs,origin:origin,startAge:player.startAge,today:today,year:year,official:official,pending:pending,competitionFixtures:fixtures,automatic:automatic)
+        // Reuse is confined to this read, after every league validation has succeeded.
+        return ValidatedSnapshot(league:league,matches:matches,teamID:plan.teamID)
     }
 }
 
 @MainActor enum CareerSeasonStore {
+    struct DisplaySnapshot {
+        let summary: CareerSeasonSummary
+        let teamID: String
+    }
     static func load(player: CareerPlayer, state: CareerCalendarState, year: Int, in context: ModelContext) throws -> CareerSeasonSummary {
+        try loadDisplaySnapshot(player: player, state: state, year: year, in: context).summary
+    }
+    static func loadDisplaySnapshot(player: CareerPlayer, state: CareerCalendarState, year: Int, in context: ModelContext) throws -> DisplaySnapshot {
         let id = player.id
         let records = try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate: #Predicate { $0.playerID == id }))
-        return try snapshot(player: player, state: state, year: year, records: records)
+        return try displaySnapshot(player: player, state: state, year: year, records: records)
     }
     static func snapshot(player: CareerPlayer, state: CareerCalendarState, year: Int, records: [CareerMatchRecord]) throws -> CareerSeasonSummary {
-        let league = try AnnualLeagueStore.snapshot(player: player, state: state, year: year, records: records)
+        try displaySnapshot(player: player, state: state, year: year, records: records).summary
+    }
+    private static func displaySnapshot(player: CareerPlayer, state: CareerCalendarState, year: Int, records: [CareerMatchRecord]) throws -> DisplaySnapshot {
+        let validated = try AnnualLeagueStore.validatedSnapshot(player: player, state: state, year: year, records: records)
         var totals = PersonalSeasonTotals(), coverage=PersonalSeasonCoverage()
-        for record in records where record.playerID == player.id && record.completed && record.appearance {
-            guard try GameDate(record.gameDate).year == year else { continue }
-            let match=try record.snapshot()
-            try totals.add(match.line);coverage.include(match,playerID:player.id)
+        for entry in validated.matches where entry.completed && entry.appearance {
+            try totals.add(entry.match.line);coverage.include(entry.match,playerID:player.id)
         }
-        return CareerSeasonSummary(league: league, totals: totals, coverage:coverage)
+        // Carry the identity from this validated plan instead of querying it for each display row.
+        return DisplaySnapshot(summary: CareerSeasonSummary(league: validated.league, totals: totals, coverage:coverage),teamID:validated.teamID)
     }
 }
 

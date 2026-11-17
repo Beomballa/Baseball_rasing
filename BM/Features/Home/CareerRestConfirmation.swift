@@ -17,6 +17,8 @@ struct CareerRestConfirmation: View {
     private var pending: Bool { training.contains { $0.playerID == player.id && !$0.completed } }
     private var used: Bool { state.hasAction(on: player.gameDate) }
     var onContinue: (() -> Void)? = nil
+    var pendingTrainingTitle: String? = nil
+    var onResumeTraining: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var recovering = false
@@ -30,6 +32,8 @@ struct CareerRestConfirmation: View {
     private var fatigueBefore: Int { completed ? before : player.fatigue }
     private var fatigueAfter: Int { completed ? player.fatigue : DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest) }
     var body: some View {
+        let schedule = scheduleStatus
+        let canRest = !used && !pending && schedule.schedule != nil
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -42,27 +46,29 @@ struct CareerRestConfirmation: View {
                             Text(ManagementDisplay.date(player.gameDate)).managementFont(.helper)
                         }
                         Spacer(minLength: 0)
-                    }.padding(16)
+                    }.padding(12)
                     Image("RestBenchV69").resizable().interpolation(.none).scaledToFill()
-                        .frame(height: typeSize.isAccessibilitySize ? 112 : 144).clipped()
+                        .frame(height: typeSize.isAccessibilitySize ? 108 : 132).clipped()
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("DUGOUT RECOVERY").font(.caption.monospaced().bold()).foregroundStyle(GameTheme.muted)
-                        Text(recovering ? "휴식을 저장했어요" : completed ? "회복을 마쳤어요" : "잠깐 쉬어갈까요?")
+                        Text(recovering ? "휴식을 저장했어요" : completed ? "회복을 마쳤어요" : canRest ? "오늘 휴식" : "현재 피로")
                             .font(ManagementPixelFont.readable(.sectionTitle)).accessibilityAddTraits(.isHeader)
-                        fatigueReceipt
-                        Text("피로 \(max(0, fatigueBefore - fatigueAfter)) " + (completed ? "회복" : "회복 예상"))
-                            .font(.subheadline.bold()).foregroundStyle(Color(hex: 0x1c6b54))
-                            .padding(.horizontal, 8).padding(.vertical, 5).background(Color(hex: 0xd8e1c6))
+                        if canRest || completed {
+                            fatigueReceipt
+                            Text("피로 \(max(0, fatigueBefore - fatigueAfter)) " + (completed ? "회복" : "회복 예상"))
+                                .font(.subheadline.bold()).foregroundStyle(Color(hex: 0x1c6b54))
+                                .padding(.horizontal, 8).padding(.vertical, 5).background(Color(hex: 0xd8e1c6))
+                        } else {
+                            fatigueColumn(title: "현재 피로 / 100", value: player.fatigue,
+                                progress: Double(player.fatigue), color: Color(hex: 0x94734f))
+                        }
                         Divider().overlay(GameTheme.muted.opacity(0.3))
-                        recoveryOutcome("오늘 행동", value: completed || !used ? "1 / 1 → 0 / 1" : "0 / 1 · 사용 완료")
+                        recoveryOutcome("오늘 행동", value: pending && !completed ? "훈련 진행 중" : canRest || completed ? "1 / 1 → 0 / 1" : used ? "0 / 1 · 사용 완료" : "일정 확인 필요")
                         recoveryOutcome("현재 일자", value: ManagementDisplay.date(player.gameDate) + " · 유지")
-                        if let error = scheduleStatus.errorMessage, !completed {
+                        if let error = schedule.errorMessage, !completed {
                             Text("일정 확인 전에는 휴식할 수 없습니다. " + error).managementFont(.body).accessibilityIdentifier("restScheduleError")
                             Button("일정 다시 확인") { scheduleRetry += 1 }.frame(minHeight: 44).id(scheduleRetry)
                         }
-                        if pending && !completed { Text("진행 중인 훈련을 먼저 마쳐 주세요.").managementFont(.body).accessibilityIdentifier("restPendingGate") }
-                        else if used && !completed { Text("오늘 행동을 이미 사용했습니다.").managementFont(.body).accessibilityIdentifier("restActionGate") }
                         if let failure { Text(failure).managementFont(.body).foregroundStyle(Color(hex: 0x8b431b)).accessibilityIdentifier("restError") }
                         if completed && !recovering { Text("휴식을 저장했습니다.").managementFont(.label).accessibilityIdentifier("restSaved") }
                     }.padding(16).foregroundStyle(GameTheme.navy).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.boardInk)
@@ -75,10 +81,12 @@ struct CareerRestConfirmation: View {
             }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 8) {
-                        if typeSize.isAccessibilitySize {
-                            Text(fatigueText).managementFont(.label).accessibilityIdentifier("restPinnedFatigue")
+                        if typeSize.isAccessibilitySize && (canRest || completed) {
+                            Text(fatigueText).font(ManagementPixelFont.readable(.helper)).accessibilityIdentifier("restPinnedFatigue")
                         }
-                        Text(completed ? "오늘 행동 사용 완료 · 날짜 유지" : "오늘 행동 1회 · 날짜 유지").managementFont(.helper)
+                        Text(footerStatus(canRest: canRest)).font(ManagementPixelFont.readable(.helper))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier(pending && !completed ? "restPendingGate" : used && !completed ? "restActionGate" : "restFooterStatus")
                         if recovering {
                             Button("회복 연출 건너뛰기") { finishRecovery() }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("skipRestPresentation")
                         } else if completed {
@@ -87,18 +95,30 @@ struct CareerRestConfirmation: View {
                             }
                             Button(returnTitle) { dismiss() }.buttonStyle(ManagementButtonStyle(variant: onContinue == nil ? .primary : .secondary)).accessibilityIdentifier("restDone")
                         } else {
-                            Button("휴식하기", action: save).buttonStyle(ManagementButtonStyle())
-                                .disabled(used || pending || CalendarScheduleStatus(player: player, state: state).schedule == nil).accessibilityIdentifier("confirmRest")
-                            Button("취소 · 돌아가기") { dismiss() }.frame(minHeight: 44)
+                            if pending, let onResumeTraining {
+                                Button((pendingTrainingTitle ?? "훈련") + " 이어하기") {
+                                    onResumeTraining()
+                                    dismiss()
+                                }.buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("restResumeTraining")
+                            } else {
+                                Button("휴식하기", action: save).buttonStyle(ManagementButtonStyle())
+                                    .disabled(!canRest).accessibilityIdentifier("confirmRest")
+                            }
+                            Button("취소 · 돌아가기") { dismiss() }.buttonStyle(ManagementButtonStyle(variant: .secondary))
                         }
                     }.padding(12).foregroundStyle(GameTheme.boardInk).background(GameTheme.board)
-                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 }
                 .navigationTitle("휴식").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ManagementToolbarAction(title: "닫기") { dismiss() } }
         }.preferredColorScheme(.dark).presentationDragIndicator(.visible)
             .onDisappear { recoveryTask?.cancel() }
             .onChange(of: reduced) { _, value in if value && recovering { finishRecovery() } }
+    }
+    private func footerStatus(canRest: Bool) -> String {
+        if completed { return "오늘 행동 사용 완료 · 날짜 유지" }
+        if pending { return "진행 중인 훈련을 먼저 마쳐 주세요." }
+        if used { return "오늘 행동을 이미 사용했습니다." }
+        return canRest ? "휴식하면 오늘 행동 1회를 사용합니다." : "일정을 확인한 뒤 휴식할 수 있습니다."
     }
     private var fatigueText: String {
         completed ? "피로 \(before) → \(player.fatigue)" : "피로 \(player.fatigue) → \(DailyRecovery.recover(player.fatigue, by: DailyRecovery.rest))"

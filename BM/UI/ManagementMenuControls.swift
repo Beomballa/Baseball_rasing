@@ -88,8 +88,8 @@ struct ManagementRoomScene: View {
     }
 }
 
-enum ManagementPlayerSection: CaseIterable { case abilities, traits, positions, records
-    var title: String { switch self { case .abilities: "능력"; case .traits: "특성"; case .positions: "포지션"; case .records: "기록" } }
+enum ManagementPlayerSection: CaseIterable { case summary, abilities, traits, positions, records
+    var title: String { switch self { case .summary: "요약"; case .abilities: "능력"; case .traits: "특성"; case .positions: "포지션"; case .records: "기록" } }
 }
 enum ManagementTrainingSection: CaseIterable { case abilities, traits, positions, practice
     var title: String { switch self { case .abilities: "능력"; case .traits: "특성"; case .positions: "포지션"; case .practice: "연습" } }

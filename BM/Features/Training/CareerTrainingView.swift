@@ -29,6 +29,7 @@ struct CareerTrainingView: View {
     let calendar: CareerCalendarState
     var practice = false
     var uniformTeamID: String? = nil
+    var appearanceOverride: PlayerAppearance? = nil
     var initialKind: TrainingKind? = nil
     var initialPitchStudyCode: String? = nil
     var replacingPitchCode: String? = nil
@@ -82,8 +83,9 @@ struct CareerTrainingView: View {
     @State private var retryRevision: Int?
 
     private var renderAppearance: PlayerAppearance {
-        let team = try? calendar.teamID(for: player, on: GameDate(record?.gameDate ?? player.gameDate))
-        return player.appearance.wearing(teamID: uniformTeamID ?? team ?? player.schoolID)
+        if let uniformTeamID {return player.appearance.wearing(teamID:uniformTeamID)}
+        if let appearanceOverride {return appearanceOverride}
+        return (try? calendar.presentationAppearance(for:player,on:GameDate(record?.gameDate ?? player.gameDate))) ?? player.appearance
     }
     private var displayTraining: CareerTraining? { replay ?? training }
     private var replayLabel: String { feedbackVisible ? "결과 확인 중…" : "동작 진행 중…" }
@@ -976,6 +978,167 @@ struct CareerTrainingView: View {
 
 }
 
+struct CareerTrainingHistoryView: View {
+    let player: CareerPlayer
+    let recordKey: String
+
+    @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var result: (training: CareerTraining, date: GameDate)?
+    @State private var unavailable = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
+                if let result {
+                    details(result.training, date: result.date)
+                } else {
+                    Text(unavailable ? "저장된 훈련 결과를 확인할 수 없습니다." : "훈련 결과를 불러오는 중")
+                        .managementFont(.body)
+                        .foregroundStyle(GameTheme.boardMuted)
+                }
+            }
+            .padding(ManagementTheme.Space.screen)
+            .frame(maxWidth: 620)
+            .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("careerJournalTrainingScroll")
+        .background(GameTheme.board)
+        .foregroundStyle(GameTheme.boardInk)
+        .navigationTitle("훈련 기록")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: recordKey) {
+            let owner = player.id, key = recordKey
+            let request = FetchDescriptor<CareerTrainingRecord>(predicate: #Predicate {
+                $0.key == key && $0.playerID == owner && $0.completed
+            })
+            do {
+                guard let record = try context.fetch(request).first else { throw TrainingError.invalidRecord }
+                let snapshot = try record.snapshot()
+                result = (snapshot, try GameDate(snapshot.date))
+                unavailable = false
+            } catch {
+                result = nil
+                unavailable = true
+            }
+        }
+    }
+
+    @ViewBuilder private func details(_ value: CareerTraining, date: GameDate) -> some View {
+        let pitch = value.pitchCode.flatMap { PitchType(rawValue: $0)?.label }
+        let title = value.pitchStudy == nil ? (pitch.map { $0 + " 훈련" } ?? value.title) : value.title
+        JournalDetailHeader(date: date, title: title, status: "완료", highlighted: true,
+                            identifier: "careerJournalTraining")
+        summary(value, pitch: pitch)
+        JournalDisclosure(title: "시도별 결과", identifier: "careerJournalTrainingAttempts") {
+            VStack(spacing: ManagementTheme.Space.micro) {
+                ForEach(Array(value.scores.enumerated()), id: \.offset) { index, score in
+                    attempt(index + 1, score: score)
+                }
+            }
+            if let contact = value.lastContact {
+                VStack(alignment: .leading, spacing: ManagementTheme.Space.inline) {
+                    Rectangle().fill(GameTheme.boardLine).frame(height: 1).accessibilityHidden(true)
+                    Text("마지막 컨택 시도").managementFont(.label)
+                    ContactTrainingFeedback(result: contact)
+                }
+            }
+        }
+        if value.projectFeedback?.project != nil {
+            JournalDisclosure(title: "당시 훈련 과제", identifier: "careerJournalTrainingProject") {
+                TrainingProjectFeedbackPanel(training: value)
+            }
+        }
+    }
+
+    private func summary(_ value: CareerTraining, pitch: String?) -> some View {
+        let growth = growthSummary(value, pitch: pitch)
+        let average = String(format: "%.1f", value.average)
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.inline))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: ManagementTheme.Space.inline))
+        return VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
+            layout {
+                metric("평균 점수", display: average + "점", rawValue: average, color: GameTheme.gold,
+                       identifier: "careerJournalTrainingScore")
+                let amount = (growth.signed && growth.amount > 0 ? "+" : "") + decimal(growth.amount)
+                metric(growth.label, display: amount, rawValue: String(format: "%.4f", growth.amount),
+                       color: GameTheme.growth, identifier: "trainingGrowth")
+            }
+            Text(growth.detail).managementFont(.label)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("피로 \(value.fatigue) → \(min(100, value.fatigue + TrainingRules.fatigueCost))")
+                .managementFont(.helper).monospacedDigit().foregroundStyle(GameTheme.boardMuted)
+                .accessibilityIdentifier("trainingFatigue")
+        }
+        .padding(ManagementTheme.Space.screen)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GameTheme.boardPanel, in: ManagementStepFrame())
+        .overlay { ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1).allowsHitTesting(false) }
+    }
+
+    private func metric(_ title: String, display: String, rawValue: String, color: Color, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+            Text(title).managementFont(.helper).foregroundStyle(GameTheme.boardMuted)
+            Text(display).managementFont(.metric).monospacedDigit().foregroundStyle(color)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(ManagementTheme.Space.compact)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GameTheme.board, in: ManagementStepFrame())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title + ", " + display)
+        .accessibilityValue(rawValue)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func attempt(_ number: Int, score: Int) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("\(number)회").managementFont(.label)
+            Spacer(minLength: ManagementTheme.Space.inline)
+            Text("\(score)점").managementFont(.label).monospacedDigit()
+                .foregroundStyle(score >= 90 ? GameTheme.gold : GameTheme.boardInk)
+        }
+        .padding(.horizontal, ManagementTheme.Space.compact)
+        .padding(.vertical, ManagementTheme.Space.inline)
+        .background(GameTheme.board, in: ManagementStepFrame())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(number)회 \(score)점")
+        .accessibilityValue(String(score))
+        .accessibilityIdentifier("careerJournalTrainingAttempt-\(number)")
+    }
+
+    private func growthSummary(_ value: CareerTraining, pitch: String?) -> (label: String, amount: Double, signed: Bool, detail: String) {
+        if let position = value.position {
+            let skill = value.positionAfter
+            return ("숙련 XP", value.positionGainXP, true,
+                    "\(position.label) 숙련도 \(decimal(value.before)) → \(decimal(skill.mastery)) · 잔여 XP \(decimal(skill.xp)) / 100")
+        }
+        if let study = value.pitchStudy {
+            if let restored = study.restoredMastery {
+                let detail = study.retired.map { "재등록 완료 · \($0.name) 숙련도 \(decimal($0.mastery)) 보관" } ?? "재등록 완료"
+                return ("복원 숙련도", restored, false, detail)
+            }
+            let progress = "\(decimal(value.before)) → \(decimal(value.after)) / 100"
+            if value.after == 100 {
+                let retired = study.retired.map { " · \($0.name) 숙련도 \(decimal($0.mastery)) 보관" } ?? ""
+                return ("구종 습득 진척", value.gain, true, progress + " · 등록 숙련도 20.0" + retired)
+            }
+            return ("구종 습득 진척", value.gain, true, progress)
+        }
+        if value.trait != nil {
+            let progress = "\(decimal(value.before)) → \(decimal(value.after)) / 100"
+            return ("특성 진척", value.gain, true, value.after == 100 ? progress + " · 특성 획득" : progress)
+        }
+        let skill = pitch.map { $0 + " 숙련도" } ?? value.selectedKind.label
+        return ("성장량", value.gain, true, "\(skill) \(decimal(value.before)) → \(decimal(value.after))")
+    }
+
+    private func decimal(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(1...4)))
+    }
+}
+
 private struct TrainingPreparationBoard: View {
     let player: CareerPlayer
     let name: String
@@ -1119,7 +1282,8 @@ private struct TrainingGrowthReceipt: View {
             Text("피로 \(fatigue) → \(min(100, fatigue + TrainingRules.fatigueCost))")
                 .font(.subheadline.monospacedDigit().bold()).accessibilityIdentifier("trainingFatigue")
             TrainingSegmentTrack(value: Double(min(100, fatigue + TrainingRules.fatigueCost)) / 100, color: Color(hex: 0x8b431b), onPaper: true)
-            Text("보상 저장 완료 · 다음 경기에 반영").font(.caption.bold()).foregroundStyle(GameTheme.navy.opacity(0.85))
+            Text("보상 저장 완료 · 다음 경기에 반영")
+                .font(.caption.bold()).foregroundStyle(GameTheme.navy.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("trainingCompleted")
         }
     }

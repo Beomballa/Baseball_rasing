@@ -166,18 +166,253 @@ struct ManagementSpatialRoom<Header: View>: View {
     let home: () -> Void
     @ViewBuilder let header: Header
     @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .caption2) private var matchupRoleWidth = 51.0
+    @ScaledMetric(relativeTo: .caption2) private var matchupVenueWidth = 34.0
     var propAbilities: [HomeAbilityValue] = []
     var homeVenue: StadiumIdentity? = nil
+    var todayAction: ClubhouseTodayAction? = nil
     private var usesProps: Bool { asset.hasSuffix("V59") || asset.hasSuffix("V62") }
 
     var body: some View {
-        if usesProps { propRoom } else { legacyRoom }
+        if selection == .home, let todayAction { clubhouse(todayAction) }
+        else if usesProps { propRoom }
+        else { legacyRoom }
     }
     func spatialAbilities(_ values: [HomeAbilityValue]) -> Self {
         var copy = self; copy.propAbilities = values; return copy
     }
     func spatialHomeVenue(_ stadium: StadiumIdentity?) -> Self {
         var copy = self; copy.homeVenue = stadium; return copy
+    }
+    func spatialTodayAction(_ action: ClubhouseTodayAction) -> Self {
+        var copy = self; copy.todayAction = action; return copy
+    }
+    private static var clubhouseShortcutIDs: [String] {
+        ["clubhouse-training", "clubhouse-rest", "facility-calendar", "clubhouse-player"]
+    }
+    private var clubhouseSigns: [ManagementFacility] {
+        let ids = ["clubhouse-game", "clubhouse-training", "clubhouse-career", "clubhouse-player", "clubhouse-rest"]
+        return ids.compactMap { id in facilities.first { $0.id == id } }
+    }
+    private var clubhouseShortcuts: [ManagementFacility] {
+        Self.clubhouseShortcutIDs.compactMap { id in facilities.first { $0.id == id } }
+    }
+    private var clubhouseExtraFacilities: [ManagementFacility] {
+        facilities.filter { ["facility-observation", "facility-review"].contains($0.id) }
+    }
+    private func clubhouse(_ today: ClubhouseTodayAction) -> some View {
+        GeometryReader { viewport in
+            VStack(spacing: 0) {
+                if typeSize.isAccessibilitySize || viewport.size.width < 340 {
+                    clubhouseReadingLayout(today, width: viewport.size.width)
+                } else {
+                    header
+                    GeometryReader { stage in
+                        ScrollView {
+                            let width = min(520, stage.size.width)
+                            // On short phones the scene can scroll, so the bottom board does not hide the room signs.
+                            let height = max(560, stage.size.height)
+                            VStack(spacing: 0) {
+                                clubhouseScene(today, width: width, height: height)
+                                facilityList(columns: 2, items: clubhouseExtraFacilities)
+                            }.frame(width: width).frame(maxWidth: .infinity)
+                        }.accessibilityIdentifier("roomFacilityList")
+                    }
+                }
+                ManagementTabBar(selection: $selection)
+            }
+        }.foregroundStyle(ManagementTheme.Spatial.onCanvas)
+            .background(ManagementTheme.Spatial.canvas.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar).preferredColorScheme(.dark)
+    }
+    private func clubhouseReadingLayout(_ today: ClubhouseTodayAction, width: CGFloat) -> some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                clubhouseReadingTitle.padding(.horizontal, 12)
+                clubhouseTodayPanel(today, stacked: true).padding(.horizontal, 12)
+                Button("휴식") { choose("clubhouse-rest") }
+                    .buttonStyle(ManagementButtonStyle(variant: .secondary))
+                    .padding(.horizontal, 12).accessibilityIdentifier("clubhouse-rest")
+                header
+                clubhouseArt.frame(width: width)
+                let items = clubhouseShortcuts.filter { $0.id != "clubhouse-rest" } + clubhouseExtraFacilities
+                    + clubhouseSigns.filter { $0.id == "clubhouse-game" || $0.id == "clubhouse-career" }
+                facilityList(columns: 1, items: items)
+            }.padding(.top, 6)
+        }.accessibilityIdentifier("roomFacilityList")
+    }
+
+    private var clubhouseReadingTitle: some View {
+        let heading = Text(title).managementFont(.sectionTitle).accessibilityAddTraits(.isHeader)
+        return ViewThatFits(in: .horizontal) {
+            HStack {
+                heading.fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 8)
+                if typeSize.isAccessibilitySize { ManagementSettingsButton { choose("clubhouse-settings") } }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                heading.fixedSize(horizontal: false, vertical: true)
+                if typeSize.isAccessibilitySize { ManagementSettingsButton { choose("clubhouse-settings") } }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    private func clubhouseScene(_ today: ClubhouseTodayAction, width: CGFloat, height: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            GeometryReader { scene in
+                let restSign = ManagementPropPlacement.at("clubhouse-rest")
+                let clearance = ManagementTheme.Control.hit / 2 + 8
+                // Reserve room for the lowest sign's full tap area even when the task board wraps.
+                let artHeight = min(height, max(scene.size.height, (scene.size.height - clearance) / restSign.y))
+                propScene(width: width, height: artHeight, items: clubhouseSigns, distinguishesShortcuts: true)
+            }
+            VStack(spacing: 8) {
+                clubhouseTodayPanel(today, stacked: false)
+                HStack(spacing: 6) {
+                    ForEach(clubhouseShortcuts) { facility in clubhouseShortcut(facility) }
+                }
+            }.padding(.horizontal, 12).padding(.bottom, 10)
+        }
+        .frame(width: width, height: height)
+        .background {
+            Image(asset).resizable().interpolation(.none).frame(width: width, height: height)
+                .accessibilityHidden(true)
+        }.clipped()
+    }
+    private func clubhouseShortcut(_ facility: ManagementFacility) -> some View {
+        Button { choose(facility.id) } label: {
+            VStack(spacing: 4) {
+                ClubhouseShortcutIcon(facilityID: facility.id).frame(width: 36, height: 28)
+                Text(facility.title).font(ManagementPixelFont.readable(.helper))
+                    .lineLimit(2).minimumScaleFactor(0.75).multilineTextAlignment(.center)
+            }.padding(.vertical, 5).frame(maxWidth: .infinity, minHeight: 58)
+                .contentShape(Rectangle())
+                .foregroundStyle(ManagementTheme.Spatial.onCanvas)
+                .background(Color(hex: 0x32241e), in: ManagementStepFrame())
+                .overlay { ManagementStepFrame().strokeBorder(GameTheme.gold, lineWidth: 2) }
+        }.buttonStyle(ManagementPropButtonStyle()).accessibilityLabel(facility.title)
+            .accessibilityHint(facility.status).accessibilityIdentifier(facility.id)
+    }
+    private func clubhouseTodayPanel(_ today: ClubhouseTodayAction, stacked: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("오늘 할 일").font(ManagementPixelFont.readable(.label)).accessibilityAddTraits(.isHeader)
+                if !stacked, let heading = today.heading {
+                    Spacer(minLength: 0)
+                    clubhouseTodayHeading(heading)
+                }
+            }
+            if stacked {
+                clubhouseTodayButton(today, compact: false)
+                if let heading = today.heading { clubhouseTodayHeading(heading) }
+                clubhouseTodayDetails(today)
+            } else {
+                Rectangle().fill(GameTheme.boardLine).frame(height: 1).accessibilityHidden(true)
+                HStack(spacing: 10) {
+                    clubhouseTodayDetails(today).frame(maxWidth: .infinity, alignment: .leading)
+                    Rectangle().fill(GameTheme.boardLine).frame(width: 1, height: 44).accessibilityHidden(true)
+                    clubhouseTodayButton(today, compact: true).frame(width: 105)
+                }
+            }
+        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(hex: 0x0e293d).opacity(0.97), in: ManagementStepFrame())
+            .overlay { ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 2) }
+            .accessibilityElement(children: .contain).accessibilityIdentifier("homeTodayPanel")
+    }
+    private func clubhouseTodayHeading(_ heading: String) -> some View {
+        Text(heading).font(ManagementPixelFont.readable(.helper)).foregroundStyle(GameTheme.boardInk)
+            .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeTodayStatus")
+    }
+    @ViewBuilder private func clubhouseTodayDetails(_ today: ClubhouseTodayAction) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !today.matchup.isEmpty { clubhouseMatchup(today.matchup) }
+            if let detail = today.detail {
+                Text(detail).font(.footnote).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("homeTodayDetail")
+            }
+            if let attempts = today.trainingAttempts {
+                Text("\(attempts)/5회 완료").font(.caption.monospacedDigit())
+                    .accessibilityIdentifier("homeTodayProgress")
+                HStack(spacing: 3) {
+                    ForEach(0..<5) { index in
+                        Rectangle().fill(index < attempts ? GameTheme.growth : GameTheme.boardLine)
+                    }
+                }.frame(maxWidth: 110).frame(height: 5).accessibilityHidden(true)
+            }
+        }
+    }
+    private func clubhouseMatchup(_ rows: [ClubhouseTodayAction.MatchupRow]) -> some View {
+        VStack(spacing: 3) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                if index > 0 {
+                    Rectangle().fill(GameTheme.boardLine.opacity(0.55)).frame(height: 1)
+                        .accessibilityHidden(true)
+                }
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            matchupRole(row)
+                            Spacer(minLength: 8)
+                            matchupVenue(row)
+                        }
+                        matchupName(row)
+                    }.padding(.vertical, 4)
+                } else {
+                    HStack(spacing: 7) {
+                        matchupRole(row).frame(width: matchupRoleWidth, alignment: .leading)
+                        matchupName(row)
+                        matchupVenue(row)
+                    }
+                }
+            }
+        }.foregroundStyle(GameTheme.boardInk)
+    }
+
+    private func matchupRole(_ row: ClubhouseTodayAction.MatchupRow) -> some View {
+        HStack(spacing: 4) {
+            Rectangle().fill(row.isOwn ? GameTheme.gold : Color.clear)
+                .frame(width: 5, height: 5).accessibilityHidden(true)
+            Text(row.isOwn ? "내 팀" : "상대 팀")
+                .font(.caption2.weight(.semibold))
+                .fixedSize(horizontal: !typeSize.isAccessibilitySize, vertical: true)
+                .accessibilityIdentifier(row.isOwn ? "homeTodayOwnRole" : "homeTodayOpponentRole")
+        }
+    }
+
+    private func matchupName(_ row: ClubhouseTodayAction.MatchupRow) -> some View {
+        Text(row.team).font(ManagementPixelFont.readable(.helper))
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
+            .accessibilityIdentifier(row.isOwn ? "homeTodayOwnTeam" : "homeTodayOpponent")
+    }
+
+    private func matchupVenue(_ row: ClubhouseTodayAction.MatchupRow) -> some View {
+        Text(row.isHome ? "홈" : "원정")
+            .font(.caption2.weight(.semibold)).fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, typeSize.isAccessibilitySize ? 6 : 0).padding(.vertical, 2)
+            .frame(width: typeSize.isAccessibilitySize ? nil : matchupVenueWidth)
+            .background(Color(hex: 0x29495d), in: ManagementStepFrame())
+            .accessibilityIdentifier(row.isOwn ? "homeTodayOwnSide" : "homeTodayOpponentSide")
+    }
+    private func clubhouseTodayButton(_ today: ClubhouseTodayAction, compact: Bool) -> some View {
+        Button(today.buttonTitle) { choose("homeTodayAction") }
+            .buttonStyle(ManagementButtonStyle(compact: compact)).accessibilityIdentifier("homeTodayAction")
+    }
+    private var clubhouseArt: some View {
+        let art = homeVenue.flatMap { ManagementHomeVenueArt.art(asset: asset, selection: .home, stadium: $0) }
+        return GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = width * (1660.0 / 948)
+            (art.map { Image(uiImage: $0.image) } ?? Image(asset))
+                .resizable().interpolation(.none).frame(width: width, height: height)
+                .offset(y: -max(0, height - geometry.size.height) * 0.31)
+                .accessibilityHidden(true)
+        }.frame(height: typeSize.isAccessibilitySize ? 136 : 188).clipped()
+            .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1).allowsHitTesting(false))
+            .padding(.horizontal, 12)
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier(art.flatMap { _ in homeVenue.map { "managementHomeVenue-" + $0.key } } ?? "managementRoomScene-home")
+            .accessibilityLabel("클럽하우스")
+            .accessibilityValue(art?.venueName ?? "")
     }
     private var legacyRoom: some View {
         GeometryReader { geometry in
@@ -230,8 +465,8 @@ struct ManagementSpatialRoom<Header: View>: View {
                     header
                     GeometryReader { stage in
                         let ratio: CGFloat = 1660.0 / 948
-                        let scrolling = stage.size.height / max(1, stage.size.width) < 1.4
-                        let width = scrolling ? stage.size.width : max(stage.size.width, stage.size.height / ratio)
+                        let scrolling = stage.size.width * ratio > stage.size.height
+                        let width = stage.size.width
                         let height = width * ratio
                         ZStack(alignment: .top) {
                             if scrolling {
@@ -263,7 +498,8 @@ struct ManagementSpatialRoom<Header: View>: View {
             }.frame(width: geometry.size.width, height: geometry.size.height)
         }.background(ManagementTheme.Spatial.canvas.ignoresSafeArea()).toolbar(.hidden, for: .navigationBar).preferredColorScheme(.dark)
     }
-    private func propScene(width: CGFloat, height: CGFloat) -> some View {
+    private func propScene(width: CGFloat, height: CGFloat, items: [ManagementFacility]? = nil,
+                           distinguishesShortcuts: Bool = false) -> some View {
         let venue = homeVenue.flatMap { stadium in
             ManagementHomeVenueArt.art(asset: asset, selection: selection, stadium: stadium)
                 .map { (stadium: stadium, art: $0) }
@@ -271,7 +507,7 @@ struct ManagementSpatialRoom<Header: View>: View {
         return ZStack(alignment: .topLeading) {
             (venue.map { Image(uiImage: $0.art.image) } ?? Image(asset))
                 .resizable().interpolation(.none).frame(width: width, height: height).accessibilityHidden(true)
-            ForEach(facilities) { facility in
+            ForEach(items ?? facilities) { facility in
                 if let p = facility.prop {
                     Button { choose(facility.id) } label: {
                         ZStack {
@@ -303,7 +539,9 @@ struct ManagementSpatialRoom<Header: View>: View {
                                     Text(facility.title).font(ManagementPixelFont.font(facility.id == "clubhouse-rest" ? 16 : max(12, min(p.kind == .notebook ? 16 : 14, width * 0.036))))
                                         .kerning(facility.id == "clubhouse-player" ? -0.8 : -0.2)
                                         .lineLimit(1).foregroundStyle(Color(hex: 0xfff0ce))
-                                        .frame(width: width * p.titleWidth).rotationEffect(.degrees(p.angle))
+                                        .frame(width: width * p.titleWidth).rotationEffect(.degrees(distinguishesShortcuts
+                                            ? atan(tan(p.angle * .pi / 180) * Double(height / width) / (1659.0 / 948)) * 180 / .pi
+                                            : p.angle))
                                         .offset(x: width * p.titleOffset.width, y: height * p.titleOffset.height)
                                 }
                                 if !facility.preview.isEmpty {
@@ -323,7 +561,9 @@ struct ManagementSpatialRoom<Header: View>: View {
                         .frame(width: max(44, width * p.width), height: max(44, height * p.height)).contentShape(Rectangle())
                     }.buttonStyle(ManagementPropButtonStyle()).foregroundStyle(ManagementTheme.Spatial.onCanvas)
                         .accessibilityLabel(facility.title + " · " + facility.status)
-                        .accessibilityHint("상세 열기").accessibilityIdentifier(facility.id)
+                        .accessibilityHint("상세 열기")
+                        .accessibilityIdentifier(distinguishesShortcuts && Self.clubhouseShortcutIDs.contains(facility.id)
+                            ? facility.id.replacingOccurrences(of: "clubhouse-", with: "clubhouseSign-") : facility.id)
                         .position(x: p.hitRect(in: .init(width: width, height: height)).midX,
                                   y: p.hitRect(in: .init(width: width, height: height)).midY)
                 }
@@ -332,7 +572,7 @@ struct ManagementSpatialRoom<Header: View>: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(venue.map { "managementHomeVenue-" + $0.stadium.key } ?? "managementRoomScene-" + selection.rawValue)
             .accessibilityLabel(title)
-            .accessibilityValue(venue?.stadium.backdrop?.name ?? "")
+            .accessibilityValue(venue?.art.venueName ?? "")
     }
     private var roomToolbar: some View {
         HStack {
@@ -345,9 +585,9 @@ struct ManagementSpatialRoom<Header: View>: View {
             Text(title).font(.subheadline.bold()).padding(.horizontal, 12)
         }.foregroundStyle(ManagementTheme.Spatial.onCanvas).background(ManagementTheme.Spatial.canvas.opacity(0.86))
     }
-    private func facilityList(columns: Int) -> some View {
+    private func facilityList(columns: Int, items: [ManagementFacility]? = nil) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: columns), spacing: 16) {
-            ForEach(facilities) { facility in facilityButton(facility) }
+            ForEach(items ?? facilities) { facility in facilityButton(facility) }
         }.padding(16)
     }
     private func facilityButton(_ facility: ManagementFacility) -> some View {
@@ -366,48 +606,126 @@ struct ManagementSpatialRoom<Header: View>: View {
     }
 }
 
+private struct ClubhouseShortcutIcon: View {
+    let facilityID: String
+
+    private var rows: [String] {
+        switch facilityID {
+        case "clubhouse-training":
+            ["................", ".NNNNNNNNNNNNN..", ".NGGGGGGGGGGGN..", ".NG.G.G.G.G.GN..",
+             ".NGGGGGGGGGGGN..", ".NG.G.G.G.G.GN..", ".NGGGGGGGGGGGN..", ".NG.G.G.G.WWGN..",
+             ".NGGGGGGGWRWWN..", ".NG.G.G.GWWWWN..", ".NNNNNNNNNWWNN..", "................"]
+        case "clubhouse-rest":
+            ["................", "..NNNNNNNNNNNN..", ".NOOOOBBOOOOON..", ".NOBBBNBBBBOON..",
+             ".NOBBBNBBBBOON..", "NNOBBBNBBBONNNN.", "NOOOOOOOOOOOOON.", "NOBBBBBBBBBBBON.",
+             "NOOOOOOOOOOOOON.", ".NNNNNNNNNNNNN..", ".NO.........NO..", "................"]
+        case "facility-calendar":
+            ["................", "....N...N...N...", "..NNNNNNNNNNNN..", ".NRRRRRRRRRRRN..",
+             ".NWWWWWWWWWWWN..", ".NWCWCWCWCWCWN..", ".NWWWWWWWWWWWN..", ".NWCWRWCWCWCWN..",
+             ".NWWWWWWWWWWWN..", ".NWCWCWCWCWCWN..", ".NNNNNNNNNNNNN..", "................"]
+        default:
+            ["................", ".NNNNNNNNNNNNNN.", ".NBBBNBBBNBBBBN.",
+             ".NUBBNUBBNUBBBN.", ".NUBBNUBBNUBBBN.", ".NUBBNUBBNUBBBN.", ".NUWBNUWBNUBWBN.",
+             ".NUBBNUBBNUBBBN.", ".NUBBNUBBNUBBBN.", ".NUBBNUBBNUBBBN.", ".NNNNNNNNNNNNNN.", "................"]
+        }
+    }
+
+    private static let colors: [Character: Color] = [
+        "N": Color(hex: 0x122335), "G": Color(hex: 0x5ac194), "O": Color(hex: 0xd78651),
+        "B": Color(hex: 0x3568a5), "U": Color(hex: 0x62a0d0), "W": Color(hex: 0xf8ebce),
+        "C": Color(hex: 0xa9916d), "R": Color(hex: 0xc35b50)
+    ]
+
+    var body: some View {
+        Canvas { context, size in
+            let unit = max(1, floor(min(size.width / 16, size.height / 12)))
+            let origin = CGPoint(x: (size.width - 16 * unit) / 2, y: (size.height - 12 * unit) / 2)
+            for (row, pixels) in rows.enumerated() {
+                for (column, pixel) in pixels.enumerated() {
+                    guard let color = Self.colors[pixel] else { continue }
+                    let rect = CGRect(x: origin.x + CGFloat(column) * unit, y: origin.y + CGFloat(row) * unit,
+                                      width: unit, height: unit)
+                    context.fill(Path(rect), with: .color(color))
+                }
+            }
+        }.accessibilityHidden(true)
+    }
+}
+
 struct ManagementSpatialHeader: View {
     let player: CareerPlayer
     let affiliation: String
     var uniformTeamID: String? = nil
+    var currentAffiliation: String? = nil
+    var originSchoolName: String? = nil
     var appearanceOverride: PlayerAppearance? = nil
     let age: Int
     let used: Bool
     let pending: Bool
+    var compact = false
+    var settings: (() -> Void)? = nil
     let profile: () -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
     private var fatigueColor: Color { ManagementDisplay.fatigueColor(player.fatigue) }
     private var date: some View {
-        Text(ManagementDisplay.date(player.gameDate)).font(ManagementPixelFont.readable(.label))
+        Text(ManagementDisplay.date(player.gameDate)).font(ManagementPixelFont.readable(compact ? .helper : .label))
             .multilineTextAlignment(typeSize.isAccessibilitySize ? .leading : .trailing)
             .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("calendarDate")
+    }
+    private var team: some View {
+        HStack(alignment: .center, spacing: 5) {
+            if originSchoolName == nil, let school = SchoolCatalog.bundled.first(where: { $0.id == player.schoolID }) {
+                SchoolCrest(school: school).frame(width: 16, height: 18).accessibilityHidden(true)
+            }
+            Text(currentAffiliation ?? affiliation).font(.caption).fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(affiliation).accessibilityIdentifier("homeSchool")
+        }
+    }
+    private var ageAndRole: some View {
+        Text("\(age)세 · \(player.role.label) · \(player.roleDetail)")
+            .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeAge")
     }
     private var identity: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("\(player.name)  #\(player.jerseyNumber)")
                 .font(ManagementPixelFont.readable(.sectionTitle))
                 .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homePlayerName")
-            HStack(alignment: .center, spacing: 5) {
-                if let school = SchoolCatalog.bundled.first(where: { $0.id == player.schoolID }) {
-                    SchoolCrest(school: school).frame(width: 18, height: 20).accessibilityHidden(true)
+            if compact && !typeSize.isAccessibilitySize {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 5) { team; Text("·").accessibilityHidden(true); ageAndRole }
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 4) { team; ageAndRole }
                 }
-                Text(affiliation).font(.caption).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeSchool")
+            } else { team; ageAndRole }
+            if let originSchoolName {
+                HStack(alignment:.center,spacing:5) {
+                    if let school=SchoolCatalog.bundled.first(where:{$0.id == player.schoolID}) {
+                        SchoolCrest(school:school).frame(width:18,height:20)
+                    }
+                    Text("출신 "+originSchoolName).font(.caption).fixedSize(horizontal:false,vertical:true)
+                }.foregroundStyle(GameTheme.boardMuted).accessibilityHidden(true)
             }
-            Text("\(age)세 · \(player.role.label) · \(player.roleDetail)")
-                .font(.caption).foregroundStyle(GameTheme.boardMuted)
-                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("homeAge")
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
+    private var fatigueGauge: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(GameTheme.boardLine.opacity(0.35))
+                Rectangle().fill(fatigueColor).frame(width: geometry.size.width * CGFloat(min(100, max(0, player.fatigue))) / 100)
+            }
+        }.frame(width: typeSize.isAccessibilitySize ? 120 : compact ? 54 : 96, height: 5).accessibilityHidden(true)
+    }
     private var fatigue: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("피로 \(player.fatigue)/100 · \(ManagementDisplay.fatigueLabel(player.fatigue))")
+        let inline = compact && !typeSize.isAccessibilitySize
+        let label = "피로 \(player.fatigue)/100"
+        let condition = ManagementDisplay.fatigueLabel(player.fatigue)
+        let layout = inline ? AnyLayout(HStackLayout(spacing: 5)) : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+        return layout {
+            Text(inline ? label : label + " · " + condition)
                 .font(.caption.bold()).foregroundStyle(fatigueColor).accessibilityIdentifier("homeFatigue")
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(GameTheme.boardLine.opacity(0.35))
-                    Rectangle().fill(fatigueColor).frame(width: geometry.size.width * CGFloat(min(100, max(0, player.fatigue))) / 100)
-                }
-            }.frame(width: typeSize.isAccessibilitySize ? 120 : 96, height: 5).accessibilityHidden(true)
+                .accessibilityLabel(label + " · " + condition)
+            fatigueGauge
         }
     }
     private var action: some View {
@@ -424,20 +742,40 @@ struct ManagementSpatialHeader: View {
             HStack(alignment: .center, spacing: 10) {
                 Button(action: profile) {
                     ManagementPlayerPortrait(appearance: appearanceOverride ?? player.appearance.wearing(teamID: uniformTeamID ?? player.schoolID), role: player.role, number: player.jerseyNumber)
-                        .frame(width: 50, height: 64)
+                        .frame(width: compact ? 44 : 50, height: compact ? 48 : 64)
                         .background(GameTheme.boardPanel)
                         .overlay(ManagementStepFrame().strokeBorder(GameTheme.boardLine, lineWidth: 1))
                 }.buttonStyle(.plain).accessibilityLabel("선수 선택 · 프로필").accessibilityIdentifier("roomProfile")
                 identity
-                if !typeSize.isAccessibilitySize { date.frame(width: 82) }
+                if compact && !typeSize.isAccessibilitySize, let settings { ManagementSettingsButton(action: settings) }
+                if !compact && !typeSize.isAccessibilitySize { date.frame(width: 82) }
             }
-            if typeSize.isAccessibilitySize { date }
+            if !compact && typeSize.isAccessibilitySize { date }
             Rectangle().fill(GameTheme.boardLine.opacity(0.7)).frame(height: 1).accessibilityHidden(true)
-            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
-            layout {
-                fatigue
-                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
-                action
+            if compact {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        date.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 0)
+                        fatigue.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 0)
+                        action.fixedSize(horizontal: true, vertical: false)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        date
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) { fatigue; action }.fixedSize(horizontal: true, vertical: false)
+                            VStack(alignment: .leading, spacing: 4) { fatigue; action }
+                        }
+                    }
+                }
+            } else {
+                let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+                layout {
+                    fatigue
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                    action
+                }
             }
         }.padding(.horizontal, 12).padding(.vertical, 9)
             .foregroundStyle(ManagementTheme.Spatial.onCanvas)
@@ -451,7 +789,7 @@ struct ManagementSpatialHeader: View {
 enum ManagementRoomDetail: Equatable, Identifiable {
     case player(ManagementPlayerSection), training(ManagementTrainingSection)
     case game(ManagementGameSection), career(ManagementCareerSection)
-    case profile, gameEntry, pitchLibrary, trainingEntry
+    case profile, gameEntry, pitchLibrary, trainingEntry, observationCalendar, observationGrowth
     var id: String {
         switch self {
         case .player: "player"
@@ -462,6 +800,8 @@ enum ManagementRoomDetail: Equatable, Identifiable {
         case .gameEntry: "gameEntry"
         case .pitchLibrary: "pitchLibrary"
         case .trainingEntry: "trainingEntry"
+        case .observationCalendar: "observationCalendar"
+        case .observationGrowth: "observationGrowth"
         }
     }
     var title: String {
@@ -474,6 +814,8 @@ enum ManagementRoomDetail: Equatable, Identifiable {
         case .gameEntry: "오늘 경기"
         case .pitchLibrary: "구종 보관함"
         case .trainingEntry: "훈련 기록"
+        case .observationCalendar: "관찰 일정"
+        case .observationGrowth: "성장 비교"
         }
     }
 }
@@ -534,6 +876,11 @@ struct ManagementStadiumRoom<Header: View>: View {
                             }.padding(.horizontal, 16)
                         }.padding(.bottom, 16)
                     }.accessibilityIdentifier("stadiumFacilityList")
+                    entryButton
+                        .font(ManagementPixelFont.readable(.label))
+                        .buttonStyle(ManagementPropButtonStyle())
+                        .foregroundStyle(GameTheme.boardInk)
+                        .padding(.horizontal, 16).padding(.vertical, 6)
                 } else {
                     header
                     GeometryReader { stage in
@@ -588,9 +935,7 @@ struct ManagementStadiumRoom<Header: View>: View {
                     .accessibilityIdentifier("facility-calendar")
                 Button { choose("facility-standings") } label: { ledText("순위 ›").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("facility-standings").accessibilityLabel("리그 순위")
-                Button { choose("roomPrimary") } label: {
-                    ledText(entryTitle + " ›", color: GameTheme.gold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                }.accessibilityIdentifier("roomPrimary").accessibilityHint(entryStatus)
+                if !typeSize.isAccessibilitySize { entryButton }
             }.font(typeSize.isAccessibilitySize ? ManagementPixelFont.readable(.label) : ManagementPixelFont.font(11))
                 .buttonStyle(ManagementPropButtonStyle())
                 .padding(.horizontal, 10)
@@ -609,6 +954,12 @@ struct ManagementStadiumRoom<Header: View>: View {
                     Rectangle().inset(by: 6).strokeBorder(Color(hex: 0x162e42), lineWidth: 1)
                 }.accessibilityHidden(true).allowsHitTesting(false)
             }
+    }
+    private var entryButton: some View {
+        Button { choose("roomPrimary") } label: {
+            ledText(entryTitle + " ›", color: GameTheme.gold)
+                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }.accessibilityIdentifier("roomPrimary").accessibilityHint(entryStatus)
     }
     private func teamCell(_ name: String, designation: String) -> some View {
         VStack(spacing: 3) {
@@ -719,7 +1070,12 @@ private struct StadiumLEDLettering: ViewModifier {
 @MainActor enum ManagementHomeVenueArt {
     final class Artwork {
         let image: UIImage
-        init(_ image: UIImage) { self.image = image }
+        let venueName: String
+
+        init(image: UIImage, venueName: String) {
+            self.image = image
+            self.venueName = venueName
+        }
     }
     static let roomAsset = "ClubhouseRoomV59"
     static let referenceSize = CGSize(width: 948, height: 1659)
@@ -733,12 +1089,31 @@ private struct StadiumLEDLettering: ViewModifier {
         return cache
     }()
 
+    static func backdrop(for stadium: StadiumIdentity) -> StadiumBackdrop? {
+        venueIdentity(for: stadium)?.backdrop
+    }
+
+    private static func venueIdentity(for stadium: StadiumIdentity) -> StadiumIdentity? {
+        if stadium.backdrop != nil { return stadium }
+        // Development teams share the parent club artwork in the clubhouse.
+        let parentID: String
+        if CareerTeamDirectory.expandedDomesticIDs.contains(stadium.key) {
+            parentID = "pro-" + stadium.key.dropFirst("dev-".count)
+        } else if CareerTeamDirectory.americanDevelopmentIDs.contains(stadium.key) {
+            parentID = "us-pro-" + stadium.key.dropFirst("us-dev-".count)
+        } else {
+            return nil
+        }
+        return StadiumIdentity(homeTeamID: parentID)
+    }
+
     static func art(asset: String, selection: ManagementTab, stadium: StadiumIdentity) -> Artwork? {
-        guard selection == .home, asset == roomAsset, let venue = stadium.backdrop else { return nil }
+        guard selection == .home, asset == roomAsset, let renderedStadium = venueIdentity(for: stadium),
+              let venue = renderedStadium.backdrop else { return nil }
         let key = "v168-home-2:\(stadium.key):\(venue.imageName)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
         guard let original = UIImage(named: roomAsset), original.size == referenceSize,
-              let upper = InplayStadiumArt.upperArt(venue, stadium: stadium)?.image else { return nil }
+              let upper = InplayStadiumArt.upperArt(venue, stadium: renderedStadium)?.image else { return nil }
         let scale = max(standsBounds.width / upper.size.width, standsBounds.height / upper.size.height)
         let size = CGSize(width: upper.size.width * scale, height: upper.size.height * scale)
         let target = CGRect(x: standsBounds.midX - size.width / 2, y: standsBounds.maxY - size.height,
@@ -753,7 +1128,7 @@ private struct StadiumLEDLettering: ViewModifier {
             drawIdentity(venue, in: target, context: context)
             context.restoreGState()
         }
-        let art = Artwork(image)
+        let art = Artwork(image: image, venueName: venue.name)
         cache.setObject(art, forKey: key, cost: Int(referenceSize.width * referenceSize.height) * 4)
         return art
     }

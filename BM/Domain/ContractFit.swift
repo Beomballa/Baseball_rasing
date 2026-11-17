@@ -251,9 +251,9 @@ struct ClubRoleRecruitment: Codable, Equatable, Identifiable {
 
 enum ScoutingClubCatalog {
     // Initial fictional domestic market. These are game data, not real club needs or league averages.
-    static func roles(for role: PlayerRole) -> [ClubRoleRecruitment] {
-        let names=["인천 하버스","대전 코멧츠","부산 타이즈","서울 스타즈","광주 폭시스","대구 팔콘스"]
-        let ids=["harbors","comets","tides","stars","foxes","falcons"]
+    static func roles(for role: PlayerRole,expanded:Bool=false) -> [ClubRoleRecruitment] {
+        let names=(expanded ? CareerTeamDirectory.expandedDomesticNames:CareerTeamDirectory.domesticNames).map {$0.replacingOccurrences(of:" 육성",with:"")}
+        let ids=(expanded ? CareerTeamDirectory.expandedDomesticIDs:CareerTeamDirectory.domesticIDs).map {String($0.dropFirst(4))}
         let keys=role == .batter ? ["slugger","onBase","field"]:["starter"]
         let minimums=["slugger":65.0,"onBase":62.0,"field":58.0,"starter":65.0]
         return names.enumerated().flatMap { club,name in
@@ -333,7 +333,7 @@ struct ScoutingContractFit: Codable, Equatable {
         }
         return result
     }
-    @MainActor static func make(_ observation: ScoutingObservation) throws -> Self {
+    @MainActor static func make(_ observation: ScoutingObservation,expandedCatalog:Bool=false) throws -> Self {
         let rows = try observation.groups.map { group -> ScoutingPerformanceComparison in
             let perf=group.performance
             let ref=try ScoutingReferenceSimulation.make(environment:group.id,role:observation.role,position:observation.role == .batter ? observation.position:"P")
@@ -344,18 +344,22 @@ struct ScoutingContractFit: Codable, Equatable {
                 correction:p,verified:verified,reason:verified ? "같은 엔진·고교 수준 · \(perf?.inputs?.mode.label ?? "자동") / 표준 NPC 입력 기준" : perf == nil ? "과거 경기의 사건 지표 미기록 · P=0 중립" : "직접 조작/미지원 환경 비교 미검증 · P=0 중립")
         }
         let source=selected(rows,role:observation.role),p=source?.correction ?? 0
-        let clubs=try ScoutingClubCatalog.roles(for:observation.role).map { rule -> ScoutingClubFit in
+        let clubs=try ScoutingClubCatalog.roles(for:observation.role,expanded:expandedCatalog).map { rule -> ScoutingClubFit in
             let h=observation.grades.first{$0.id == rule.roleID}?.score,c=try rule.criterion(role:observation.role)
             let f=h.flatMap{h in c.map{round(h-$0+p)}}
             return ScoutingClubFit(recruitment:rule,h:h,c:c,p:p,f:f,stage:rule.demand == .none ? "모집 없음":stage(f:f),
                 blockers:blockers(observation:observation,rule:rule,h:h,c:c,source:source))
         }
-        return Self(comparisons:rows,selectedEnvironment:source?.id,clubs:clubs)
+        return Self(catalogVersion:expandedCatalog ? "domestic-market-v2":"domestic-market-v1",comparisons:rows,selectedEnvironment:source?.id,clubs:clubs)
     }
     func validate(observation: ScoutingObservation) throws {
-        guard [1,2].contains(version), catalogVersion == "domestic-market-v1", comparisons.count == observation.groups.count,
+        let expanded=catalogVersion == "domestic-market-v2"
+        guard [1,2].contains(version), catalogVersion == "domestic-market-v1" || (version == 2 && expanded), comparisons.count == observation.groups.count,
               Set(comparisons.map(\.id)).count == comparisons.count,
-              clubs.count == (observation.role == .batter ? 18:6),Set(clubs.map(\.id)).count == clubs.count else {throw ScoutingObservationError.invalid}
+              clubs.count == (observation.role == .batter ? 3:1)*(expanded ? 10:6),Set(clubs.map(\.id)).count == clubs.count else {throw ScoutingObservationError.invalid}
+        if expanded {
+            guard clubs.map(\.recruitment) == ScoutingClubCatalog.roles(for:observation.role,expanded:true) else {throw ScoutingObservationError.invalid}
+        }
         for row in comparisons {
             guard let group=observation.groups.first(where:{$0.id == row.id}),group.totals == row.totals,group.performance == row.performance else {throw ScoutingObservationError.invalid}
             if let perf=row.performance {try perf.validate(line:row.totals.line,role:observation.role)}
@@ -399,6 +403,7 @@ struct DomesticSelectionCandidate: Codable, Equatable, Identifiable {
     let role: String
     let h: Double
     let p: Double
+    var route: DomesticSelectionRoute? = nil
 }
 struct DomesticSelectionPick: Codable, Equatable {
     let seatID: String
@@ -441,9 +446,9 @@ struct DomesticSelection: Codable, Equatable {
     }
     static func cost(_ f:Double) -> Int {Int((100 * max(0.75,min(2,1+0.06*f))).rounded())}
     static func hash(_ text:String) -> UInt64 {text.utf8.reduce(UInt64(14695981039346656037)) {($0 ^ UInt64($1)) &* 1099511628211}}
-    static func market(seed:String) -> [DomesticSelectionSeat] {
-        let ids=["harbors","comets","tides","stars","foxes","falcons"]
-        let clubs=["인천 하버스","대전 코멧츠","부산 타이즈","서울 스타즈","광주 폭시스","대구 팔콘스"]
+    static func market(seed:String,expanded:Bool=false) -> [DomesticSelectionSeat] {
+        let ids=(expanded ? CareerTeamDirectory.expandedDomesticIDs:CareerTeamDirectory.domesticIDs).map {String($0.dropFirst(4))}
+        let clubs=(expanded ? CareerTeamDirectory.expandedDomesticNames:CareerTeamDirectory.domesticNames).map {$0.replacingOccurrences(of:" 육성",with:"")}
         let colleges=["해솔대","한빛대","푸른대","다온대","누리대","가온대"]
         // Seeded initial previous-year order is fictional game configuration, not real standings.
         let order=ids.indices.sorted {hash(seed+ids[$0]) < hash(seed+ids[$1])}
@@ -451,9 +456,9 @@ struct DomesticSelection: Codable, Equatable {
         for round in 0..<3 {for (index,club) in order.enumerated() {
             let role=roles[(club+round)%4]
             seats.append(DomesticSelectionSeat(id:"rookie/"+ids[club]+"/\(round+1)",name:clubs[club],route:.rookie,
-                order:round*6+index,roles:[role],budget:330+club*12))
+                order:round*ids.count+index,roles:[role],budget:330+club*12))
         }}
-        for club in ids.indices {for (index,role) in roles.enumerated() {
+        for club in colleges.indices {for (index,role) in roles.enumerated() {
             seats.append(DomesticSelectionSeat(id:"college/\(club)/"+role,name:colleges[club],route:.college,
                 order:club*4+index,roles:[role],budget:520+club*40))
         }}
@@ -465,8 +470,40 @@ struct DomesticSelection: Codable, Equatable {
             return DomesticSelectionCandidate(id:id,role:roles[index%4],h:Double(46+bits%17),p:Double(Int((bits/17)%7)-3)*0.5)
         }
     }
-    static func carried(seed:String,april:DomesticSelection?) -> [DomesticSelectionPick] {
-        let picks=april?.picks ?? simulate(observation:nil,seats:market(seed:seed),candidates:candidates(seed:seed,month:4),carried:[],sample:nil,sampleReason:"").picks
+    static func competitiveCandidates(seed:String,month:Int) -> [DomesticSelectionCandidate] {
+        let legacy=candidates(seed:seed,month:month)
+        let oldSeats=market(seed:seed).filter {$0.route == .rookie}
+        let newSeats=market(seed:seed,expanded:true).filter {$0.route == .rookie}
+        // Preserve candidate density by total places and apportion role quotas with stable remainder ties.
+        let total=(legacy.count*newSeats.count+oldSeats.count-1)/oldSeats.count
+        let ideals=roles.map { role in
+            Double(legacy.filter {$0.role == role}.count)*Double(newSeats.filter {$0.roles.contains(role)}.count)
+                / Double(oldSeats.filter {$0.roles.contains(role)}.count)
+        }
+        var quotas=ideals.map {Int($0.rounded(.down))}
+        let order=roles.indices.sorted { left,right in
+            let a=ideals[left]-Double(quotas[left]),b=ideals[right]-Double(quotas[right])
+            return a == b ? left < right:a > b
+        }
+        for index in order.prefix(total-quotas.reduce(0,+)) {quotas[index]+=1}
+        var result=legacy
+        for (index,role) in roles.enumerated() {
+            let needed=quotas[index]-legacy.filter {$0.role == role}.count
+            for _ in 0..<needed {
+                let id="npc/\(month)/\(result.count)",bits=hash(seed+"/"+id)
+                result.append(DomesticSelectionCandidate(id:id,role:role,h:Double(46+bits%17),
+                    p:Double(Int((bits/17)%7)-3)*0.5,route:.rookie))
+            }
+        }
+        return result
+    }
+    static func carried(seed:String,april:DomesticSelection?,expanded:Bool=false) -> [DomesticSelectionPick] {
+        carried(seed:seed,april:april,rule:expanded ? "domestic-selection-v2":"domestic-selection-v1")
+    }
+    static func carried(seed:String,april:DomesticSelection?,rule:String) -> [DomesticSelectionPick] {
+        let picks=april?.picks ?? simulate(observation:nil,seats:market(seed:seed,expanded:rule != "domestic-selection-v1"),
+            candidates:rule == "domestic-selection-v3" ? competitiveCandidates(seed:seed,month:4):candidates(seed:seed,month:4),
+            carried:[],sample:nil,sampleReason:"").picks
         return picks.filter {$0.seatID.hasPrefix("rookie/") && $0.candidateID.hasPrefix("npc/")}
     }
     static func fieldCondition(_ role:String,route:DomesticSelectionRoute,observation:ScoutingObservation) -> [String] {
@@ -499,7 +536,7 @@ struct DomesticSelection: Codable, Equatable {
                 let occupied=picks.contains {$0.seatID == seat.id}
                 let spent=picks.filter {pick in seats.first(where:{$0.id == pick.seatID})?.name == seat.name}.reduce(0) {$0+$1.cost}
                 let budget=max(0,seat.budget-spent)
-                var pool=candidates.filter {!chosen.contains($0.id) && seat.roles.contains($0.role)}.filter {
+                var pool=candidates.filter {($0.route == nil || $0.route == route) && !chosen.contains($0.id) && seat.roles.contains($0.role)}.filter {
                     let f=$0.h-minimum($0.role,route:route)+$0.p
                     return f >= 0 && cost(f) <= budget
                 }
@@ -541,10 +578,11 @@ struct DomesticSelection: Codable, Equatable {
         return (picks,results)
     }
     func validate(observation:ScoutingObservation,window:ContractEvaluationWindow) throws {
-        guard rule == "domestic-selection-v1",seed == observation.playerID.uuidString+"/\(window.year)",
+        guard ["domestic-selection-v1","domestic-selection-v2","domestic-selection-v3"].contains(rule),seed == observation.playerID.uuidString+"/\(window.year)",
               [4,7].contains(window.month),(20...23).contains(observation.age),
-              seats == Self.market(seed:seed),Set(candidates.map(\.id)).count == candidates.count,
-              candidates == Self.candidates(seed:seed,month:window.month),candidates.allSatisfy({$0.id.hasPrefix("npc/") && Self.roles.contains($0.role) && $0.h.isFinite && (0...100).contains($0.h) && $0.p.isFinite && (-4...4).contains($0.p)}),
+              seats == Self.market(seed:seed,expanded:rule != "domestic-selection-v1"),Set(candidates.map(\.id)).count == candidates.count,
+              candidates == (rule == "domestic-selection-v3" ? Self.competitiveCandidates(seed:seed,month:window.month):Self.candidates(seed:seed,month:window.month)),
+              candidates.allSatisfy({$0.id.hasPrefix("npc/") && Self.roles.contains($0.role) && $0.h.isFinite && (0...100).contains($0.h) && $0.p.isFinite && (-4...4).contains($0.p) && ($0.route == nil || (rule == "domestic-selection-v3" && $0.route == .rookie))}),
               Set(carried.map(\.seatID)).count == carried.count,Set(carried.map(\.candidateID)).count == carried.count,
               carried.allSatisfy({pick in seats.contains(where:{$0.id == pick.seatID && $0.route == .rookie && $0.roles.contains(pick.role)}) && pick.candidateID.hasPrefix("npc/") && pick.f.isFinite && pick.f >= 0 && pick.cost == Self.cost(pick.f)}),
               window.month == 7 || carried.isEmpty else {throw ContractEvaluationError.invalid}
@@ -690,7 +728,7 @@ struct CareerMembership:Codable,Equatable {
     static func make(offer:DomesticContractOffer,on date:GameDate,origin:GameDate,startAge:Int) throws -> Self {
         let parts=offer.resultID.components(separatedBy:"/")
         guard parts.count >= 3,date.year < 9995 else {throw ContractRegistrationError.invalid}
-        let ids=offer.route == .rookie ? CareerTeamDirectory.domesticIDs:CareerTeamDirectory.collegeIDs
+        let ids=offer.route == .rookie ? CareerTeamDirectory.expandedDomesticIDs:CareerTeamDirectory.collegeIDs
         let id=offer.route == .rookie ? "dev-"+parts[1]:"college-"+parts[1]
         guard ids.contains(id) else {throw ContractRegistrationError.invalid}
         let economicEnd=date.anniversary(in:date.year+1).adding(days:-1)
@@ -704,6 +742,8 @@ enum CareerTeamDirectory {
     static let collegeIDs=(0..<6).map {"college-\($0)"}
     static let americanDevelopmentIDs=(0..<6).map {"us-dev-\($0)"}
     static let domesticFirstIDs=domesticIDs.map {$0.replacingOccurrences(of:"dev-",with:"pro-")}
+    static let expandedDomesticIDs=domesticIDs+["gears","silverhorns","auroras","crowns"].map {"dev-"+$0}
+    static let expandedDomesticFirstIDs=expandedDomesticIDs.map {$0.replacingOccurrences(of:"dev-",with:"pro-")}
     static let japaneseFirstIDs=(0..<6).map {"jp-pro-\($0)"}
     static let americanFirstIDs=(0..<6).map {"us-pro-\($0)"}
     static let japaneseExpandedFirstIDs=(0..<15).map {"jp-pro-\($0)"}
@@ -712,15 +752,16 @@ enum CareerTeamDirectory {
     static func teams(level:String,expanded:Bool=false) -> [String] {
         switch level {
         case "mlb-development": americanDevelopmentIDs
-        case "domestic-first-team": domesticFirstIDs
+        case "domestic-first-team": expanded ? expandedDomesticFirstIDs:domesticFirstIDs
         case "npb-first-team": expanded ? japaneseExpandedFirstIDs:japaneseFirstIDs
         case "mlb-first-team": expanded ? americanExpandedFirstIDs:americanFirstIDs
         case "college": collegeIDs
-        default: domesticIDs
+        default: expanded ? expandedDomesticIDs:domesticIDs
         }
     }
     static func fixtures(level:String,year:Int,expanded:Bool) throws -> [SeasonFixture] {
         let ids=teams(level:level,expanded:expanded)
+        if ids.count == 10 { return try SeasonSchedule.domesticExpandedFixtures(year:year,teamIDs:ids) }
         if ids.count == 15 {
             let east=ids.filter {division(for:$0) == .east}
             let west=ids.filter {division(for:$0) == .west}
@@ -738,11 +779,12 @@ enum CareerTeamDirectory {
         return nil
     }
     static let domesticNames=["인천 하버스 육성","대전 코멧츠 육성","부산 타이즈 육성","서울 스타즈 육성","광주 폭시스 육성","대구 팔콘스 육성"]
+    static let expandedDomesticNames=domesticNames+["수원 기어즈 육성","창원 실버혼즈 육성","성남 오로라스 육성","전주 크라운즈 육성"]
     static let collegeNames=["해솔대","한빛대","푸른대","다온대","누리대","가온대"]
     static func name(_ id:String,schools:[School]=[]) -> String {
-        if let i=domesticIDs.firstIndex(of:id) {return domesticNames[i]}
+        if let i=expandedDomesticIDs.firstIndex(of:id) {return expandedDomesticNames[i]}
         if let i=collegeIDs.firstIndex(of:id) {return collegeNames[i]}
-        if let i=domesticFirstIDs.firstIndex(of:id) {return domesticNames[i].replacingOccurrences(of:" 육성",with:"")+" 1군"}
+        if let i=expandedDomesticFirstIDs.firstIndex(of:id) {return expandedDomesticNames[i].replacingOccurrences(of:" 육성",with:"")+" 1군"}
         if let i=japaneseFirstIDs.firstIndex(of:id) {return OverseasMarket.japaneseNames[i]}
         if let i=americanFirstIDs.firstIndex(of:id) {return OverseasMarket.americanNames[i]}
         if let i=americanDevelopmentIDs.firstIndex(of:id) {return OverseasMarket.americanNames[i]}
@@ -999,7 +1041,7 @@ struct DomesticRenewalReview: Codable, Equatable {
         guard member.route == .rookie,try member.contains(date),window.month == 11,
               window == ContractEvaluationWindow.containing(date),observation.age >= 20,
               observation.school == member.name,key == observation.playerID.uuidString+":"+window.id,
-              let club=CareerTeamDirectory.domesticIDs.firstIndex(of:member.teamID),
+              let club=CareerTeamDirectory.expandedDomesticIDs.firstIndex(of:member.teamID),
               observation.grades.contains(where:{$0.id == roleID}) else {throw ContractEvaluationError.invalid}
         // One fixed current-club role, one incumbent slot. These are development-team game data.
         let bits=DomesticSelection.hash(key+"/renewal/"+member.teamID+"/"+roleID)
@@ -1048,9 +1090,9 @@ struct DomesticRetryReview:Codable,Equatable {
     var certificate:CertifiedAssessment? = nil
     let release:DomesticRelease
     let results:[DomesticSelectionResult]
-    static func make(observation:ScoutingObservation,release:DomesticRelease,window:ContractEvaluationWindow,certificate:CertifiedAssessment?=nil,certificationEnabled:Bool=false) throws -> Self {
+    static func make(observation:ScoutingObservation,release:DomesticRelease,window:ContractEvaluationWindow,certificate:CertifiedAssessment?=nil,certificationEnabled:Bool=false,expandedMarket:Bool=false) throws -> Self {
         let date=try GameDate(observation.observedDate)
-        guard observation.age >= 20,[4,7].contains(window.month),window == ContractEvaluationWindow.containing(date),
+        guard (!expandedMarket || certificationEnabled),observation.age >= 20,[4,7].contains(window.month),window == ContractEvaluationWindow.containing(date),
               try GameDate(release.date)<date else {throw ContractEvaluationError.invalid}
         let groups=observation.groups.filter {$0.id.hasPrefix("domestic-development/") && $0.performance != nil}
         if let certificate {
@@ -1063,7 +1105,7 @@ struct DomesticRetryReview:Codable,Equatable {
         let seed=observation.playerID.uuidString+"/reentry/"+window.id
         let roles=observation.role == .batter ? ["slugger","onBase","field"]:["starter"]
         var rows:[DomesticSelectionResult]=[]
-        for (index,team) in CareerTeamDirectory.domesticIDs.enumerated() {
+        for team in (expandedMarket ? CareerTeamDirectory.expandedDomesticIDs:CareerTeamDirectory.domesticIDs) {
             for role in roles {
                 let bits=DomesticSelection.hash(seed+team+role)
                 let c=max(DomesticSelection.minimum(role,route:.rookie),Double(52+bits%19))
@@ -1075,7 +1117,7 @@ struct DomesticRetryReview:Codable,Equatable {
                 reasons += DomesticSelection.fieldCondition(role,route:.rookie,observation:observation)
                 if let f,f < 0 {reasons.append("성인 역할/고정 후보 경쟁 기준 미달 · F 0 필요")}
                 if cost>budget {reasons.append("재입단 예산 부족")}
-                rows.append(DomesticSelectionResult(id:"rookie/"+CareerTeamDirectory.domesticIDs[index].dropFirst(4)+"/"+role,
+                rows.append(DomesticSelectionResult(id:"rookie/"+team.dropFirst(4)+"/"+role,
                     name:CareerTeamDirectory.name(team),route:.rookie,role:role,h:h,c:c,p:0,f:f,cost:cost,
                     availableBudget:budget,availableSeats:1,competition:1,selected:false,reasons:reasons))
             }
@@ -1086,7 +1128,7 @@ struct DomesticRetryReview:Codable,Equatable {
                 cost:row.cost,availableBudget:row.availableBudget,availableSeats:1,competition:1,selected:row.id == winner,
                 reasons:row.reasons.isEmpty && row.id != winner ? ["다른 재입단 자리 우선 배정"]:row.reasons)
         })
-        if certificationEnabled {result.version=2;result.certificate=certificate}
+        if certificationEnabled {result.version=expandedMarket ? 3:2;result.certificate=certificate}
         return result
     }
 }
@@ -1163,6 +1205,7 @@ enum CertificationError:LocalizedError {
 
 // College early entry is a game rule; contracts start after the current annual season.
 struct CollegeProReview:Codable,Equatable {
+    var version:Int? = nil
     let membership:CareerMembership
     let effectiveDate:String
     let results:[DomesticSelectionResult]
@@ -1174,7 +1217,7 @@ struct CollegeProReview:Codable,Equatable {
         try member.route == .college && (22...23).contains(age) && member.contains(date)
             && date >= GameDate(member.since).anniversary(in:GameDate(member.since).year+2)
     }
-    static func make(observation:ScoutingObservation,member:CareerMembership,window:ContractEvaluationWindow) throws -> Self {
+    static func make(observation:ScoutingObservation,member:CareerMembership,window:ContractEvaluationWindow,expandedMarket:Bool=false) throws -> Self {
         let date=try GameDate(observation.observedDate)
         guard window.month == 11,window == ContractEvaluationWindow.containing(date),
               try eligible(member:member,age:observation.age,on:date) else {throw ContractEvaluationError.invalid}
@@ -1183,7 +1226,7 @@ struct CollegeProReview:Codable,Equatable {
         let roles=observation.role == .batter ? ["slugger","onBase","field"]:["starter"]
         let seed=observation.playerID.uuidString+"/college-pro/"+window.id
         var rows:[DomesticSelectionResult]=[]
-        for team in CareerTeamDirectory.domesticIDs {
+        for team in (expandedMarket ? CareerTeamDirectory.expandedDomesticIDs:CareerTeamDirectory.domesticIDs) {
             for role in roles {
                 let bits=DomesticSelection.hash(seed+team+role),c=max(DomesticSelection.minimum(role,route:.rookie),Double(52+bits%19))
                 let h=observation.grades.first {$0.id == role}?.score,f=h.map {ScoutingContractFit.round($0-c)}
@@ -1198,7 +1241,7 @@ struct CollegeProReview:Codable,Equatable {
             }
         }
         let winner=rows.filter {$0.reasons.isEmpty}.sorted {a,b in a.f == b.f ? a.id < b.id:a.f! > b.f!}.first?.id
-        return Self(membership:member,effectiveDate:try effective(after:date).description,results:rows.map { row in
+        return Self(version:expandedMarket ? 2:nil,membership:member,effectiveDate:try effective(after:date).description,results:rows.map { row in
             DomesticSelectionResult(id:row.id,name:row.name,route:row.route,role:row.role,h:row.h,c:row.c,p:0,f:row.f,cost:row.cost,availableBudget:row.availableBudget,availableSeats:1,competition:1,selected:row.id == winner,reasons:row.reasons.isEmpty && row.id != winner ? ["다른 프로 진출 자리 우선 배정"]:row.reasons)
         })
     }
@@ -1684,7 +1727,7 @@ struct OverseasCareerJournal:Codable,Equatable {
                   item.sampleCount == (report.observation.role == .batter ? report.selected?.totals.line.plateAppearances:report.selected?.totals.line.pitchingOuts),
                   owner.membershipHistory().contains(where:{$0.offerID == item.sourceOfferID && $0.route == .rookie}) else {throw ContractRegistrationError.invalid}
             if item.fromLevel == "domestic-development" {
-                guard item.roleID == nil,item.toLevel == "domestic-first-team",CareerTeamDirectory.domesticFirstIDs.contains(item.teamID),item.h == report.observation.grades.compactMap(\.score).max(),item.sampleCount >= (report.observation.role == .batter ? 40:45) else {throw ContractRegistrationError.invalid}
+                guard item.roleID == nil,item.toLevel == "domestic-first-team",CareerTeamDirectory.expandedDomesticFirstIDs.contains(item.teamID),item.h == report.observation.grades.compactMap(\.score).max(),item.sampleCount >= (report.observation.role == .batter ? 40:45) else {throw ContractRegistrationError.invalid}
             } else {
                 guard item.fromLevel == "mlb-development",item.toLevel == "mlb-first-team",CareerTeamDirectory.americanFirstIDs.contains(item.teamID),
                       let grade=CareerLevelPromotion.majorRole(report),item.roleID == grade.id,item.h == grade.score,
@@ -2539,7 +2582,7 @@ extension CareerTargetClub {
     var assessmentTeamID:String? {
         let parts=id.components(separatedBy:"/")
         guard parts.count == 3 else {return nil}
-        if route == nil {let team="dev-"+parts[1];return CareerTeamDirectory.domesticIDs.contains(team) ? team:nil}
+        if route == nil {let team="dev-"+parts[1];return CareerTeamDirectory.expandedDomesticIDs.contains(team) ? team:nil}
         let teams=CareerTeamDirectory.teams(level:assessmentLevel,expanded:true)
         guard let index=Int(parts[1]),teams.indices.contains(index) else {return nil}
         return teams[index]
@@ -2831,13 +2874,13 @@ struct ClubSeasonGoal:Codable,Equatable,Identifiable {
     }
 }
 extension CareerContractJournal {
-    func validateSeasonGoals(today:GameDate,offers:[DomesticContractOffer],expandedFrom:Int?) throws {
+    func validateSeasonGoals(today:GameDate,offers:[DomesticContractOffer],expandedFrom:Int?,domesticExpandedFrom:Int?=nil) throws {
         let goals=seasonGoals ?? []
         guard Set(goals.map(\.id)).count == goals.count else {throw ContractRegistrationError.invalid}
         for goal in goals {
             let date=try GameDate(goal.started)
-            let expanded=["npb-first-team","mlb-first-team"].contains(goal.role.level)
-                && (expandedFrom.map {goal.year >= $0} ?? false)
+            let cutoff=["domestic-development","domestic-first-team"].contains(goal.role.level) ? domesticExpandedFrom:(["npb-first-team","mlb-first-team"].contains(goal.role.level) ? expandedFrom:nil)
+            let expanded=cutoff.map {goal.year >= $0} ?? false
             guard goal.version == 1,goal.year == date.year,date <= today,
                   goal.expandedSchedule == (expanded ? true:nil),
                   let member=try current(on:date),member.teamID == goal.role.teamID,member.level == goal.role.level,
@@ -3037,7 +3080,7 @@ struct ClubParticipationBasis:Codable,Equatable {
     func validate() throws {
         let expanded=expandedSchedule == true
         guard version == 1,!membershipID.isEmpty,!teamID.isEmpty,["batter","pitcher"].contains(playerRole),
-              expandedSchedule != false,(!expanded || ["npb-first-team","mlb-first-team"].contains(level)),
+              expandedSchedule != false,(!expanded || ["domestic-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(level)),
               ["college","domestic-development","domestic-first-team","mlb-development","npb-first-team","mlb-first-team"].contains(level),
               CareerTeamDirectory.teams(level:level,expanded:expanded).contains(teamID),try GameDate(from).year == year,try GameDate(from)<=GameDate(through),games.count<=30,
               Set(games.map(\.fixtureID)).count == games.count,games.map(\.date) == games.map(\.date).sorted() else {throw ContractRegistrationError.invalid}

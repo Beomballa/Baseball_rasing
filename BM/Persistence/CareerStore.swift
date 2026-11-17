@@ -57,6 +57,7 @@ import SwiftData
     }
 
     static func create(_ draft: PlayerDraft, schools: [School], in context: ModelContext,
+                       currentLeagueRules: Bool = true,
                        save: CalendarProgression.Save = { try $0.save() }) throws -> CareerPlayer {
         try draft.validate(schools: schools)
         let role = draft.role.rawValue
@@ -90,7 +91,7 @@ import SwiftData
         if player.role == .batter, context.container.schema.entities.contains(where: { $0.name == "PlayerPositions" }) {
             context.insert(try PlayerPositions(playerID: player.id, loadout: PositionLoadout(primary: draft.position), source: "initial-v1"))
         }
-        let state = CareerCalendarState(player: player, schools: schools, legacySave: false)
+        let state = CareerCalendarState(player: player, schools: schools, legacySave: false, currentLeagueRules: currentLeagueRules)
         context.insert(state)
         do {
             try CareerPathStore.synchronize(player: player, calendar: state, in: context, initial: true)

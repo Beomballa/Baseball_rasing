@@ -33,16 +33,18 @@ struct MatchTimingGauge: View {
                 .overlay(Rectangle().strokeBorder(Color(hex: 0x9fb7bf), lineWidth: 2))
             if batting {
                 if typeSize.isAccessibilitySize {
-                    HStack {
+                    HStack(spacing: 12) {
                         Text(earlyLabel).foregroundStyle(Color(hex: 0x8cc6f2))
-                        Spacer(minLength: 4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         Text(centerLabel).foregroundStyle(GameTheme.gold)
+                            .frame(maxWidth: .infinity)
                         Text(lateLabel).foregroundStyle(Color(hex: 0xf3a97a))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }.font(.caption2.bold()).accessibilityHidden(true)
                 } else {
                     GeometryReader { size in
                         Text(earlyLabel).foregroundStyle(Color(hex: 0x8cc6f2)).position(x: 16, y: 7)
-                    Text(centerLabel).foregroundStyle(GameTheme.gold).position(x: size.size.width * center, y: 7)
+                        Text(centerLabel).foregroundStyle(GameTheme.gold).position(x: size.size.width * center, y: 7)
                         Text(lateLabel).foregroundStyle(Color(hex: 0xf3a97a)).position(x: size.size.width - 16, y: 7)
                     }.font(.caption2.bold()).frame(height: 14).accessibilityHidden(true)
                 }
@@ -415,37 +417,66 @@ struct MatchLastPlayStrip<Action: View>: View {
 
 /// A compact visual plate inside the full 44-point button target.
 struct MatchPitchChip: View {
+    static let compactMinimumWidth: CGFloat = 66
     let name: String
     let mastery: Double
     let selected: Bool
     var code = "four-seam"
     var hand = "right"
+    var compact = false
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        HStack(spacing: 3) {
-            MatchGrip(code: code, hand: hand).frame(width: typeSize.isAccessibilitySize ? 38 : 23, height: typeSize.isAccessibilitySize ? 38 : 28).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(name).font(typeSize.isAccessibilitySize ? .headline : .system(size: 12, weight: .heavy, design: .monospaced))
-                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+        Group {
+            if compact {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 3) {
+                        grip.frame(width: 20, height: 22)
+                        pitchName
+                    }
+                    masteryRow
+                }
+            } else {
                 HStack(spacing: 3) {
-                    HStack(spacing: 1) {
-                        ForEach(0..<8, id: \.self) { index in
-                            Rectangle().fill(Double(index) < min(100, max(0, mastery))/12.5 ? GameTheme.gold : Color(hex: 0x345365))
-                                .frame(maxWidth: 3).frame(height: 3)
-                        }
-                    }.accessibilityHidden(true)
-                    Text(mastery.formatted(.number.precision(.fractionLength(1))))
-                        .font(typeSize.isAccessibilitySize ? .body.monospaced().bold() : .system(size: 9, weight: .bold, design: .monospaced))
+                    grip.frame(width: typeSize.isAccessibilitySize ? 38 : 23, height: typeSize.isAccessibilitySize ? 38 : 28)
+                    VStack(alignment: .leading, spacing: 3) {
+                        pitchName
+                        masteryRow
+                    }
                 }
             }
-        }.padding(.leading, 8).padding(.trailing, 5).padding(.vertical, typeSize.isAccessibilitySize ? 10 : 0)
+        }.padding(.leading, 8).padding(.trailing, compact ? 3 : 5)
+            .padding(.vertical, typeSize.isAccessibilitySize ? 10 : 0)
             .frame(maxWidth: .infinity, minHeight: 36)
             .foregroundStyle(selected ? GameTheme.gold : GameTheme.paper)
             .background(ManagementStepFrame().fill(Color(hex: 0x102a3f)))
             .overlay(ManagementStepFrame().strokeBorder(selected ? GameTheme.gold : Color(hex: 0x66818f), lineWidth: 2))
             .overlay(alignment: .leading) {
-                if selected { Rectangle().fill(GameTheme.gold).frame(width: 3, height: 14).padding(.leading, 5) }
+                if selected { Rectangle().fill(GameTheme.gold).frame(width: 3, height: 14).padding(.leading, compact ? 3 : 5) }
             }
+    }
+
+    private var grip: some View {
+        MatchGrip(code: code, hand: hand).accessibilityHidden(true)
+    }
+
+    private var pitchName: some View {
+        Text(name).font(typeSize.isAccessibilitySize ? .headline : .system(size: compact ? 11 : 12, weight: .heavy, design: .monospaced))
+            .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+            .minimumScaleFactor(compact ? 0.72 : 1)
+    }
+
+    private var masteryRow: some View {
+        HStack(spacing: 3) {
+            HStack(spacing: 1) {
+                ForEach(0..<8, id: \.self) { index in
+                    Rectangle().fill(Double(index) < min(100, max(0, mastery)) / 12.5 ? GameTheme.gold : Color(hex: 0x345365))
+                        .frame(maxWidth: 3).frame(height: 3)
+                }
+            }.accessibilityHidden(true)
+            Text(mastery.formatted(.number.precision(.fractionLength(1))))
+                .font(typeSize.isAccessibilitySize ? .body.monospaced().bold() : .system(size: 9, weight: .bold, design: .monospaced))
+                .fixedSize(horizontal: true, vertical: false)
+        }
     }
 }
 

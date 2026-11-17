@@ -20,7 +20,7 @@ struct ClubIdentity: Identifiable, Equatable {
     let division: Division?
     var id: String { league.rawValue + "-" + String(index) }
     var asset: String { "Club-" + id }
-    var participates: Bool { league != .kbo || index < 6 }
+    var participates: Bool { true }
     var isExpansionClub: Bool { index >= 10 }
 
     private static let domestic: [Self] = [

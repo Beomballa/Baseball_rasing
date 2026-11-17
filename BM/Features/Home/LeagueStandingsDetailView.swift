@@ -26,16 +26,14 @@ struct AnnualLeagueHomePanel: View {
                 if let own = league.displayStandings.first(where: { $0.id == ownTeamID }) {
                     LeagueOwnScorecard(row: own, name: CareerTeamDirectory.name(own.id, schools: schools), leagueWide: league.hasGeographicDivisions)
                 }
-                LeagueStandingsTables(league: league, ownTeamID: ownTeamID, schools: schools)
+                leaderSummary(league)
+                todaySummary(league)
             } else if let error {
                 GamePanel(title: "리그 기록 확인 필요", onBoard: true) {
                     Text(error).font(.body).accessibilityIdentifier("homeLeagueError")
                     Button("순위 다시 확인", action: reload).buttonStyle(MatchPixelButtonStyle())
                 }
             } else { ProgressView("리그 순위 불러오는 중").tint(GameTheme.gold) }
-            NavigationLink { LeaguePlayersScreen(player: player, state: state) } label: {
-                HStack(spacing: 12) { LeagueTrophyPixel().frame(width: 24, height: 28); Text("팀 선수 명단 · 리그 타이틀"); Spacer(); Text("›") }
-            }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openLeaguePlayers")
             NavigationLink { AnnualLeagueScreen(player: player, state: state, schools: schools) } label: {
                 HStack(spacing: 10) {
                     LeaguePixelFlag().frame(width: 20, height: 22)
@@ -44,6 +42,9 @@ struct AnnualLeagueHomePanel: View {
                     Text("›").font(.title2.bold())
                 }
             }.buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("openAnnualLeague")
+            NavigationLink { LeaguePlayersScreen(player: player, state: state) } label: {
+                HStack(spacing: 12) { LeagueTrophyPixel().frame(width: 24, height: 28); Text("팀 선수 명단 · 리그 타이틀"); Spacer(); Text("›") }
+            }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("openLeaguePlayers")
             if let season {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("MY SEASON · 내 시즌 기록").font(.subheadline.monospaced().bold()).foregroundStyle(GameTheme.gold)
@@ -59,6 +60,33 @@ struct AnnualLeagueHomePanel: View {
             .task(id: "\(player.gameDate):\(state.revision):\(transition.display == nil)") {
                 if transition.display == nil { reload() }
             }
+    }
+
+    private func leaderSummary(_ league: AnnualLeague) -> some View {
+        let leaders = league.displayStandings.filter { $0.rank == 1 }
+        return ManagementPanel(league.hasGeographicDivisions ? "리그 전체 선두" : "리그 선두", surface: .paper) {
+            if let first = leaders.first {
+                let name = CareerTeamDirectory.name(first.id, schools: schools)
+                Text(leaders.count > 1 ? "공동 선두 · \(name) 외 \(leaders.count - 1)팀" : name).managementFont(.label).bold()
+                Text("승률 \(first.percentage)").managementFont(.helper).monospacedDigit()
+            } else {
+                Text("집계된 팀 경기 결과가 없습니다.").managementFont(.body)
+            }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("leagueLeaderSummary")
+    }
+
+    private func todaySummary(_ league: AnnualLeague) -> some View {
+        let fixture = league.fixtures.first {
+            $0.date.description == player.gameDate && ($0.homeID == ownTeamID || $0.awayID == ownTeamID)
+        }
+        return ManagementPanel("내 팀 오늘 대진") {
+            if let fixture {
+                LeagueMatchTicket(fixture: fixture, result: league.results.first { $0.id == fixture.id },
+                                  pending: league.pendingIDs.contains(fixture.id), ownTeamID: ownTeamID, schools: schools)
+            } else {
+                Text("오늘 내 팀 경기 일정이 없습니다.").managementFont(.body)
+            }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("leagueTodaySummary")
     }
 }
 
@@ -173,7 +201,7 @@ private struct LeagueSeasonMasthead: View {
                 Image("NavGameV1").resizable().interpolation(.none).scaledToFit().frame(width: 42, height: 42).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(String(league.year)) SEASON").font(.title2.monospaced().bold()).foregroundStyle(GameTheme.gold)
-                    Text(league.hasGeographicDivisions ? "동부·서부 15구단 · 팀당 연 30경기" : "6팀 조별리그 · 팀당 연 30경기")
+                    Text(league.hasGeographicDivisions ? "동부·서부 15구단 · 팀당 연 30경기" : league.standings.count == 10 ? "10구단 단일리그 · 팀당 연 30경기" : "6팀 조별리그 · 팀당 연 30경기")
                         .font(.subheadline).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("leagueSeasonFormat")
                 }
             }

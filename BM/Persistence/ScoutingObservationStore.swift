@@ -228,7 +228,7 @@ typealias CareerScoutingReport = CareerSchemaV8.ScoutingReport
         value.opportunities = try ClubSelectionStore.opportunities(player:player,through:player.gameDate,in:context)
         value.clubParticipation = try ClubParticipationStore.current(player:player,calendar:calendar,in:context)
         value.version = 4
-        value.contractFit = try ScoutingContractFit.make(value)
+        value.contractFit = try ScoutingContractFit.make(value,expandedCatalog:calendar.isExpandedDomestic(year:live.date.year))
         value.interests = ScoutingInterests.make(value)
         value.evaluationPending = ScoutingObservation.pendingReasons(age:live.age,role:player.role,groups:live.groups,modern:true,compared:value.contractFit?.selectedEnvironment != nil)
         try value.validate()
@@ -272,10 +272,12 @@ struct ContractEvaluationSnapshot: Codable {
         guard version == 6 || college == nil else {throw ContractEvaluationError.invalid}
         if version == 6 {
             guard let college,selection == nil,renewal == nil,retry == nil,
-                  college == (try CollegeProReview.make(observation:observation,member:college.membership,window:window)) else {throw ContractEvaluationError.invalid}
+                  college == (try CollegeProReview.make(observation:observation,member:college.membership,window:window,expandedMarket:college.version == 2)),
+                  try (college.version != 2 || calendar.isExpandedDomestic(year:GameDate(college.effectiveDate).year)) else {throw ContractEvaluationError.invalid}
         } else if [4,5].contains(version) {
             guard let retry,selection == nil,renewal == nil,
-                  retry == (try DomesticRetryReview.make(observation:observation,release:retry.release,window:window,certificate:version == 5 ? retry.certificate:nil,certificationEnabled:version == 5)) else {throw ContractEvaluationError.invalid}
+                  retry == (try DomesticRetryReview.make(observation:observation,release:retry.release,window:window,certificate:version == 5 ? retry.certificate:nil,certificationEnabled:version == 5,expandedMarket:retry.version == 3)),
+                  try (retry.version != 3 || calendar.isExpandedDomestic(year:window.year)) else {throw ContractEvaluationError.invalid}
         } else if version == 3 {
             guard let renewal,retry == nil,selection == nil else {throw ContractEvaluationError.invalid}
             try renewal.validate(observation:observation,key:player.id.uuidString+":"+window.id,window:window)
@@ -283,6 +285,7 @@ struct ContractEvaluationSnapshot: Codable {
         else {
             guard let selection,renewal == nil,retry == nil, affiliation.stage == .unsigned else {throw ContractEvaluationError.invalid}
             try selection.validate(observation:observation,window:window)
+            guard try (!["domestic-selection-v2","domestic-selection-v3"].contains(selection.rule) || calendar.isExpandedDomestic(year:window.year)) else {throw ContractEvaluationError.invalid}
         }
     }
 }
@@ -344,7 +347,10 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
         for value in snapshots where value.window.month == 7 {
             if let selection=value.selection {
                 let april=snapshots.first {$0.window.year == value.window.year && $0.window.month == 4}?.selection
-                guard selection.carried == DomesticSelection.carried(seed:selection.seed,april:april) else {throw ContractEvaluationError.invalid}
+                if let april,selection.rule == "domestic-selection-v3" || april.rule == "domestic-selection-v3" {
+                    guard april.rule == selection.rule else {throw ContractEvaluationError.invalid}
+                }
+                guard selection.carried == DomesticSelection.carried(seed:selection.seed,april:april,rule:selection.rule) else {throw ContractEvaluationError.invalid}
             }
         }
         return rows.sorted {$0.key > $1.key}
@@ -366,7 +372,8 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
                       try CollegeProReview.eligible(member:member,age:calendar.age(of:player),on:GameDate(player.gameDate)) else {return false}
                 guard let history=try CareerPathStore.record(player:player,calendar:calendar,in:context)?.snapshot(player:player,calendar:calendar) else {throw ContractEvaluationError.invalid}
                 let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
-                let review=try CollegeProReview.make(observation:observation,member:member,window:window)
+                let review=try CollegeProReview.make(observation:observation,member:member,window:window,
+                    expandedMarket:calendar.isExpandedDomestic(year:CollegeProReview.effective(after:GameDate(player.gameDate)).year))
                 let value=ContractEvaluationSnapshot(version:6,rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,calendarRevision:calendar.revision,affiliation:history.current,routes:["대학 재학생 프로 진출"],observation:observation,pending:["성인 Vref 미검증 · P=0 중립","수락 시 다음 해4월1일 전환 · 현재 대학 시즌/학적 원본 보존"],college:review)
                 try value.validate(player:player,calendar:calendar)
                 context.insert(try CareerContractEvaluation(playerID:player.id,snapshot:value))
@@ -396,7 +403,8 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
             guard release.date < player.gameDate else {return false}
             let observation=try ScoutingObservationStore.currentObservation(player:player,calendar:calendar,in:context)
             let certificate=try CertificationStore.assessment(player:player,releaseID:release.membershipOfferID,window:window,in:context)
-            let retry=try DomesticRetryReview.make(observation:observation,release:release,window:window,certificate:certificate,certificationEnabled:true)
+            let retry=try DomesticRetryReview.make(observation:observation,release:release,window:window,certificate:certificate,certificationEnabled:true,
+                expandedMarket:calendar.isExpandedDomestic(year:window.year))
             let value=ContractEvaluationSnapshot(version:5,rule:"contracts-window-v1",window:window,evaluatedDate:player.gameDate,
                 calendarRevision:calendar.revision,affiliation:history.current,routes:["무소속 국내 육성팀 재입단"],observation:observation,
                 pending:["성인 Vref 미검증 · P=0 중립","육성 표본 또는 해당 창 인증 평가전 · 같은 창 재평가 없음"],retry:retry)
@@ -411,16 +419,20 @@ typealias CareerContractEvaluation = CareerSchemaV10.ContractEvaluation
             calendarRevision:calendar.revision,affiliation:history.current,routes:routes,observation:observation,
             pending:observation.age <= 23 ? ["선발·실제 제의는 같은 창 최초 자료로 고정 · 상세에서 수락/거절을 결정합니다.","신규 신청과 방출 후 재입단·인증 경로를 구분하며 자료 부족은 심사 보류입니다."] : ["국내 전력/검증 테스트 선발 심사 대기"])
         if (20...23).contains(observation.age) {
-            let seed=player.id.uuidString+"/\(window.year)",seats=DomesticSelection.market(seed:seed)
+            let expanded=try calendar.isExpandedDomestic(year:window.year)
+            let seed=player.id.uuidString+"/\(window.year)"
             let april=try rows.first(where:{$0.key == CareerContractEvaluation.key(player.id,"\(window.year)-04")})?.snapshot(player:player,calendar:calendar).selection
-            let carried=window.month == 7 ? DomesticSelection.carried(seed:seed,april:april):[]
+            let currentRule=expanded ? "domestic-selection-v3":"domestic-selection-v1"
+            let rule=window.month == 7 ? april?.rule ?? currentRule:currentRule
+            let seats=DomesticSelection.market(seed:seed,expanded:rule != "domestic-selection-v1")
+            let carried=window.month == 7 ? DomesticSelection.carried(seed:seed,april:april,rule:rule):[]
             let sample=try graduationSample(player:player,calendar:calendar,observation:observation,in:context)
             let reason="검증된 졸업 표본40PA/15IP 부족 또는 유효기간 경과 · 동일 형식 인증 평가전 자료 필요"
-            let candidates=DomesticSelection.candidates(seed:seed,month:window.month)
+            let candidates=rule == "domestic-selection-v3" ? DomesticSelection.competitiveCandidates(seed:seed,month:window.month):DomesticSelection.candidates(seed:seed,month:window.month)
             let simulated=DomesticSelection.simulate(observation:observation,seats:window.month == 7 ? seats.filter {$0.route == .rookie}:seats,
                 candidates:candidates,carried:carried,sample:sample,sampleReason:reason)
             value.version=2
-            value.selection=DomesticSelection(rule:"domestic-selection-v1",seed:seed,priorMarket:window.month == 4 ? "연간 신규 시장":april == nil ? "고정 가상4월 NPC 충원 이월":"4월 고정 NPC 충원 이월 · 미수락 내 예약 해제",
+            value.selection=DomesticSelection(rule:rule,seed:seed,priorMarket:window.month == 4 ? "연간 신규 시장":april == nil ? "고정 가상4월 NPC 충원 이월":"4월 고정 NPC 충원 이월 · 미수락 내 예약 해제",
                 sample:sample,sampleReason:reason,seats:seats,candidates:candidates,carried:carried,picks:simulated.picks,results:simulated.results)
         }
         try value.validate(player:player,calendar:calendar)
@@ -580,7 +592,7 @@ typealias CareerContractRegistration=CareerSchemaV12.ContractRegistration
                 expandedFrom:calendar.overseasExpansionYear)
             guard service.allSatisfy({earned.contains($0)}) else {throw ContractRegistrationError.invalid}
         }
-        try value.validateSeasonGoals(today:GameDate(player.gameDate),offers:offers,expandedFrom:calendar.overseasExpansionYear)
+        try value.validateSeasonGoals(today:GameDate(player.gameDate),offers:offers,expandedFrom:calendar.overseasExpansionYear,domesticExpandedFrom:calendar.domesticExpansionYear)
         try value.validateDevelopment(today:GameDate(player.gameDate))
         if value.developmentProjects != nil || value.developmentReviews != nil || value.gamePlanReports != nil || value.specialTrainings != nil || value.specialAssessments != nil || value.specialReports != nil || value.seasonGoalReports != nil || value.seasonReviews != nil {
             var sources=Dictionary(uniqueKeysWithValues:(value.overseasReports ?? []).map {($0.id,($0.period,$0.observation.observedDate))})
@@ -1385,7 +1397,7 @@ enum GoalSpecialError:LocalizedError {
         let fixtures=try calendar.fixtures(for:player,year:year).filter {$0.date.description >= date && !old.contains(CareerMatchRecord.key(player.id,$0.id))}
         let n=fixtures.filter {$0.isAppearance(for:player.role)}.count
         guard n > 0 else {throw ClubSeasonGoalError.noGames}
-        let expanded=try ["npb-first-team","mlb-first-team"].contains(role.level) && calendar.isExpandedOverseas(year:year)
+        let expanded=try calendar.isExpandedCompetition(level:role.level,year:year)
         let goal=ClubSeasonGoal(id:key,year:year,started:date,role:role,playerRole:player.roleRaw,fixtureIDs:fixtures.map(\.id),excludedKeys:old,appearances:n,
             targets:ClubSeasonGoal.targets(role:role,playerRole:player.roleRaw,appearances:n),expandedSchedule:expanded ? true:nil)
         owner.seasonGoals=(owner.seasonGoals ?? [])+[goal]
@@ -1552,10 +1564,7 @@ enum GoalSpecialError:LocalizedError {
         return projected
     }
     static func matchSelection(player:CareerPlayer,calendar:CareerCalendarState,fixture:SeasonFixture,in context:ModelContext) throws -> MatchClubSelection? {
-        try projection(player: player, calendar: calendar, in: context).map {
-            MatchClubSelection(fixtureID: fixture.id, review: $0, rotationDay: fixture.isAppearance(for: player.role),
-                               fixtureNumber: fixture.number)
-        }
+        try projection(player:player,calendar:calendar,in:context).map { MatchClubSelection(fixtureID:fixture.id,review:$0,rotationDay:fixture.isAppearance(for:player.role),fixtureNumber:fixture.number) }
     }
     static func opportunities(player:CareerPlayer,through:String,in context:ModelContext) throws -> ClubOpportunitySummary {
         let id = player.id
@@ -1703,7 +1712,7 @@ enum GoalSpecialError:LocalizedError {
         let date=try GameDate(player.gameDate)
         guard let member=try owner.current(on:date) else {return nil}
         let from=max(try GameDate("\(date.year)-01-01"),try GameDate(member.since))
-        let expanded=try ["npb-first-team","mlb-first-team"].contains(member.level) && calendar.isExpandedOverseas(year:date.year)
+        let expanded=try calendar.isExpandedCompetition(level:member.level,year:date.year)
         return try collect(player:player,owner:owner,membershipID:member.offerID,teamID:member.teamID,level:member.level,year:date.year,
             from:from.description,through:date.description,expanded:expanded,in:context)
     }

@@ -274,22 +274,36 @@ enum MatchArt {
         }
         guard ok else {return nil}
         var bounds=[(Int,Int)](repeating:(0,0),count:h)
-        var backCloth=[Bool](repeating:false,count:w*h),sumX=0.0,sumY=0.0,clothCount=0.0
         let pro = request.style?.pro != nil
         let catcher = f.file.hasPrefix("catcher-")
+        let needsClothMask = back || (pro && !catcher)
+        var backCloth = [Bool](repeating: false, count: needsClothMask ? w*h : 0)
+        var sumX = 0.0, sumY = 0.0, clothCount = 0.0
         // In other poses the blue fabric can be a raised cleat, so its existing colors stay in place.
         let standingFielder = f.action == "ready" && (f.file == "fielder-s-v1.png" || f.file == "fielder-n-v1.png")
         for row in f.clipRows where row.count==3 && row[0]<h {bounds[row[0]]=(row[1],row[1]+row[2])}
-        for y in 0..<h {for x in 0..<w {
+        let visible = bounds.map { left, right -> Range<Int> in
+            let start = min(w, max(0, left))
+            return start..<min(w, max(start, right))
+        }
+        bytes.withUnsafeMutableBytes { buffer in
+            guard let pixels = buffer.baseAddress else { return }
+            for (y, span) in visible.enumerated() {
+                let row = pixels.advanced(by: y*w*4)
+                memset(row, 0, span.lowerBound*4)
+                memset(row.advanced(by: span.upperBound*4), 0, (w-span.upperBound)*4)
+            }
+        }
+        for y in 0..<h {for x in visible[y] {
             let i=(y*w+x)*4,a=Int(bytes[i+3])
-            guard x>=bounds[y].0 && x<bounds[y].1 else {bytes[i+3]=0;bytes[i]=0;bytes[i+1]=0;bytes[i+2]=0;continue}
             guard a>128 else {continue}
             let r=Double(bytes[i])*255/Double(a),g=Double(bytes[i+1])*255/Double(a),b=Double(bytes[i+2])*255/Double(a)
             let nx = Double(x) / Double(w), ny = Double(y) / Double(h)
             var color:Int?,shade=1.0
             if b>40 && b>r*1.35 && b>g*1.08 {
-                if (0.30...0.68).contains(nx) && (0.30...0.65).contains(ny) {
-                    backCloth[y*w+x]=true;sumX+=Double(x);sumY+=Double(y);clothCount+=1
+                if needsClothMask, (0.30...0.68).contains(nx), (0.30...0.65).contains(ny) {
+                    backCloth[y*w+x] = true
+                    if back { sumX += Double(x); sumY += Double(y); clothCount += 1 }
                 }
                 if let style=request.style {
                     if pro && catcher { color = style.gear ?? style.sleeves }
@@ -1424,6 +1438,29 @@ enum InplayFieldProjection {
         let texture=SKTexture(image:image);texture.filteringMode = .nearest;return texture
     }()
 
+    static func prewarm(_ stadium:StadiumIdentity) async -> Bool {
+        guard !Task.isCancelled else {return false}
+        #if DEBUG
+        let began=MatchRenderMetrics.begin()
+        MatchRenderMetrics.mark("field.assets.prewarm.begin")
+        defer {MatchRenderMetrics.end("fieldAssetPrewarm",started:began)}
+        #endif
+        var textures=baseTexture.map {[$0]} ?? []
+        if let venue=stadium.backdrop,let upper=upperArt(venue, stadium: stadium) {textures.append(upper.texture)}
+        if let turf = turfArt(stadium) { textures.append(turf.texture) }
+        for role in [PlayerRole.batter, .pitcher] {
+            if let venue = MatchStadiumBackdropArt.art(stadium: stadium, role: role) { textures.append(venue.texture) }
+        }
+        #if DEBUG
+        MatchRenderMetrics.mark("field.assets.texturesCreated")
+        #endif
+        let ready=await InplayTexturePreload().wait(for:textures)
+        #if DEBUG
+        MatchRenderMetrics.mark(ready ? "field.assets.prewarm.ready":"field.assets.prewarm.fallback")
+        #endif
+        return ready
+    }
+
     @MainActor final class UpperArt {
         let image:UIImage
         init(image:UIImage) {self.image=image}
@@ -1557,6 +1594,34 @@ enum InplayFieldProjection {
             let font:Font = .system(size:max(12,size.width*(homeRun ? 0.027:0.028)),weight:homeRun ? .bold:.black,design:.monospaced)
             context.draw(Text(text).font(font).foregroundStyle(GameTheme.paper),at:CGPoint(x:frame.midX,y:frame.midY))
         }
+    }
+}
+
+// A failed or cancelled upload must not leave the first game input locked.
+@MainActor private final class InplayTexturePreload {
+    private var waiter:CheckedContinuation<Bool,Never>?
+    private var timeout:Task<Void,Never>?
+    func wait(for textures:[SKTexture]) async -> Bool {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation {continuation in
+                guard !Task.isCancelled else {continuation.resume(returning:false);return}
+                guard !textures.isEmpty else {continuation.resume(returning:false);return}
+                waiter=continuation
+                timeout=Task {@MainActor [weak self] in
+                    do {try await Task.sleep(for:.seconds(2))} catch {return}
+                    self?.finish(false)
+                }
+                SKTexture.preload(textures) {[weak self] in
+                    Task {@MainActor in self?.finish(true)}
+                }
+            }
+        } onCancel: {
+            Task {@MainActor [weak self] in self?.finish(false)}
+        }
+    }
+    private func finish(_ ready:Bool) {
+        guard let waiter else {return}
+        self.waiter=nil;timeout?.cancel();timeout=nil;waiter.resume(returning:ready)
     }
 }
 

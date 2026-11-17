@@ -1016,6 +1016,9 @@ import SpriteKit
         let p=misplay(clean,stage:1,position:"LF"),e=try XCTUnwrap(p.misplay)
         XCTAssertEqual(e.kind,.throwing);XCTAssertEqual(p.hitBases,clean.hitBases);XCTAssertGreaterThan(p.hitBases,0)
         XCTAssertFalse(e.reachedOnError);XCTAssertFalse(e.extraBases.isEmpty);XCTAssertEqual(p.rbi,min(clean.rbi,p.runs));try p.validate()
+        XCTAssertNil(FieldReplayPresentation.confirmedHitLabel(p), "An acknowledged hit can still need the complete error ruling")
+        let batter = try XCTUnwrap(p.runners.first { $0.from == 0 })
+        XCTAssertNil(FieldReplayPresentation.hitSafeBase(p, time: batter.arrival, finished: false))
     }
     func testPivotBadThrowKeepsSecondBaseOutAndOnlyOneXPEvent() throws {
         let clean=doublePlay(position:"2B",outs:1),p=misplay(clean,stage:5,position:"2B"),e=try XCTUnwrap(p.misplay)
@@ -3120,7 +3123,7 @@ extension FieldTrainingTests {
         }
     }
 
-    func testV189HomeRunAndHighlightRenderSameScoreboardAndEnglishReceipt() throws {
+    func testV189HomeRunAndHighlightRenderSameVenueWithEnglishReceipt() throws {
         let event = homeRunSample()
         let sprites = FieldReplaySprites(appearance: PlayerAppearance(kit: 1), jerseyNumber: 27,
                                         ownPosition: "CF", throwingHand: "right", ownTeamFielding: false)
@@ -3141,11 +3144,10 @@ extension FieldTrainingTests {
                 let label = "\(id) \(scoreText)"
                 let upper = try XCTUnwrap(scene.childNode(withName: "//" + venue.imageName) as? SKSpriteNode, label)
                 let turf = try XCTUnwrap(scene.childNode(withName: "//" + turfName) as? SKSpriteNode, label)
-                let stands = try XCTUnwrap(upper.texture, label)
-                XCTAssertEqual(stands.size(), venue.pixelSize, label)
-                for (actual, expected) in [(stands, venueArt.texture), (try XCTUnwrap(turf.texture, label), turfArt.texture)] {
+                for (node, expected) in [(upper, venueArt.texture), (turf, turfArt.texture)] {
+                    let actual = try XCTUnwrap(node.texture, label)
                     if actual !== expected {
-                        // The cache can regenerate a texture. Compare the resulting pixels.
+                        // An NSCache eviction can regenerate the texture. The actual artwork should still match.
                         let actualPixels = try stadiumPixelBytes(UIImage(cgImage: actual.cgImage()))
                         let expectedPixels = try stadiumPixelBytes(UIImage(cgImage: expected.cgImage()))
                         XCTAssertTrue(actualPixels.elementsEqual(expectedPixels), label)
@@ -3249,7 +3251,7 @@ extension FieldTrainingTests {
         XCTAssertEqual(schoolIDs.count, 50)
         let clubs = ClubIdentity.all
         let leagues: [(ClubIdentity.League, [String], Int)] = [
-            (.kbo, CareerTeamDirectory.domesticFirstIDs + ["pro-gears", "pro-silverhorns", "pro-auroras", "pro-crowns"], 10),
+            (.kbo, CareerTeamDirectory.expandedDomesticFirstIDs, 10),
             (.npb, CareerTeamDirectory.japaneseExpandedFirstIDs, 15),
             (.mlb, CareerTeamDirectory.americanExpandedFirstIDs, 15)
         ]

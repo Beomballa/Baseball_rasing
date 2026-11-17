@@ -44,10 +44,10 @@ struct ContractMarketView:View {
                             ContractTermsMetric(title:"연봉지수",value:String(entry.offer.economicIndex),note:"\(entry.offer.years)년 · 실제 통화/출전 보장 아님")
                             if let amount = entry.offer.signingBonusWon { SigningBonusOfferAmount(amount: amount) }
                             Text("경제 기간 종료 · "+ManagementDisplay.date(entry.offer.economicEnd)).font(.footnote.monospacedDigit())
-                            if entry.retention {
-                                NavigationLink {OverseasRenewalView(player:player,calendar:calendar)} label: {Text("잔류 조건 상세 · 결정")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketOfferDecision-"+entry.id)
+                            if (state.renewalReviews ?? []).contains(where:{$0.offer?.id == entry.id}) {
+                                NavigationLink {OverseasRenewalView(player:player,calendar:calendar,selectedOfferID:entry.id)} label: {Text("잔류 조건 상세 · 결정")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketOfferDecision-"+entry.id)
                             } else {
-                                NavigationLink {OverseasContractsView(player:player,calendar:calendar)} label: {Text("외부 조건 상세 · 결정")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketOfferDecision-"+entry.id)
+                                NavigationLink {OverseasContractsView(player:player,calendar:calendar,selectedOfferID:entry.id)} label: {Text(entry.retention ? "잔류 조건 상세 · 결정":"외부 조건 상세 · 결정")}.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("marketOfferDecision-"+entry.id)
                             }
                             Text("출전·승격 보장 없음").font(.caption).foregroundStyle(GameTheme.boardMuted)
                         }
