@@ -15,6 +15,159 @@ struct ClubBadge: View {
     }
 }
 
+struct TransferContractDocument: View {
+    struct TermDate: Hashable {
+        let label: String
+        let date: String
+    }
+
+    struct Terms {
+        let clubID: String?
+        let clubName: String
+        let league: String?
+        let role: String?
+        let period: String?
+        let economicLabel: String
+        let economicIndex: Int
+        let signingBonusWon: Int?
+        let origin: String?
+        let dates: [TermDate]
+        let status: String
+    }
+
+    let terms: Terms
+    let identifier: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var club: ClubIdentity? {
+        terms.clubID.flatMap(ClubIdentity.resolve(teamID:)) ?? ClubIdentity.resolve(name: terms.clubName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
+            heading
+            if let origin = terms.origin, origin != terms.clubName {
+                transfer(from: origin)
+            }
+            rule
+            Text("계약 조건").font(.headline).accessibilityAddTraits(.isHeader)
+            conditions
+            if !terms.dates.isEmpty {
+                rule
+                timeline
+            }
+            if !terms.status.isEmpty {
+                rule
+                Text(terms.status)
+                    .font(.subheadline.bold()).foregroundStyle(ScoutDossierInk.green)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(identifier + "Status")
+            }
+        }
+        .padding(ManagementTheme.Space.screen)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(ScoutDossierInk.ink)
+        .background(ScoutDossierInk.paper, in: ManagementStepFrame())
+        .overlay {
+            ManagementStepFrame().strokeBorder(ScoutDossierInk.rule, lineWidth: ManagementTheme.Control.border)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var heading: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.inline))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: ManagementTheme.Space.compact))
+        return layout {
+            if let club {
+                Image(club.asset)
+                    .interpolation(.none).resizable().scaledToFit()
+                    .padding(ManagementTheme.Space.micro)
+                    .frame(width: 64, height: 64)
+                    .background(GameTheme.navy, in: ManagementStepFrame())
+                    .accessibilityLabel(terms.clubName + " 엠블럼")
+                    .accessibilityIdentifier(identifier + "Crest")
+            }
+            VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                Text(terms.clubName).font(.title2.bold())
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier(identifier + "ClubName")
+                    .accessibilitySortPriority(1)
+                Text((terms.league ?? club?.league.label).map { $0 + " · 구단 계약서" } ?? "구단 계약서")
+                    .font(.footnote.weight(.semibold)).foregroundStyle(ScoutDossierInk.muted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func transfer(from origin: String) -> some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+            Text("소속 전환").font(.footnote.weight(.semibold)).foregroundStyle(ScoutDossierInk.muted)
+            Text(origin + " → " + terms.clubName).font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var conditions: some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.inline) {
+            let layout = typeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.inline))
+                : AnyLayout(HStackLayout(alignment: .top, spacing: ManagementTheme.Space.compact))
+            layout {
+                term(terms.economicLabel, value: String(terms.economicIndex), key: "index", emphasis: true)
+                if let role = terms.role {
+                    term("선수 역할", value: role, key: "role")
+                }
+            }
+            if let period = terms.period {
+                term("계약 기간", value: period, key: "period")
+            }
+            if let bonus = terms.signingBonusWon {
+                term("제의 계약금", value: SigningBonusDisplay.won(bonus), key: "bonus")
+            }
+        }
+    }
+
+    private func term(_ label: String, value: String, key: String, emphasis: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+            Text(label).font(.footnote.weight(.semibold)).foregroundStyle(ScoutDossierInk.muted)
+            Text(value).font(emphasis ? .title2.bold() : .subheadline.weight(.semibold))
+                .monospacedDigit().fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label + ", " + value)
+        .accessibilityIdentifier(identifier + "Metric-" + key)
+    }
+
+    private var timeline: some View {
+        let layout = typeSize.isAccessibilitySize || terms.dates.count > 3
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.inline))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: ManagementTheme.Space.inline))
+        return layout {
+            ForEach(terms.dates, id: \.self) { point in
+                VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+                    Text(point.label).font(.footnote.weight(.semibold)).foregroundStyle(ScoutDossierInk.muted)
+                    Text(point.date).font(.subheadline.monospacedDigit())
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(ManagementDisplay.date(point.date, includeYear: true))
+                        .accessibilityValue(point.date)
+                        .accessibilityIdentifier(identifier + "Date-" + point.date)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier + "Dates")
+    }
+
+    private var rule: some View {
+        Rectangle().fill(ScoutDossierInk.rule).frame(height: 1).accessibilityHidden(true)
+    }
+}
+
 struct ClubFileHeader: View {
     let name: String
     let subtitle: String

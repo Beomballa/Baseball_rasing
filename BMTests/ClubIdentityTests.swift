@@ -29,6 +29,9 @@ final class ClubIdentityTests: XCTestCase {
             let ids = CareerTeamDirectory.teams(level: level, expanded: true)
             XCTAssertEqual(ids.count, count)
             XCTAssertTrue(ids.allSatisfy { ClubIdentity.resolve(name: CareerTeamDirectory.name($0))?.participates == true })
+            for id in ids {
+                XCTAssertEqual(ClubIdentity.resolve(teamID: id), ClubIdentity.resolve(name: CareerTeamDirectory.name(id)))
+            }
         }
         for level in ["domestic-first-team", "npb-first-team", "mlb-first-team", "mlb-development"] {
             let ids = CareerTeamDirectory.teams(level: level)
@@ -49,6 +52,9 @@ final class ClubIdentityTests: XCTestCase {
         XCTAssertNil(ClubIdentity.resolve(name: "기존 사용자 구단"))
         XCTAssertNil(ClubIdentity.resolve(name: "인천 하버스 다른 구단"))
         XCTAssertTrue(ClubIdentity.resolve(name: "수원 기어즈")!.participates)
+        XCTAssertEqual(ClubIdentity.resolve(teamID: "dev-harbors"), ClubIdentity.resolve(id: "kbo-0"))
+        XCTAssertEqual(ClubIdentity.resolve(teamID: "us-dev-2"), ClubIdentity.resolve(id: "mlb-2"))
+        XCTAssertNil(ClubIdentity.resolve(teamID: "college-0"))
     }
     @MainActor func testEveryIdentityHasItsOwnBundledTransparentAsset() throws {
         for club in ClubIdentity.all {

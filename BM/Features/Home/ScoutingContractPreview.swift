@@ -434,12 +434,12 @@ struct DomesticOffersView: View {
     @Query private var packets:[CareerContractOffer]
     @Query private var registrations:[CareerContractRegistration]
     @State private var refresh=0
-    private func load() -> Result<(DomesticOfferPacket,ContractEvaluationSnapshot),Error> {
+    private func load() -> Result<(DomesticOfferPacket,ContractEvaluationSnapshot,CareerContractJournal),Error> {
         do {
             _ = packets.count;_ = registrations.count
             guard let row=try ContractOfferStore.records(player:player,calendar:calendar,in:context).first(where:{$0.key == evaluation.key}) else {throw ContractOfferError.invalid}
-            _ = try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
-            return .success((try row.snapshot(evaluation:evaluation,player:player,calendar:calendar),try evaluation.snapshot(player:player,calendar:calendar)))
+            let owner=try ContractRegistrationStore.journal(player:player,calendar:calendar,in:context)
+            return .success((try row.snapshot(evaluation:evaluation,player:player,calendar:calendar),try evaluation.snapshot(player:player,calendar:calendar),owner))
         } catch {return .failure(error)}
     }
     var body: some View {
@@ -459,7 +459,7 @@ struct DomesticOffersView: View {
                     switch page {
                     case .list:list(packet,value)
                     case .detail(let id):
-                        if let offer=packet.offers.first(where:{$0.id == id}) {detail(offer,value)}
+                        if let offer=packet.offers.first(where:{$0.id == id}) {detail(offer,value,owner:pair.2)}
                         else {Text(ContractOfferError.invalid.localizedDescription)}
                     case .compare:compare(packet)
                     }
@@ -505,8 +505,9 @@ struct DomesticOffersView: View {
         command=nil
     }
     private var title:String {switch page {case .list:"도착한 제의";case .detail:"제의 상세";case .compare:"제의 비교"}}
-    private func status(_ offer:DomesticContractOffer) -> String {
-        if let decision=try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context).decisions.first(where:{$0.offerID == offer.id}) {
+    private func status(_ offer:DomesticContractOffer, owner:CareerContractJournal? = nil) -> String {
+        let journal = owner ?? (try? ContractRegistrationStore.journal(player:player,calendar:calendar,in:context))
+        if let decision=journal?.decisions.first(where:{$0.offerID == offer.id}) {
             switch decision.kind {case .accepted:return offer.collegeEntry.map {$0.effectiveDate > player.gameDate ? "수락 · 전환 예약":"수락 · 소속 발효"} ?? "수락 · 소속 발효";case .rejected:return "거절 완료";case .closed:return "다른 제의 수락으로 종료"}
         }
         guard let date=try? GameDate(player.gameDate),let expired=try? offer.isExpired(on:date) else {return "날짜 확인 필요"}
@@ -547,29 +548,44 @@ struct DomesticOffersView: View {
             .font(.footnote).foregroundStyle(GameTheme.boardMuted).lineSpacing(4)
     }
 
-    private func detail(_ offer:DomesticContractOffer,_ value:ContractEvaluationSnapshot) -> some View {
-        VStack(alignment:.leading,spacing:16) {
-            ScoutDossier(title:offer.name,code:"LIVE OFFER / "+offer.route.rawValue.uppercased(),stamp:status(offer),isPreview:false) {
-                detailRow("선수",value.observation.name+" · #\(value.observation.number) / "+value.observation.role.label)
-                Text(DomesticContractOffer.roleName(offer.roleID)).font(.title3.bold())
-                ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:"해당 경로 기준 100 · 실제 통화 금액 아님",paper:true)
-                if offer.route == .rookie { SigningBonusOfferAmount(amount: offer.signingBonusWon, paper: true) }
-                detailRow("종류 / 배치",offer.kind+" / "+offer.placement)
-                detailRow("기간",offer.period)
-                ContractTermsTimeline(issued:offer.issuedDate,expires:offer.expiresDate,effective:offer.collegeEntry?.effectiveDate ?? "수락일",paper:true)
-                detailRow("소속 발효 / 경제 기간",registrationTerms(offer))
-                detailRow("소속 · 보유권리",offer.route == .rookie ? "경제 기간 종료와 권리 해제는 별도 · 자동 FA 아님":"학적 종료 규칙 적용 · 프로 보유권리와 구분")
-                detailRow("출전 보장","없음 · 입단 후 역할/선발 경쟁")
-                DisclosureGroup("예산 · 경쟁 · 등록 조건 원본") {
-                    VStack(alignment:.leading,spacing:12) {
-                        detailRow("옵션 · 성과급", "0")
-                        detailRow("연간 예산","잔여\(offer.availableBudget) / 필요\(offer.economicIndex)지수")
-                        detailRow("경쟁/선발","적격 경쟁\(offer.competition)명 · 고정F/ID 순으로 선발")
-                        detailRow("필요 확인",offer.collegeEntry != nil ? "대학 재학생 자격 검증 · 발효 전 대학 소속/학적 유지":"성인 무소속 신규 지원 · 수락/등록은 별도")
-                    }.padding(.top,12)
-                }.font(.subheadline).tint(ScoutDossierInk.ink)
+    private func detail(_ offer:DomesticContractOffer,_ value:ContractEvaluationSnapshot,owner:CareerContractJournal) -> some View {
+        let offerStatus=status(offer,owner:owner)
+        return VStack(alignment:.leading,spacing:16) {
+            if offer.route == .rookie {
+                domesticContract(offer,owner:owner,status:offerStatus)
+            } else {
+                ScoutDossier(title:offer.name,code:"LIVE OFFER / "+offer.route.rawValue.uppercased(),stamp:offerStatus,isPreview:false) {
+                    detailRow("선수",value.observation.name+" · #\(value.observation.number) / "+value.observation.role.label)
+                    Text(DomesticContractOffer.roleName(offer.roleID)).font(.title3.bold())
+                    ContractTermsMetric(title:offer.economicLabel,value:String(offer.economicIndex),note:"해당 경로 기준 100 · 실제 통화 금액 아님",paper:true)
+                    detailRow("종류 / 배치",offer.kind+" / "+offer.placement)
+                    detailRow("기간",offer.period)
+                    ContractTermsTimeline(issued:offer.issuedDate,expires:offer.expiresDate,effective:"수락일",paper:true)
+                    detailRow("소속 발효 / 경제 기간",registrationTerms(offer))
+                    detailRow("소속 · 보유권리","학적 종료 규칙 적용 · 프로 보유권리와 구분")
+                    detailRow("출전 보장","없음 · 입단 후 역할/선발 경쟁")
+                    DisclosureGroup("예산 · 경쟁 · 등록 조건 원본") {
+                        VStack(alignment:.leading,spacing:12) {
+                            detailRow("옵션 · 성과급", "0")
+                            detailRow("연간 예산","잔여\(offer.availableBudget) / 필요\(offer.economicIndex)지수")
+                            detailRow("경쟁/선발","적격 경쟁\(offer.competition)명 · 고정F/ID 순으로 선발")
+                            detailRow("필요 확인","성인 무소속 신규 지원 · 수락/등록은 별도")
+                        }.padding(.top,12)
+                    }.font(.subheadline).tint(ScoutDossierInk.ink)
+                }
             }
+            if offer.route == .rookie { decisionControls(offer,status:offerStatus) }
             GamePanel(title:"선발 근거 · 고정 평가 자료",onBoard:true,contentSpacing:16) {
+                if offer.route == .rookie {
+                    Text("실제 선수 자료").font(.caption.bold()).foregroundStyle(GameTheme.boardMuted)
+                    Text(value.observation.name+" · #\(value.observation.number) / "+value.observation.role.label).font(.subheadline)
+                    Text(offer.kind+" · "+offer.placement).font(.subheadline)
+                    DisclosureGroup("예산 · 경쟁 · 등록 조건 원본") {
+                        Text("옵션 · 성과급 0").font(.subheadline)
+                        Text("연간 예산 잔여 \(offer.availableBudget) / 필요 \(offer.economicIndex)지수").font(.subheadline)
+                        Text("적격 경쟁 \(offer.competition)명 · 고정 F와 ID 순으로 선발").font(.subheadline)
+                    }.font(.subheadline).tint(GameTheme.gold)
+                }
                 Text(String(format:"H %.1f / C %.1f / P %+.1f / F %+.1f",offer.h,offer.c,offer.p,offer.f))
                     .font(.subheadline.monospaced()).accessibilityIdentifier("liveOfferFit")
                 ManagementProgress(title:"기량 H",value:ManagementProgressValue(current:offer.h,target:100),color:GameTheme.growth)
@@ -582,13 +598,38 @@ struct DomesticOffersView: View {
                 Text("발행 뒤 훈련/경기·재실행으로 제의 조건을 재계산하지 않습니다. 현재 능력과 당시 평가를 구분해 보세요.")
                     .font(.footnote).foregroundStyle(GameTheme.boardMuted)
             }
-            if status(offer) == "검토 가능" {
-                Text(offer.collegeEntry.map {"수락 시 "+$0.effectiveDate+" 소속 전환을 예약하며 그 전까지 대학 소속을 유지합니다. 다른 열린 제의는 닫힙니다."} ?? "수락하면 오늘 소속이 발효되고 다른 열린 제의는 닫힙니다. 진행 중인 경기·훈련을 먼저 마쳐 주세요.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferDecisionGuide")
-                Button("수락 · 소속 등록") {command=Command(offer:offer,accept:true,date:player.gameDate,revision:calendar.revision)}
-                    .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptLiveOffer")
-                Button("이 제의 거절") {command=Command(offer:offer,accept:false,date:player.gameDate,revision:calendar.revision)}
-                    .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("rejectLiveOffer")
-            } else {Text(status(offer)+" · 원본 조건과 결정 이력을 보관합니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferFinalDecision")}
+            if offer.route != .rookie { decisionControls(offer,status:offerStatus) }
+        }
+    }
+
+    private func domesticContract(_ offer:DomesticContractOffer,owner:CareerContractJournal,status:String) -> some View {
+        let membership=owner.memberships.first(where:{$0.offerID == offer.id})
+        let effective=membership?.since ?? offer.collegeEntry?.effectiveDate
+        let proposed=try? CareerMembership.make(offer:offer,on:GameDate(effective ?? offer.issuedDate),
+            origin:GameDate(calendar.originDate),startAge:player.startAge)
+        let origin=offer.collegeEntry.flatMap {entry in owner.membershipHistory().first(where:{$0.offerID == entry.membershipOfferID})?.name}
+        let period:String
+        if let effective,let end=membership?.economicEnd ?? proposed?.economicEnd {
+            period="\(offer.years)년 · \(effective) ~ \(end)"
+        } else {
+            period="\(offer.years)년 · 수락일부터"
+        }
+        return TransferContractDocument(terms:.init(clubID:membership?.teamID ?? proposed?.teamID,clubName:offer.name,
+            league:"KBO · 국내 육성",role:DomesticContractOffer.roleName(offer.roleID),period:period,
+            economicLabel:offer.economicLabel,economicIndex:offer.economicIndex,signingBonusWon:offer.signingBonusWon,origin:origin,
+            dates:[.init(label:"발행",date:offer.issuedDate),.init(label:"마감",date:offer.expiresDate),.init(label:"소속 발효",date:effective ?? "수락일")],
+            status:status),identifier:"transferOffer")
+    }
+
+    @ViewBuilder private func decisionControls(_ offer:DomesticContractOffer,status:String) -> some View {
+        if status == "검토 가능" {
+            Text(offer.collegeEntry.map {"수락 시 "+$0.effectiveDate+" 소속 전환을 예약하며 그 전까지 대학 소속을 유지합니다. 다른 열린 제의는 닫힙니다."} ?? "수락하면 오늘 소속이 발효되고 다른 열린 제의는 닫힙니다. 진행 중인 경기·훈련을 먼저 마쳐 주세요.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferDecisionGuide")
+            Button("수락 · 소속 등록") {command=Command(offer:offer,accept:true,date:player.gameDate,revision:calendar.revision)}
+                .buttonStyle(MatchPixelButtonStyle(primary:true)).accessibilityIdentifier("acceptLiveOffer")
+            Button("이 제의 거절") {command=Command(offer:offer,accept:false,date:player.gameDate,revision:calendar.revision)}
+                .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("rejectLiveOffer")
+        } else {
+            Text(status+" · 원본 조건과 결정 이력을 보관합니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("liveOfferFinalDecision")
         }
     }
 

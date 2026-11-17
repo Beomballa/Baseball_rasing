@@ -44,6 +44,7 @@ import SwiftData
         var terms: [ContractTerms] = []
         var dates: [ContractDate] = []
         var evidence: [Fact] = []
+        var documentStatus: String? = nil
     }
 
     struct ContractClub {
@@ -61,6 +62,7 @@ import SwiftData
         let signingBonusWon: Int?
         let period: String?
         var dates: [ContractDate]
+        var origin: String? = nil
     }
 
     struct ContractDate: Hashable {
@@ -363,7 +365,8 @@ import SwiftData
             guard let offer = domesticOffers[decision.offerID] else { continue }
             let accepted = decision.kind == .accepted
             let member = accepted ? memberships[offer.id] : nil
-            rows += try decisionRows(terms: domesticTerms(offer, membership: member), date: decision.date,
+            let source = offer.collegeEntry.flatMap { memberships[$0.membershipOfferID] }
+            rows += try decisionRows(terms: domesticTerms(offer, membership: member, source: source), date: decision.date,
                                      accepted: accepted, effective: member?.since, today: today)
         }
         for renewal in journal.renewals ?? [] {
@@ -383,25 +386,26 @@ import SwiftData
 
     private static func overseasContractEntries(_ career: OverseasCareerJournal, today: GameDate) throws -> [Entry] {
         var rows: [Entry] = []
-        var offers: [String: OverseasOffer] = [:]
+        var offers: [String: ContractTerms] = [:]
         for evaluation in career.evaluations {
-            for offer in evaluation.offers { offers[offer.id] = offer }
             let summary = evaluation.offers.isEmpty ? "저장된 제의 없음" : "해외 구단 제의 \(evaluation.offers.count)건"
-            let terms = evaluation.offers.map { overseasTerms($0) }
+            let source = evaluation.source ?? evaluation.mobility?.source
+            let terms = evaluation.offers.map { overseasTerms($0, source: source) }
+            for offer in terms { offers[offer.id] = offer }
             let detail = ContractDetail(title: "해외 계약 평가", status: offerStatus(terms), terms: terms,
                                         dates: [ContractDate(label: "평가일", date: evaluation.date)], evidence: reasonFacts(evaluation.reasons))
             rows.append(try contractEntry(id: "contract/evaluation/" + evaluation.id, date: evaluation.date,
                                           summary: summary, emphasis: terms.isEmpty ? nil : "해외 계약 제의", detail: detail))
         }
         for decision in career.decisions where decision.kind != .closed {
-            guard let offer = offers[decision.offerID] else { continue }
+            guard let terms = offers[decision.offerID] else { continue }
             let effective = career.transitions.first { $0.offerID == decision.offerID }?.destination.since
-            rows += try decisionRows(terms: overseasTerms(offer), date: decision.date, accepted: decision.kind == .accepted,
+            rows += try decisionRows(terms: terms, date: decision.date, accepted: decision.kind == .accepted,
                                      effective: effective, today: today)
         }
-        offers.removeAll()
+        var renewalOffers: [String: OverseasOffer] = [:]
         for review in career.renewalReviews ?? [] {
-            if let offer = review.offer { offers[offer.id] = offer }
+            if let offer = review.offer { renewalOffers[offer.id] = offer }
             let terms = review.offer.map { [overseasTerms($0, renewal: true)] } ?? []
             let detail = ContractDetail(title: "해외 재계약 평가", status: offerStatus(terms), reviewedClub: club(review.source), terms: terms,
                                         dates: [ContractDate(label: "평가일", date: review.date)], evidence: reasonFacts(review.reasons))
@@ -410,7 +414,7 @@ import SwiftData
                                    emphasis: review.offer == nil ? nil : "재계약 제의", detail: detail))
         }
         for decision in career.renewalDecisions ?? [] where decision.kind != .closed {
-            guard let offer = offers[decision.offerID] else { continue }
+            guard let offer = renewalOffers[decision.offerID] else { continue }
             let accepted = decision.kind == .accepted
             rows += try decisionRows(terms: overseasTerms(offer, renewal: true), date: decision.date, accepted: accepted, renewal: true,
                                      effective: accepted ? offer.effective : nil, today: today)
@@ -426,6 +430,7 @@ import SwiftData
         let effectiveDate = try accepted ? effective.map(GameDate.init) : nil
         let effectiveLabel = effectiveDate.map { $0 > today ? "발효 예정" : "발효일" } ?? ""
         let summary = effectiveDate.map { effectiveLabel + " " + $0.description } ?? "결정일 " + date
+        let documentStatus = effectiveDate.map { $0 > today ? "수락 완료 · 발효 예정" : "수락 완료 · 발효 완료" } ?? decision
         var schedule = [ContractDate(label: "결정일", date: date)]
         var archivedTerms = terms
         if let effectiveDate {
@@ -435,12 +440,14 @@ import SwiftData
         }
         var rows = [try contractEntry(id: "contract/decision/" + terms.id, date: date, title: terms.club.name + " " + decision,
                                       summary: summary, emphasis: accepted ? decision : nil,
-                                      detail: ContractDetail(title: decision, status: nil, terms: [archivedTerms], dates: schedule))]
+                                      detail: ContractDetail(title: decision, status: nil, terms: [archivedTerms], dates: schedule,
+                                                             documentStatus: documentStatus))]
         if let effectiveDate, effectiveDate != occurred, effectiveDate <= today {
             let label = type + " 발효"
             rows.append(try contractEntry(id: "contract/effective/" + terms.id, date: effectiveDate.description, title: terms.club.name + " " + label,
                                           summary: "수락일 " + date, emphasis: label,
-                                          detail: ContractDetail(title: label, status: nil, terms: [archivedTerms], dates: schedule)))
+                                          detail: ContractDetail(title: label, status: nil, terms: [archivedTerms], dates: schedule,
+                                                                 documentStatus: "발효 완료")))
         }
         return rows
     }
@@ -449,20 +456,24 @@ import SwiftData
         Entry(id: id, date: try GameDate(date), kind: .contract, title: title ?? detail.title, summary: summary, emphasis: emphasis, destination: .contract(detail))
     }
 
-    private static func domesticTerms(_ offer: DomesticContractOffer, membership: CareerMembership? = nil) -> ContractTerms {
+    private static func domesticTerms(_ offer: DomesticContractOffer, membership: CareerMembership? = nil,
+                                      source: CareerMembership? = nil) -> ContractTerms {
         let prefix = offer.route == .rookie ? "dev-" : "college-"
         // Validated offers carry a `route/team/role` result key, including proposals without a membership.
         let teamID = offer.resultID.split(separator: "/").dropFirst().first.map { prefix + $0 } ?? offer.resultID
         let period: String
-        if offer.collegeEntry != nil { period = "1년 · 대학 소속은 발효 전일까지 유지" }
-        else if membership != nil && offer.route == .rookie { period = "1개 달력연도" }
+        if let membership, offer.route == .rookie {
+            period = "\(offer.years)년 · \(membership.since) ~ \(membership.economicEnd)"
+        }
+        else if offer.collegeEntry != nil { period = "1년 · 대학 소속은 발효 전일까지 유지" }
         else { period = offer.period }
         var dates = termDates(issued: offer.issuedDate, expires: offer.expiresDate,
                               proposed: offer.collegeEntry?.effectiveDate, end: membership?.economicEnd)
         if let end = membership?.enrollmentEnd { dates.append(ContractDate(label: "학적 기한", date: end)) }
         return ContractTerms(id: offer.id, club: ContractClub(id: teamID, name: offer.name), kind: offer.kind,
                              role: DomesticContractOffer.roleName(offer.roleID), economicLabel: offer.economicLabel,
-                             economicIndex: offer.economicIndex, signingBonusWon: offer.signingBonusWon, period: period, dates: dates)
+                             economicIndex: offer.economicIndex, signingBonusWon: offer.signingBonusWon, period: period, dates: dates,
+                             origin: source?.name)
     }
 
     private static func renewalTerms(_ offer: DomesticRenewalOffer, review: DomesticRenewalReview) -> ContractTerms {
@@ -471,11 +482,12 @@ import SwiftData
                       dates: termDates(issued: offer.issuedDate, expires: offer.expiresDate, proposed: offer.effectiveDate, end: offer.economicEnd))
     }
 
-    private static func overseasTerms(_ offer: OverseasOffer, renewal: Bool = false) -> ContractTerms {
+    private static func overseasTerms(_ offer: OverseasOffer, renewal: Bool = false, source: CareerMembership? = nil) -> ContractTerms {
         ContractTerms(id: offer.id, club: ContractClub(id: offer.teamID, name: offer.name), kind: offer.route.label + (renewal ? " 재계약" : " 계약"),
                       role: DomesticContractOffer.roleName(offer.roleID), economicLabel: "연봉지수", economicIndex: offer.economicIndex,
-                      signingBonusWon: offer.signingBonusWon, period: "\(offer.years)년",
-                      dates: termDates(issued: offer.issued, expires: offer.expires, proposed: offer.effective, end: offer.economicEnd))
+                      signingBonusWon: offer.signingBonusWon, period: "\(offer.years)년 · \(offer.effective) ~ \(offer.economicEnd)",
+                      dates: termDates(issued: offer.issued, expires: offer.expires, proposed: offer.effective, end: offer.economicEnd),
+                      origin: source?.teamID == offer.teamID ? nil : source?.name)
     }
 
     private static func club(_ membership: CareerMembership) -> ContractClub {

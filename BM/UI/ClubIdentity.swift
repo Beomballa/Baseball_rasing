@@ -81,6 +81,21 @@ struct ClubIdentity: Identifiable, Equatable {
         all.first { $0.id == id }
     }
 
+    static func resolve(teamID: String) -> Self? {
+        if let index = CareerTeamDirectory.expandedDomesticIDs.firstIndex(of: teamID)
+            ?? CareerTeamDirectory.expandedDomesticFirstIDs.firstIndex(of: teamID) {
+            return resolve(id: "kbo-\(index)")
+        }
+        if let index = CareerTeamDirectory.japaneseExpandedFirstIDs.firstIndex(of: teamID) {
+            return resolve(id: "npb-\(index)")
+        }
+        if let index = CareerTeamDirectory.americanExpandedFirstIDs.firstIndex(of: teamID)
+            ?? CareerTeamDirectory.americanDevelopmentIDs.firstIndex(of: teamID) {
+            return resolve(id: "mlb-\(index)")
+        }
+        return resolve(id: teamID)
+    }
+
     static func resolve(name: String) -> Self? {
         let base = [" 육성", " 1군"].reduce(name) { text, suffix in
             text.hasSuffix(suffix) ? String(text.dropLast(suffix.count)) : text

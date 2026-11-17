@@ -520,7 +520,7 @@ private struct CareerJournalContractView: View {
         let additionalDates = detail.dates.filter { $0.date != date.description }
         ScrollView {
             VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
-                JournalDetailHeader(date: date, title: detail.title, status: detail.status,
+                JournalDetailHeader(date: date, title: detail.title, status: detail.documentStatus == nil ? detail.status : nil,
                                     highlighted: !detail.terms.isEmpty, identifier: "careerJournalContract")
                 if detail.terms.isEmpty, let club = detail.reviewedClub {
                     ManagementPanel("평가 대상 구단") {
@@ -528,7 +528,11 @@ private struct CareerJournalContractView: View {
                     }
                 }
                 ForEach(detail.terms) { terms in
-                    offer(terms)
+                    if let status = detail.documentStatus {
+                        document(terms, status: status)
+                    } else {
+                        offer(terms)
+                    }
                 }
                 if detail.terms.count != 1, !additionalDates.isEmpty {
                     ManagementPanel("기록 일정") { timeline(additionalDates) }
@@ -546,6 +550,24 @@ private struct CareerJournalContractView: View {
         .foregroundStyle(GameTheme.boardInk)
         .navigationTitle("계약 기록")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func document(_ terms: CareerJournal.ContractTerms, status: String) -> some View {
+        TransferContractDocument(terms: .init(
+            clubID: terms.club.id,
+            clubName: terms.club.name,
+            league: terms.kind,
+            role: terms.role,
+            period: terms.period,
+            economicLabel: terms.economicLabel,
+            economicIndex: terms.economicIndex,
+            signingBonusWon: terms.signingBonusWon,
+            origin: terms.origin,
+            dates: orderedDates(detail.dates + terms.dates).map { .init(label: $0.label, date: $0.date) },
+            status: status
+        ), identifier: "careerJournalContract")
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("careerJournalContractOffer-" + terms.id)
     }
 
     private func offer(_ terms: CareerJournal.ContractTerms) -> some View {
@@ -617,13 +639,16 @@ private struct CareerJournalContractView: View {
         .accessibilityIdentifier("careerJournalContractMetric-" + id)
     }
 
-    private func timeline(_ dates: [CareerJournal.ContractDate]) -> some View {
+    private func orderedDates(_ dates: [CareerJournal.ContractDate]) -> [CareerJournal.ContractDate] {
         var seen = Set<CareerJournal.ContractDate>()
-        let ordered = dates.filter { seen.insert($0).inserted }.enumerated().sorted {
+        return dates.filter { seen.insert($0).inserted }.enumerated().sorted {
             ($0.element.date, $0.offset) < ($1.element.date, $1.offset)
         }.map(\.element)
+    }
+
+    private func timeline(_ dates: [CareerJournal.ContractDate]) -> some View {
         return VStack(alignment: .leading, spacing: ManagementTheme.Space.inline) {
-            ForEach(ordered, id: \.self) { point in
+            ForEach(orderedDates(dates), id: \.self) { point in
                 HStack(alignment: .top, spacing: ManagementTheme.Space.inline) {
                     Rectangle().fill(GameTheme.gold).frame(width: 5, height: 5)
                         .padding(.top, ManagementTheme.Space.inline).accessibilityHidden(true)
@@ -732,28 +757,13 @@ private struct JournalClubCrest: View {
     let identifier: String
 
     var body: some View {
-        if let identity = identity(for: teamID) {
+        if let identity = ClubIdentity.resolve(teamID: teamID) {
             Image(identity.asset).interpolation(.none).resizable().scaledToFit()
                 .padding(ManagementTheme.Space.micro).frame(width: size, height: size)
                 .background(ManagementTheme.Palette.control, in: ManagementStepFrame())
                 .accessibilityLabel(name + " 엠블럼")
                 .accessibilityIdentifier(identifier)
         }
-    }
-
-    private func identity(for teamID: String) -> ClubIdentity? {
-        if let index = CareerTeamDirectory.expandedDomesticIDs.firstIndex(of: teamID)
-            ?? CareerTeamDirectory.expandedDomesticFirstIDs.firstIndex(of: teamID) {
-            return ClubIdentity.resolve(id: "kbo-\(index)")
-        }
-        if let index = CareerTeamDirectory.japaneseExpandedFirstIDs.firstIndex(of: teamID) {
-            return ClubIdentity.resolve(id: "npb-\(index)")
-        }
-        if let index = CareerTeamDirectory.americanExpandedFirstIDs.firstIndex(of: teamID)
-            ?? CareerTeamDirectory.americanDevelopmentIDs.firstIndex(of: teamID) {
-            return ClubIdentity.resolve(id: "mlb-\(index)")
-        }
-        return ClubIdentity.resolve(id: teamID)
     }
 }
 

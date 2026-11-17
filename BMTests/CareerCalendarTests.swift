@@ -148,7 +148,10 @@ extension CareerCalendarTests {
         let (container, player, calendar) = try collegeProFixture(.pitcher)
         let context = container.mainContext, schools = try SchoolCatalog.load()
         let offer = try collegeProOffer(player, calendar, context)
-        let future = try XCTUnwrap(offer.collegeEntry).effectiveDate
+        let transition = try XCTUnwrap(offer.collegeEntry)
+        let future = transition.effectiveDate
+        let beforeRegistration = try ContractRegistrationStore.journal(player: player, calendar: calendar, in: context)
+        let source = try XCTUnwrap(beforeRegistration.memberships.first { $0.offerID == transition.membershipOfferID })
         let acceptedOn = player.gameDate
         try ContractRegistrationStore.decide(player: player, calendar: calendar, offerID: offer.id,
                                              accept: true, date: acceptedOn, revision: calendar.revision, in: context)
@@ -161,10 +164,14 @@ extension CareerCalendarTests {
         let terms = try XCTUnwrap(accepted.terms.first)
         let member = try XCTUnwrap(ContractRegistrationStore.journal(player: player, calendar: calendar, in: context).memberships.first { $0.offerID == offer.id })
         XCTAssertEqual(accepted.title, "계약 수락")
+        XCTAssertEqual(accepted.documentStatus, "수락 완료 · 발효 예정")
         XCTAssertEqual(accepted.terms.count, 1)
         XCTAssertEqual(terms.id, offer.id)
         XCTAssertEqual(terms.club.id, member.teamID)
         XCTAssertEqual(terms.club.name, offer.name)
+        XCTAssertEqual(terms.origin, source.name)
+        XCTAssertEqual(terms.role, DomesticContractOffer.roleName(offer.roleID))
+        XCTAssertEqual(terms.period, "\(offer.years)년 · \(member.since) ~ \(member.economicEnd)")
         XCTAssertEqual(terms.economicIndex, offer.economicIndex)
         XCTAssertEqual(terms.signingBonusWon, offer.signingBonusWon)
         XCTAssertEqual(accepted.dates, [.init(label: "결정일", date: acceptedOn), .init(label: "발효 예정", date: future)])
@@ -186,6 +193,9 @@ extension CareerCalendarTests {
         let registered = try XCTUnwrap(after.first { $0.id == future }?.entries.first { $0.id == effectiveID })
         guard case .contract(let effective) = registered.destination else { return XCTFail("Registration event must open its structured archive") }
         XCTAssertEqual(effective.title, "계약 발효")
+        XCTAssertEqual(effective.documentStatus, "발효 완료")
+        XCTAssertEqual(effective.terms.first?.id, offer.id)
+        XCTAssertEqual(effective.terms.first?.origin, source.name)
         XCTAssertEqual(effective.dates, [.init(label: "결정일", date: acceptedOn), .init(label: "발효일", date: future)])
         XCTAssertEqual(try ContractRegistrationStore.finances(player: player, calendar: calendar, in: context).balanceWon, expectedBalance)
         XCTAssertFalse(context.hasChanges)
