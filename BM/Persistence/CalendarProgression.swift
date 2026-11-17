@@ -1,12 +1,23 @@
 import Foundation
 import SwiftData
 
+enum CalendarAdvanceGoal: Equatable, Sendable {
+    case nextFixture
+    case observation(until: GameDate)
+
+    var observationDate: GameDate? {
+        guard case .observation(let date) = self else { return nil }
+        return date
+    }
+}
+
 struct CalendarAdvanceSummary: Equatable, Sendable {
     enum Stop: String, Sendable {
         case traitChange = "특성 유지 경고·상실 전 · 하루 진행으로 확인"
         case retirement = "은퇴 완료 · 기록 열람 가능"
-        case evaluation = "계약 평가 자료 도착 · 홈에서 확인 후 계속"
+        case evaluation = "계약 평가 자료 도착 · 평가 확인 후 계속"
         case fixture = "경기일 도착 · 경기 진행/완료 확인"
+        case observation = "다음 관찰일 도착"
         case anniversary = "나이·학적 변경 전 · 하루 진행으로 확인"
         case limit = "30일 진행 완료"
         case seasonOpening = "다음 연도 4월 1일 도착"
@@ -19,6 +30,22 @@ struct CalendarAdvanceSummary: Equatable, Sendable {
     let fatigueAfter: Int
     let stop: Stop
     let lastSavedDate: String
+    let goal: CalendarAdvanceGoal
+    // Arrival is independent of whether this save has a scouting report for the date.
+    let observationDate: String?
+
+    init(days: Int, restDays: Int, fatigueBefore: Int, fatigueAfter: Int, stop: Stop, lastSavedDate: String,
+         goal: CalendarAdvanceGoal = .nextFixture, observationDate: String? = nil) {
+        self.days = days
+        self.restDays = restDays
+        self.fatigueBefore = fatigueBefore
+        self.fatigueAfter = fatigueAfter
+        self.stop = stop
+        self.lastSavedDate = lastSavedDate
+        self.goal = goal
+        self.observationDate = observationDate
+    }
+
     var message: String {
         "\(days)일 진행 · 휴식 \(restDays)회 · 피로 \(fatigueBefore) → \(fatigueAfter)\n\(stop.rawValue)\n마지막 저장일 \(lastSavedDate)"
     }
@@ -63,6 +90,12 @@ struct CalendarAdvanceFailure: LocalizedError {
         return try state.fixtures(for: player, year: today.year).contains { $0.date == today }
     }
 
+    static func nextObservationGoal(player: CareerPlayer, state: CareerCalendarState) throws -> CalendarAdvanceGoal {
+        guard state.playerID == player.id else { throw CalendarError.staleState }
+        let period = try ScoutingPeriod(origin: GameDate(state.originDate), today: GameDate(player.gameDate))
+        return .observation(until: try GameDate(period.next.description))
+    }
+
     /// One day is one save, including automatic rest and sleep. A failed save rolls back the whole day.
     static func advanceDay(player: CareerPlayer, state: CareerCalendarState, revision: Int,
                            automaticRest: Bool = false, confirmAnniversary: Bool = false,
@@ -103,6 +136,7 @@ struct CalendarAdvanceFailure: LocalizedError {
     }
 
     static func advanceOffDays(player: CareerPlayer, state: CareerCalendarState,
+                               goal: CalendarAdvanceGoal = .nextFixture,
                                in context: ModelContext, save: Save = { try $0.save() }, onDaySaved: (@MainActor (String) async -> Void)? = nil) async throws -> CalendarAdvanceSummary {
         let before = player.fatigue
         var days = 0, rests = 0
@@ -110,12 +144,27 @@ struct CalendarAdvanceFailure: LocalizedError {
         var expectedRevision = state.revision
         var lastSavedDate = player.gameDate
         var lastSavedFatigue = player.fatigue
+        let target = goal.observationDate
+        let targetDate = target?.description
+        var observationDate: String?
         do {
             while days < 30 {
                 if Task.isCancelled { stop = .cancelled; break }
                 try validate(player, state, revision: expectedRevision)
+                if let target, days == 0 {
+                    let today = try GameDate(lastSavedDate)
+                    let period = try ScoutingPeriod(origin: GameDate(state.originDate), today: today)
+                    guard target == period.next || (target == today && target == period.start) else {
+                        throw CalendarError.staleState
+                    }
+                    if target == today { observationDate = lastSavedDate }
+                }
                 if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
                 if player.isRetired {stop = .retirement;break}
+                if observationDate != nil {
+                    stop = try hasGameToday(player: player, state: state) ? .fixture : .observation
+                    break
+                }
                 if try CareerLifecycleStore.traitEventTomorrow(player:player,in:context) {stop = .traitChange;break}
                 if try hasGameToday(player: player, state: state) { stop = .fixture; break }
                 if try isAnniversaryTomorrow(player: player, state: state) { stop = .anniversary; break }
@@ -126,10 +175,15 @@ struct CalendarAdvanceFailure: LocalizedError {
                 lastSavedFatigue = player.fatigue
                 days += 1
                 if needsRest { rests += 1 }
-                await onDaySaved?(player.gameDate)
+                if targetDate == lastSavedDate { observationDate = lastSavedDate }
+                await onDaySaved?(lastSavedDate)
                 await Task.yield()
                 if player.isRetired {stop = .retirement;break}
                 if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
+                if observationDate != nil {
+                    stop = try hasGameToday(player: player, state: state) ? .fixture : .observation
+                    break
+                }
             }
             if stop == .limit {
                 if try hasGameToday(player: player, state: state) { stop = .fixture }
@@ -137,11 +191,13 @@ struct CalendarAdvanceFailure: LocalizedError {
             }
         } catch {
             let saved = CalendarAdvanceSummary(days: days, restDays: rests, fatigueBefore: before,
-                                               fatigueAfter: lastSavedFatigue, stop: .failed, lastSavedDate: lastSavedDate)
+                                               fatigueAfter: lastSavedFatigue, stop: .failed, lastSavedDate: lastSavedDate,
+                                               goal: goal, observationDate: observationDate)
             throw CalendarAdvanceFailure(summary: saved, reason: error.localizedDescription)
         }
         return CalendarAdvanceSummary(days: days, restDays: rests, fatigueBefore: before,
-                                      fatigueAfter: lastSavedFatigue, stop: stop, lastSavedDate: lastSavedDate)
+                                      fatigueAfter: lastSavedFatigue, stop: stop, lastSavedDate: lastSavedDate,
+                                      goal: goal, observationDate: observationDate)
     }
 }
 

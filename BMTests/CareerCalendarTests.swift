@@ -99,6 +99,171 @@ import SwiftData
         XCTAssertEqual(player.gameDate, "2026-04-07")
     }
 
+    func testV175ObservationGoalStopsForEarlierFixtureAndEvaluation() async throws {
+        do {
+            let (container, player, state) = try fixture()
+            let context = container.mainContext
+            let goal = try CalendarProgression.nextObservationGoal(player: player, state: state)
+            XCTAssertEqual(goal.observationDate?.description, "2026-04-29")
+            let before = try ScoutingObservationStore.reports(player: player, calendar: state, in: context).map(\.payload)
+
+            let summary = try await CalendarProgression.advanceOffDays(player: player, state: state, goal: goal, in: context)
+            XCTAssertEqual(summary.stop, .fixture)
+            XCTAssertEqual(summary.goal, goal)
+            XCTAssertNil(summary.observationDate)
+            XCTAssertEqual(summary.days, 5)
+            XCTAssertEqual(summary.lastSavedDate, "2026-04-07")
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerMatchRecord>()), 0)
+            XCTAssertEqual(try ScoutingObservationStore.reports(player: player, calendar: state, in: context).map(\.payload), before)
+
+            let revision = state.revision
+            let retry = try await CalendarProgression.advanceOffDays(player: player, state: state, goal: goal, in: context,
+                save: { _ in XCTFail("A fixture gate must not save another day") })
+            XCTAssertEqual(retry.stop, .fixture)
+            XCTAssertEqual(retry.days, 0)
+            XCTAssertEqual(state.revision, revision)
+        }
+        for (start, target, expectedObservation) in [
+            ("2030-06-30", "2030-07-17", nil as String?),
+            ("2032-07-13", "2032-07-14", "2032-07-14")
+        ] {
+            let (container, player, state) = try evaluationFixture(date: start)
+            let context = container.mainContext
+            let goal = try CalendarProgression.nextObservationGoal(player: player, state: state)
+            XCTAssertEqual(goal.observationDate?.description, target)
+            let oldReports = try ScoutingObservationStore.reports(player: player, calendar: state, in: context).map(\.payload)
+
+            let summary = try await CalendarProgression.advanceOffDays(player: player, state: state, goal: goal, in: context)
+            XCTAssertEqual(summary.stop, .evaluation)
+            XCTAssertEqual(summary.goal, goal)
+            XCTAssertEqual(summary.days, 1)
+            let nextDay = try GameDate(start).adding(days: 1).description
+            XCTAssertEqual(summary.lastSavedDate, nextDay)
+            XCTAssertEqual(summary.observationDate, expectedObservation)
+            let evaluation = try XCTUnwrap(ContractEvaluationStore.unread(player: player, calendar: state, in: context))
+            let reports = try ScoutingObservationStore.reports(player: player, calendar: state, in: context)
+            if let expectedObservation {
+                XCTAssertEqual(reports.first?.observedDate, expectedObservation)
+                XCTAssertEqual(reports.dropFirst().map(\.payload), oldReports)
+            } else {
+                XCTAssertEqual(reports.map(\.payload), oldReports)
+            }
+
+            let payload = evaluation.payload
+            let retry = try await CalendarProgression.advanceOffDays(player: player, state: state, goal: goal, in: context,
+                save: { _ in XCTFail("An unread evaluation must not save another day") })
+            XCTAssertEqual(retry.stop, .evaluation)
+            XCTAssertEqual(retry.days, 0)
+            XCTAssertEqual(try ContractEvaluationStore.records(player: player, calendar: state, in: context).count, 1)
+            XCTAssertFalse(evaluation.acknowledged)
+            XCTAssertEqual(evaluation.payload, payload)
+        }
+    }
+
+    func testV175ObservationGoalCancelAndSaveFailureResumeWithoutDuplicates() async throws {
+        enum Failure: Error { case disk }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("observation-goal.store")
+        let goal: CalendarAdvanceGoal
+        let baselineRevision: Int
+        var savedDates: [String] = []
+
+        do {
+            let container = try CareerStore.makeContainer(url: url)
+            let context = container.mainContext
+            var draft = PlayerDraft()
+            draft.name = "관찰일검증"
+            draft.schoolID = "hs-ref-001"
+            draft.role = .pitcher
+            let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            player.gameDate = "2026-04-26"
+            player.fatigue = 95
+            try context.save()
+            baselineRevision = state.revision
+            goal = try CalendarProgression.nextObservationGoal(player: player, state: state)
+            XCTAssertEqual(goal.observationDate?.description, "2026-04-29")
+
+            let task = Task { @MainActor in
+                try await CalendarProgression.advanceOffDays(player: player, state: state, goal: goal, in: context, onDaySaved: { date in
+                    savedDates.append(date)
+                    withUnsafeCurrentTask { $0?.cancel() }
+                })
+            }
+            let stopped = try await task.value
+            XCTAssertEqual(stopped.stop, .cancelled)
+            XCTAssertEqual(stopped.goal, goal)
+            XCTAssertEqual(stopped.lastSavedDate, "2026-04-27")
+            XCTAssertEqual(stopped.days, 1)
+            XCTAssertEqual(player.fatigue, 73)
+            XCTAssertEqual(state.revision, baselineRevision + 1)
+            XCTAssertNil(stopped.observationDate)
+        }
+
+        do {
+            let container = try CareerStore.makeContainer(url: url)
+            let context = container.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            XCTAssertEqual(player.gameDate, "2026-04-27")
+            XCTAssertEqual(player.fatigue, 73)
+            do {
+                _ = try await CalendarProgression.advanceOffDays(player: player, state: state, goal: goal, in: context, save: { context in
+                    if player.gameDate == "2026-04-29" { throw Failure.disk }
+                    try context.save()
+                }, onDaySaved: { savedDates.append($0) })
+                XCTFail("Expected the observation-day save to fail")
+            } catch let error as CalendarAdvanceFailure {
+                XCTAssertEqual(error.summary.stop, .failed)
+                XCTAssertEqual(error.summary.goal, goal)
+                XCTAssertEqual(error.summary.days, 1)
+                XCTAssertEqual(error.summary.lastSavedDate, "2026-04-28")
+                XCTAssertNil(error.summary.observationDate)
+            }
+            XCTAssertEqual(player.gameDate, "2026-04-28")
+            XCTAssertEqual(player.fatigue, 51)
+            XCTAssertEqual(state.revision, baselineRevision + 2)
+            XCTAssertEqual(try ScoutingObservationStore.reports(player: player, calendar: state, in: context).map(\.period), [0])
+            XCTAssertFalse(context.hasChanges)
+        }
+
+        let container = try CareerStore.makeContainer(url: url)
+        let context = container.mainContext
+        let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        XCTAssertEqual(player.gameDate, "2026-04-28")
+        XCTAssertEqual(player.fatigue, 51)
+
+        let arrived = try await CalendarProgression.advanceOffDays(player: player, state: state, goal: goal, in: context,
+            onDaySaved: { savedDates.append($0) })
+        XCTAssertEqual(arrived.stop, .observation)
+        XCTAssertEqual(arrived.observationDate, "2026-04-29")
+        XCTAssertEqual(arrived.days, 1)
+        XCTAssertEqual(arrived.restDays, 1)
+        XCTAssertEqual(player.fatigue, 29)
+        XCTAssertEqual(state.revision, baselineRevision + 3)
+        XCTAssertEqual(savedDates, ["2026-04-27", "2026-04-28", "2026-04-29"])
+        let reports = try ScoutingObservationStore.reports(player: player, calendar: state, in: context)
+        XCTAssertEqual(reports.map(\.period), [1, 0])
+        let written = try XCTUnwrap(reports.first)
+        XCTAssertEqual(written.observedDate, arrived.observationDate)
+        XCTAssertEqual(try XCTUnwrap(written.snapshot().interests).entries.count, 0)
+        let frozen = reports.map(\.payload)
+
+        let replay = try await CalendarProgression.advanceOffDays(player: player, state: state, goal: goal, in: context,
+            save: { _ in XCTFail("Reopening a reached goal must not save another day") },
+            onDaySaved: { _ in XCTFail("Reopening a reached goal must not announce another commit") })
+        XCTAssertEqual(replay.stop, .observation)
+        XCTAssertEqual(replay.days, 0)
+        XCTAssertEqual(player.gameDate, "2026-04-29")
+        XCTAssertEqual(player.fatigue, 29)
+        XCTAssertEqual(state.revision, baselineRevision + 3)
+        XCTAssertEqual(try ScoutingObservationStore.reports(player: player, calendar: state, in: context).map(\.payload), frozen)
+        XCTAssertFalse(context.hasChanges)
+    }
+
     func testPreparedDayNotRestedAgainDuringBulk() async throws {
         let (container, player, state) = try fixture(date: "2026-04-06")
         player.fatigue = 90

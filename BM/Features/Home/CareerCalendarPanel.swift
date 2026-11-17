@@ -10,12 +10,15 @@ struct CareerCalendarPanel: View {
     var compact = false
     var progressionOnly = false
     var onTraining: (() -> Void)? = nil
+    var onOpenMatch: (() -> Void)? = nil
+    var onOpenRecords: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var showSchedule = false
     @State private var showRest = false
     @State private var showHelp = false
     @State private var confirmBirthday = false
+    @State private var chooseAdvanceGoal = false
     @State private var errorMessage: String?
     @State private var summary = ""
     @State private var advancing = false
@@ -82,13 +85,18 @@ struct CareerCalendarPanel: View {
         #endif
         try context.save()
     }
-    private func advanceBatch() {
+    private func advanceToNextObservation() {
+        run { advanceBatch(goal: try CalendarProgression.nextObservationGoal(player: player, state: state)) }
+    }
+
+    private func advanceBatch(goal: CalendarAdvanceGoal) {
         guard !advancing,transition.display == nil else {return}
-        transition.perform(date:player.gameDate,label:"다음 일정까지 · 회복 우선",reduced:reduced,cancellable:true) {
+        let label = goal.observationDate == nil ? "다음 팀 경기까지" : "다음 관찰일까지"
+        transition.perform(date:player.gameDate,label:label,reduced:reduced,cancellable:true) {
             advancing=true;summary="";receiptFailure=nil
             defer {advancing=false}
             do {
-                receipt=try await CalendarProgression.advanceOffDays(player:player,state:state,in:context,save:saveDay,onDaySaved:{date in
+                receipt=try await CalendarProgression.advanceOffDays(player:player,state:state,goal:goal,in:context,save:saveDay,onDaySaved:{date in
                     transition.arrive(on:date,reduced:reduced)
                     try? await Task.sleep(for:.milliseconds(reduced ? 0:100))
                 })
@@ -96,6 +104,117 @@ struct CareerCalendarPanel: View {
                 receipt=failure.summary;receiptFailure=failure.reason
                 transition.arrive(on:failure.summary.lastSavedDate,reduced:reduced)
             } catch {errorMessage=error.localizedDescription}
+        }
+    }
+
+    private func savedObservation(on date: String) throws -> ScoutingObservation? {
+        let period = try ScoutingPeriod(origin: GameDate(state.originDate), today: GameDate(date))
+        let key = CareerScoutingReport.key(player.id, period.index)
+        return try ScoutingObservationStore.reports(player: player, calendar: state, in: context)
+            .first { $0.key == key }?.snapshot()
+    }
+
+    @ViewBuilder
+    private func observationAction(on date: String) -> some View {
+        switch Result(catching: { try savedObservation(on: date) }) {
+        case .success(let snapshot):
+            if let snapshot {
+                NavigationLink {
+                    SavedScoutingObservationView(value: snapshot, schoolID: player.schoolID, legacySchoolName: player.schoolName)
+                } label: { Text("확정 관찰 보고서 보기") }
+                    .buttonStyle(MatchPixelButtonStyle(primary: true))
+                    .accessibilityIdentifier("calendarProgressOpenObservation")
+            } else {
+                Text("관찰일에 도착했습니다. 이 주기의 확정 보고서는 아직 없습니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+        case .failure:
+            Text("저장된 관찰 보고서를 확인할 수 없습니다.")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+        }
+    }
+
+    private var overseasRenewalPending: Bool {
+        guard let date = try? GameDate(player.gameDate),
+              let window = ContractEvaluationWindow.containing(date), window.month == 11,
+              let owner = try? ContractRegistrationStore.journal(player: player, calendar: state, in: context),
+              let member = try? owner.current(on: date),
+              (try? OverseasRenewalReview.eligible(member, on: date)) == true else { return false }
+        let overseas = owner.overseasCareer
+        return overseas?.hasPendingFA(on: player.gameDate) != true &&
+            overseas?.hasPending(on: player.gameDate) != true &&
+            !(overseas?.renewalReviews ?? []).contains { $0.window == window }
+    }
+
+    @ViewBuilder
+    private func overseasEvaluationAction() -> some View {
+        if overseasRenewalPending {
+            NavigationLink {
+                OverseasRenewalView(player: player, calendar: state)
+            } label: { Text("해외 재계약 심사 열기") }
+                .buttonStyle(MatchPixelButtonStyle(primary: true))
+                .accessibilityIdentifier("calendarProgressOpenOverseasEvaluation")
+        } else {
+            NavigationLink {
+                OverseasContractsView(player: player, calendar: state)
+            } label: { Text("해외 계약 평가 열기") }
+                .buttonStyle(MatchPixelButtonStyle(primary: true))
+                .accessibilityIdentifier("calendarProgressOpenOverseasEvaluation")
+        }
+    }
+
+    @ViewBuilder
+    private func receiptActions(_ receipt: CalendarAdvanceSummary, today: SeasonFixture?, todayState: CalendarDayPresentation,
+                                overseasEvaluation: Bool, canRetry: Bool) -> some View {
+        switch receipt.stop {
+        case .fixture:
+            if today != nil, let onOpenMatch {
+                Button(todayState.entry, action: onOpenMatch)
+                    .buttonStyle(MatchPixelButtonStyle(primary: true))
+                    .accessibilityIdentifier("calendarProgressOpenMatch")
+            } else if today != nil {
+                Text("경기 메뉴에서 오늘 경기의 준비·이어하기·결과를 확인할 수 있습니다.")
+                    .font(.caption).foregroundStyle(GameTheme.boardMuted)
+            }
+        case .evaluation:
+            if evaluationUnread {
+                NavigationLink {
+                    ContractEvaluationReviewScreen(player: player, calendar: state)
+                } label: { Text("고정 계약 평가 열기") }
+                    .buttonStyle(MatchPixelButtonStyle(primary: true))
+                    .accessibilityIdentifier("calendarProgressOpenEvaluation")
+            }
+            if overseasEvaluation {
+                overseasEvaluationAction()
+            }
+            if !evaluationUnread, !overseasEvaluation {
+                if let target = receipt.goal.observationDate, target.description > player.gameDate, canRetry {
+                    Button("관찰일까지 계속 진행") { advanceBatch(goal: receipt.goal) }
+                        .buttonStyle(ManagementButtonStyle(variant: .secondary))
+                        .accessibilityIdentifier("calendarProgressContinueObservation")
+                } else if today != nil, let onOpenMatch {
+                    Button(todayState.entry, action: onOpenMatch)
+                        .buttonStyle(MatchPixelButtonStyle(primary: true))
+                        .accessibilityIdentifier("calendarProgressOpenMatch")
+                }
+            }
+        case .retirement:
+            if let onOpenRecords {
+                Button("선수 기록 보기", action: onOpenRecords)
+                    .buttonStyle(MatchPixelButtonStyle(primary: true))
+                    .accessibilityIdentifier("calendarProgressOpenRecords")
+            }
+        case .anniversary:
+            Text("훈련 또는 휴식을 마친 뒤 ‘다음 날’에서 나이·학적 변경을 확인하세요.")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+        case .traitChange:
+            Text("훈련 또는 휴식을 마친 뒤 ‘다음 날’에서 특성 변화를 확인하세요.")
+                .font(.caption).foregroundStyle(GameTheme.boardMuted)
+        case .observation, .limit, .seasonOpening, .failed, .cancelled:
+            EmptyView()
+        }
+        if let date = receipt.observationDate {
+            observationAction(on: date)
         }
     }
 
@@ -109,6 +228,7 @@ struct CareerCalendarPanel: View {
         let nextAppearance = schedule?.upcoming.first { $0.date.description > player.gameDate && $0.isAppearance(for: player.role) }
         let savedGame = today.flatMap { fixture in gameRecords.first { $0.playerID == player.id && $0.fixtureID == fixture.id } }
         let gameCompleted = savedGame?.completed == true && (try? savedGame?.snapshot()) != nil
+        let overseasEvaluation = (try? OverseasContractStore.needsEvaluation(player: player, calendar: state, in: context)) == true
         let selection: (starter:Bool?,failed:Bool) = {
             do {return (try ClubSelectionStore.projection(player:player,calendar:state,in:context)?.isStarter,false)}
             catch {return (nil,true)}
@@ -213,21 +333,26 @@ struct CareerCalendarPanel: View {
                 Button { nextDay() } label: {
                     CalendarActionLabel(icon: "NavGameV1", title: "다음 날", detail: "하루 마무리 · 수면 최대 −\(DailyRecovery.sleep)")
                 }.buttonStyle(GameButtonStyle(onBoard: true))
-                    .disabled(evaluationUnread || trainingPending || !hasAction || (today != nil && !gameCompleted) || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
+                    .disabled(evaluationUnread || overseasEvaluation || trainingPending || !hasAction || (today != nil && !gameCompleted) || advancing || schedule == nil).accessibilityIdentifier("advanceDay")
             }
             if advancing {
                 Button("묶음 진행 중지") { transition.requestCancel() }.buttonStyle(GameButtonStyle(secondary: true, onBoard: true))
             } else {
-                Button(action: advanceBatch) {
+                Button { chooseAdvanceGoal = true } label: {
                     CalendarActionLabel(icon: "NavCareerV1", title: "다음 일정까지", detail: "회복 우선 · 매일 저장 · 최대 30일")
                 }
                     .buttonStyle(GameButtonStyle(secondary:true,onBoard:true)).disabled(trainingPending || today != nil || schedule == nil)
                     .accessibilityIdentifier("advanceOffDays")
             }
             if let receipt {
+                let active = !advancing && transition.display == nil && receipt.lastSavedDate == player.gameDate
+                let canRetry = active && !evaluationUnread && !overseasEvaluation && !trainingPending && today == nil && schedule != nil
                 CalendarProgressReceipt(summary:receipt,failure:receiptFailure,
-                    retryEnabled:!advancing && !trainingPending && today == nil && schedule != nil && receipt.lastSavedDate == player.gameDate,
-                    retry:advanceBatch)
+                    retryEnabled:canRetry, retry:{ advanceBatch(goal: receipt.goal) })
+                if active {
+                    receiptActions(receipt, today: today, todayState: todayState, overseasEvaluation: overseasEvaluation,
+                                   canRetry: canRetry)
+                }
             }
             if evaluationUnread {
                 Text("새 계약 평가 미확인 · 날짜 진행이 잠겨 있습니다.").font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("contractEvaluationDateGate")
@@ -252,6 +377,20 @@ struct CareerCalendarPanel: View {
             }
         }
         .onDisappear { transition.requestCancel() }
+        .managementConfirmationDialog("어디까지 진행할까요?", isPresented: $chooseAdvanceGoal,
+                                      identifier: "calendarAdvanceGoal") {
+            Button("다음 팀 경기") { advanceBatch(goal: .nextFixture) }
+                .accessibilityIdentifier("calendarAdvanceGoalFixture")
+            Button("다음 관찰일까지", action: advanceToNextObservation)
+                .accessibilityIdentifier("calendarAdvanceGoalObservation")
+        } message: {
+            Text("하루씩 저장하며 최대 30일 진행합니다. 팀 경기나 계약 평가가 먼저 오면 그날 멈춥니다.")
+            if let goal = try? CalendarProgression.nextObservationGoal(player: player, state: state),
+               let date = goal.observationDate {
+                Text("다음 관찰일 · " + ManagementDisplay.date(date.description))
+                    .accessibilityIdentifier("calendarNextObservationDate")
+            }
+        }
         .managementConfirmationDialog("나이·학적 변경일로 진행할까요?", isPresented: $confirmBirthday, titleVisibility: .visible) {
             Button("확인하고 다음 날") { nextDay(confirmed: true) }
         } message: { Text("게임 달력의 기념일에만 나이가 바뀝니다. 31~40세에는 능력별 노화가 적용되고, 41세에는 기록을 보존하며 은퇴합니다. 성인 도달이 프로 입단을 뜻하지 않습니다.") }
@@ -288,6 +427,11 @@ struct CalendarProgressReceipt:View {
                 .font(.headline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("calendarReceiptTitle")
             Text("마지막 저장 · "+ManagementDisplay.date(summary.lastSavedDate)).font(.headline.monospacedDigit())
                 .accessibilityIdentifier("calendarReceiptDate")
+            if let target = summary.goal.observationDate {
+                Text("목표 관찰일 · " + ManagementDisplay.date(target.description))
+                    .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("calendarReceiptGoal")
+            }
             Text("완료 \(summary.days)일 · 자동 휴식 \(summary.restDays)회 · 피로 \(summary.fatigueBefore) → \(summary.fatigueAfter)")
                 .font(.subheadline.monospacedDigit()).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("calendarReceiptTotals")
             Text(summary.stop.rawValue).font(.subheadline).accessibilityIdentifier("calendarReceiptStop")
@@ -295,6 +439,8 @@ struct CalendarProgressReceipt:View {
                 Text("중단 원인 · "+failure).font(.subheadline).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("calendarReceiptFailure")
                 Text("완료한 날짜는 취소되지 않았습니다. 마지막 저장일부터 계속하며 이미 적용한 회복은 반복하지 않습니다.")
                     .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            }
+            if failure != nil || summary.stop == .cancelled {
                 Button("마지막 저장일부터 다시 진행",action:retry).buttonStyle(ManagementButtonStyle(variant:.secondary))
                     .disabled(!retryEnabled).accessibilityIdentifier("retryCalendarProgress")
             }

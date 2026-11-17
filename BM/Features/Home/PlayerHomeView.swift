@@ -153,8 +153,12 @@ struct PlayerHomeView: View {
         case .unavailable, .schedule: showCalendar = true
         case .training: chooseFacility("facility-training")
         case .season: chooseFacility("facility-standings")
-        case .game: gameSection = .schedule; roomDetail = .game(gameSection)
+        case .game: showMatchLobby()
         }
+    }
+    private func showMatchLobby() {
+        gameSection = .schedule
+        roomDetail = .game(gameSection)
     }
     private var stadiumSchedule: (title: String, date: String, teams: [String], number: Int?) {
         if let presentedMatchLobby {return presentedMatchLobby.schedule}
@@ -287,10 +291,15 @@ struct PlayerHomeView: View {
             }
         }
         .sheet(isPresented: $showSettings) { SaveProtectionView() }
-        .sheet(isPresented: $showCalendar) {
+        .sheet(isPresented: $showCalendar, onDismiss: performRootAction) {
             if let calendar {
                 NavigationStack {
-                    ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }.accessibilityIdentifier("calendarDetailScroll")
+                    ScrollView {
+                        CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition,
+                            onOpenMatch: { leaveCalendar(for: .matchLobby) },
+                            onOpenRecords: { leaveCalendar(for: .gameRecords) })
+                            .padding(16)
+                    }.accessibilityIdentifier("calendarDetailScroll")
                         .background(GameTheme.board).navigationTitle("일정 · 날짜 관리").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ManagementToolbarAction(title: "닫기", identifier: "closeCalendar") { showCalendar = false } }
                 }.preferredColorScheme(.dark)
@@ -398,10 +407,14 @@ struct PlayerHomeView: View {
         }
     }
 
-    private enum ManagementRootAction { case create, practice, tab(ManagementTab) }
+    private enum ManagementRootAction { case create, practice, tab(ManagementTab), matchLobby, gameRecords }
     private func leaveRoom(for action: ManagementRootAction) {
         rootAction = action
         roomDetail = nil
+    }
+    private func leaveCalendar(for action: ManagementRootAction) {
+        rootAction = action
+        showCalendar = false
     }
     private func performRootAction() {
         guard let action = rootAction else { return }
@@ -410,6 +423,9 @@ struct PlayerHomeView: View {
         case .create: create()
         case .practice: play()
         case .tab(let tab): selectedTab = tab
+        case .matchLobby:
+            showMatchLobby()
+        case .gameRecords: chooseFacility("facility-gameRecords")
         }
     }
     private var roomAsset: String {
@@ -746,7 +762,15 @@ struct PlayerHomeView: View {
                         Text("\(fixture.number)/30차전 · \(CareerTeamDirectory.name(fixture.opponent(of: gameTeamID(calendar,on:fixture.date)), schools: schools))").managementFont(.label)
                         playActions(calendar, training: false)
                     } else { Text("오늘은 비경기일입니다.").managementFont(.body) }
-                    NavigationLink { ScrollView { CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition).padding(16) }.background(GameTheme.board).navigationTitle("일정 · 날짜 관리").navigationBarTitleDisplayMode(.inline) } label: { Text("연간 일정 · 날짜 진행") }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
+                    NavigationLink {
+                        ScrollView {
+                            CareerCalendarPanel(player: player, state: calendar, schools: schools, transition: transition,
+                                onOpenMatch: { leaveRoom(for: .matchLobby) },
+                                onOpenRecords: { leaveRoom(for: .gameRecords) })
+                                .padding(16)
+                        }.background(GameTheme.board).navigationTitle("일정 · 날짜 관리").navigationBarTitleDisplayMode(.inline)
+                    } label: { Text("연간 일정 · 날짜 진행") }
+                        .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("hubCalendar")
                     ForEach(Array((status.schedule?.upcoming ?? []).prefix(3)), id: \.id) { fixture in
                         Text("\(fixture.date.description) · \(CareerTeamDirectory.name(fixture.opponent(of: gameTeamID(calendar,on:fixture.date)), schools: schools)) · \(fixture.isAppearance(for: player.role) ? "기본 출전 차례 · 기용 별도" : "순번 휴식 · 팀 경기")").managementFont(.helper)
                     }
