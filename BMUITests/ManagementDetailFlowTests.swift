@@ -76,6 +76,61 @@ final class ManagementDetailFlowTests: XCTestCase {
         }
     }
 
+    @MainActor func testV152LargestMatchControlJumpBothRoles() {
+        continueAfterFailure=false
+        for pitcher in [false,true] {
+            let app=XCUIApplication()
+            app.launchArguments=["-management-career-verification","-UIPreferredContentSizeCategoryName","UICTContentSizeCategoryAccessibilityXXXL","-management-reduced-motion-verification"]
+            app.launch();defer {app.terminate()}
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout:30))
+            if pitcher {v151SelectRole(app,pitcher:true)}
+            reveal(app.buttons["clubhouse-rest"],app);app.buttons["clubhouse-rest"].tap()
+            reveal(app.buttons["confirmRest"],app);app.buttons["confirmRest"].tap()
+            let done=app.buttons["restDone"];XCTAssertTrue(done.waitForExistence(timeout:15));reveal(done,app);done.tap()
+            app.buttons["managementLargeMenu"].tap();app.buttons["managementMenu-game"].tap()
+            app.buttons["roomPrimary"].tap()
+            let entry=app.buttons["openCareerGame"];reveal(entry,app);entry.tap()
+            XCTAssertTrue(app.buttons["opponentTab-plan"].waitForExistence(timeout:8));app.buttons["opponentTab-plan"].tap()
+            let plan=app.buttons["confirmGamePlan"];reveal(plan,app);plan.tap()
+            let jump=app.buttons["gameJumpToControls"]
+            XCTAssertTrue(jump.waitForExistence(timeout:10));XCTAssertTrue(jump.isHittable)
+            XCTAssertGreaterThanOrEqual(jump.frame.height,44)
+            let summary=app.descendants(matching:.any).matching(identifier:"gameControlSummary").firstMatch
+            let before=summary.label
+            jump.tap()
+            XCTAssertTrue(summary.isHittable);XCTAssertEqual(summary.label,before)
+            let action=app.buttons[pitcher ? "gamePitch":"accessibleBattingInput"]
+            revealLocationChoice(action,app);XCTAssertTrue(action.isHittable)
+            XCTAssertGreaterThanOrEqual(action.frame.height,44)
+            XCTAssertEqual(summary.label,before,"점프·스크롤로 경기 카운트가 바뀌면 안 됩니다.")
+            XCTAssertTrue(app.buttons["gameAutomatic"].isEnabled)
+        }
+    }
+
+    @MainActor func testV169RestUsedShowsReasonAtDisabledAction() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-management-reduced-motion-verification"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        let rest = app.buttons["clubhouse-rest"]
+        reveal(rest, app); rest.tap()
+        let confirm = app.buttons["confirmRest"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 8)); confirm.tap()
+        let done = app.buttons["restDone"]
+        XCTAssertTrue(done.waitForExistence(timeout: 8)); done.tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 8))
+        let saved = status(app)
+        reveal(rest, app); rest.tap()
+        let reason = app.staticTexts["restActionGate"]
+        XCTAssertTrue(reason.waitForExistence(timeout: 8)); XCTAssertTrue(reason.isHittable)
+        XCTAssertTrue(reason.label.contains("이미 사용"))
+        XCTAssertFalse(confirm.isEnabled)
+        app.buttons["취소 · 돌아가기"].tap()
+        XCTAssertEqual(status(app), saved)
+    }
+
     @MainActor func testV56TrainingTerminationResumeAndStoredRewardBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication()

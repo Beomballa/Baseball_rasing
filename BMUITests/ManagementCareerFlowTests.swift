@@ -2,6 +2,32 @@ import XCTest
 
 /// Isolated in-memory CareerRootView; never opens the installed player's store.
 final class ManagementCareerFlowTests: XCTestCase {
+    @MainActor func testV152CompactCurrentReportBothRoles() {
+        continueAfterFailure=false
+        let app=launch(large:true)
+        defer {app.terminate()}
+        for pitcher in [false,true] {
+            if pitcher {switchToPitcher(app)}
+            let before=labels(app)
+            v99Menu("career",title:"커리어",app:app)
+            v166Tap("facility-observation",app)
+            v166Tap("openScoutingReport",app)
+            let menu=app.buttons["currentScoutSectionMenu"],name=app.staticTexts["scoutActualPlayer"],date=app.staticTexts["scoutCurrentDate"]
+            XCTAssertTrue(menu.waitForExistence(timeout:8));XCTAssertTrue(menu.isHittable)
+            XCTAssertTrue(name.isHittable);XCTAssertTrue(date.isHittable)
+            XCTAssertEqual(app.staticTexts.matching(identifier:"scoutActualPlayer").count,1)
+            XCTAssertFalse(app.staticTexts["scoutDetailPlayer"].exists)
+            XCTAssertLessThanOrEqual(date.frame.maxY,app.windows.firstMatch.frame.maxY)
+            let details=app.descendants(matching:.any).matching(identifier:"scoutCurrentIdentityDetails").firstMatch
+            reveal(details,app);XCTAssertTrue(details.isHittable);details.tap()
+            XCTAssertTrue(app.staticTexts["scoutDetailPlayer"].waitForExistence(timeout:5))
+            XCTAssertEqual(app.staticTexts.matching(identifier:"scoutActualPlayer").count,1)
+            app.navigationBars.buttons.element(boundBy:0).tap();closeDetail(app)
+            v99Menu("home",title:"홈",app:app)
+            XCTAssertEqual(labels(app),before)
+        }
+    }
+
     @MainActor func testV172ClubhouseGameDayAndAwayVenue() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1510,7 +1536,7 @@ final class ManagementCareerFlowTests: XCTestCase {
         app.buttons["roomProfile"].tap(); XCTAssertTrue(app.buttons["homeRole-pitcher"].waitForExistence(timeout: 5))
         app.buttons["homeRole-pitcher"].tap()
         if app.buttons["closeRoomDetail"].exists { closeDetail(app) }
-        app.buttons["managementTab-home"].tap()
+        v99Menu("home", title: "홈", app: app)
         XCTAssertTrue(app.staticTexts["homePlayerName"].label.contains("CareerPitch"))
     }
     @MainActor private func closeDetail(_ app: XCUIApplication) {
