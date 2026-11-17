@@ -491,7 +491,7 @@ private struct UniformTrouserRows {
         return times.lastIndex(where: { $0 <= max(0, progress) }) ?? 0
     }
     static let refinedDelivery: RefinedDelivery? = {
-        guard let url = Bundle.main.url(forResource: "pitcher-delivery-back-v143", withExtension: "json", subdirectory: "MatchArt"),
+        guard let url = Bundle.main.url(forResource: "pitcher-delivery-back-v161", withExtension: "json", subdirectory: "MatchArt"),
               let bytes = try? Data(contentsOf: url),
               let value = try? JSONDecoder().decode(RefinedDelivery.self, from: bytes),
               value.cell > 0, value.progress.count == value.camera.frames.count,
@@ -511,7 +511,7 @@ private struct UniformTrouserRows {
     }
     static func prepareRefined(appearance: PlayerAppearance, number: Int, hand: String) -> Prepared? {
         guard appearance.isValid, (0...99).contains(number), let refinedDelivery, let refinedSource else { return nil }
-        let key = (PlayerMotionArt.cacheKey(role: .pitcher, appearance: appearance, number: number, hand: hand) + ":whole-v143") as NSString
+        let key = (PlayerMotionArt.cacheKey(role: .pitcher, appearance: appearance, number: number, hand: hand) + ":whole-v161") as NSString
         if let value = cache.object(forKey: key) { return value }
         let textures = refinedDelivery.camera.frames.compactMap { frame -> SKTexture? in
             guard let image = refinedImage(frame, source: refinedSource, appearance: appearance, number: number, mirrored: hand == "left") else { return nil }

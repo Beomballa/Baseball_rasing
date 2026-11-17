@@ -32,6 +32,8 @@ ART_HASHES.update({
 ART_HASHES.update({
     'BM/Resources/MatchArt/pitcher-delivery-back-v143.json': '9cd75ed0a3307db8fc684ac9749132763a415d4dff5eb50131aa4c816bf67f25',
     'BM/Resources/MatchArt/pitcher-delivery-back-v143.png': '9a9d64762b549e84bcbffb24a6f059d4d535677fffdac655a6b69669a0dbf1b3',
+    'BM/Resources/MatchArt/pitcher-delivery-back-v161.json': 'db82ad2de85b33dff7008bb8534bab646f6071f4156fa0d3f75f9f50ecf082f1',
+    'BM/Resources/MatchArt/pitcher-delivery-back-v161.png': 'b5a268402110b111ccc0f5a4e677bd0df0f544412b45e80609bd7d771e133f09',
 })
 ART_HASHES.update({'BM/Resources/MatchArt/pitcher-fullbody-back-v120.png': 'e93eb19dec38889f77b63cc23042601964adb0205ce3b617b8a15f360d2489a3', 'BM/Resources/MatchArt/pitcher-fullbody-front-v120.png': '71c264acda0c3062e5923476c63968f96c1abdb9270a8ec646ebfc82ea6e086d', 'BM/Resources/MatchArt/pitcher-fullbody-v120.json': 'ae2eec9caa0a00b2d0a871950f78579bda03f26044c74257e76b5c49524ff294'})
 

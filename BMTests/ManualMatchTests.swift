@@ -2314,7 +2314,7 @@ extension ManualMatchTests {
             let originalNumber = try XCTUnwrap(FullBodyPitcherArt.prepareRefined(appearance: appearance, number: 27, hand: hand))
             let manifest = try XCTUnwrap(variant.refined)
             let releaseIndex = try XCTUnwrap(manifest.progress.firstIndex(of: 1))
-            XCTAssertEqual(variant.textures.count, 46)
+            XCTAssertEqual(variant.textures.count, 65)
             XCTAssertFalse(variant === originalNumber)
             let customRelease = try XCTUnwrap(variant.textures[releaseIndex].cgImage())
             let originalRelease = try XCTUnwrap(originalNumber.textures[releaseIndex].cgImage())

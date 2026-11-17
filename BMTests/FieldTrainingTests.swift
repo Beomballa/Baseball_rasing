@@ -2936,6 +2936,43 @@ import SpriteKit
     }
 }
 
+@MainActor final class InplayStaticAssetPreparationTests:XCTestCase {
+    func testV161PrewarmReusesCurrentVenueTexturesForFieldAndHomeRunWithoutChangingReplay() async throws {
+        let stadium=StadiumIdentity(homeTeamID:"hs-ref-024")
+        let venue=try XCTUnwrap(stadium.backdrop)
+        let upper=try XCTUnwrap(InplayStadiumArt.upperArt(venue, stadium: stadium))
+        let ready=await InplayStadiumArt.prewarm(stadium)
+        XCTAssertTrue(ready)
+        let base=try XCTUnwrap(InplayStadiumArt.baseTexture)
+        XCTAssertEqual(base.filteringMode,.nearest)
+        let play=try FieldVerificationScenario.groundOut.make()
+        let homeRun=try XCTUnwrap(MatchReplayFixture.make(pitcher:false).last?.homeRun)
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        let playBefore=try encoder.encode(play),homeRunBefore=try encoder.encode(homeRun)
+        let sprites=FieldReplaySprites(appearance:PlayerAppearance(kit:1),jerseyNumber:27,ownPosition:"P",throwingHand:"left",ownTeamFielding:true)
+        for replay in [InplayReplay.field(play),.homeRun(homeRun)] {
+            let scene=InplayFieldScene(replay:replay,sprites:sprites,prepared:FieldRasterArt.Prepared(images:[:]),scoreText:"H 0 : 0 A",stadium:stadium)
+            let baseNode=try XCTUnwrap(scene.childNode(withName:"//inplay-field-base") as? SKSpriteNode)
+            let upperNode=try XCTUnwrap(scene.childNode(withName:"//"+venue.imageName) as? SKSpriteNode)
+            XCTAssertTrue(baseNode.texture === base)
+            XCTAssertTrue(upperNode.texture === upper.texture)
+            XCTAssertEqual(scene.displayedTime,0)
+            XCTAssertFalse(scene.resultVisible)
+        }
+        XCTAssertEqual(try encoder.encode(play),playBefore)
+        XCTAssertEqual(try encoder.encode(homeRun),homeRunBefore)
+    }
+    func testV161CancelledPrewarmReturnsWithoutStartingAnotherReplay() async {
+        let task=Task {@MainActor in
+            await Task.yield()
+            return await InplayStadiumArt.prewarm(.legacy)
+        }
+        task.cancel()
+        let ready=await task.value
+        XCTAssertFalse(ready)
+    }
+}
+
 @MainActor final class MatchArenaLifecycleTests:XCTestCase {
     func testDetachedArenaPausesWithoutDiscardingSceneOrActions() {
         let view=MatchArenaSKView(frame:CGRect(x:0,y:0,width:320,height:340))
