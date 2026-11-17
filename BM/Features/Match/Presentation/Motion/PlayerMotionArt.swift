@@ -1,3 +1,4 @@
+import CryptoKit
 import SpriteKit
 import SwiftUI
 import UIKit
@@ -438,6 +439,7 @@ private struct UniformTrouserRows {
         let number: [Double]
         let numberAngle: Double
         let handVisible: Bool
+        let ballInArtwork: Bool?
         let clipRows: [[Int]]
         let coverageRuns: [[Int]]
     }
@@ -455,15 +457,43 @@ private struct UniformTrouserRows {
         let progress: [Double]
         let camera: Camera
     }
+    struct PreparedMidpoint {
+        let progress: Double
+        let frame: Frame
+        let texture: SKTexture
+        let textureIndex: Int
+    }
     final class Prepared: NSObject {
         let textures: [SKTexture]
         let camera: Camera
         let refined: RefinedDelivery?
-        init(textures: [SKTexture], camera: Camera, refined: RefinedDelivery? = nil) {
+        let backingAtlas: SKTexture?
+        let preparationMidpoints: [Int: PreparedMidpoint]
+        var preloadTextures: [SKTexture] {
+            if let backingAtlas { return [backingAtlas] }
+            return textures + preparationMidpoints.values.sorted { $0.textureIndex < $1.textureIndex }.map(\.texture)
+        }
+        init(textures: [SKTexture], camera: Camera, refined: RefinedDelivery? = nil, backingAtlas: SKTexture? = nil,
+             preparationMidpoints: [Int: PreparedMidpoint] = [:]) {
             self.textures = textures
             self.camera = camera
             self.refined = refined
+            self.backingAtlas = backingAtlas
+            self.preparationMidpoints = preparationMidpoints
         }
+    }
+    private struct PreparationSidecar: Decodable {
+        struct Entry: Decodable {
+            let afterBaseIndex: Int
+            let progress: Double
+            let frame: Frame
+        }
+        let cell: Int
+        let file: String
+        let baseFile: String
+        let baseManifestSHA256: String
+        let baseAtlasSHA256: String
+        let entries: [Entry]
     }
     private static let cache: NSCache<NSString, Prepared> = {
         let cache = NSCache<NSString, Prepared>()
@@ -490,8 +520,9 @@ private struct UniformTrouserRows {
         guard let times = manifest?.progress else { return 0 }
         return times.lastIndex(where: { $0 <= max(0, progress) }) ?? 0
     }
+    private static let refinedResource = "pitcher-delivery-back-v171"
     static let refinedDelivery: RefinedDelivery? = {
-        guard let url = Bundle.main.url(forResource: "pitcher-delivery-back-v161", withExtension: "json", subdirectory: "MatchArt"),
+        guard let url = Bundle.main.url(forResource: refinedResource, withExtension: "json", subdirectory: "MatchArt"),
               let bytes = try? Data(contentsOf: url),
               let value = try? JSONDecoder().decode(RefinedDelivery.self, from: bytes),
               value.cell > 0, value.progress.count == value.camera.frames.count,
@@ -504,6 +535,49 @@ private struct UniformTrouserRows {
               let url = Bundle.main.url(forResource: file, withExtension: "png", subdirectory: "MatchArt") else { return nil }
         return UIImage(contentsOfFile: url.path)?.cgImage
     }()
+    private static let preparationSource: (entries: [PreparationSidecar.Entry], image: CGImage)? = {
+        let name = refinedResource + "-prep-midpoints"
+        func read(_ file: String, _ fileExtension: String) -> Data? {
+            guard let url = Bundle.main.url(forResource: file, withExtension: fileExtension, subdirectory: "MatchArt") else { return nil }
+            return try? Data(contentsOf: url)
+        }
+        func digest(_ bytes: Data) -> String {
+            SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        }
+        guard let base = refinedDelivery, base.camera.file == refinedResource, base.progress.count == 71,
+              let metadata = read(name, "json"), let sidecar = try? JSONDecoder().decode(PreparationSidecar.self, from: metadata),
+              sidecar.cell == base.cell, sidecar.file == name, sidecar.baseFile == base.camera.file,
+              sidecar.entries.count == 20,
+              let baseManifest = read(refinedResource, "json"), digest(baseManifest) == sidecar.baseManifestSHA256,
+              let baseAtlas = read(refinedResource, "png"), digest(baseAtlas) == sidecar.baseAtlasSHA256,
+              let pixels = read(name, "png"),
+              digest(pixels) == "01a979cdb9bcba17095c7bb88e5b1fef1d7431a750e1a809957ba3a813e4a8f1",
+              let image = UIImage(data: pixels)?.cgImage,
+              image.width >= base.cell, image.height >= base.cell,
+              image.width.isMultiple(of: base.cell), image.height.isMultiple(of: base.cell) else { return nil }
+        let columns = image.width / base.cell
+        for (index, entry) in sidecar.entries.enumerated() {
+            let lower = base.progress[index], upper = base.progress[index + 1]
+            let left = base.camera.frames[index], right = base.camera.frames[index + 1]
+            let frame = entry.frame
+            let x = index % columns * base.cell, y = index / columns * base.cell
+            guard entry.afterBaseIndex == index, abs(entry.progress - (lower + upper) / 2) < 1e-9,
+                  y + base.cell <= image.height, frame.rect == [x, y, base.cell, base.cell],
+                  frame.rearFoot.count == 2, frame.rearFoot == left.rearFoot, frame.rearFoot == right.rearFoot,
+                  frame.offset.count == 2, frame.offset == left.offset, frame.offset == right.offset,
+                  frame.hand.count == 2, matchesMidpoint(frame.hand, left.hand, right.hand),
+                  frame.leadFoot.count == 2, matchesMidpoint(frame.leadFoot, left.leadFoot, right.leadFoot),
+                  frame.number.count == 2, matchesMidpoint(frame.number, left.number, right.number),
+                  frame.shirt.count == 4, matchesMidpoint(frame.shirt, left.shirt, right.shirt),
+                  frame.shirt[2] > 0, frame.shirt[3] > 0,
+                  frame.handVisible == left.handVisible, frame.ballInArtwork == left.ballInArtwork else { return nil }
+        }
+        return (sidecar.entries, image)
+    }()
+    private static func matchesMidpoint(_ value: [Double], _ left: [Double], _ right: [Double]) -> Bool {
+        guard value.count == left.count, value.count == right.count else { return false }
+        return zip(value, zip(left, right)).allSatisfy { point, pair in abs(point - (pair.0 + pair.1) / 2) < 1e-9 }
+    }
     static func refinedPreviewImage(appearance: PlayerAppearance, number: Int) -> UIImage? {
         guard appearance.isValid, (0...99).contains(number), let frame = refinedDelivery?.camera.frames.first,
               let refinedSource else { return nil }
@@ -511,19 +585,107 @@ private struct UniformTrouserRows {
     }
     static func prepareRefined(appearance: PlayerAppearance, number: Int, hand: String) -> Prepared? {
         guard appearance.isValid, (0...99).contains(number), let refinedDelivery, let refinedSource else { return nil }
-        let key = (PlayerMotionArt.cacheKey(role: .pitcher, appearance: appearance, number: number, hand: hand) + ":whole-v161") as NSString
+        let key = (PlayerMotionArt.cacheKey(role: .pitcher, appearance: appearance, number: number, hand: hand)
+            + ":\(refinedDelivery.camera.file)") as NSString
         if let value = cache.object(forKey: key) { return value }
-        let textures = refinedDelivery.camera.frames.compactMap { frame -> SKTexture? in
-            guard let image = refinedImage(frame, source: refinedSource, appearance: appearance, number: number, mirrored: hand == "left") else { return nil }
+        let baseImages = refinedDelivery.camera.frames.compactMap { frame in
+            refinedImage(frame, source: refinedSource, appearance: appearance, number: number, mirrored: hand == "left")
+        }
+        guard baseImages.count == refinedDelivery.camera.frames.count else { return nil }
+        var entries: [PreparationSidecar.Entry] = []
+        var images = baseImages
+        if let source = preparationSource {
+            let midpointImages = source.entries.compactMap { entry in
+                refinedImage(entry.frame, source: source.image, appearance: appearance, number: number, mirrored: hand == "left")
+            }
+            if midpointImages.count == source.entries.count {
+                entries = source.entries
+                images += midpointImages
+            }
+        }
+        let atlas = packedRefinedTextures(images, cell: refinedDelivery.cell)
+        let textures = atlas?.frames ?? images.map { image in
             let texture = SKTexture(image: image)
             texture.filteringMode = .nearest
             return texture
         }
-        guard textures.count == refinedDelivery.camera.frames.count else { return nil }
-        let value = Prepared(textures: textures, camera: refinedDelivery.camera, refined: refinedDelivery)
-        cache.setObject(value, forKey: key, cost: textures.count * refinedDelivery.cell * refinedDelivery.cell * 4)
+        let midpoints = Dictionary(uniqueKeysWithValues: entries.enumerated().map { ordinal, entry in
+            let index = baseImages.count + ordinal
+            let midpoint = PreparedMidpoint(progress: entry.progress, frame: entry.frame, texture: textures[index], textureIndex: index)
+            return (entry.afterBaseIndex, midpoint)
+        })
+        let value = Prepared(textures: Array(textures.prefix(baseImages.count)), camera: refinedDelivery.camera, refined: refinedDelivery,
+                             backingAtlas: atlas?.backing, preparationMidpoints: midpoints)
+        let cost = atlas?.bytes ?? textures.count * refinedDelivery.cell * refinedDelivery.cell * 4
+        cache.setObject(value, forKey: key, cost: cost)
         return value
     }
+
+    private static func packedRefinedTextures(_ images: [UIImage], cell: Int)
+        -> (backing: SKTexture, frames: [SKTexture], bytes: Int)? {
+        guard !images.isEmpty else { return nil }
+        let columns = Int(ceil(sqrt(Double(images.count))))
+        let rows = (images.count + columns - 1) / columns
+        // A transparent gutter keeps adjacent poses separate at texture boundaries.
+        let stride = cell + 2
+        let width = columns * stride, height = rows * stride
+        let cellRowBytes = cell * 4, atlasRowBytes = width * 4
+        let format = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+        var bytes = Data(count: height * atlasRowBytes)
+        let copied = bytes.withUnsafeMutableBytes { (buffer: UnsafeMutableRawBufferPointer) -> Bool in
+            guard let destination = buffer.baseAddress else { return false }
+            for (index, source) in images.enumerated() {
+                guard let image = source.cgImage, image.width == cell, image.height == cell,
+                      image.bytesPerRow == cellRowBytes, image.bitmapInfo.rawValue == format,
+                      let pixels = image.dataProvider?.data, CFDataGetLength(pixels) == cell * cellRowBytes,
+                      let origin = CFDataGetBytePtr(pixels) else { return false }
+                let x = (index % columns) * stride + 1
+                let y = (index / columns) * stride + 1
+                for row in 0..<cell {
+                    destination.advanced(by: (y + row) * atlasRowBytes + x * 4)
+                        .copyMemory(from: origin.advanced(by: row * cellRowBytes), byteCount: cellRowBytes)
+                }
+            }
+            return true
+        }
+        guard copied, let provider = CGDataProvider(data: bytes as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                  bytesPerRow: atlasRowBytes, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGBitmapInfo(rawValue: format), provider: provider,
+                                  decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
+        let backing = SKTexture(image: UIImage(cgImage: image))
+        backing.filteringMode = .nearest
+        let frames = images.indices.map { index in
+            let x = (index % columns) * stride + 1
+            let y = height - (index / columns) * stride - 1 - cell
+            let rect = CGRect(x: Double(x) / Double(width), y: Double(y) / Double(height),
+                              width: Double(cell) / Double(width), height: Double(cell) / Double(height))
+            let texture = SKTexture(rect: rect, in: backing)
+            texture.filteringMode = .nearest
+            return texture
+        }
+        return (backing, frames, bytes.count)
+    }
+
+    #if DEBUG
+    static func separateRefinedTextureForVerification(index: Int, appearance: PlayerAppearance, number: Int, hand: String) -> SKTexture? {
+        guard let refinedDelivery, refinedDelivery.camera.frames.indices.contains(index), let refinedSource,
+              let image = refinedImage(refinedDelivery.camera.frames[index], source: refinedSource, appearance: appearance,
+                                       number: number, mirrored: hand == "left") else { return nil }
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .nearest
+        return texture
+    }
+    static func separatePreparationTextureForVerification(afterBaseIndex: Int, appearance: PlayerAppearance,
+                                                           number: Int, hand: String) -> SKTexture? {
+        guard let source = preparationSource, source.entries.indices.contains(afterBaseIndex),
+              let image = refinedImage(source.entries[afterBaseIndex].frame, source: source.image,
+                                       appearance: appearance, number: number, mirrored: hand == "left") else { return nil }
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .nearest
+        return texture
+    }
+    #endif
     private static func refinedImage(
         _ frame: Frame, source: CGImage, appearance: PlayerAppearance, number: Int, mirrored: Bool
     ) -> UIImage? {
@@ -561,7 +723,7 @@ private struct UniformTrouserRows {
         var sleeveEnds = [0.52, 0.52]
         var trouserRows = UniformTrouserRows(height: height)
         if proStyle != nil {
-            // The V143 atlas preserves the ankle outlines and both original sock palettes.
+            // The authored atlas preserves the ankle outlines and both original sock palettes.
             let sockTone: [Int: Int] = [0x122425: 0, 0x1b3335: 1, 0x264446: 2, 0x375757: 3,
                                         0x112b23: 0, 0x1d4435: 1, 0x32634a: 2, 0x558364: 3]
             for pixel in sockKinds.indices {

@@ -2296,10 +2296,16 @@ extension ManualMatchTests {
 
 extension ManualMatchTests {
     func testV143SharesDeliveryInMatchPitchTrainingAndBullpenDrills() throws {
-        let cases: [(String, String?)] = [("left", nil), ("right", nil), ("left", "npb-13")]
-        for (hand, club) in cases {
-            let appearance = PlayerAppearance(kit: 1).wearing(teamID: club)
-            let captureID = club.map { "v148-\($0)-\(hand)" } ?? "v143-\(hand)"
+        var cases: [(String, String?, Bool)] = [("left", nil, false), ("right", nil, false)]
+        for club in ["kbo-3", "npb-13", "mlb-12"] {
+            for hand in ["left", "right"] {
+                for away in [false, true] { cases.append((hand, club, away)) }
+            }
+        }
+        var homeReleaseImages: [String: Data] = [:]
+        for (hand, club, away) in cases {
+            let appearance = PlayerAppearance(kit: 1).wearing(teamID: club, away: away)
+            let captureID = club.map { "v154-\($0)-\(hand)-\(away ? "away" : "home")" } ?? "v154-personal-\(hand)"
             let firstStarted = ProcessInfo.processInfo.systemUptime
             let variant = try XCTUnwrap(FullBodyPitcherArt.prepareRefined(appearance: appearance, number: 54, hand: hand))
             let firstDuration = ProcessInfo.processInfo.systemUptime - firstStarted
@@ -2314,11 +2320,18 @@ extension ManualMatchTests {
             let originalNumber = try XCTUnwrap(FullBodyPitcherArt.prepareRefined(appearance: appearance, number: 27, hand: hand))
             let manifest = try XCTUnwrap(variant.refined)
             let releaseIndex = try XCTUnwrap(manifest.progress.firstIndex(of: 1))
-            XCTAssertEqual(variant.textures.count, 65)
+            XCTAssertEqual(variant.textures.count, 71)
             XCTAssertFalse(variant === originalNumber)
             let customRelease = try XCTUnwrap(variant.textures[releaseIndex].cgImage())
             let originalRelease = try XCTUnwrap(originalNumber.textures[releaseIndex].cgImage())
             XCTAssertNotEqual(customRelease.dataProvider!.data! as Data, originalRelease.dataProvider!.data! as Data)
+            if let club {
+                let key = club + "-" + hand
+                let releaseData = customRelease.dataProvider!.data! as Data
+                if away {
+                    XCTAssertNotEqual(releaseData, try XCTUnwrap(homeReleaseImages[key]), "Home and away uniforms must remain distinct in the live release texture")
+                } else { homeReleaseImages[key] = releaseData }
+            }
             func checkRelease(_ rig: FullBodyPitcherNode, _ sprite: SKSpriteNode) throws {
                 XCTAssertTrue(rig.usesRefinedDelivery)
                 XCTAssertEqual(rig.frameIndex, releaseIndex)
@@ -2353,7 +2366,6 @@ extension ManualMatchTests {
             game.usePracticeSetting()
             XCTAssertTrue(game.demonstrate(reduceMotion: false, flightDuration: 1, preparedRelease: true))
             try checkRelease(matchRig, matchSprite)
-            try capture(game, "pitch-training-release")
             game.cancelDelivery()
             view.presentScene(nil)
 
@@ -2374,11 +2386,9 @@ extension ManualMatchTests {
             let release = trainingRig.convert(trainingRig.handPoint, to: bullpen)
             XCTAssertEqual(ball.position.x, release.x, accuracy: 0.000001)
             XCTAssertEqual(ball.position.y, release.y, accuracy: 0.000001)
-            try capture(bullpen, "bullpen-release")
             bullpen.advance(at: now + LocationDrillReplay.windup + LocationDrillReplay.flight + 0.001)
             XCTAssertEqual(trainingRig.frameIndex, variant.textures.count - 1)
             XCTAssertEqual(completions, 0)
-            try capture(bullpen, "bullpen-finish")
             bullpen.advance(at: now + 3)
             bullpen.advance(at: now + 4)
             XCTAssertEqual(completions, 1)

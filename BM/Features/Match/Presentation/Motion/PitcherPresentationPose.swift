@@ -175,7 +175,15 @@ enum PitcherMotionPlayback {
     private(set) var handPoint = CGPoint.zero
     private(set) var leadFoot = CGPoint.zero
     private(set) var frameIndex = 0
-    var hasVisibleHand: Bool { art.camera.frames[frameIndex].handVisible }
+    private(set) var displayedFrameIndex = 0
+    private var displayedFrame: FullBodyPitcherArt.Frame {
+        if displayedFrameIndex != frameIndex, let midpoint = art.preparationMidpoints[frameIndex] {
+            return midpoint.frame
+        }
+        return art.camera.frames[frameIndex]
+    }
+    var hasVisibleHand: Bool { displayedFrame.handVisible }
+    var hasEmbeddedBall: Bool { displayedFrame.ballInArtwork == true }
     var usesRefinedDelivery: Bool { art.refined != nil }
     var authoredCanvas: Double? { art.refined.map { Double($0.cell) } }
     var registrationAnchor: CGPoint {
@@ -191,7 +199,7 @@ enum PitcherMotionPlayback {
         body.name = "pitcherWholeBody"
         addChild(body)
         // 투구 도중 처음 등장하는 자세가 텍스처 업로드를 기다리지 않게 한다.
-        SKTexture.preload(art.textures) {}
+        SKTexture.preload(art.preloadTextures) {}
     }
     required init?(coder:NSCoder) { fatalError("Storyboard initialization is not used") }
     static func recoveryOffset(progress:Double,camera:FullBodyPitcherArt.Camera) -> CGPoint {
@@ -208,13 +216,16 @@ enum PitcherMotionPlayback {
         } else {
             frameIndex = FullBodyPitcherArt.index(progress:progress)
         }
-        let frame = art.camera.frames[frameIndex]
-        let texture = art.textures[frameIndex]
+        // 추가 원화는 두 승인 원화 사이에서만 사용하고 승인 원화의 시각을 유지한다.
+        let midpoint = art.preparationMidpoints[frameIndex].flatMap { progress >= $0.progress ? $0 : nil }
+        displayedFrameIndex = midpoint?.textureIndex ?? frameIndex
+        let frame = midpoint?.frame ?? art.camera.frames[frameIndex]
+        let texture = midpoint?.texture ?? art.textures[frameIndex]
         if body.texture !== texture { body.texture = texture }
         let size = CGSize(width:canvas,height:canvas)
         if body.size != size { body.size = size }
         if body.anchorPoint != anchor { body.anchorPoint = anchor }
-        // The V143 body atlas already includes the fixed-foot placement for every raster pose.
+        // Refined poses already include their registered foot placement.
         let offset = usesRefinedDelivery ? CGPoint.zero : Self.recoveryOffset(progress:progress,camera:art.camera)
         let position = CGPoint(x:offset.x*canvas,y:-offset.y*canvas)
         if body.position != position { body.position = position }

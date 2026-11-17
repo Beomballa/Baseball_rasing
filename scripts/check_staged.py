@@ -34,6 +34,10 @@ ART_HASHES.update({
     'BM/Resources/MatchArt/pitcher-delivery-back-v143.png': '9a9d64762b549e84bcbffb24a6f059d4d535677fffdac655a6b69669a0dbf1b3',
     'BM/Resources/MatchArt/pitcher-delivery-back-v161.json': 'db82ad2de85b33dff7008bb8534bab646f6071f4156fa0d3f75f9f50ecf082f1',
     'BM/Resources/MatchArt/pitcher-delivery-back-v161.png': 'b5a268402110b111ccc0f5a4e677bd0df0f544412b45e80609bd7d771e133f09',
+    'BM/Resources/MatchArt/pitcher-delivery-back-v171.json': 'ea93a7f01302c85a80bbcabd3d0b3ba3805f9c4cffd8c1ebf566dde9f46bd764',
+    'BM/Resources/MatchArt/pitcher-delivery-back-v171.png': 'f25b8363d5a17c30adc854a27a3d789b3997e8a4549c56ea91fbcd112f503e36',
+    'BM/Resources/MatchArt/pitcher-delivery-back-v171-prep-midpoints.json': '5fe3a92f993125cb245e6da9642bf810c1dbaf26edcbb50d708029afb8d1fc18',
+    'BM/Resources/MatchArt/pitcher-delivery-back-v171-prep-midpoints.png': '01a979cdb9bcba17095c7bb88e5b1fef1d7431a750e1a809957ba3a813e4a8f1',
 })
 ART_HASHES.update({'BM/Resources/MatchArt/pitcher-fullbody-back-v120.png': 'e93eb19dec38889f77b63cc23042601964adb0205ce3b617b8a15f360d2489a3', 'BM/Resources/MatchArt/pitcher-fullbody-front-v120.png': '71c264acda0c3062e5923476c63968f96c1abdb9270a8ec646ebfc82ea6e086d', 'BM/Resources/MatchArt/pitcher-fullbody-v120.json': 'ae2eec9caa0a00b2d0a871950f78579bda03f26044c74257e76b5c49524ff294'})
 

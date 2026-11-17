@@ -537,7 +537,7 @@ import SwiftUI
     private func showHeldBall() {
         // 양손을 모은 동안 공은 글러브 안에 숨기고 손을 분리한 뒤 표시한다.
         let separated = role == .pitcher && preparationPhase / 3 >= 0.40 && fullBodyPitcher?.hasVisibleHand != false
-        ball.isHidden = !separated
+        ball.isHidden = !separated || fullBodyPitcher?.hasEmbeddedBall == true
         if separated {
             ball.position = displayedHandPoint()
             ball.setScale(1)

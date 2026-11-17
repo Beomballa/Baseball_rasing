@@ -234,7 +234,7 @@ struct LocationDrillReplay: Equatable {
                 x: pitchRelease.x + (destination.x - pitchRelease.x) * p + sin(p * .pi) * playback.curve,
                 y: pitchRelease.y + (destination.y - pitchRelease.y) * p
             )
-            ball.isHidden = preparing && fullBodyPitcher?.hasVisibleHand == false
+            ball.isHidden = preparing && (fullBodyPitcher?.hasVisibleHand == false || fullBodyPitcher?.hasEmbeddedBall == true)
             mitt.position = CGPoint(x: goal.position.x + (destination.x - goal.position.x) * p, y: goal.position.y + (destination.y - goal.position.y) * p)
             if p == 1, catchFrames.count == 4 { receiver.texture = catchFrames[1]; mitt.texture = catchFrames[3] }
         } else {
@@ -261,7 +261,7 @@ struct LocationDrillReplay: Equatable {
         drillPreparation = max(drillPreparation, min(0.999, phase / releaseBeat))
         let frame = phase < 0.27 ? 0 : phase < 0.56 ? 1 : 2
         pitchingPose(frame, progress: drillPreparation)
-        ball.isHidden = fullBodyPitcher?.hasVisibleHand == false
+        ball.isHidden = fullBodyPitcher?.hasVisibleHand == false || fullBodyPitcher?.hasEmbeddedBall == true
         ball.position = pitchingHand(frame)
     }
     private func pitchingPose(_ frame: Int, progress: Double = 0) {
