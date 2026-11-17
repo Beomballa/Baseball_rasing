@@ -865,8 +865,8 @@ struct PlayerHomeView: View {
             else { PositionHomePanel(player: player, calendar: calendar) }
         case .records:
             if let calendar {
-        GamePanel(title: "커리어 일지", onBoard: true) {
-                    Text("경기 · 훈련 · 스카우트 · 계약")
+                GamePanel(title: "커리어 일지", onBoard: true) {
+                    Text("경기 · 훈련 · 스카우트 · 계약 · 시상")
                         .managementFont(.helper).foregroundStyle(GameTheme.boardMuted)
                     NavigationLink {
                         CareerJournalView(player: player, calendar: calendar, schools: schools).id(player.id)
@@ -1401,6 +1401,7 @@ struct CareerSeasonScreen: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var selectedYear: Int?
     @State private var displaySnapshot: CareerSeasonStore.DisplaySnapshot?
+    @State private var awardResult: Result<CareerSeasonAwardBoard, Error>?
     @State private var error: String?
     private var summary: CareerSeasonSummary? { displaySnapshot?.summary }
     private func name(_ id: String) -> String { CareerTeamDirectory.name(id,schools:schools) }
@@ -1408,11 +1409,31 @@ struct CareerSeasonScreen: View {
         do {
             let year = try selectedYear ?? CareerSeasonStore.offseason(player: player, state: state, in: context)?.seasonYear ?? GameDate(player.gameDate).year
             displaySnapshot = try CareerSeasonStore.loadDisplaySnapshot(player: player, state: state, year: year, in: context)
+            awardResult = Result { try CareerSeasonAwardStore.board(player: player, state: state, year: year, in: context) }
             if selectedYear == nil { selectedYear = year }
             error = nil
-        } catch { displaySnapshot = nil; self.error = error.localizedDescription }
+        } catch { displaySnapshot = nil; awardResult = nil; self.error = error.localizedDescription }
     }
     private var ownTeamID: String { displaySnapshot?.teamID ?? player.schoolID }
+    @ViewBuilder private var seasonAwards: some View {
+        if let awardResult {
+            switch awardResult {
+            case .success(let board):
+                SeasonAwardPanel(board: board, player: player, schools: schools, identifier: "seasonAwards")
+                SeasonBestNinePanel(board: board, player: player, schools: schools, identifier: "seasonBestNine")
+                    .id(board.year)
+                SeasonGoldGlovePanel(board: board, player: player, schools: schools, identifier: "seasonGoldGlove")
+                    .id(board.year)
+            case .failure:
+                ManagementPanel("개인 타이틀") {
+                    Text("개인 타이틀을 불러오지 못했습니다.").managementFont(.helper)
+                        .accessibilityIdentifier("seasonAwardsLoadError")
+                    Button("다시 확인", action: reload).buttonStyle(ManagementButtonStyle(variant: .secondary))
+                }
+            }
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
@@ -1430,8 +1451,9 @@ struct CareerSeasonScreen: View {
                     GamePanel(title: summary.finalized ? "FINAL · 시즌 결산" : "LIVE · 시즌 진행 중", onBoard: true) {
                         if summary.finalized {
                             SeasonPixelTrophy().frame(width: 72, height: 72).frame(maxWidth: .infinity)
-                            Text(summary.champions.count > 1 ? "CO-CHAMPIONS · 공동 우승" : "LEAGUE CHAMPIONS")
+                            Text(summary.champions.count > 1 ? "팀 공동 우승" : "팀 우승")
                                 .font(.caption.monospaced().bold()).foregroundStyle(GameTheme.gold)
+                                .accessibilityIdentifier("seasonTeamChampionStatus")
                             Text(summary.champions.map { name($0.id) }.joined(separator: " · "))
                                 .font(.title2.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("seasonChampion")
                             if league.hasGeographicDivisions {
@@ -1458,6 +1480,7 @@ struct CareerSeasonScreen: View {
                     if summary.finalized {
                         SeasonOffseasonPanel(player: player, state: state, seasonYear: league.year, transition: transition)
                     }
+                    seasonAwards
                     GamePanel(title: summary.finalized ? "FINAL TABLE · 최종 순위" : "TABLE · 현재 순위", onBoard: true) {
                         ForEach(summary.finalStandings) { row in
                             VStack(alignment: .leading, spacing: 5) {

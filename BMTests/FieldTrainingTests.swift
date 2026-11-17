@@ -1027,6 +1027,49 @@ import SpriteKit
         XCTAssertEqual(p.hitBases,0);XCTAssertEqual(p.rbi,0);XCTAssertTrue(e.ownError)
         XCTAssertTrue(p.ownParticipation);XCTAssertTrue(p.xpPlay.safe);try p.validate()
     }
+    func testFieldingLedgerCreditsCompletedDoublePlayAndLaterReceiverError() throws {
+        let roster = MatchNPCFielders.make(year: 2026, competition: "highschool", homeID: "home", awayID: "away")
+        var game = CareerMatch(random: 1, isHome: true, role: "league", appearance: false, contact: 60,
+                               power: 60, discipline: 60, mastery: [:])
+        game.npcAttack = MatchNPCAttack.makeComplete(roster: roster)
+        game.detailedFieldVersion = 5
+        game.fieldPlays = []
+        let initial = try XCTUnwrap(MatchPlayerRecords.make(match: game, careerID: UUID(), fixtureID: "fielding",
+                                                            trackFielding: true))
+        let clean = doublePlay(batterSpeed: 0)
+        let failed = misplay(clean, stage: 6, position: "1B")
+        XCTAssertEqual(clean.outsAdded, 2)
+        XCTAssertEqual(failed.outsAdded, 1)
+        XCTAssertEqual(try XCTUnwrap(failed.misplay).fielder, 2)
+
+        func score(_ play: MatchDetailedPlay) throws -> [String: MatchFieldingRecord] {
+            var records = initial
+            records.recordPitch(home: true, relief: false)
+            records.recordPlate(home: false, order: 0, battingRelief: false, pitchingRelief: false,
+                                result: "삼진", play: nil, runs: 0, outsAdded: 1, rbi: 0, responsible: [])
+            records.recordPitch(home: true, relief: false)
+            records.recordPlate(home: false, order: 1, battingRelief: false, pitchingRelief: false,
+                                result: play.misplay == nil ? "범타" : "실책 출루", play: play, runs: 0,
+                                outsAdded: play.outsAdded, rbi: 0, responsible: [], cleanFieldingPlay: clean)
+            let reopened = try JSONDecoder().decode(MatchPlayerRecords.self, from: JSONEncoder().encode(records))
+            let fielding = try XCTUnwrap(reopened.home.fielding)
+            XCTAssertEqual(fielding.reduce(0) { $0 + $1.putouts }, reopened.home.pitchingTotal.outs)
+            return Dictionary(uniqueKeysWithValues: fielding.filter { $0.position != "P" }.map { ($0.position, $0) })
+        }
+        let completed = try score(clean)
+        XCTAssertEqual(completed["C"]?.putouts, 1)
+        XCTAssertEqual(completed["SS"]?.assists, 1)
+        XCTAssertEqual(completed["2B"]?.putouts, 1)
+        XCTAssertEqual(completed["2B"]?.assists, 1)
+        XCTAssertEqual(completed["1B"]?.putouts, 1)
+        let afterError = try score(failed)
+        XCTAssertEqual(afterError["C"]?.putouts, 1)
+        XCTAssertEqual(afterError["SS"]?.assists, 1)
+        XCTAssertEqual(afterError["2B"]?.putouts, 1)
+        XCTAssertEqual(afterError["2B"]?.assists, 1)
+        XCTAssertEqual(afterError["1B"]?.putouts, 0)
+        XCTAssertEqual(afterError["1B"]?.errors, 1)
+    }
     func testRelayBadThrowKeepsEarlierFlyOutAndDoesNotRewardFailedCutoff() throws {
         let clean=relayFly(before:[FieldRunnerProfile(speed:60),nil,FieldRunnerProfile(speed:100)])
         let p=misplay(clean,stage:3,position:"2B"),e=try XCTUnwrap(p.misplay)

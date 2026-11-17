@@ -153,6 +153,7 @@ struct CalendarScoutNotice: Identifiable {
                 if observationDue { _ = try ScoutingObservationStore.insertIfNeeded(player: player, calendar: state, in: context) }
                 _ = try ClubSelectionStore.capture(player:player,calendar:state,in:context)
             }
+            CareerSeasonAwardStore.freezeIfDue(player: player, state: state, closingDate: today, in: context)
             try save(context)
         } catch { context.rollback(); throw error }
     }

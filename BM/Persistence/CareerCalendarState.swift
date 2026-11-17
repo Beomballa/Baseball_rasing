@@ -266,8 +266,160 @@ extension CareerSeasonStore {
         let year = today < april ? today.year - 1 : today.year
         guard year >= origin.year else { return nil }
         let summary = try load(player: player, state: state, year: year, in: context)
-        guard summary.finalized, year < 9998, today < (try GameDate(String(format: "%04d-04-01", year + 1))) else { return nil }
+        guard summary.finalized, let lastGame = summary.league.fixtures.map(\.date).max(), today > lastGame,
+              year < 9998, today < (try GameDate(String(format: "%04d-04-01", year + 1))) else { return nil }
         return try OffseasonPlan.make(summary: summary, origin: origin, startAge: player.startAge, today: today)
+    }
+}
+
+struct CareerSeasonAwardBoard {
+    enum Status: Equatable { case inProgress, pending, historical, finalized }
+
+    let year: Int
+    let competition: String
+    let currentTeamID: String
+    let status: Status
+    let expectedGames: Int
+    let recordedGames: Int
+    let honors: [LeagueHonor]
+    let reason: String?
+    let record: CareerSeasonAwardRecord?
+    var coverageAvailable = true
+    var bestNine: LeagueBestNine? { record?.bestNine }
+    var goldGlove: LeagueGoldGlove? { record?.goldGlove }
+}
+
+@MainActor enum CareerSeasonAwardStore {
+    static func board(player: CareerPlayer, state: CareerCalendarState, year: Int, ledger: SeasonPlayerLedger? = nil,
+                      in context: ModelContext) throws -> CareerSeasonAwardBoard {
+        guard state.playerID == player.id else { throw CareerPathError.invalid }
+        if let award = try storedHistory(player: player, state: state, in: context)?.seasonAwards?.first(where: { $0.year == year }) {
+            return savedBoard(award, player: player, state: state, in: context)
+        }
+        return try projection(player: player, state: state, year: year, ledger: ledger, in: context)
+    }
+
+    static func journalBoards(player: CareerPlayer, state: CareerCalendarState,
+                              in context: ModelContext) throws -> [(date: GameDate, board: CareerSeasonAwardBoard)] {
+        guard state.playerID == player.id else { throw CareerPathError.invalid }
+        let saved = try storedHistory(player: player, state: state, in: context)?.seasonAwards ?? []
+        let savedByYear = Dictionary(grouping: saved, by: \.year)
+        let today = try GameDate(player.gameDate)
+        let origin = try GameDate(state.originDate)
+        let id = player.id
+        let matches = try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate: #Predicate { $0.playerID == id && $0.completed }))
+        var officialPerYear: [Int: Int] = [:]
+        for match in matches {
+            if let year = Int(match.gameDate.prefix(4)) { officialPerYear[year, default: 0] += 1 }
+        }
+        let years = Set(savedByYear.keys).union(officialPerYear.keys).sorted(by: >)
+        return try years.flatMap { year -> [(date: GameDate, board: CareerSeasonAwardBoard)] in
+            guard (origin.year...today.year).contains(year), let lastDay = try? scheduledLastDay(year: year),
+                  today > lastDay else { return [] }
+            let date = lastDay.adding(days: 1)
+            if let awards = savedByYear[year] {
+                return awards.map { (date, savedBoard($0, player: player, state: state, in: context)) }
+            }
+            let plan = try state.competition(for: player, year: year)
+            let level = plan.membership?.level ?? "highschool"
+            guard CareerSeasonAwardRecord.supports(level), !plan.fixtures.isEmpty else { return [] }
+            if officialPerYear[year, default: 0] >= 30 {
+                return [(date, try projection(player: player, state: state, year: year, ledger: nil, in: context))]
+            }
+            return [(date, CareerSeasonAwardBoard(year: year, competition: level, currentTeamID: plan.teamID,
+                status: .pending, expectedGames: plan.teamIDs.count * 15, recordedGames: 0, honors: [],
+                reason: "팀당 30경기의 개인 상세 원장이 모두 필요합니다.", record: nil, coverageAvailable: false))]
+        }
+    }
+
+    // CalendarProgression supplies the enclosing save. An unavailable award never blocks a day.
+    static func freezeIfDue(player: CareerPlayer, state: CareerCalendarState, closingDate: GameDate, in context: ModelContext) {
+        guard context.container.schema.entities.contains(where: { $0.name == "AffiliationRecord" }),
+              (try? scheduledLastDay(year: closingDate.year)) == closingDate,
+              player.gameDate == closingDate.adding(days: 1).description,
+              let row = try? CareerPathStore.record(player: player, calendar: state, in: context),
+              var history = try? row.snapshot(player: player, calendar: state),
+              history.seasonAwards?.contains(where: { $0.year == closingDate.year }) != true,
+              let award = (try? projection(player: player, state: state, year: closingDate.year, ledger: nil, in: context))?.record else { return }
+        history.seasonAwards = ((history.seasonAwards ?? []) + [award]).sorted { ($0.date, $0.id) < ($1.date, $1.id) }
+        guard let data = try? JSONEncoder().encode(history) else { return }
+        row.payload = String(decoding: data, as: UTF8.self)
+    }
+
+    private static func storedHistory(player: CareerPlayer, state: CareerCalendarState, in context: ModelContext) throws -> CareerPathHistory? {
+        guard context.container.schema.entities.contains(where: { $0.name == "AffiliationRecord" }) else { return nil }
+        return try CareerPathStore.record(player: player, calendar: state, in: context)?.snapshot(player: player, calendar: state)
+    }
+
+    private static func scheduledLastDay(year: Int) throws -> GameDate {
+        try GameDate(String(format: "%04d-04-01", year)).adding(days: 174)
+    }
+
+    private static func finalBoard(_ award: CareerSeasonAwardRecord, status: CareerSeasonAwardBoard.Status) -> CareerSeasonAwardBoard {
+        CareerSeasonAwardBoard(year: award.year, competition: award.competition, currentTeamID: award.teamID, status: status,
+                               expectedGames: award.teamIDs.count * 15, recordedGames: award.fixtureIDs.count,
+                               honors: award.honors, reason: nil, record: award)
+    }
+
+    private static func savedBoard(_ award: CareerSeasonAwardRecord, player: CareerPlayer, state: CareerCalendarState,
+                                   in context: ModelContext) -> CareerSeasonAwardBoard {
+        var display = award
+        // Older season titles remain frozen. Additional evidence comes from the same completed fixtures.
+        if display.bestNine == nil || display.goldGlove == nil,
+           let rebuilt = (try? projection(player: player, state: state, year: award.year, ledger: nil, in: context))?.record,
+           rebuilt.competition == award.competition, rebuilt.teamID == award.teamID, rebuilt.fixtureIDs == award.fixtureIDs {
+            display.bestNine = display.bestNine ?? rebuilt.bestNine
+            display.goldGlove = display.goldGlove ?? rebuilt.goldGlove
+        }
+        return finalBoard(display, status: .finalized)
+    }
+
+    private static func projection(player: CareerPlayer, state: CareerCalendarState, year: Int, ledger supplied: SeasonPlayerLedger?,
+                                   in context: ModelContext) throws -> CareerSeasonAwardBoard {
+        let today = try GameDate(player.gameDate)
+        let closingDate = try scheduledLastDay(year: year)
+        let plan = try state.competition(for: player, year: year)
+        let competition = plan.membership?.level ?? "highschool"
+        let closed = today > closingDate
+        let expected = plan.teamIDs.count * 15
+        func pending(_ reason: String, recorded: Int? = nil) -> CareerSeasonAwardBoard {
+            CareerSeasonAwardBoard(year: year, competition: competition, currentTeamID: plan.teamID,
+                                   status: closed ? .pending : .inProgress, expectedGames: expected, recordedGames: recorded ?? 0,
+                                   honors: [], reason: reason, record: nil, coverageAvailable: recorded != nil)
+        }
+        guard CareerSeasonAwardRecord.supports(competition) else {
+            return pending("고교·KBO·NPB·MLB 정규 시즌의 타이틀을 집계합니다.")
+        }
+        guard plan.fixtures.count == expected else {
+            return pending("부분 시즌입니다. 모든 팀의 30경기 일정이 있어야 타이틀을 확정할 수 있습니다.")
+        }
+        let ledger: SeasonPlayerLedger
+        if closed {
+            guard let value = try? CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: year, competition: competition,
+                                                                      through: closingDate, verifiedAgainst: plan, in: context) else {
+                return pending("일정과 완료 원장이 일치하는지 확인한 뒤 타이틀을 확정할 수 있습니다.")
+            }
+            ledger = value
+        } else if let supplied, supplied.careerID == player.id, supplied.competition == competition, supplied.year == year {
+            ledger = supplied
+        } else {
+            return pending("리그 선수 명단에서 현재 선두와 집계 범위를 확인할 수 있습니다.")
+        }
+        let recorded = Set(ledger.fixtureIDs).intersection(plan.fixtures.map(\.id)).count
+        if closed {
+            guard let record = try? CareerSeasonAwardRecord.make(ledger: ledger, teamID: plan.teamID, teamIDs: plan.teamIDs,
+                                                                 fixtures: plan.fixtures) else {
+                return pending("팀당 30경기의 개인 상세 원장이 모두 필요합니다.", recorded: recorded)
+            }
+            return finalBoard(record, status: .historical)
+        }
+
+        let required = Set(plan.fixtures.filter { $0.date < today }.map(\.id))
+        let leaders = LeagueHonorRules.leaders(ledger, requiredFixtureIDs: required, teamCount: plan.teamIDs.count)
+        return CareerSeasonAwardBoard(year: year, competition: competition, currentTeamID: plan.teamID, status: .inProgress,
+                                      expectedGames: expected, recordedGames: recorded, honors: leaders.filter { !$0.final },
+                                      reason: LeagueHonorRules.pendingReason(ledger, requiredFixtureIDs: required, teamCount: plan.teamIDs.count),
+                                      record: nil)
     }
 }
 
@@ -393,7 +545,8 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         match.npcFielders=MatchNPCFielders.make(year:fixture.date.year,competition:competition,homeID:fixture.homeID,awayID:fixture.awayID)
         match.npcAttack=MatchNPCAttack.makeComplete(roster:match.npcFielders!)
         match.pitching=MatchPitching();match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
-        match.playerRecords=MatchPlayerRecords.make(match:match,careerID:playerID,fixtureID:fixture.id,trackEarnedRuns:true,trackDecisions:true)
+        match.playerRecords = MatchPlayerRecords.make(match: match, careerID: playerID, fixtureID: fixture.id,
+                                                      trackEarnedRuns: true, trackDecisions: true, trackFielding: true)
         match.pitchLog=MatchPitchLog();match.npcReadiness=readiness
         try match.advance(.automatic)
         try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match);try match.pitchLog?.validate(match:match)

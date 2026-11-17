@@ -498,7 +498,7 @@ struct CareerMatch: Codable, Equatable {
             battingRelief:pitching?.change(home:half % 2 == 1) != nil,
             pitchingRelief:pitching?.change(home:half % 2 == 0) != nil,
             result:result,play:detailed,runs:runs,outsAdded:outs-outsBefore,
-            rbi:detailed?.rbi ?? runs,responsible:scoring,earnedContext:earnedContext)
+            rbi:detailed?.rbi ?? runs,responsible:scoring,earnedContext:earnedContext,cleanFieldingPlay:cleanForEarned)
         if runs > 0, var records=playerRecords, records.decisions != nil {
             let battingHome=half % 2 == 1
             let battingTeam=battingHome ? records.home:records.away
@@ -990,11 +990,66 @@ struct MatchPitchingRecord:Codable,Equatable {
     let role:String
     var counts=MatchPitchingCounts()
 }
+
+struct MatchFieldingRecord: Codable, Equatable {
+    let id: String
+    let position: String
+    var putouts = 0
+    var assists = 0
+    var errors = 0
+}
+
+private struct MatchFieldingCredits {
+    var putouts: [Int] = []
+    var assists: Set<Int> = []
+    var error: Int?
+
+    static func make(result: String, play: MatchDetailedPlay?, clean: MatchDetailedPlay?, outsAdded: Int) -> Self? {
+        guard let play else {
+            if result == "삼진", outsAdded == 1 { return Self(putouts: [1]) }
+            if ["볼넷", "홈런"].contains(result), outsAdded == 0 { return Self() }
+            return nil
+        }
+        // A resolved error replaces the throw path. Only outs retained before the error
+        // get credit, with the original throw or catch identifying the fielders involved.
+        let ordinary: MatchDetailedPlay
+        if play.misplay != nil {
+            guard let clean else { return nil }
+            ordinary = clean
+        } else {
+            ordinary = play
+        }
+        var credit = Self(error: play.misplay?.fielder)
+        var retired = Set(play.runners.filter(\.out).map(\.from))
+        if ordinary.fly?.caught == true, retired.remove(0) != nil {
+            credit.putouts.append(ordinary.fielder)
+        }
+        if ordinary.out, let target = ordinary.targetRunner, retired.remove(target) != nil {
+            credit.putouts.append(ordinary.receiver)
+            credit.assists.insert(ordinary.fielder)
+            if let relay = ordinary.relay { credit.assists.insert(relay.fielder) }
+        }
+        if let second = ordinary.secondThrow, second.out, retired.remove(0) != nil {
+            credit.putouts.append(second.receiver)
+            credit.assists.insert(ordinary.receiver)
+        }
+        if let misplay = play.misplay {
+            // A completed throw can earn an assist when a later error prevents an out.
+            if ordinary.out, (2...4).contains(misplay.stage) { credit.assists.insert(ordinary.fielder) }
+            if ordinary.out, misplay.stage == 4, let relay = ordinary.relay { credit.assists.insert(relay.fielder) }
+            if ordinary.secondThrow?.out == true, misplay.stage == 6 { credit.assists.insert(ordinary.receiver) }
+        }
+        guard retired.isEmpty, credit.putouts.count == outsAdded else { return nil }
+        return credit
+    }
+}
+
 struct MatchTeamRecords:Codable,Equatable {
     let teamID:String
     let lineup:[String]
     var batting:[MatchBattingRecord]
     var pitching:[MatchPitchingRecord]
+    var fielding: [MatchFieldingRecord]? = nil
     var battingTotal:MatchBattingCounts {batting.reduce(into:MatchBattingCounts()) {$0.add($1.counts)}}
     // Individual ER charges can differ from reconstructed team ER after a relief change.
     var pitchingTotal:MatchPitchingCounts {pitching.reduce(into:MatchPitchingCounts(earnedRuns:0)) {$0.add($1.counts)}}
@@ -1007,6 +1062,58 @@ struct MatchTeamRecords:Codable,Equatable {
         if let index=batting.firstIndex(where:{$0.id == id}) {return index}
         batting.append(MatchBattingRecord(id:id,order:order % 9+1,position:"P"))
         return batting.count-1
+    }
+
+    var fieldingLineup: [MatchFieldingRecord] {
+        batting.prefix(9).filter { $0.position != "P" }.map { MatchFieldingRecord(id: $0.id, position: $0.position) }
+            + pitching.map { MatchFieldingRecord(id: $0.id, position: "P") }
+    }
+
+    fileprivate mutating func recordFielding(_ credit: MatchFieldingCredits?, pitchingIndex: Int) {
+        guard var rows = fielding else { return }
+        guard let credit else {
+            fielding = nil
+            return
+        }
+        let activePitcher = pitching[pitchingIndex].id
+        func rowIndex(_ index: Int) -> Int? {
+            guard DetailedFieldRules.names.indices.contains(index) else { return nil }
+            let position = DetailedFieldRules.names[index]
+            return rows.firstIndex { $0.position == position && (position != "P" || $0.id == activePitcher) }
+        }
+        let putouts = credit.putouts.compactMap(rowIndex)
+        let assists = credit.assists.compactMap(rowIndex)
+        let error = credit.error.flatMap(rowIndex)
+        guard putouts.count == credit.putouts.count, assists.count == credit.assists.count,
+              credit.error == nil || error != nil else {
+            fielding = nil
+            return
+        }
+        for index in putouts { rows[index].putouts += 1 }
+        for index in assists { rows[index].assists += 1 }
+        if let error { rows[error].errors += 1 }
+        fielding = rows
+    }
+
+    func validateFielding(against source: MatchTeamRecords) throws {
+        guard let fielding else { return }
+        let expected = source.fieldingLineup
+        let defense = pitchingTotal
+        guard fielding.count == expected.count,
+              zip(fielding, expected).allSatisfy({ $0.id == $1.id && $0.position == $1.position }),
+              fielding.allSatisfy({ (0...defense.outs).contains($0.putouts) &&
+                  (0...defense.battersFaced).contains($0.assists) && (0...defense.battersFaced).contains($0.errors) }),
+              fielding.reduce(0, { $0 + $1.putouts }) == defense.outs,
+              fielding.first(where: { $0.position == "C" }).map({ $0.putouts >= defense.strikeouts }) == true else {
+            throw MatchError.invalidRecord
+        }
+        let errors = fielding.reduce(0) { $0 + $1.errors }
+        guard errors <= defense.battersFaced,
+              fielding.reduce(0, { $0 + $1.assists }) <= (defense.outs + errors) * 2 else { throw MatchError.invalidRecord }
+        for pitcher in pitching where pitcher.counts.pitches == 0 {
+            guard let row = fielding.first(where: { $0.id == pitcher.id && $0.position == "P" }),
+                  row.putouts == 0, row.assists == 0, row.errors == 0 else { throw MatchError.invalidRecord }
+        }
     }
 }
 struct MatchPlayerRecords:Codable,Equatable {
@@ -1021,7 +1128,8 @@ struct MatchPlayerRecords:Codable,Equatable {
     var runners:[String?]=[nil,nil,nil]
     var earned:MatchEarnedState? = nil
     var decisions:MatchPitcherDecision? = nil
-    static func make(match:CareerMatch,careerID:UUID,fixtureID:String,trackEarnedRuns:Bool=false,trackDecisions:Bool=false) -> Self? {
+    static func make(match:CareerMatch,careerID:UUID,fixtureID:String,trackEarnedRuns:Bool=false,trackDecisions:Bool=false,
+                     trackFielding: Bool = false) -> Self? {
         guard let attack=match.npcAttack else {return nil}
         func team(_ isHome:Bool) -> MatchTeamRecords {
             let source=attack.team(home:isHome)
@@ -1036,6 +1144,17 @@ struct MatchPlayerRecords:Codable,Equatable {
                 pitching:[MatchPitchingRecord(id:starter,role:"starter"),MatchPitchingRecord(id:source.relief.id,role:"relief")])
         }
         var result=Self(careerID:careerID,fixtureID:fixtureID,year:attack.year,competition:attack.competition,home:team(true),away:team(false))
+        if trackFielding, match.detailedFieldVersion == 5, match.fieldPlays?.isEmpty == true,
+           match.homeOrder == 0, match.awayOrder == 0 {
+            let positions = Set(DetailedFieldRules.names)
+            let fielders = positions.subtracting(["P"])
+            let ownPositionKnown = !match.appearance || match.role != "batter"
+                || match.fieldStats.map { fielders.contains($0.position) } == true
+            if ownPositionKnown, [result.home, result.away].allSatisfy({ Set($0.batting.map(\.position)) == positions }) {
+                result.home.fielding = result.home.fieldingLineup
+                result.away.fielding = result.away.fieldingLineup
+            }
+        }
         if trackDecisions { result.decisions=MatchPitcherDecision() }
         if trackEarnedRuns {
             result.earned=MatchEarnedState(half:match.half)
@@ -1048,7 +1167,8 @@ struct MatchPlayerRecords:Codable,Equatable {
         else {away.pitching[relief ? 1:0].counts.pitches += 1}
     }
     mutating func recordPlate(home battingHome:Bool,order:Int,battingRelief:Bool,pitchingRelief:Bool,
-                              result:String,play:MatchDetailedPlay?,runs:Int,outsAdded:Int,rbi:Int,responsible:[String],earnedContext:MatchEarnedPlay?=nil) {
+                              result:String,play:MatchDetailedPlay?,runs:Int,outsAdded:Int,rbi:Int,responsible:[String],
+                              earnedContext:MatchEarnedPlay?=nil,cleanFieldingPlay: MatchDetailedPlay? = nil) {
         var batters=battingHome ? home:away,pitchers=battingHome ? away:home
         let bi=batters.battingIndex(order:order,relief:battingRelief),pi=pitchingRelief ? 1:0
         let batterID=batters.batting[bi].id,before=runners
@@ -1070,6 +1190,10 @@ struct MatchPlayerRecords:Codable,Equatable {
             }
         }
         batters.batting[bi].counts=b;pitchers.pitching[pi].counts=p
+        if pitchers.fielding != nil {
+            pitchers.recordFielding(MatchFieldingCredits.make(result: result, play: play, clean: cleanFieldingPlay,
+                                                               outsAdded: outsAdded), pitchingIndex: pi)
+        }
         func runnerID(_ from:Int) -> String? {from == 0 ? batterID:(1...3).contains(from) ? before[from-1]:nil}
         let scoring:[String]
         if let play {
@@ -1114,6 +1238,7 @@ struct MatchPlayerRecords:Codable,Equatable {
                 try row.counts.validate()
             }
             for row in team.pitching {try row.counts.validate()}
+            try team.validateFielding(against: source)
             let b=team.battingTotal,p=other.pitchingTotal
             let defense=team.pitchingTotal
             let expectedOuts=(isHome ? (match.half+1)/2:match.half/2)*3+((match.half % 2 == 0) == isHome ? match.outs:0)

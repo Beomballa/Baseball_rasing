@@ -436,6 +436,7 @@ struct CareerPathHistory: Codable, Equatable {
     let origin: String
     let source: String
     var entries: [CareerAffiliationEntry]
+    var seasonAwards: [CareerSeasonAwardRecord]? = nil
     var current: CareerAffiliationEntry { entries[entries.count - 1] }
     func validate(playerID: UUID, origin: String, today: GameDate, startAge: Int = 16) throws {
         guard version == 1, self.playerID == playerID, self.origin == origin,
@@ -449,6 +450,13 @@ struct CareerPathHistory: Codable, Equatable {
                   index == 0 || (entries[index - 1].stage == .school && entry.stage == .preparation)
                     || (entries[index - 1].stage == .preparation && entry.stage == .unsigned) else { throw CareerPathError.invalid }
             last = date
+        }
+        let awards = seasonAwards ?? []
+        guard Set(awards.map(\.id)).count == awards.count else { throw CareerPathError.invalid }
+        for award in awards {
+            let date = try GameDate(award.date)
+            guard date >= (try GameDate(origin)) else { throw CareerPathError.invalid }
+            try award.validate(playerID: playerID, today: today)
         }
     }
 }

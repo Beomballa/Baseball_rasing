@@ -20,7 +20,7 @@ struct CareerJournalView: View {
     }
 
     private enum Filter: String, CaseIterable {
-        case all, game, training, scout, contract
+        case all, game, training, scout, contract, award
 
         var kind: CareerJournal.Kind? {
             switch self {
@@ -29,6 +29,7 @@ struct CareerJournalView: View {
             case .training: .training
             case .scout: .scouting
             case .contract: .contract
+            case .award: .award
             }
         }
 
@@ -166,7 +167,11 @@ struct CareerJournalView: View {
     private var filterBar: some View {
         Group {
             if typeSize < .xxLarge {
-                HStack(spacing: ManagementTheme.Space.micro) { filters }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: ManagementTheme.Space.micro) { filters }
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3),
+                              spacing: ManagementTheme.Space.micro) { filters }
+                }
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: typeSize.isAccessibilitySize ? 135 : 100))],
                           spacing: ManagementTheme.Space.micro) {
@@ -187,7 +192,7 @@ struct CareerJournalView: View {
                     .managementFont(.label)
                     .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                     .minimumScaleFactor(0.85)
-                    .frame(maxWidth: .infinity, minHeight: ManagementTheme.Control.hit)
+                    .frame(minWidth: item == .scout ? 56 : 44, maxWidth: .infinity, minHeight: ManagementTheme.Control.hit)
                     .foregroundStyle(filter == item ? GameTheme.navy : GameTheme.boardInk)
                     .background(filter == item ? GameTheme.gold : GameTheme.boardPanel, in: ManagementStepFrame())
                     .overlay {
@@ -218,64 +223,89 @@ struct CareerJournalView: View {
 
     private func eventRow(_ entry: CareerJournal.Entry) -> some View {
         let featured = entry.emphasis != nil
+        let label = [entry.kind.label, entry.title, entry.summary].filter { !$0.isEmpty }.joined(separator: ", ")
+        let value = entry.emphasis.map { "핵심 기록 · " + $0 } ?? ""
         return Button {
             lastOpenedID = entry.id
             selection = entry
         } label: {
-            HStack(alignment: .top, spacing: ManagementTheme.Space.compact) {
-                VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: ManagementTheme.Space.inline) { category(entry) }
-                        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) { category(entry) }
-                    }
-                    Text(entry.title)
-                        .managementFont(.body)
-                        .bold(featured)
-                        .foregroundStyle(GameTheme.boardInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !entry.summary.isEmpty {
-                        Text(entry.summary)
-                            .managementFont(.helper)
-                            .foregroundStyle(GameTheme.boardMuted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if !typeSize.isAccessibilitySize {
-                    HStack(spacing: ManagementTheme.Space.inline) {
-                        if featured {
-                            ManagementMenuIcon(tab: entry.kind.icon, size: ManagementTheme.Control.tabIcon)
-                                .padding(ManagementTheme.Space.micro)
-                                .background(GameTheme.gold.opacity(0.13), in: ManagementStepFrame())
-                        }
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(featured ? GameTheme.gold : GameTheme.boardMuted)
-                    }
-                    .padding(.top, ManagementTheme.Space.micro)
-                    .accessibilityHidden(true)
-                }
-            }
-            .padding(.horizontal, ManagementTheme.Space.screen)
-            .padding(.vertical, ManagementTheme.Space.compact)
-            .frame(minHeight: ManagementTheme.Control.hit)
-            .background(featured ? GameTheme.gold.opacity(0.055) : .clear)
-            .contentShape(Rectangle())
+            JournalEventLabel(entry: entry)
         }
         .buttonStyle(.plain)
         .overlay(alignment: .bottom) { Rectangle().fill(GameTheme.boardLine.opacity(0.45)).frame(height: 1).allowsHitTesting(false) }
         .overlay(alignment: .leading) {
             if featured { Rectangle().fill(GameTheme.gold).frame(width: ManagementTheme.Control.border).allowsHitTesting(false) }
         }
-        .accessibilityLabel([entry.kind.label, entry.title, entry.summary].filter { !$0.isEmpty }.joined(separator: ", "))
-        .accessibilityValue(entry.emphasis.map { "핵심 기록 · " + $0 } ?? "")
+        .accessibilityLabel(label)
+        .accessibilityValue(value)
         .accessibilityHint("저장된 상세를 확인합니다")
         .accessibilityIdentifier("careerJournalEvent-" + entry.id)
         .accessibilityFocused($focusedEntryID, equals: entry.id)
     }
+}
 
-    @ViewBuilder
-    private func category(_ entry: CareerJournal.Entry) -> some View {
+private struct JournalEventLabel: View {
+    let entry: CareerJournal.Entry
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var featured: Bool { entry.emphasis != nil }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: ManagementTheme.Space.compact) {
+            details.frame(maxWidth: .infinity, alignment: .leading)
+            if !typeSize.isAccessibilitySize { decoration }
+        }
+        .padding(.horizontal, ManagementTheme.Space.screen)
+        .padding(.vertical, ManagementTheme.Space.compact)
+        .frame(minHeight: ManagementTheme.Control.hit)
+        .background(featured ? GameTheme.gold.opacity(0.055) : .clear)
+        .contentShape(Rectangle())
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: ManagementTheme.Space.inline) { category }
+                VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) { category }
+            }
+            Text(entry.title)
+                .managementFont(.body)
+                .bold(featured)
+                .foregroundStyle(GameTheme.boardInk)
+                .fixedSize(horizontal: false, vertical: true)
+            if !entry.summary.isEmpty {
+                Text(entry.summary)
+                    .managementFont(.helper)
+                    .foregroundStyle(GameTheme.boardMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var decoration: some View {
+        HStack(spacing: ManagementTheme.Space.inline) {
+            if featured {
+                eventIcon
+                    .padding(ManagementTheme.Space.micro)
+                    .background(GameTheme.gold.opacity(0.13), in: ManagementStepFrame())
+            }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(featured ? GameTheme.gold : GameTheme.boardMuted)
+        }
+        .padding(.top, ManagementTheme.Space.micro)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var eventIcon: some View {
+        if entry.kind == .award {
+            LeagueTrophyPixel().frame(width: ManagementTheme.Control.tabIcon, height: ManagementTheme.Control.tabIcon)
+        } else {
+            ManagementMenuIcon(tab: entry.kind.icon, size: ManagementTheme.Control.tabIcon)
+        }
+    }
+
+    @ViewBuilder private var category: some View {
         Text(entry.kind.label)
             .managementFont(.helper)
             .foregroundStyle(GameTheme.boardMuted)
@@ -296,7 +326,7 @@ private extension CareerJournal.Kind {
         switch self {
         case .match: .game
         case .training: .training
-        case .scouting, .contract: .career
+        case .scouting, .contract, .award: .career
         }
     }
 }
@@ -317,7 +347,79 @@ private struct CareerJournalDetail: View {
             CareerJournalScoutView(detail: detail, date: entry.date)
         case .contract(let detail):
             CareerJournalContractView(detail: detail, date: entry.date)
+        case .award(let record):
+            CareerJournalAwardView(record: record, date: entry.date, player: player, schools: schools)
+        case .awardPending(let board):
+            CareerJournalPendingAwardView(board: board, date: entry.date, player: player, schools: schools)
         }
+    }
+}
+
+private struct CareerJournalAwardView: View {
+    let record: CareerSeasonAwardRecord
+    let date: GameDate
+    let player: CareerPlayer
+    let schools: [School]
+
+    private var personalCount: Int {
+        let selected = record.bestNine?.slots.contains {
+            $0.winner?.playerID == player.id.uuidString && $0.winner?.teamID == record.teamID
+        } == true
+        let glove = record.goldGlove?.slots.contains {
+            $0.winner?.playerID == player.id.uuidString && $0.winner?.teamID == record.teamID
+        } == true
+        return record.personalHonors.count + (selected ? 1 : 0) + (glove ? 1 : 0)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
+                JournalDetailHeader(date: date, title: "\(String(record.year)) \(record.leagueLabel) 시즌 시상",
+                                    status: personalCount > 0 ? "내 수상 \(personalCount)개" : nil,
+                                    highlighted: personalCount > 0, identifier: "careerJournalAward")
+                ManagementPanel("리그 시상 결과") {
+                    SeasonAwardLeaders(honors: record.honors, unresolvedKinds: record.unresolvedKinds,
+                                       player: player, schools: schools, identifier: "careerJournalAward")
+                }
+                SeasonBestNinePanel(record: record, player: player, schools: schools, identifier: "careerJournalBestNine")
+                SeasonGoldGlovePanel(record: record, player: player, schools: schools, identifier: "careerJournalGoldGlove")
+            }
+            .padding(ManagementTheme.Space.screen)
+            .frame(maxWidth: 620)
+            .frame(maxWidth: .infinity)
+        }
+        .background(GameTheme.board)
+        .foregroundStyle(GameTheme.boardInk)
+        .accessibilityIdentifier("careerJournalAwardScroll")
+        .navigationTitle("시즌 시상 기록")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct CareerJournalPendingAwardView: View {
+    let board: CareerSeasonAwardBoard
+    let date: GameDate
+    let player: CareerPlayer
+    let schools: [School]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
+                let league = CareerSeasonAwardRecord.leagueLabel(board.competition)
+                JournalDetailHeader(date: date, title: "\(String(board.year)) \(league) 시즌 시상",
+                                    status: nil, highlighted: false, identifier: "careerJournalAward")
+                SeasonBestNinePanel(board: board, player: player, schools: schools, identifier: "careerJournalBestNine")
+                SeasonGoldGlovePanel(board: board, player: player, schools: schools, identifier: "careerJournalGoldGlove")
+            }
+            .padding(ManagementTheme.Space.screen)
+            .frame(maxWidth: 620)
+            .frame(maxWidth: .infinity)
+        }
+        .background(GameTheme.board)
+        .foregroundStyle(GameTheme.boardInk)
+        .accessibilityIdentifier("careerJournalAwardScroll")
+        .navigationTitle("시즌 시상 기록")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

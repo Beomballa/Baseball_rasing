@@ -186,3 +186,429 @@ enum LeagueHonorRules {
         }
     }
 }
+
+struct CareerSeasonAwardRecord: Codable, Equatable, Identifiable {
+    var version = 1
+    let playerID: UUID
+    let year: Int
+    let competition: String
+    let date: String
+    let teamID: String
+    let teamIDs: [String]
+    let fixtureIDs: [String]
+    let honors: [LeagueHonor]
+    var bestNine: LeagueBestNine? = nil
+    var goldGlove: LeagueGoldGlove? = nil
+
+    var id: String { "\(playerID.uuidString)/\(year)/\(competition)" }
+    var leagueLabel: String { Self.leagueLabel(competition) }
+    var personalHonors: [LeagueHonor] { honors.filter { $0.playerID == playerID.uuidString && $0.teamID == teamID } }
+    var unresolvedKinds: [LeagueHonor.Kind] { LeagueHonor.Kind.allCases.filter { kind in !honors.contains { $0.kind == kind } } }
+
+    static func leagueLabel(_ competition: String) -> String {
+        switch competition {
+        case "highschool": "고교"
+        case "domestic-first-team": "KBO"
+        case "npb-first-team": "NPB"
+        case "mlb-first-team": "MLB"
+        default: "리그"
+        }
+    }
+
+    static func supports(_ competition: String) -> Bool {
+        ["highschool", "domestic-first-team", "npb-first-team", "mlb-first-team"].contains(competition)
+    }
+
+    static func make(ledger: SeasonPlayerLedger, teamID: String, teamIDs: [String],
+                     fixtures: [SeasonFixture]) throws -> Self? {
+        guard supports(ledger.competition), allowedTeamCounts(ledger.competition).contains(teamIDs.count),
+              Set(teamIDs).count == teamIDs.count, teamIDs.contains(teamID),
+              fixtures.count == teamIDs.count * 15, ledger.uncollectedGames == 0 else { return nil }
+        guard let first = fixtures.map(\.date).min(), let last = fixtures.map(\.date).max(),
+              first == (try GameDate(String(format: "%04d-04-01", ledger.year))),
+              last == first.adding(days: 174) else { return nil }
+        let fixtureIDs = Set(fixtures.map(\.id))
+        guard fixtureIDs.count == fixtures.count, ledger.fixtureIDs.count == fixtures.count,
+              Set(ledger.fixtureIDs) == fixtureIDs else { return nil }
+        let scheduledGames = Dictionary(grouping: fixtures.flatMap { [$0.homeID, $0.awayID] }, by: { $0 }).mapValues(\.count)
+        guard Set(scheduledGames.keys) == Set(teamIDs), scheduledGames.values.allSatisfy({ $0 == 30 }),
+              ledger.teamGames == scheduledGames else { return nil }
+
+        // If a qualifying pitcher's earned runs are unknown, we cannot establish the ERA winner.
+        let incompleteERA = ledger.players.contains { row in
+            row.pitching.outs >= 90 && (row.unscoredPitchingGames > 0 || row.pitching.earnedRuns == nil)
+        }
+        let honors = LeagueHonorRules.leaders(ledger, requiredFixtureIDs: fixtureIDs, teamCount: teamIDs.count)
+            .filter { !incompleteERA || $0.kind != .era }
+        let date = last.adding(days: 1)
+        let record = Self(playerID: ledger.careerID, year: ledger.year, competition: ledger.competition,
+                          date: date.description, teamID: teamID, teamIDs: teamIDs.sorted(),
+                          fixtureIDs: fixtureIDs.sorted(), honors: honors, bestNine: LeagueBestNine.make(ledger),
+                          goldGlove: LeagueGoldGlove.make(ledger))
+        try record.validate(playerID: ledger.careerID, today: date)
+        return record
+    }
+
+    func validate(playerID: UUID, today: GameDate) throws {
+        let prefix = String(format: "%04d-", year)
+        let date = try GameDate(self.date)
+        let opening = try GameDate(prefix + "04-01")
+        let firstFixtureDate = opening.description
+        guard version == 1, self.playerID == playerID, Self.supports(competition),
+              Self.allowedTeamCounts(competition).contains(teamIDs.count),
+              !teamIDs.contains(where: \.isEmpty), teamIDs == Set(teamIDs).sorted(), teamIDs.contains(teamID),
+              date == opening.adding(days: 175), date <= today,
+              fixtureIDs.count == teamIDs.count * 15, fixtureIDs == Set(fixtureIDs).sorted(),
+              fixtureIDs.allSatisfy({ $0.prefix(10) >= firstFixtureDate && $0.prefix(10) < self.date }),
+              Set(honors.map(\.id)).count == honors.count else { throw CareerPathError.invalid }
+        if competition != "highschool" {
+            let leagueTeams = CareerTeamDirectory.teams(level: competition, expanded: teamIDs.count != 6)
+            guard teamIDs == leagueTeams.sorted() else { throw CareerPathError.invalid }
+        }
+        try bestNine?.validate(teamIDs: teamIDs)
+        try goldGlove?.validate(competition: competition, teamIDs: teamIDs)
+        let byKind = Dictionary(grouping: honors, by: \.kind)
+        for (kind, group) in byKind {
+            guard let value = group.first?.value, value.isFinite, value >= 0,
+                  kind != .average || value <= 1,
+                  kind == .average || kind == .era || (value > 0 && value.rounded() == value),
+                  group.allSatisfy({ $0.version == 1 && !$0.playerID.isEmpty && $0.final && teamIDs.contains($0.teamID)
+                      && abs($0.value - value) < 0.000000001 && $0.tied == (group.count > 1) }) else {
+                throw CareerPathError.invalid
+            }
+        }
+    }
+
+    private static func allowedTeamCounts(_ competition: String) -> [Int] {
+        switch competition {
+        case "highschool": [6]
+        case "domestic-first-team": [6, 10]
+        case "npb-first-team", "mlb-first-team": [6, 15]
+        default: []
+        }
+    }
+}
+
+struct LeagueBestNine: Codable, Equatable {
+    var version = 1
+    let slots: [Slot]
+
+    enum Position: String, Codable, CaseIterable, Identifiable {
+        case pitcher = "P", catcher = "C", first = "1B", second = "2B", third = "3B"
+        case shortstop = "SS", left = "LF", center = "CF", right = "RF"
+
+        var id: String { rawValue }
+        var label: String { FieldPosition(rawValue: rawValue)?.label ?? PlayerRole.pitcher.label }
+    }
+
+    enum HoldReason: String, Codable {
+        case missingDefensiveCoverage
+        case missingEarnedRunCoverage
+        case noEligiblePlayer
+
+        var label: String {
+            switch self {
+            case .missingDefensiveCoverage: "포지션별 수비 원장을 확인할 수 없어 선정을 보류했습니다."
+            case .missingEarnedRunCoverage: "규정 이닝에 도달한 투수의 자책점 기록이 부족해 선정을 보류했습니다."
+            case .noEligiblePlayer: "이 포지션의 출전 기준을 충족한 선수가 없습니다."
+            }
+        }
+    }
+
+    struct Slot: Codable, Equatable, Identifiable {
+        let position: Position
+        let winner: Winner?
+        let reason: HoldReason?
+
+        var id: String { position.rawValue }
+    }
+
+    struct Winner: Codable, Equatable {
+        let teamID: String
+        let playerID: String
+        let evidence: Evidence
+    }
+
+    enum Evidence: Codable, Equatable {
+        case pitcher(PitcherEvidence)
+        case fielder(FielderEvidence)
+
+        var sampleSummary: String {
+            switch self {
+            case .pitcher(let sample):
+                "등판 \(sample.games)경기 · \(LeagueBestNine.innings(sample.outs)) 투구"
+            case .fielder(let sample):
+                "수비 \(sample.games)경기 · \(LeagueBestNine.innings(sample.outs)) · \(sample.plateAppearances)타석"
+            }
+        }
+
+        var rankingSummary: String {
+            switch self {
+            case .pitcher(let sample):
+                "ERA \(String(format: "%.2f", sample.era)) · 탈삼진 \(sample.strikeouts)개"
+            case .fielder(let sample):
+                "OPS \(String(format: "%.3f", Double(sample.rankedOPS) / 1_000)) · 홈런 \(sample.homeRuns)개"
+            }
+        }
+
+        var summary: String { sampleSummary + " · " + rankingSummary }
+    }
+
+    struct PitcherEvidence: Codable, Equatable {
+        let games: Int
+        let outs: Int
+        let earnedRuns: Int
+        let strikeouts: Int
+
+        var era: Double { Double(earnedRuns) * 27 / Double(outs) }
+    }
+
+    struct FielderEvidence: Codable, Equatable {
+        let games: Int
+        let outs: Int
+        let plateAppearances: Int
+        let ops: Double
+        let homeRuns: Int
+
+        var rankedOPS: Int { Int((ops * 1_000).rounded()) }
+    }
+
+    static let minimumOutsPerTeamGame = 15
+    static let minimumPlateAppearancesPerTeamGame = 2
+    static let minimumPitchingOutsPerTeamGame = 3
+
+    static let fieldingCriteria = "주 포지션 수비 팀 경기당 5이닝 · 공격 팀 경기당 2타석"
+    static let pitchingCriteria = "투구 팀 경기당 1이닝 · 자책점 집계 완료"
+    static let primaryPositionRule = "수비 이닝이 가장 많은 포지션에서만 평가합니다. 같으면 수비 경기 수, 포지션 표시 순으로 결정합니다."
+    static let fieldingRanking = "OPS(소수 셋째 자리), 홈런, 해당 포지션의 수비 이닝 순"
+    static let pitchingRanking = "낮은 ERA, 탈삼진, 투구 이닝 순"
+    static let finalTieRule = "성적이 모두 같으면 구단 ID, 선수 ID 순으로 한 명을 선정합니다."
+
+    static func make(_ ledger: SeasonPlayerLedger) -> Self {
+        let pitching = selectPitcher(in: ledger)
+        let positions = Position.allCases.dropFirst()
+        guard ledger.unverifiedFieldingGames == 0 else {
+            return Self(slots: [pitching] + positions.map {
+                Slot(position: $0, winner: nil, reason: .missingDefensiveCoverage)
+            })
+        }
+        var fielders: [Position: [(record: SeasonPlayerRecord, sample: FielderEvidence)]] = [:]
+        for player in ledger.players where player.id != pitching.winner?.playerID {
+            guard let teamGames = ledger.teamGames[player.teamID], teamGames > 0,
+                  let primary = primaryPosition(player.fielding),
+                  primary.sample.outs >= teamGames * minimumOutsPerTeamGame,
+                  player.batting.plateAppearances >= teamGames * minimumPlateAppearancesPerTeamGame,
+                  let ops = player.batting.ops else { continue }
+            let sample = FielderEvidence(games: primary.sample.games, outs: primary.sample.outs,
+                                         plateAppearances: player.batting.plateAppearances,
+                                         ops: ops, homeRuns: player.batting.homeRuns)
+            fielders[primary.position, default: []].append((player, sample))
+        }
+        let fielding = positions.map { position in
+            let selected = fielders[position]?.min { left, right in
+                if left.sample.rankedOPS != right.sample.rankedOPS { return left.sample.rankedOPS > right.sample.rankedOPS }
+                if left.sample.homeRuns != right.sample.homeRuns { return left.sample.homeRuns > right.sample.homeRuns }
+                if left.sample.outs != right.sample.outs { return left.sample.outs > right.sample.outs }
+                return (left.record.teamID, left.record.id) < (right.record.teamID, right.record.id)
+            }
+            guard let selected else { return Slot(position: position, winner: nil, reason: .noEligiblePlayer) }
+            return Slot(position: position, winner: Winner(teamID: selected.record.teamID, playerID: selected.record.id,
+                                                            evidence: .fielder(selected.sample)), reason: nil)
+        }
+        return Self(slots: [pitching] + fielding)
+    }
+
+    private static func selectPitcher(in ledger: SeasonPlayerLedger) -> Slot {
+        let eligible = ledger.players.filter { player in
+            guard let teamGames = ledger.teamGames[player.teamID], teamGames > 0 else { return false }
+            return player.pitchingGames > 0 && player.pitching.outs >= teamGames * minimumPitchingOutsPerTeamGame
+        }
+        guard !eligible.contains(where: { $0.unscoredPitchingGames > 0 || $0.pitching.earnedRuns == nil }) else {
+            return Slot(position: .pitcher, winner: nil, reason: .missingEarnedRunCoverage)
+        }
+        let candidates = eligible.compactMap { player -> (record: SeasonPlayerRecord, sample: PitcherEvidence)? in
+            guard let earnedRuns = player.pitching.earnedRuns else { return nil }
+            let sample = PitcherEvidence(games: player.pitchingGames, outs: player.pitching.outs,
+                                         earnedRuns: earnedRuns, strikeouts: player.pitching.strikeouts)
+            return (player, sample)
+        }
+        let selected = candidates.min { left, right in
+            if left.sample.era != right.sample.era { return left.sample.era < right.sample.era }
+            if left.sample.strikeouts != right.sample.strikeouts { return left.sample.strikeouts > right.sample.strikeouts }
+            if left.sample.outs != right.sample.outs { return left.sample.outs > right.sample.outs }
+            return (left.record.teamID, left.record.id) < (right.record.teamID, right.record.id)
+        }
+        guard let selected else { return Slot(position: .pitcher, winner: nil, reason: .noEligiblePlayer) }
+        return Slot(position: .pitcher, winner: Winner(teamID: selected.record.teamID, playerID: selected.record.id,
+                                                       evidence: .pitcher(selected.sample)), reason: nil)
+    }
+
+    static func primaryPosition(_ fielding: [String: SeasonFieldingSample],
+                                includingPitcher: Bool = false) -> (position: Position, sample: SeasonFieldingSample)? {
+        var result: (position: Position, sample: SeasonFieldingSample)?
+        for position in Position.allCases where includingPitcher || position != .pitcher {
+            guard let sample = fielding[position.rawValue], sample.outs > 0, sample.games > 0 else { continue }
+            if let best = result?.sample, (sample.outs, sample.games) <= (best.outs, best.games) { continue }
+            result = (position, sample)
+        }
+        return result
+    }
+
+    func validate(teamIDs: [String]) throws {
+        let winners = slots.compactMap(\.winner)
+        guard version == 1, slots.map(\.position) == Position.allCases,
+              Set(winners.map(\.playerID)).count == winners.count else { throw CareerPathError.invalid }
+        for slot in slots {
+            if let reason = slot.reason {
+                guard slot.winner == nil,
+                      reason != .missingDefensiveCoverage || slot.position != .pitcher,
+                      reason != .missingEarnedRunCoverage || slot.position == .pitcher else { throw CareerPathError.invalid }
+                continue
+            }
+            guard let winner = slot.winner, !winner.playerID.isEmpty, teamIDs.contains(winner.teamID) else {
+                throw CareerPathError.invalid
+            }
+            switch winner.evidence {
+            case .pitcher(let sample):
+                guard slot.position == .pitcher, (1...30).contains(sample.games),
+                      sample.outs >= 30 * Self.minimumPitchingOutsPerTeamGame, sample.earnedRuns >= 0,
+                      (0...sample.outs).contains(sample.strikeouts) else { throw CareerPathError.invalid }
+            case .fielder(let sample):
+                guard slot.position != .pitcher, (1...30).contains(sample.games),
+                      sample.outs >= 30 * Self.minimumOutsPerTeamGame,
+                      sample.plateAppearances >= 30 * Self.minimumPlateAppearancesPerTeamGame,
+                      sample.ops.isFinite, (0...5).contains(sample.ops),
+                      (0...sample.plateAppearances).contains(sample.homeRuns) else { throw CareerPathError.invalid }
+            }
+        }
+    }
+
+    static func innings(_ outs: Int) -> String {
+        "\(outs / 3).\(outs % 3)이닝"
+    }
+}
+
+struct LeagueGoldGlove: Codable, Equatable {
+    var version = 1
+    let slots: [Slot]
+    let unscoredGames: Int
+
+    enum HoldReason: String, Codable {
+        case missingFieldingRecords, belowMinimumInnings, belowMinimumChances
+
+        var label: String {
+            switch self {
+            case .missingFieldingRecords: "실책·자살·보살 기록이 없는 경기가 있어 수상자를 확정할 수 없습니다."
+            case .belowMinimumInnings: "해당 포지션의 최소 수비이닝을 채운 선수가 없습니다."
+            case .belowMinimumChances: "이닝 기준을 채운 선수 중 최소 수비 기회를 충족한 선수가 없습니다."
+            }
+        }
+    }
+
+    struct Slot: Codable, Equatable, Identifiable {
+        let position: LeagueBestNine.Position
+        let minimumInnings: Int
+        let minimumChances: Int
+        let winner: Winner?
+        let reason: HoldReason?
+
+        var id: String { position.rawValue }
+    }
+
+    struct Winner: Codable, Equatable {
+        let teamID: String
+        let playerID: String
+        let evidence: Evidence
+    }
+
+    struct Evidence: Codable, Equatable {
+        let games: Int
+        let outs: Int
+        let putouts: Int
+        let assists: Int
+        let errors: Int
+
+        var chances: Int { putouts + assists + errors }
+        var fieldingPercentage: Double { Double(putouts + assists) / Double(chances) }
+        var sampleSummary: String { "수비 \(games)경기 · \(LeagueBestNine.innings(outs)) · \(chances)기회" }
+        var rankingSummary: String { "수비율 \(String(format: "%.3f", fieldingPercentage)) · 실책 \(errors)개" }
+    }
+
+    static let rankingRule = "수비율이 높은 순으로 선정합니다. 같으면 수비 기회, 수비이닝 순으로 비교합니다."
+
+    static func criteria(_ position: LeagueBestNine.Position, competition: String) -> (innings: Int, chances: Int) {
+        let thresholds: (pitcher: Int, catcher: Int, fielder: Int)
+        switch competition {
+        case "domestic-first-team": thresholds = (10, 135, 150)
+        case "npb-first-team": thresholds = (30, 135, 135)
+        case "mlb-first-team": thresholds = (30, 135, 165)
+        default: thresholds = (10, 120, 135)
+        }
+        switch position {
+        case .pitcher: return (thresholds.pitcher, 5)
+        case .catcher: return (thresholds.catcher, 20)
+        case .left, .center, .right: return (thresholds.fielder, 12)
+        default: return (thresholds.fielder, 20)
+        }
+    }
+
+    static func make(_ ledger: SeasonPlayerLedger) -> Self {
+        let missingGames = max(ledger.unverifiedFieldingGames, ledger.unscoredDefensiveGames)
+        var byPosition: [LeagueBestNine.Position: [Winner]] = [:]
+        for player in ledger.players where missingGames == 0 {
+            guard let primary = LeagueBestNine.primaryPosition(player.fielding, includingPitcher: true),
+                  primary.sample.games == primary.sample.scoredGames else { continue }
+            let sample = primary.sample
+            let evidence = Evidence(games: sample.games, outs: sample.outs, putouts: sample.putouts,
+                                    assists: sample.assists, errors: sample.errors)
+            byPosition[primary.position, default: []].append(Winner(teamID: player.teamID, playerID: player.id, evidence: evidence))
+        }
+        let slots = LeagueBestNine.Position.allCases.map { position in
+            let minimum = criteria(position, competition: ledger.competition)
+            func held(_ reason: HoldReason) -> Slot {
+                Slot(position: position, minimumInnings: minimum.innings, minimumChances: minimum.chances, winner: nil, reason: reason)
+            }
+            guard missingGames == 0 else { return held(.missingFieldingRecords) }
+            let qualifiedInnings = (byPosition[position] ?? []).filter { $0.evidence.outs >= 3 * minimum.innings }
+            guard !qualifiedInnings.isEmpty else { return held(.belowMinimumInnings) }
+            let winner = qualifiedInnings.filter { $0.evidence.chances >= minimum.chances }.min(by: ranksAhead)
+            guard let winner else { return held(.belowMinimumChances) }
+            return Slot(position: position, minimumInnings: minimum.innings, minimumChances: minimum.chances, winner: winner, reason: nil)
+        }
+        return Self(slots: slots, unscoredGames: missingGames)
+    }
+
+    private static func ranksAhead(_ left: Winner, _ right: Winner) -> Bool {
+        let a = left.evidence, b = right.evidence
+        let leftRate = (a.putouts + a.assists) * b.chances
+        let rightRate = (b.putouts + b.assists) * a.chances
+        if leftRate != rightRate { return leftRate > rightRate }
+        if a.chances != b.chances { return a.chances > b.chances }
+        if a.outs != b.outs { return a.outs > b.outs }
+        return (left.teamID, left.playerID) < (right.teamID, right.playerID)
+    }
+
+    func validate(competition: String, teamIDs: [String]) throws {
+        let winners = slots.compactMap(\.winner)
+        guard version == 1, (0...teamIDs.count * 15).contains(unscoredGames),
+              slots.map(\.position) == LeagueBestNine.Position.allCases,
+              Set(winners.map(\.playerID)).count == winners.count else { throw CareerPathError.invalid }
+        for slot in slots {
+            let minimum = Self.criteria(slot.position, competition: competition)
+            guard slot.minimumInnings == minimum.innings, slot.minimumChances == minimum.chances else { throw CareerPathError.invalid }
+            if let reason = slot.reason {
+                guard slot.winner == nil, (reason == .missingFieldingRecords) == (unscoredGames > 0) else { throw CareerPathError.invalid }
+                continue
+            }
+            guard unscoredGames == 0, let winner = slot.winner,
+                  !winner.playerID.isEmpty, teamIDs.contains(winner.teamID) else { throw CareerPathError.invalid }
+            let sample = winner.evidence
+            guard (1...30).contains(sample.games),
+                  sample.outs >= 3 * minimum.innings, sample.outs <= 27 * sample.games,
+                  (0...sample.outs).contains(sample.putouts),
+                  (0...200_000 * sample.games).contains(sample.assists),
+                  (0...200_000 * sample.games).contains(sample.errors),
+                  sample.chances >= minimum.chances else { throw CareerPathError.invalid }
+        }
+    }
+}

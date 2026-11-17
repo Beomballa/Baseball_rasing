@@ -69,6 +69,398 @@ import AVFoundation
         let noERA = SeasonPlayerLedger(careerID: ledger.careerID, year: 2026, competition: ledger.competition, fixtureIDs: [], uncollectedGames: 0, players: [unknown], teamGames: Dictionary(uniqueKeysWithValues: ["a","b","c","d","e","f"].map { ($0, 5) }))
         XCTAssertFalse(LeagueHonorRules.leaders(noERA).contains { $0.kind == .era })
     }
+    func testSeasonAwardTitlesUseExactFourLeagueSchedulesAndQualification() throws {
+        let year = 2026
+        let closing = try GameDate("2026-09-23")
+        for (level, gameCount) in [("highschool", 90), ("domestic-first-team", 150),
+                                   ("npb-first-team", 225), ("mlb-first-team", 225)] {
+            let teams = level == "highschool"
+                ? Array(try SchoolCatalog.load().prefix(6)).map(\.id)
+                : CareerTeamDirectory.teams(level: level, expanded: true)
+            let fixtures = try level == "highschool" ? SeasonSchedule.fixtures(year: year, schoolIDs: teams)
+                : CareerTeamDirectory.fixtures(level: level, year: year, expanded: true)
+            XCTAssertEqual(fixtures.count, gameCount, level)
+            let career = UUID(), first = teams[0], second = teams[1]
+            var leader = SeasonPlayerRecord(teamID: first, id: career.uuidString, wins: 12)
+            leader.batting = MatchBattingCounts(plateAppearances: 93, atBats: 93, singles: 22, homeRuns: 9)
+            leader.pitching = MatchPitchingCounts(outs: 90, strikeouts: 40, earnedRuns: 10)
+            var rival = SeasonPlayerRecord(teamID: second, id: "rival", wins: 11)
+            rival.batting = MatchBattingCounts(plateAppearances: 93, atBats: 93, singles: 18, homeRuns: 9)
+            rival.pitching = MatchPitchingCounts(outs: 90, strikeouts: 38, earnedRuns: 15)
+            var short = SeasonPlayerRecord(teamID: second, id: "short")
+            short.batting = MatchBattingCounts(plateAppearances: 92, atBats: 92, singles: 92)
+            short.pitching = MatchPitchingCounts(outs: 89, earnedRuns: 0)
+            let shortSeasonGames = Dictionary(uniqueKeysWithValues: teams.map { ($0, 30) })
+            let fixtureIDs = fixtures.map(\.id)
+            func ledger(ids: [String] = fixtureIDs, players: [SeasonPlayerRecord]? = nil) -> SeasonPlayerLedger {
+                SeasonPlayerLedger(careerID: career, year: year, competition: level, fixtureIDs: ids,
+                                   uncollectedGames: 0, players: players ?? [leader, rival, short], teamGames: shortSeasonGames)
+            }
+            let award = try XCTUnwrap(CareerSeasonAwardRecord.make(ledger: ledger(), teamID: first, teamIDs: teams, fixtures: fixtures))
+            XCTAssertEqual(award.date, closing.description, level)
+            XCTAssertEqual(Set(award.honors.map(\.kind)), Set(LeagueHonor.Kind.allCases), level)
+            XCTAssertEqual(award.honors.filter { $0.kind == .homeRuns }.count, 2, level)
+            XCTAssertTrue(award.honors.filter { $0.kind == .homeRuns }.allSatisfy(\.tied), level)
+            XCTAssertTrue(award.honors.filter { $0.kind != .homeRuns }.allSatisfy { !$0.tied && $0.playerID == career.uuidString }, level)
+            XCTAssertEqual(award.personalHonors.count, 5, level)
+            XCTAssertTrue(award.unresolvedKinds.isEmpty, level)
+            XCTAssertTrue(award.honors.allSatisfy(\.final), level)
+            XCTAssertEqual(try JSONDecoder().decode(CareerSeasonAwardRecord.self, from: JSONEncoder().encode(award)), award)
+            XCTAssertNil(try CareerSeasonAwardRecord.make(ledger: ledger(ids: Array(fixtureIDs.dropLast())),
+                                                          teamID: first, teamIDs: teams, fixtures: fixtures), level)
+            XCTAssertNil(try CareerSeasonAwardRecord.make(ledger: ledger(ids: Array(fixtureIDs.dropLast()) + fixtureIDs.prefix(1)),
+                                                          teamID: first, teamIDs: teams, fixtures: fixtures), level)
+
+            var unscoredERA = rival
+            unscoredERA.pitching.earnedRuns = nil
+            unscoredERA.unscoredPitchingGames = 1
+            var partialLedger = ledger(players: [leader, unscoredERA, short])
+            partialLedger.unscoredDecisionGames = 1
+            let partial = try XCTUnwrap(CareerSeasonAwardRecord.make(ledger: partialLedger, teamID: first, teamIDs: teams, fixtures: fixtures))
+            XCTAssertEqual(Set(partial.unresolvedKinds), [.era, .wins], level)
+            XCTAssertEqual(partial.fixtureIDs, award.fixtureIDs, level)
+
+            var zero = leader
+            zero.batting = MatchBattingCounts(plateAppearances: 93, atBats: 93)
+            XCTAssertFalse(LeagueHonorRules.leaders(ledger(players: [zero]), teamCount: teams.count).contains { $0.kind == .average }, level)
+            let zeroAverage = CareerSeasonAwardRecord(playerID: career, year: year, competition: level, date: award.date,
+                teamID: first, teamIDs: award.teamIDs, fixtureIDs: award.fixtureIDs,
+                honors: [LeagueHonor(playerID: career.uuidString, teamID: first, kind: .average, value: 0, tied: false, final: true)])
+            let persisted = try JSONDecoder().decode(CareerSeasonAwardRecord.self, from: JSONEncoder().encode(zeroAverage))
+            XCTAssertNoThrow(try persisted.validate(playerID: career, today: closing), level)
+        }
+    }
+
+    func testBestNineReadsActualSavedPositionsAndDefensiveOutsWithoutRewritingGames() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("positions.store")
+        let before = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            let (player, state) = try growthSetup(in: context)
+            let schedule = try state.competition(for: player, year: 2026)
+            let fixtures = try state.fixtures(for: player, year: 2026)
+            let positions: [FieldPosition] = [.center, .shortstop]
+            var expected = [String: SeasonFieldingSample]()
+            var rows = [CareerMatchRecord]()
+            for (fixture, position) in zip(fixtures, positions) {
+                player.gameDate = fixture.date.description
+                player.positionRaw = position.rawValue
+                state.actionDate = nil
+                try context.save()
+                let record = try ready(player, state, in: context)
+                XCTAssertFalse(record.completed)
+                XCTAssertEqual(try record.snapshot().fieldStats?.position, position.rawValue)
+                XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: 2026,
+                    competition: "highschool", verifiedAgainst: schedule, in: context).fixtureIDs.count, rows.count)
+                try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision,
+                                             input: .automatic, in: context)
+                let match = try record.snapshot()
+                let ledger = try XCTUnwrap(match.playerRecords)
+                let own = match.isHome ? ledger.home : ledger.away
+                XCTAssertGreaterThan(own.pitchingTotal.outs, 0)
+                let defense = try XCTUnwrap(own.fielding)
+                let fielding = try XCTUnwrap(defense.first { $0.id == player.id.uuidString })
+                XCTAssertEqual(fielding.position, position.rawValue)
+                XCTAssertEqual(defense.reduce(0) { $0 + $1.putouts }, own.pitchingTotal.outs)
+                expected[position.rawValue] = SeasonFieldingSample(outs: own.pitchingTotal.outs, games: 1,
+                    putouts: fielding.putouts, assists: fielding.assists, errors: fielding.errors, scoredGames: 1)
+                rows.append(record)
+            }
+
+            let rival = try XCTUnwrap(schedule.fixtures.first { !$0.includes(player.schoolID) })
+            let simulated = try AutomaticLeagueStore.simulate(playerID: player.id, fixture: rival, competition: "highschool")
+            let rivalRow = try CareerLeagueGameRecord(playerID: player.id, fixture: rival, competition: "highschool", match: simulated)
+            context.insert(rivalRow)
+            player.positionRaw = FieldPosition.right.rawValue
+            try context.save()
+            let season = try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: 2026, competition: "highschool",
+                                                                  verifiedAgainst: schedule, in: context)
+            let own = try XCTUnwrap(season.players.first { $0.id == player.id.uuidString })
+            XCTAssertEqual(own.fielding, expected)
+            XCTAssertEqual(season.unverifiedFieldingGames, 0)
+            XCTAssertEqual(season.unscoredDefensiveGames, 0)
+            XCTAssertEqual(season.fixtureIDs.count, 3)
+            let npcLedger = try XCTUnwrap(simulated.playerRecords)
+            for team in [npcLedger.home, npcLedger.away] {
+                let fielding = try XCTUnwrap(team.fielding)
+                XCTAssertEqual(fielding.reduce(0) { $0 + $1.putouts }, team.pitchingTotal.outs)
+                for line in team.batting where line.position != "P" {
+                    let tracked = try XCTUnwrap(season.players.first { $0.id == line.id }?.fielding[line.position])
+                    XCTAssertGreaterThanOrEqual(tracked.outs, team.pitchingTotal.outs)
+                }
+                for line in team.pitching where line.counts.outs > 0 {
+                    let tracked = try XCTUnwrap(season.players.first { $0.id == line.id }?.fielding["P"])
+                    XCTAssertGreaterThanOrEqual(tracked.outs, line.counts.outs)
+                }
+            }
+            XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: 2026,
+                competition: "highschool", records: rows + rows, automatic: [rivalRow], verifiedAgainst: schedule), season)
+            return (playerID: player.id, season: season, payloads: Dictionary(uniqueKeysWithValues: rows.map { ($0.key, $0.payload) }))
+        }
+        try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let schedule = try state.competition(for: player, year: 2026)
+            XCTAssertEqual(player.id, before.playerID)
+            XCTAssertEqual(player.positionRaw, FieldPosition.right.rawValue)
+            XCTAssertEqual(try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: 2026,
+                competition: "highschool", verifiedAgainst: schedule, in: context), before.season)
+            let rows = try context.fetch(FetchDescriptor<CareerMatchRecord>())
+            XCTAssertEqual(Dictionary(uniqueKeysWithValues: rows.map { ($0.key, $0.payload) }), before.payloads)
+            XCTAssertFalse(context.hasChanges)
+        }
+    }
+
+    func testBestNineLegacyMatchWithNoKnownOwnPositionKeepsBattingButHoldsDefense() throws {
+        let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+        let (player, state) = try growthSetup(in: context)
+        let schedule = try state.competition(for: player, year: 2026)
+        let fixtures = try state.fixtures(for: player, year: 2026)
+        let fixture = try XCTUnwrap(fixtures.first)
+        var legacy = CareerMatch(random: 3, isHome: fixture.homeID == player.schoolID,
+            role: player.roleRaw, appearance: true, contact: player.contact, power: player.power, discipline: player.discipline, mastery: [:])
+        legacy.controlVersion = 2
+        legacy.detailedFieldVersion = 5
+        legacy.battedBallVersion = 1
+        legacy.fieldPlays = []
+        legacy.runnerProfiles = [nil, nil, nil]
+        legacy.pitching = MatchPitching(startingFatigue: player.fatigue)
+        let roster = MatchNPCFielders.make(year: 2026, competition: "highschool", homeID: fixture.homeID, awayID: fixture.awayID)
+        legacy.npcFielders = roster
+        legacy.npcAttack = MatchNPCAttack.makeComplete(roster: roster)
+        legacy.playerRecords = MatchPlayerRecords.make(match: legacy, careerID: player.id, fixtureID: fixture.id,
+                                                      trackEarnedRuns: true, trackDecisions: true)
+        legacy.settle()
+        try legacy.advance(.automatic)
+        let careerMatch = try CareerMatchRecord(verificationPlayerID: player.id, teamID: player.schoolID,
+                                                fixture: fixture, match: legacy, fatigue: player.fatigue)
+        let bytes = careerMatch.payload
+        let validated = try careerMatch.snapshot()
+        XCTAssertNil(validated.fieldStats)
+        let season = try CareerMatchStore.seasonPlayerRecords(playerID: player.id, year: 2026,
+            competition: "highschool", records: [careerMatch], verifiedAgainst: schedule)
+        let own = try XCTUnwrap(season.players.first { $0.id == player.id.uuidString })
+        XCTAssertEqual(season.uncollectedGames, 0)
+        XCTAssertEqual(season.unverifiedFieldingGames, 1)
+        XCTAssertEqual(season.unscoredDefensiveGames, 1)
+        XCTAssertGreaterThan(own.batting.plateAppearances, 0)
+        XCTAssertEqual(own.batting.plateAppearances, legacy.line.plateAppearances)
+        XCTAssertTrue(own.fielding.isEmpty)
+        XCTAssertEqual(careerMatch.payload, bytes)
+    }
+
+    func testBestNinePrimaryPositionQualificationAndTieAreIndependentOfLedgerOrder() throws {
+        let teams = Array(try SchoolCatalog.load().prefix(6)).map(\.id).sorted()
+        let fixtures = try SeasonSchedule.fixtures(year: 2026, schoolIDs: teams)
+        let career = UUID()
+        func fielder(_ id: String, team: String, outs: Int = 450, appearances: Int = 60,
+                     position: FieldPosition, singles: Int = 20) -> SeasonPlayerRecord {
+            var row = SeasonPlayerRecord(teamID: team, id: id)
+            row.batting = MatchBattingCounts(plateAppearances: appearances, atBats: appearances, singles: singles, homeRuns: 5)
+            row.fielding[position.rawValue] = SeasonFieldingSample(outs: outs, games: 20)
+            return row
+        }
+        func pitcher(_ id: String, team: String, outs: Int = 90, earned: Int? = 10) -> SeasonPlayerRecord {
+            var row = SeasonPlayerRecord(teamID: team, id: id, pitchingGames: 5)
+            row.pitching = MatchPitchingCounts(outs: outs, strikeouts: 40, earnedRuns: earned)
+            return row
+        }
+
+        let leftTie = fielder("best-catcher", team: teams[0], position: .catcher)
+        let rightTie = fielder("aaa", team: teams[1], position: .catcher)
+        var first = fielder(career.uuidString, team: teams[0], outs: 465, position: .catcher, singles: 30)
+        first.fielding[FieldPosition.first.rawValue] = SeasonFieldingSample(outs: 465, games: 21)
+        var short = fielder("short", team: teams[0], position: .shortstop)
+        short.fielding[FieldPosition.center.rawValue] = SeasonFieldingSample(outs: 450, games: 20)
+        let shortOfOuts = fielder("short-outs", team: teams[2], outs: 449, position: .right, singles: 40)
+        let shortOfPlateAppearances = fielder("short-pa", team: teams[3], appearances: 59, position: .right, singles: 40)
+        let topPitch = pitcher("pitch-a", team: teams[0])
+        let tiedPitch = pitcher("pitch-b", team: teams[1])
+        let shortOfPitchingOuts = pitcher("short-pitch", team: teams[2], outs: 89, earned: nil)
+        let players = [leftTie, rightTie, first, short, shortOfOuts, shortOfPlateAppearances, topPitch, tiedPitch, shortOfPitchingOuts]
+        let games = Dictionary(uniqueKeysWithValues: teams.map { ($0, 30) })
+        func ledger(_ rows: [SeasonPlayerRecord], unverified: Int = 0) -> SeasonPlayerLedger {
+            SeasonPlayerLedger(careerID: career, year: 2026, competition: "highschool", fixtureIDs: fixtures.map(\.id),
+                               uncollectedGames: 0, players: rows, teamGames: games, unverifiedFieldingGames: unverified)
+        }
+        let best = LeagueBestNine.make(ledger(players))
+        XCTAssertEqual(best, LeagueBestNine.make(ledger(Array(players.reversed()))))
+        XCTAssertEqual(best.slots.map(\.position), LeagueBestNine.Position.allCases)
+        func slot(_ position: LeagueBestNine.Position, from result: LeagueBestNine = best) throws -> LeagueBestNine.Slot {
+            try XCTUnwrap(result.slots.first { $0.position == position })
+        }
+        XCTAssertEqual(try slot(.catcher).winner?.playerID, leftTie.id)
+        XCTAssertEqual(try slot(.first).winner?.playerID, career.uuidString)
+        XCTAssertEqual(try slot(.shortstop).winner?.playerID, short.id)
+        XCTAssertEqual(try slot(.center).reason, .noEligiblePlayer)
+        XCTAssertEqual(try slot(.right).reason, .noEligiblePlayer)
+        XCTAssertEqual(try slot(.pitcher).winner?.playerID, topPitch.id)
+        XCTAssertEqual(try slot(.first).winner?.evidence,
+            .fielder(.init(games: 21, outs: 465, plateAppearances: 60, ops: try XCTUnwrap(first.batting.ops), homeRuns: 5)))
+
+        var moreHomeRuns = leftTie
+        moreHomeRuns.batting = MatchBattingCounts(plateAppearances: 60, atBats: 60, singles: 2, homeRuns: 10)
+        var fewerHomeRuns = rightTie
+        fewerHomeRuns.batting = MatchBattingCounts(plateAppearances: 60, atBats: 60, singles: 7, homeRuns: 8)
+        let sameOPS = LeagueBestNine.make(ledger([fewerHomeRuns, moreHomeRuns]))
+        XCTAssertEqual(try slot(.catcher, from: sameOPS).winner?.playerID, moreHomeRuns.id)
+        XCTAssertEqual(try slot(.catcher, from: sameOPS).winner?.evidence.rankingSummary, "OPS 0.900 · 홈런 10개")
+
+        let missingFielding = LeagueBestNine.make(ledger(players, unverified: 1))
+        XCTAssertEqual(try slot(.pitcher, from: missingFielding).winner?.playerID, topPitch.id)
+        XCTAssertTrue(missingFielding.slots.dropFirst().allSatisfy { $0.reason == .missingDefensiveCoverage && $0.winner == nil })
+        var missingEarnedRuns = tiedPitch
+        missingEarnedRuns.pitching.earnedRuns = nil
+        missingEarnedRuns.unscoredPitchingGames = 1
+        let missingPitch = LeagueBestNine.make(ledger(players.filter { $0.id != tiedPitch.id } + [missingEarnedRuns]))
+        XCTAssertEqual(try slot(.pitcher, from: missingPitch).reason, .missingEarnedRunCoverage)
+        XCTAssertEqual(try slot(.first, from: missingPitch).winner?.playerID, career.uuidString)
+
+        let archived = try XCTUnwrap(CareerSeasonAwardRecord.make(ledger: ledger(players), teamID: teams[0], teamIDs: teams, fixtures: fixtures))
+        XCTAssertEqual(archived.bestNine, best)
+        let reopened = try JSONDecoder().decode(CareerSeasonAwardRecord.self, from: JSONEncoder().encode(archived))
+        try reopened.validate(playerID: career, today: GameDate("2026-09-23"))
+        XCTAssertEqual(reopened.bestNine, best)
+        var legacyArchive = archived
+        legacyArchive.bestNine = nil
+        let legacy = try JSONDecoder().decode(CareerSeasonAwardRecord.self, from: JSONEncoder().encode(legacyArchive))
+        XCTAssertNil(legacy.bestNine)
+        XCTAssertEqual(legacy.honors, reopened.honors)
+        try legacy.validate(playerID: career, today: GameDate("2026-09-23"))
+
+        var malformed = best.slots
+        let selectedFirst = try slot(.first)
+        let catcherIndex = try XCTUnwrap(malformed.firstIndex { $0.position == .catcher })
+        malformed[catcherIndex] = LeagueBestNine.Slot(position: .catcher, winner: selectedFirst.winner, reason: nil)
+        XCTAssertThrowsError(try LeagueBestNine(slots: malformed).validate(teamIDs: teams))
+    }
+
+    func testGoldGloveQualifiesFourLeaguesAndPreservesSeasonSnapshot() throws {
+        let year = 2026
+        let closing = try GameDate("2026-09-23")
+        let policies = [
+            ("highschool", 10, 120, 135),
+            ("domestic-first-team", 10, 135, 150),
+            ("npb-first-team", 30, 135, 135),
+            ("mlb-first-team", 30, 135, 165)
+        ]
+        for (level, pitcherInnings, catcherInnings, fielderInnings) in policies {
+            let teams = level == "highschool"
+                ? Array(try SchoolCatalog.load().prefix(6)).map(\.id)
+                : CareerTeamDirectory.teams(level: level, expanded: true)
+            let fixtures = try level == "highschool" ? SeasonSchedule.fixtures(year: year, schoolIDs: teams)
+                : CareerTeamDirectory.fixtures(level: level, year: year, expanded: true)
+            let playerID = UUID()
+            func row(_ id: String, _ position: String, team: String? = nil,
+                     outs: Int, chances: Int, errors: Int = 0, assists: Int = 0) -> SeasonPlayerRecord {
+                var record = SeasonPlayerRecord(teamID: team ?? teams[0], id: id)
+                record.fielding[position] = SeasonFieldingSample(outs: outs, games: 25,
+                    putouts: chances - errors - assists, assists: assists, errors: errors, scoredGames: 25)
+                return record
+            }
+            let leagueGames = Dictionary(uniqueKeysWithValues: teams.map { ($0, 30) })
+            let pitch = row("pitching", "P", outs: pitcherInnings * 3, chances: 5)
+            let catcher = row("catcher", "C", outs: catcherInnings * 3, chances: 20)
+            let highRate = row("high-rate", "1B", team: teams[1],
+                               outs: fielderInnings * 3, chances: 80, errors: 2, assists: 3)
+            let sameRate = row("same-rate", "1B", outs: fielderInnings * 3, chances: 40, errors: 1)
+            var slugger = row(playerID.uuidString, "1B", outs: max(450, fielderInnings * 3 + 3), chances: 30, errors: 1)
+            slugger.batting = MatchBattingCounts(plateAppearances: 60, atBats: 60, singles: 20, homeRuns: 5)
+            let underInnings = row("one-out-short", "SS", outs: fielderInnings * 3 - 1, chances: 40)
+            let underChances = row("one-chance-short", "CF", outs: fielderInnings * 3, chances: 11)
+            let rows = [pitch, catcher, highRate, sameRate, slugger, underInnings, underChances]
+            func ledger(_ players: [SeasonPlayerRecord], unscored: Int = 0) -> SeasonPlayerLedger {
+                SeasonPlayerLedger(careerID: playerID, year: year, competition: level, fixtureIDs: fixtures.map(\.id),
+                    uncollectedGames: 0, players: players, teamGames: leagueGames, unscoredDefensiveGames: unscored)
+            }
+            let scored = LeagueGoldGlove.make(ledger(rows))
+            let slots = Dictionary(uniqueKeysWithValues: scored.slots.map { ($0.position, $0) })
+            XCTAssertEqual(scored, LeagueGoldGlove.make(ledger(Array(rows.reversed()))), level)
+            XCTAssertEqual(scored.slots.map(\.position), LeagueBestNine.Position.allCases, level)
+            XCTAssertEqual(slots[.pitcher]?.minimumInnings, pitcherInnings, level)
+            XCTAssertEqual(slots[.catcher]?.minimumInnings, catcherInnings, level)
+            XCTAssertEqual(slots[.first]?.minimumInnings, fielderInnings, level)
+            XCTAssertEqual(slots[.pitcher]?.winner?.playerID, pitch.id, level)
+            XCTAssertEqual(slots[.catcher]?.winner?.playerID, catcher.id, level)
+            XCTAssertEqual(slots[.first]?.winner?.playerID, highRate.id, level)
+            let evidence = try XCTUnwrap(slots[.first]?.winner?.evidence)
+            XCTAssertEqual(evidence.putouts, 75, level)
+            XCTAssertEqual(evidence.assists, 3, level)
+            XCTAssertEqual(evidence.errors, 2, level)
+            XCTAssertEqual(evidence.chances, 80, level)
+            XCTAssertEqual(evidence.fieldingPercentage, 0.975, accuracy: 0.00001, level)
+            XCTAssertEqual(slots[.shortstop]?.reason, .belowMinimumInnings, level)
+            XCTAssertEqual(slots[.center]?.reason, .belowMinimumChances, level)
+            let held = LeagueGoldGlove.make(ledger(rows, unscored: 1))
+            XCTAssertTrue(held.slots.allSatisfy { $0.reason == .missingFieldingRecords && $0.winner == nil }, level)
+
+            let record = try XCTUnwrap(CareerSeasonAwardRecord.make(ledger: ledger(rows), teamID: teams[0],
+                                                                    teamIDs: teams, fixtures: fixtures))
+            XCTAssertEqual(record.goldGlove, scored, level)
+            XCTAssertEqual(record.bestNine?.slots.first { $0.position == .first }?.winner?.playerID, slugger.id, level)
+            let reopened = try JSONDecoder().decode(CareerSeasonAwardRecord.self, from: JSONEncoder().encode(record))
+            try reopened.validate(playerID: playerID, today: closing)
+            XCTAssertEqual(reopened, record, level)
+
+            var legacyRecord = record
+            legacyRecord.goldGlove = nil
+            let reopenedLegacy = try JSONDecoder().decode(CareerSeasonAwardRecord.self, from: JSONEncoder().encode(legacyRecord))
+            XCTAssertNil(reopenedLegacy.goldGlove, level)
+            XCTAssertEqual(reopenedLegacy.bestNine, reopened.bestNine, level)
+            try reopenedLegacy.validate(playerID: playerID, today: closing)
+        }
+    }
+
+    func testGoldGloveAutomaticSeasonUsesCompleteScoredDefenseInFourLeagues() throws {
+        let year = 2026
+        let careerID = try XCTUnwrap(UUID(uuidString: "D8D6CB58-95FD-457B-B48F-18A885932709"))
+        for (competition, expectedGames) in [("highschool", 90), ("domestic-first-team", 150),
+                                             ("npb-first-team", 225), ("mlb-first-team", 225)] {
+            let teams = competition == "highschool"
+                ? Array(try SchoolCatalog.load().prefix(6)).map(\.id)
+                : CareerTeamDirectory.teams(level: competition, expanded: true)
+            let fixtures = try competition == "highschool" ? SeasonSchedule.fixtures(year: year, schoolIDs: teams)
+                : CareerTeamDirectory.fixtures(level: competition, year: year, expanded: true)
+            var missing = [String]()
+            var track = MatchFieldingRecord(id: "league-total", position: "")
+            let records = try fixtures.map { fixture in
+                let game = try AutomaticLeagueStore.simulate(playerID: careerID, fixture: fixture, competition: competition)
+                let ledger = try XCTUnwrap(game.playerRecords, fixture.id)
+                for team in [ledger.home, ledger.away] {
+                    guard let fielding = team.fielding else {
+                        missing.append("\(fixture.id):\(team.teamID)")
+                        continue
+                    }
+                    XCTAssertEqual(fielding.reduce(0) { $0 + $1.putouts }, team.pitchingTotal.outs, fixture.id)
+                    for entry in fielding {
+                        track.putouts += entry.putouts
+                        track.assists += entry.assists
+                        track.errors += entry.errors
+                    }
+                }
+                return try CareerLeagueGameRecord(playerID: careerID, fixture: fixture, competition: competition, match: game)
+            }
+            XCTAssertTrue(missing.isEmpty, "\(competition): \(missing.count) missing team records: \(missing.prefix(5))")
+            XCTAssertGreaterThan(track.errors, 0, competition)
+            XCTAssertGreaterThan(track.assists, 0, competition)
+            let season = try CareerMatchStore.seasonPlayerRecords(playerID: careerID, year: year, competition: competition,
+                                                                  records: [], automatic: records)
+            XCTAssertEqual(season.fixtureIDs.count, expectedGames, competition)
+            XCTAssertEqual(season.unscoredDefensiveGames, 0, competition)
+            let samples = season.players.flatMap { $0.fielding.values }
+            XCTAssertEqual(samples.reduce(0) { $0 + $1.putouts }, track.putouts, competition)
+            XCTAssertEqual(samples.reduce(0) { $0 + $1.assists }, track.assists, competition)
+            XCTAssertEqual(samples.reduce(0) { $0 + $1.errors }, track.errors, competition)
+            XCTAssertTrue(samples.allSatisfy { $0.scoredGames == $0.games }, competition)
+            let glove = LeagueGoldGlove.make(season)
+            XCTAssertNotNil(glove.slots.first { $0.position == .first }?.winner, competition)
+            XCTAssertNotNil(glove.slots.first { $0.position == .catcher }?.winner, competition)
+        }
+    }
+
     func testV27InningScoresDiskResumeRollbackAndCompletedResultApplyOnce() throws {
         enum Failure: Error { case injected }
         for role in PlayerRole.allCases {

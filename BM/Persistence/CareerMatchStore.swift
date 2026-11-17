@@ -233,7 +233,10 @@ struct CareerCommittedManualInput {
         }
         match.scoutingPerformance = .tracked
         match.inningScores = MatchInningScores()
-        if match.npcAttack != nil {match.playerRecords=MatchPlayerRecords.make(match:match,careerID:player.id,fixtureID:fixture.id,trackEarnedRuns:true,trackDecisions:true)}
+        if match.npcAttack != nil {
+            match.playerRecords = MatchPlayerRecords.make(match: match, careerID: player.id, fixtureID: fixture.id,
+                                                          trackEarnedRuns: true, trackDecisions: true, trackFielding: true)
+        }
         if match.playerRecords != nil {
             match.pitchLog=MatchPitchLog()
             match.npcReadiness=try NPCSelectionStore.readiness(playerID:player.id,attack:match.npcAttack!,date:fixture.date,in:context)
@@ -605,6 +608,25 @@ typealias CareerCertificationRecord=CareerSchemaV13.CertificationRecord
     }
 }
 
+struct SeasonFieldingSample: Equatable {
+    var outs = 0
+    var games = 0
+    var putouts = 0
+    var assists = 0
+    var errors = 0
+    var scoredGames = 0
+
+    mutating func recordGame(outs: Int, counts: MatchFieldingRecord?) {
+        self.outs += outs
+        games += 1
+        guard let counts else { return }
+        putouts += counts.putouts
+        assists += counts.assists
+        errors += counts.errors
+        scoredGames += 1
+    }
+}
+
 struct SeasonPlayerRecord:Equatable {
     let teamID:String
     let id:String
@@ -612,6 +634,7 @@ struct SeasonPlayerRecord:Equatable {
     var wins=0,losses=0,decisionGames=0,unscoredDecisionGames=0
     var batting=MatchBattingCounts()
     var pitching=MatchPitchingCounts(earnedRuns:0)
+    var fielding: [String: SeasonFieldingSample] = [:]
 }
 struct SeasonPlayerLedger:Equatable {
     let careerID:UUID
@@ -622,27 +645,70 @@ struct SeasonPlayerLedger:Equatable {
     let players:[SeasonPlayerRecord]
     var teamGames: [String: Int] = [:]
     var unscoredDecisionGames = 0
+    var unverifiedFieldingGames = 0
+    var unscoredDefensiveGames = 0
 }
 extension CareerMatchStore {
     // Completed match payloads are the ledger. No independent total is incremented on read or result reopening.
-    static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,in context:ModelContext) throws -> SeasonPlayerLedger {
+    static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,
+                                    verifiedAgainst schedule: CareerCompetitionPlan? = nil,in context:ModelContext) throws -> SeasonPlayerLedger {
         let rows=try context.fetch(FetchDescriptor<CareerMatchRecord>(predicate:#Predicate {$0.playerID == playerID && $0.completed}))
-        return try seasonPlayerRecords(playerID:playerID,year:year,competition:competition,through:through,records:rows,automatic:AutomaticLeagueStore.records(playerID:playerID,year:year,in:context))
+        return try seasonPlayerRecords(playerID:playerID,year:year,competition:competition,through:through,records:rows,
+                                       automatic:AutomaticLeagueStore.records(playerID:playerID,year:year,in:context), verifiedAgainst:schedule)
     }
-    static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,records:[CareerMatchRecord],automatic:[CareerLeagueGameRecord]=[]) throws -> SeasonPlayerLedger {
+    static func seasonPlayerRecords(playerID:UUID,year:Int,competition:String,through:GameDate?=nil,records:[CareerMatchRecord],
+                                    automatic:[CareerLeagueGameRecord]=[], verifiedAgainst schedule: CareerCompetitionPlan? = nil) throws -> SeasonPlayerLedger {
         guard (1...9999).contains(year),["highschool","college","domestic-development","mlb-development","domestic-first-team","npb-first-team","mlb-first-team"].contains(competition) else {throw MatchError.invalidRecord}
+        var scheduledFixtures: [String: SeasonFixture] = [:]
+        if let schedule {
+            for fixture in schedule.fixtures {
+                guard scheduledFixtures.updateValue(fixture, forKey: fixture.id) == nil else { throw MatchError.invalidRecord }
+            }
+        }
+        func validateFixture(_ id: String, date: GameDate, match: CareerMatch, official: Bool, opponentID: String? = nil) throws {
+            guard let schedule else { return }
+            guard let fixture = scheduledFixtures[id], fixture.date == date, fixture.includes(schedule.teamID) == official,
+                  match.npcFielders.map({ $0.home.teamID == fixture.homeID && $0.away.teamID == fixture.awayID }) ?? true else {
+                throw MatchError.invalidRecord
+            }
+            if official {
+                let assigned = fixture.forTeam(schedule.teamID)
+                guard opponentID == fixture.opponent(of: schedule.teamID), match.isHome == (fixture.homeID == schedule.teamID),
+                      match.clubSelection?.fixtureNumber.map({ $0 == assigned.number }) ?? true else { throw MatchError.invalidRecord }
+            }
+        }
         var seen=[String:Data](),fixtures=[String](),missing=0,totals=[String:SeasonPlayerRecord]()
-        var teamGames: [String: Int] = [:], unscoredDecisions=0
-        func add(_ ledger:MatchPlayerRecords) {
+        var teamGames: [String: Int] = [:], unscoredDecisions=0, unverifiedFieldingGames=0
+        var unscoredDefensiveGames = 0
+        let fieldingPositions = Set(DetailedFieldRules.names)
+        func add(_ ledger:MatchPlayerRecords, match: CareerMatch) {
             fixtures.append(ledger.fixtureID)
             if ledger.decisions?.settled != true {unscoredDecisions += 1}
             teamGames[ledger.home.teamID, default: 0] += 1
             teamGames[ledger.away.teamID, default: 0] += 1
+            let ownTeam = match.isHome ? ledger.home : ledger.away
+            let hasOwnBatter = match.appearance && match.role == PlayerRole.batter.rawValue
+            let ownPositionKnown = !hasOwnBatter || match.fieldStats.map { stats in
+                stats.position != "P" && fieldingPositions.contains(stats.position)
+                    && ownTeam.batting.contains { $0.id == playerID.uuidString && $0.position == stats.position }
+            } == true
+            let exactFielding = ownPositionKnown && [ledger.home, ledger.away].allSatisfy {
+                Set($0.batting.prefix(9).map(\.position)) == fieldingPositions
+            }
+            if !exactFielding { unverifiedFieldingGames += 1 }
+            if !exactFielding || ledger.home.fielding == nil || ledger.away.fielding == nil { unscoredDefensiveGames += 1 }
             for team in [ledger.home,ledger.away] {
+                // These eight positions stay on the field until the end of the game.
+                // A pitcher change allocates the same recorded outs to the actual pitchers below.
+                let defense = team.pitchingTotal
+                let counts = Dictionary(uniqueKeysWithValues: (team.fielding ?? []).map { ($0.id, $0) })
                 for line in team.batting {
                     let key=team.teamID+"/"+line.id
                     var sum=totals[key] ?? SeasonPlayerRecord(teamID:team.teamID,id:line.id)
                     if line.counts.plateAppearances > 0 {sum.battingGames += 1}
+                    if exactFielding && line.position != "P" && defense.pitches > 0 {
+                        sum.fielding[line.position, default: SeasonFieldingSample()].recordGame(outs: defense.outs, counts: counts[line.id])
+                    }
                     sum.batting.add(line.counts);totals[key]=sum
                 }
                 for line in team.pitching {
@@ -650,6 +716,9 @@ extension CareerMatchStore {
                     var sum=totals[key] ?? SeasonPlayerRecord(teamID:team.teamID,id:line.id)
                     if line.counts.pitches > 0 {
                         sum.pitchingGames += 1
+                        if exactFielding {
+                            sum.fielding["P", default: SeasonFieldingSample()].recordGame(outs: line.counts.outs, counts: counts[line.id])
+                        }
                         if let decisions=ledger.decisions,decisions.settled {
                             sum.decisionGames += 1
                             if decisions.winner == line.id {sum.wins += 1}
@@ -667,24 +736,28 @@ extension CareerMatchStore {
             let match=try row.snapshot()
             guard (match.competition ?? "highschool") == competition else {continue}
             guard row.key == CareerMatchRecord.key(playerID,row.fixtureID) else {throw MatchError.invalidRecord}
+            try validateFixture(row.fixtureID, date: date, match: match, official: true, opponentID: row.opponentID)
             if let previous=seen[row.key] {guard previous == row.payload else {throw MatchError.invalidRecord};continue}
             seen[row.key]=row.payload
             guard let ledger=match.playerRecords else {missing += 1;continue}
-            add(ledger)
+            add(ledger, match: match)
         }
         for row in automatic where row.playerID == playerID {
             let date=try GameDate(row.gameDate)
             guard date.year == year,through.map({date <= $0}) ?? true else {continue}
             let match=try row.snapshot()
             guard row.competition == competition else {continue}
+            try validateFixture(row.fixtureID, date: date, match: match, official: false)
             let key=CareerMatchRecord.key(playerID,row.fixtureID)
             if let previous=seen[key] {guard previous == row.payload else {throw MatchError.invalidRecord};continue}
             seen[key]=row.payload
             guard let ledger=match.playerRecords else {missing += 1;continue}
-            add(ledger)
+            add(ledger, match: match)
         }
         return SeasonPlayerLedger(careerID:playerID,year:year,competition:competition,fixtureIDs:fixtures.sorted(),uncollectedGames:missing,
-            players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID}, teamGames: teamGames, unscoredDecisionGames: unscoredDecisions)
+            players:totals.values.sorted {$0.teamID == $1.teamID ? $0.id < $1.id:$0.teamID < $1.teamID}, teamGames: teamGames,
+            unscoredDecisionGames: unscoredDecisions, unverifiedFieldingGames: unverifiedFieldingGames,
+            unscoredDefensiveGames: unscoredDefensiveGames)
     }
 }
 

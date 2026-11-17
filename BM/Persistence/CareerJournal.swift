@@ -3,7 +3,7 @@ import SwiftData
 
 @MainActor enum CareerJournal {
     enum Kind: String, CaseIterable {
-        case match, training, scouting, contract
+        case match, training, scouting, contract, award
 
         var label: String {
             switch self {
@@ -11,6 +11,7 @@ import SwiftData
             case .training: "훈련"
             case .scouting: "스카우트"
             case .contract: "계약"
+            case .award: "시상"
             }
         }
     }
@@ -72,6 +73,8 @@ import SwiftData
         case training(String)
         case scouting(ScoutDetail)
         case contract(ContractDetail)
+        case award(CareerSeasonAwardRecord)
+        case awardPending(CareerSeasonAwardBoard)
     }
 
     struct Entry: Identifiable {
@@ -98,12 +101,37 @@ import SwiftData
             + trainingEntries(player: player, in: context)
             + scoutingEntries(player: player, calendar: calendar, overseas: journal.overseasReports ?? [], in: context)
             + contractEntries(player: player, calendar: calendar, journal: journal, today: today, in: context)
+            + awardEntries(player: player, calendar: calendar, in: context)
         var seen = Set<String>()
         let grouped = Dictionary(grouping: entries.filter { $0.date <= today && seen.insert($0.id).inserted }, by: \.date)
         return grouped.keys.sorted(by: >).map { date in
             Day(date: date, entries: (grouped[date] ?? []).sorted {
                 ($0.kind.rawValue, $0.id) < ($1.kind.rawValue, $1.id)
             })
+        }
+    }
+
+    private static func awardEntries(player: CareerPlayer, calendar: CareerCalendarState, in context: ModelContext) throws -> [Entry] {
+        try CareerSeasonAwardStore.journalBoards(player: player, state: calendar, in: context).map { day in
+            let board = day.board
+            let title = "\(board.year) \(CareerSeasonAwardRecord.leagueLabel(board.competition)) 시즌 시상"
+            let id = "award/\(player.id.uuidString)/\(board.year)/\(board.competition)"
+            guard let award = board.record else {
+                return Entry(id: id, date: day.date, kind: .award, title: title,
+                             summary: "올해의팀·골든글러브 보류 · 경기 기록 부족", emphasis: nil, destination: .awardPending(board))
+            }
+            let winners = award.bestNine?.slots.compactMap(\.winner) ?? []
+            let gloves = award.goldGlove?.slots.compactMap(\.winner) ?? []
+            let teamLabel = winners.isEmpty ? "올해의팀 보류" : "올해의팀 \(winners.count)/9"
+            let gloveLabel = gloves.isEmpty ? "골든글러브 보류" : "골든글러브 \(gloves.count)/9"
+            let personal = award.personalHonors
+            let madeTeam = winners.contains { $0.playerID == player.id.uuidString && $0.teamID == award.teamID }
+            let gotGlove = gloves.contains { $0.playerID == player.id.uuidString && $0.teamID == award.teamID }
+            let lead = personal.first?.label ?? (award.honors.isEmpty ? "" : "개인 타이틀 확정")
+            let summary = [lead, teamLabel, gloveLabel].filter { !$0.isEmpty }.joined(separator: " · ")
+            let emphasis = gotGlove ? "내 골든글러브" : madeTeam ? "내 올해의팀" : personal.isEmpty ? nil : "내 수상"
+            return Entry(id: id, date: day.date, kind: .award, title: title, summary: summary,
+                         emphasis: emphasis, destination: .award(award))
         }
     }
 
