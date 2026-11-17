@@ -21,6 +21,20 @@ struct TransferContractDocument: View {
         let date: String
     }
 
+    struct SalaryRank {
+        let topPercent: Int
+        let comparison: String
+
+        init(_ standing: LeagueSalaryStanding) {
+            topPercent = standing.topPercent
+            comparison = standing.comparison
+        }
+
+        var title: String { "리그 연봉지수 상위 \(topPercent)%" }
+        var isPremium: Bool { topPercent <= 10 }
+        var presentationIdentifier: String { isPremium ? "SalaryRankPremium" : "SalaryRankNeutral" }
+    }
+
     struct Terms {
         let clubID: String?
         let clubName: String
@@ -33,6 +47,7 @@ struct TransferContractDocument: View {
         let origin: String?
         let dates: [TermDate]
         let status: String
+        var salaryRank: SalaryRank? = nil
     }
 
     let terms: Terms
@@ -121,6 +136,9 @@ struct TransferContractDocument: View {
                     term("선수 역할", value: role, key: "role")
                 }
             }
+            if let rank = terms.salaryRank {
+                salaryRank(rank)
+            }
             if let period = terms.period {
                 term("계약 기간", value: period, key: "period")
             }
@@ -128,6 +146,40 @@ struct TransferContractDocument: View {
                 term("제의 계약금", value: SigningBonusDisplay.won(bonus), key: "bonus")
             }
         }
+    }
+
+    private func salaryRank(_ rank: SalaryRank) -> some View {
+        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
+            HStack(spacing: ManagementTheme.Space.micro) {
+                if rank.isPremium {
+                    Image(systemName: "medal.fill").accessibilityHidden(true)
+                }
+                Text(rank.title)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(identifier + "SalaryPercentile")
+            }
+            .font(rank.isPremium ? .headline : .subheadline.weight(.semibold))
+            .foregroundStyle(rank.isPremium ? ScoutDossierInk.green : ScoutDossierInk.ink)
+            Text(rank.comparison)
+                .font(.caption).foregroundStyle(ScoutDossierInk.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier + "SalaryComparison")
+        }
+        .padding(rank.isPremium ? ManagementTheme.Space.inline : 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if rank.isPremium {
+                ManagementStepFrame().fill(ScoutDossierInk.green.opacity(0.08))
+            }
+        }
+        .overlay {
+            if rank.isPremium {
+                ManagementStepFrame().strokeBorder(ScoutDossierInk.green.opacity(0.35), lineWidth: ManagementTheme.Control.border)
+                    .allowsHitTesting(false)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier + rank.presentationIdentifier)
     }
 
     private func term(_ label: String, value: String, key: String, emphasis: Bool = false) -> some View {

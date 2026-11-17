@@ -833,8 +833,10 @@ struct CareerContractJournal:Codable,Equatable {
     var seasonReviews:[ClubSeasonReview]? = nil
     var clubSelections:[ClubSelectionReview]? = nil
     var signingFunds: CareerSigningFunds? = nil
+    var kboTransfers: KBOTransferJournal? = nil
     func membershipHistory(excludingOverseasRelease:String?=nil,excludingFA:String?=nil) -> [CareerMembership] {
-        (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])).sorted {$0.since<$1.since}.map {member in
+        let transfers = kboTransfers?.acceptedOffers.map { $0.membership() } ?? []
+        return (memberships+(overseasCareer?.transitions.map(\.destination) ?? [])+transfers).sorted {$0.since<$1.since}.map {member in
             var value=member
             value.releasedOn=releases?.first {$0.membershipOfferID == member.offerID}?.date ?? collegeTransitions?.first {$0.source.membershipOfferID == member.offerID}?.source.effectiveDate
             if let end=overseasCareer?.transitions.first(where:{$0.sourceMembershipID == member.offerID})?.destination.since {
@@ -844,6 +846,9 @@ struct CareerContractJournal:Codable,Equatable {
                 value.releasedOn=value.releasedOn.map {min($0,released.date)} ?? released.date
             }
             if let fa=overseasCareer?.faDeclarations?.first(where:{$0.source.offerID == member.offerID && $0.id != excludingFA}) {
+                value.releasedOn=value.releasedOn.map {min($0,fa.effective)} ?? fa.effective
+            }
+            if let fa=kboTransfers?.declarations.first(where:{$0.source.offerID == member.offerID && $0.id != excludingFA}) {
                 value.releasedOn=value.releasedOn.map {min($0,fa.effective)} ?? fa.effective
             }
             return value
@@ -905,6 +910,7 @@ struct CareerContractJournal:Codable,Equatable {
             }
         }
         try overseasCareer?.validate(owner:self,today:today)
+        try kboTransfers?.validate(owner: self, player: player, calendar: calendar, today: today)
         for decision in decisions {
             guard let offer=offers.first(where:{$0.id == decision.offerID}) else {throw ContractRegistrationError.invalid}
             let date=try GameDate(decision.date)
@@ -958,7 +964,8 @@ struct CareerContractJournal:Codable,Equatable {
             guard decisions.contains(where:{$0.offerID == member.offerID && $0.kind == .accepted && ($0.date == member.since || transitions.contains(where: { $0.offerID == member.offerID && $0.source.effectiveDate == member.since }))}) else {throw ContractRegistrationError.invalid}
             if index > 0 {
                 let date=try GameDate(member.since),previous=try GameDate(memberships[index-1].since)
-                guard try !membershipHistory()[index-1].contains(date),previous < date else {throw ContractRegistrationError.invalid}
+                guard let prior = membershipHistory().first(where: { $0.offerID == memberships[index-1].offerID }),
+                      try !prior.contains(date),previous < date else {throw ContractRegistrationError.invalid}
             }
         }
         try validateFinances(domesticOffers: offers, today: today)
@@ -2070,21 +2077,26 @@ struct FASeasonEvidence:Codable,Equatable {
     let sourceID:String
     let level:String
     let matchKeys:[String]
-    static func collect(owner:CareerContractJournal,role:PlayerRole,on date:GameDate,rows:[CareerMatchRecord],expandedFrom:Int?=nil) throws -> [Self] {
+    static func collect(owner:CareerContractJournal,role:PlayerRole,on date:GameDate,rows:[CareerMatchRecord],expandedFrom:Int?=nil,
+                        competition:String?=nil) throws -> [Self] {
+        let levels = competition.map { [$0] } ?? ["npb-first-team", "mlb-first-team"]
         var result:[Self]=[]
         for year in Set(try rows.map {try GameDate($0.gameDate).year}).sorted() {
             let first=try GameDate("\(year)-04-01"),last=first.adding(days:174)
             guard last < date,let start=try owner.current(on:first),let end=try owner.current(on:last),
-                  start.offerID == end.offerID,start.level == end.level,["npb-first-team","mlb-first-team"].contains(start.level) else {continue}
+                  start.offerID == end.offerID,start.level == end.level,levels.contains(start.level),
+                  competition == nil || start.teamID == end.teamID else {continue}
             let expanded=expandedFrom.map {year >= $0} ?? false
             let fixtures=try CareerTeamDirectory.fixtures(level:start.level,year:year,expanded:expanded).filter {$0.includes(start.teamID)}
             var keys:[String]=[],totals=PersonalSeasonTotals()
+            var counted=Set<String>()
             for row in rows where row.completed && row.appearance && row.gameDate >= first.description && row.gameDate <= last.description {
                 guard row.playerID == owner.playerID,let fixture=fixtures.first(where:{$0.id == row.fixtureID}),fixture.date.description == row.gameDate,
                       row.key == CareerMatchRecord.key(owner.playerID,fixture.id),row.opponentID == fixture.opponent(of:start.teamID) else {continue}
                 let match=try row.snapshot(),day=try GameDate(row.gameDate)
                 guard let member=try owner.current(on:day),member.offerID == start.offerID,member.level == start.level,
-                      match.competition == start.level,match.role == role.rawValue,match.isHome == (fixture.homeID == start.teamID) else {continue}
+                      match.competition == start.level,match.role == role.rawValue,match.isHome == (fixture.homeID == start.teamID),
+                      competition == nil || (member.teamID == start.teamID && counted.insert(row.key).inserted) else {continue}
                 try totals.add(match.line);keys.append(row.key)
             }
             if role == .batter ? totals.line.plateAppearances >= 100:totals.line.pitchingOuts >= 75 {
@@ -2109,6 +2121,264 @@ struct FADeclaration:Codable,Equatable,Identifiable {
         return Self(id:member.offerID+":fa-v1:"+window.id,source:member,date:date.description,effective:try CollegeProReview.effective(after:date).description,service:service)
     }
 }
+
+struct KBOFADeclaration: Codable, Equatable, Identifiable {
+    static let competition = "domestic-first-team"
+    static let minimumSeasons = 8
+    static let repeatSeasons = 4
+
+    let id: String
+    let source: CareerMembership
+    let date: String
+    let effective: String
+    let service: [FASeasonEvidence]
+
+    static func make(member: CareerMembership, on date: GameDate, service: [FASeasonEvidence],
+                     previous: Self? = nil) throws -> Self {
+        guard let window = ContractEvaluationWindow.containing(date), window.month == 11,
+              member.level == competition, CareerTeamDirectory.expandedDomesticFirstIDs.contains(member.teamID),
+              try member.contains(date) else { throw KBOTransferError.window }
+        let effective = try CollegeProReview.effective(after: date)
+        guard try GameDate(member.economicEnd) < effective else { throw KBOTransferError.contract }
+        let previousEffective = try previous.map { try GameDate($0.effective) }
+        let seasons = service.filter {
+            $0.level == competition && $0.year <= date.year && $0.year >= (previousEffective?.year ?? 1)
+        }.sorted { $0.year < $1.year }
+        let required = previous == nil ? minimumSeasons : repeatSeasons
+        guard Set(seasons.map(\.year)).count == seasons.count, seasons.count >= required,
+              seasons.allSatisfy({ !$0.sourceID.isEmpty && !$0.matchKeys.isEmpty
+                  && $0.matchKeys == Set($0.matchKeys).sorted() }) else { throw KBOTransferError.service(required) }
+        return Self(id: member.offerID + ":kbo-fa-v1:" + window.id, source: member,
+                    date: date.description, effective: effective.description, service: seasons)
+    }
+}
+
+enum KBOTransferError: LocalizedError {
+    case window, contract, service(Int), declaration
+
+    var errorDescription: String? {
+        switch self {
+        case .window: "KBO 1군 FA 선언은 11월 1~14일에 가능합니다."
+        case .contract: "현재 계약이 다음 시즌 개막 전에 끝나야 합니다."
+        case .service(let count): "검증된 KBO 1군 출전 시즌 \(count)개가 필요합니다."
+        case .declaration: "현재 소속의 KBO FA 선언을 먼저 확인해 주세요."
+        }
+    }
+}
+
+struct KBOTransferOffer: Codable, Equatable, Identifiable {
+    let id: String
+    let teamID: String
+    let name: String
+    let roleID: String
+    let issued: String
+    let expires: String
+    let effective: String
+    let economicEnd: String
+    let economicIndex: Int
+    let years: Int
+    let signingBonusTerms: SigningBonusTerms
+    let salaryStanding: LeagueSalaryStanding?
+
+    var signingBonusWon: Int? { signingBonusTerms.amountWon }
+
+    func membership() -> CareerMembership {
+        var member = CareerMembership(offerID: id, route: .rookie, teamID: teamID, name: name,
+            since: effective, economicEnd: economicEnd, enrollmentEnd: nil, economicIndex: economicIndex)
+        member.competitionLevel = KBOFADeclaration.competition
+        return member
+    }
+}
+
+struct KBOTransferEvaluation: Codable {
+    var version = 1
+    let id: String
+    let window: ContractEvaluationWindow
+    let date: String
+    let declarationID: String
+    let observation: ScoutingObservation
+    let expanded: Bool
+    let horizon: String?
+    let offers: [KBOTransferOffer]
+    let reasons: [String]
+
+    static func make(observation: ScoutingObservation, declaration: KBOFADeclaration, on date: GameDate,
+                     expanded: Bool, horizon: String? = nil) throws -> Self {
+        guard let window = ContractEvaluationWindow.containing(date), observation.observedDate <= date.description,
+              observation.observedDate >= date.adding(days: -364).description,
+              declaration.date <= date.description else { throw KBOTransferError.declaration }
+        try observation.validate()
+        let opening = try CollegeProReview.effective(after: date)
+        let effective = try max(GameDate(declaration.effective), opening)
+        guard try GameDate(declaration.source.economicEnd) < effective else { throw KBOTransferError.contract }
+        let id = observation.playerID.uuidString + ":kbo-transfer-v1:" + window.id
+        let grades = observation.grades.filter { grade in
+            (observation.role == .pitcher) == (grade.id == "starter")
+                && DomesticSelection.roles.contains(grade.id)
+                && DomesticSelection.fieldCondition(grade.id, route: .rookie, observation: observation).isEmpty
+        }
+        let teams = CareerTeamDirectory.teams(level: KBOFADeclaration.competition, expanded: expanded)
+        var candidates: [(teamID: String, role: String, margin: Double, years: Int, end: String, bonus: SigningBonusForecast)] = []
+        for teamID in teams where teamID != declaration.source.teamID {
+            let roster = MatchNPCFielders.make(year: effective.year, competition: KBOFADeclaration.competition,
+                                               homeID: teamID, awayID: declaration.source.teamID)
+            let lineup = MatchNPCAttack.make(roster: roster).home
+            let position = roster.home.players.first { $0.position == observation.position }
+            let proposals = grades.compactMap { grade -> (role: String, margin: Double)? in
+                guard let h = grade.score else { return nil }
+                let reference: Double
+                switch grade.id {
+                case "starter": reference = (lineup.starter.velocity + lineup.starter.control) / 2
+                case "slugger": reference = lineup.batters.dropFirst().map(\.slugging).max() ?? roster.home.strength
+                case "onBase": reference = lineup.batters.dropFirst().map(\.onBase).max() ?? roster.home.strength
+                default:
+                    guard let position else { return nil }
+                    reference = (position.defense + position.arm) / 2
+                }
+                let margin = ScoutingContractFit.round(h - max(60, reference))
+                guard margin >= 0 else { return nil }
+                return (grade.id, margin)
+            }.sorted { a, b in a.margin == b.margin ? a.role < b.role : a.margin > b.margin }
+            guard let best = proposals.first,
+                  let bonus = SigningBonusPolicy.domesticQuote(clubID: String(teamID.dropFirst("pro-".count)), roleID: best.role) else { continue }
+            let cap = observation.age >= 35 ? 1 : observation.age >= 30 ? 2 : 3
+            let years = min(cap, best.margin >= 12 ? 3 : best.margin >= 5 ? 2 : 1)
+            let economicEnd = effective.anniversary(in: effective.year + years).adding(days: -1).description
+            guard horizon.map({ economicEnd < $0 }) ?? true else { continue }
+            candidates.append((teamID, best.role, best.margin, years, economicEnd, bonus))
+        }
+        let benchmark = candidates.isEmpty ? nil : LeagueSalaryStanding.benchmark(
+            competition: KBOFADeclaration.competition, year: effective.year, expanded: expanded)
+        let offers = candidates.sorted {
+            $0.margin == $1.margin ? $0.teamID < $1.teamID : $0.margin > $1.margin
+        }.prefix(3).map { candidate in
+            let economicIndex = 100 + Int((6 * candidate.margin).rounded())
+            return KBOTransferOffer(id: id + "/" + candidate.teamID + "/" + candidate.role,
+                teamID: candidate.teamID, name: CareerTeamDirectory.name(candidate.teamID), roleID: candidate.role,
+                issued: date.description, expires: min(date.adding(days: 6), window.end).description,
+                effective: effective.description, economicEnd: candidate.end, economicIndex: economicIndex,
+                years: candidate.years, signingBonusTerms: SigningBonusPolicy.terms(for: candidate.bonus),
+                salaryStanding: benchmark?.standing(economicIndex: economicIndex))
+        }
+        let reasons = offers.isEmpty ? ["KBO 1군 모집 역할의 기량·계약 기간 조건 미달"] : []
+        return Self(id: id, window: window, date: date.description, declarationID: declaration.id,
+                    observation: observation, expanded: expanded, horizon: horizon, offers: offers, reasons: reasons)
+    }
+}
+
+struct KBOTransferMarketEntry: Identifiable, Equatable {
+    let offer: KBOTransferOffer
+    let source: CareerMembership
+    let status: String
+    var id: String { offer.id }
+}
+
+struct KBOTransferJournal: Codable {
+    var declarations: [KBOFADeclaration] = []
+    var evaluations: [KBOTransferEvaluation] = []
+    var decisions: [DomesticOfferDecision] = []
+    var lastDeclarationNoticeDate: String? = nil
+
+    var acceptedOffers: [KBOTransferOffer] {
+        let ids = Set(decisions.filter { $0.kind == .accepted }.map(\.offerID))
+        return evaluations.flatMap(\.offers).filter { ids.contains($0.id) }
+    }
+
+    func hasPending(on date: String) -> Bool {
+        acceptedOffers.contains { offer in
+            offer.effective > date && decisions.contains(where: { $0.offerID == offer.id && $0.date <= date })
+        }
+    }
+
+    func availableDeclaration(owner: CareerContractJournal, on date: GameDate) throws -> KBOFADeclaration? {
+        let days = date.description
+        if let retired = owner.retiredOn, retired <= days { return nil }
+        let current = try owner.current(on: date)
+        let latest = owner.membershipHistory().last { $0.since <= days }
+        let membershipID = current?.offerID ?? latest?.offerID
+        return declarations.last { declaration in
+            declaration.source.offerID == membershipID && declaration.date <= days
+                && (current?.level == KBOFADeclaration.competition || (current == nil && declaration.effective <= days))
+        }
+    }
+
+    func marketEntries(on date: String) -> [KBOTransferMarketEntry] {
+        evaluations.filter { $0.date <= date }.flatMap { evaluation -> [KBOTransferMarketEntry] in
+            guard let source = declarations.first(where: { $0.id == evaluation.declarationID })?.source else { return [] }
+            return evaluation.offers.map { offer in
+                let status: String
+                switch decisions.first(where: { $0.offerID == offer.id && $0.date <= date })?.kind {
+                case .accepted: status = date < offer.effective ? "수락 · 발효 대기" : "수락 · 발효 완료"
+                case .rejected: status = "거절"
+                case .closed: status = "다른 제의 수락 · 종료"
+                case nil: status = date > offer.expires ? "마감" : "검토 가능"
+                }
+                return KBOTransferMarketEntry(offer: offer, source: source, status: status)
+            }
+        }
+    }
+
+    func validate(owner: CareerContractJournal, player: CareerPlayer, calendar: CareerCalendarState,
+                  today: GameDate) throws {
+        if let lastDeclarationNoticeDate {
+            let shownOn = try GameDate(lastDeclarationNoticeDate)
+            guard shownOn <= today, ContractEvaluationWindow.containing(shownOn)?.month == 11
+                else { throw ContractRegistrationError.invalid }
+        }
+        guard Set(declarations.map(\.id)).count == declarations.count,
+              Set(declarations.map { $0.source.offerID }).count == declarations.count,
+              Set(evaluations.map(\.id)).count == evaluations.count,
+              Set(decisions.map(\.offerID)).count == decisions.count else { throw ContractRegistrationError.invalid }
+        var previous: KBOFADeclaration?
+        for declaration in declarations {
+            let date = try GameDate(declaration.date)
+            guard date <= today, declaration.date > (previous?.date ?? ""),
+                  try owner.current(on: date, excludingFA: declaration.id) == declaration.source,
+                  declaration == (try KBOFADeclaration.make(member: declaration.source, on: date,
+                                                            service: declaration.service, previous: previous)) else {
+                throw ContractRegistrationError.invalid
+            }
+            previous = declaration
+        }
+        let origin = try GameDate(calendar.originDate)
+        for evaluation in evaluations {
+            let date = try GameDate(evaluation.date)
+            let observed = try GameDate(evaluation.observation.observedDate)
+            guard evaluation.version == 1, date <= today, evaluation.window == ContractEvaluationWindow.containing(date),
+                  evaluation.observation.playerID == owner.playerID, evaluation.observation.origin == calendar.originDate,
+                  evaluation.observation.role == player.role,
+                  evaluation.observation.age == origin.age(startingAt: player.startAge, on: observed),
+                  let declaration = try availableDeclaration(owner: owner, on: date), declaration.id == evaluation.declarationID,
+                  evaluation.expanded == (try calendar.isExpandedDomesticAtFutureOpening(year: CollegeProReview.effective(after: date).year)) else {
+                throw ContractRegistrationError.invalid
+            }
+            let expected = try KBOTransferEvaluation.make(observation: evaluation.observation, declaration: declaration,
+                                                          on: date, expanded: evaluation.expanded, horizon: evaluation.horizon)
+            guard expected.id == evaluation.id, expected.offers == evaluation.offers,
+                  expected.reasons == evaluation.reasons else { throw ContractRegistrationError.invalid }
+        }
+        var signedDeclarations = Set<String>()
+        for decision in decisions {
+            let date = try GameDate(decision.date)
+            guard date <= today,
+                  let evaluation = evaluations.first(where: { $0.offers.contains { $0.id == decision.offerID } }),
+                  let offer = evaluation.offers.first(where: { $0.id == decision.offerID }),
+                  offer.issued <= decision.date, decision.date <= offer.expires else { throw ContractRegistrationError.invalid }
+            let acceptedOtherPath = owner.decisions.contains { $0.kind == .accepted && $0.date == decision.date }
+                || owner.overseasCareer?.decisions.contains { $0.kind == .accepted && $0.date == decision.date } == true
+            if decision.kind == .accepted {
+                guard !acceptedOtherPath, signedDeclarations.insert(evaluation.declarationID).inserted,
+                      try availableDeclaration(owner: owner, on: date)?.id == evaluation.declarationID else { throw ContractRegistrationError.invalid }
+            } else if decision.kind == .closed {
+                guard acceptedOtherPath || decisions.contains(where: { sibling in
+                    sibling.kind == .accepted && sibling.date == decision.date
+                        && evaluation.offers.contains(where: { $0.id == sibling.offerID })
+                }) else { throw ContractRegistrationError.invalid }
+            }
+        }
+    }
+}
+
 struct OverseasMobilityContext:Codable,Equatable {
     let source:CareerMembership
     let fa:FADeclaration?
@@ -2813,8 +3083,11 @@ struct CareerClubRole:Codable,Equatable {
     static func make(member:CareerMembership,owner:CareerContractJournal,offers:[DomesticContractOffer],on date:String) -> Self {
         let promoted=(owner.overseasCareer?.promotions ?? []).last {$0.sourceOfferID == member.offerID && $0.effective <= date && $0.toLevel == member.level && $0.roleID != nil}
         let domestic=offers.first {offer in offer.id == member.offerID && owner.decisions.contains(where:{$0.offerID == offer.id && $0.kind == .accepted})}
+        let transfer=owner.kboTransfers?.acceptedOffers.first {$0.id == member.offerID}
         let foreign=(owner.overseasCareer?.evaluations ?? []).flatMap(\.offers).first {$0.id == member.offerID}
-        return Self(membershipID:member.offerID,teamID:member.teamID,level:member.level,roleID:promoted?.roleID ?? domestic?.roleID ?? foreign?.roleID,sourceID:promoted?.id ?? domestic?.id ?? foreign?.id)
+        let roleID=promoted?.roleID ?? domestic?.roleID ?? transfer?.roleID ?? foreign?.roleID
+        let sourceID=promoted?.id ?? domestic?.id ?? transfer?.id ?? foreign?.id
+        return Self(membershipID:member.offerID,teamID:member.teamID,level:member.level,roleID:roleID,sourceID:sourceID)
     }
 }
 
@@ -3208,6 +3481,8 @@ struct ContractRegistrationPresentation: Equatable {
             reserved="같은 해외 구단 경제 조건 갱신";effective=renewal.effective+" 경제 조건 발효 · 소속/권리 유지"
         } else if let fa=(owner.overseasCareer?.faDeclarations ?? []).last(where:{$0.effective > date.description}) {
             reserved="게임 FA 선언 · 권리 해제 예약";effective=fa.effective+" 등록/권리 종료 · 새 소속은 별도 계약"
+        } else if let fa=owner.kboTransfers?.declarations.last(where:{$0.effective > date.description}) {
+            reserved="KBO FA 선언 · 권리 해제 예약";effective=fa.effective+" 등록/권리 종료 · 새 소속은 별도 계약"
         } else {reserved="수락된 미래 변경 없음";effective="현재 등록·경제·권리 상태 적용"}
     }
 }

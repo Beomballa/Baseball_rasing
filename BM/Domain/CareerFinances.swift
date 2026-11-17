@@ -13,6 +13,58 @@ struct SigningBonusTerms: Codable, Equatable {
     let amountWon: Int
 }
 
+struct LeagueSalaryStanding: Codable, Equatable {
+    let version: Int
+    let competition: String
+    let year: Int
+    let teamCount: Int
+    let sampleCount: Int
+    let rank: Int
+
+    var topPercent: Int { (100 * rank + sampleCount - 1) / sampleCount }
+    var comparison: String { "\(year)년 BM 가상 KBO 1군 선수 \(sampleCount - 1)명과 비교 · 동률 공동 순위" }
+
+    struct Benchmark {
+        let competition: String
+        let year: Int
+        let teamCount: Int
+        let indices: [Int]
+
+        func standing(economicIndex: Int) -> LeagueSalaryStanding? {
+            guard economicIndex > 0 else { return nil }
+            return LeagueSalaryStanding(version: 1, competition: competition, year: year, teamCount: teamCount,
+                sampleCount: indices.count + 1, rank: indices.count { $0 > economicIndex } + 1)
+        }
+    }
+
+    static func benchmark(competition: String, year: Int, expanded: Bool) -> Benchmark? {
+        guard competition == "domestic-first-team", (1...9999).contains(year) else { return nil }
+        let clubs = CareerTeamDirectory.teams(level: competition, expanded: expanded)
+        guard clubs.count >= 2 else { return nil }
+        let indices = clubs.enumerated().flatMap { index, club -> [Int] in
+            let opponent = clubs[(index + 1) % clubs.count]
+            let roster = MatchNPCFielders.make(year: year, competition: competition, homeID: club, awayID: opponent)
+            let players = MatchNPCAttack.makeComplete(roster: roster).home
+            let batting = players.batters.enumerated().filter { $0.element.position != "P" }.map { index, batter in
+                let skills = roster.home.players[index]
+                let rating = (batter.contact + batter.power + batter.discipline + skills.defense) / 4
+                return referenceIndex(rating: rating, id: batter.id)
+            }
+            let pitching = [players.starter, players.relief].map { pitcher in
+                let rating = (pitcher.velocity + pitcher.control + (pitcher.profile?.stuff ?? 60) + (pitcher.profile?.mental ?? 60)) / 4
+                return referenceIndex(rating: rating, id: pitcher.id)
+            }
+            return batting + pitching
+        }
+        return Benchmark(competition: competition, year: year, teamCount: clubs.count, indices: indices)
+    }
+
+    private static func referenceIndex(rating: Double, id: String) -> Int {
+        let adjustment = Int(MatchNPCFielders.hash(id + "/salary-v1") % 25) - 12
+        return max(50, 110 + Int((7 * (rating - 63)).rounded()) + adjustment)
+    }
+}
+
 enum SigningBonusPolicy {
     // Fictional game ranges in millions of won. V1 is frozen for save validation.
     static let version = 1
@@ -197,7 +249,11 @@ extension CareerContractJournal {
             guard let offer = overseasByID[transition.offerID], let amount = offer.signingBonusWon else { return nil }
             return SigningBonusTransaction(id: offer.id, name: offer.name, date: transition.destination.since, amountWon: amount)
         }
-        let expected = (domestic + overseas).sorted(by: Self.signingBonusOrder)
+        let korean = (kboTransfers?.acceptedOffers ?? []).compactMap { offer -> SigningBonusTransaction? in
+            guard let amount = offer.signingBonusWon else { return nil }
+            return SigningBonusTransaction(id: offer.id, name: offer.name, date: offer.effective, amountWon: amount)
+        }
+        let expected = (domestic + overseas + korean).sorted(by: Self.signingBonusOrder)
         guard Set(expected.map(\.id)).count == expected.count,
               expected == (signingFunds?.entries ?? []), (signingFunds?.version ?? 1) == 1 else { throw ContractRegistrationError.invalid }
         let funds = try finances(on: today)

@@ -564,7 +564,8 @@ private struct CareerJournalContractView: View {
             signingBonusWon: terms.signingBonusWon,
             origin: terms.origin,
             dates: orderedDates(detail.dates + terms.dates).map { .init(label: $0.label, date: $0.date) },
-            status: status
+            status: status,
+            salaryRank: terms.salaryStanding.map(TransferContractDocument.SalaryRank.init)
         ), identifier: "careerJournalContract")
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("careerJournalContractOffer-" + terms.id)

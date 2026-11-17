@@ -1598,6 +1598,10 @@ struct SeasonOffseasonPanel: View {
                 CalendarProgressReceipt(summary:receipt,failure:receiptFailure,
                     retryEnabled:plan != nil && transition.display == nil && receipt.lastSavedDate == player.gameDate,retry:{proceed()})
                     .accessibilityIdentifier("offseasonSummary")
+                if receipt.stop == .kboFA, receipt.lastSavedDate == player.gameDate, transition.display == nil {
+                    CalendarKBOFANotice(player: player, calendar: state, date: receipt.lastSavedDate,
+                                        canContinue: plan != nil) { proceed() }
+                }
             }
         }
         .task(id: "\(seasonYear):\(player.gameDate):\(state.revision):\(transition.display == nil)") {

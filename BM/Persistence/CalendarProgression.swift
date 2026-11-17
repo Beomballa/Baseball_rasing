@@ -16,6 +16,7 @@ struct CalendarAdvanceSummary: Equatable, Sendable {
         case traitChange = "특성 유지 경고·상실 전 · 하루 진행으로 확인"
         case retirement = "은퇴 완료 · 기록 열람 가능"
         case evaluation = "계약 평가 자료 도착 · 평가 확인 후 계속"
+        case kboFA = "KBO 1군 FA 선언 가능"
         case fixture = "경기일 도착 · 경기 진행/완료 확인"
         case observation = "다음 관찰일 도착"
         case anniversary = "나이·학적 변경 전 · 하루 진행으로 확인"
@@ -118,6 +119,14 @@ struct CalendarScoutNotice: Identifiable {
         return .observation(until: try GameDate(period.next.description))
     }
 
+    private static func automaticContractStop(player: CareerPlayer, state: CareerCalendarState,
+                                              in context: ModelContext, save: Save) throws -> CalendarAdvanceSummary.Stop? {
+        if try ContractEvaluationStore.unread(player: player, calendar: state, in: context) != nil
+            || OverseasContractStore.needsEvaluation(player: player, calendar: state, in: context) { return .evaluation }
+        return try KBOTransferStore.recordDeclarationNoticeIfDue(player: player, calendar: state, in: context, save: save)
+            ? .kboFA : nil
+    }
+
     /// One day is one save, including automatic rest and sleep. A failed save rolls back the whole day.
     static func advanceDay(player: CareerPlayer, state: CareerCalendarState, revision: Int,
                            automaticRest: Bool = false, confirmAnniversary: Bool = false,
@@ -182,7 +191,9 @@ struct CalendarScoutNotice: Identifiable {
                     }
                     if target == today { observationDate = lastSavedDate }
                 }
-                if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
+                if let contract = try automaticContractStop(player: player, state: state, in: context, save: save) {
+                    stop = contract; break
+                }
                 if player.isRetired {stop = .retirement;break}
                 if observationDate != nil {
                     stop = try hasGameToday(player: player, state: state) ? .fixture : .observation
@@ -202,7 +213,9 @@ struct CalendarScoutNotice: Identifiable {
                 await onDaySaved?(lastSavedDate)
                 await Task.yield()
                 if player.isRetired {stop = .retirement;break}
-                if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
+                if let contract = try automaticContractStop(player: player, state: state, in: context, save: save) {
+                    stop = contract; break
+                }
                 if observationDate != nil {
                     stop = try hasGameToday(player: player, state: state) ? .fixture : .observation
                     break
@@ -249,7 +262,9 @@ extension CalendarProgression {
                 try validate(player, state, revision: expectedRevision)
                 guard player.gameDate == lastDate else { throw CalendarError.staleState }
                 if try GameDate(player.gameDate) >= plan.target { stop = .seasonOpening; break }
-                if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
+                if let contract = try automaticContractStop(player: player, state: state, in: context, save: save) {
+                    stop = contract; break
+                }
                 if player.isRetired {stop = .retirement;break}
                 if try CareerLifecycleStore.traitEventTomorrow(player:player,in:context) {stop = .traitChange;break}
                 if try hasGameToday(player: player, state: state) { stop = .fixture; break }
@@ -264,7 +279,9 @@ extension CalendarProgression {
                 await onDaySaved?(lastDate)
                 await Task.yield()
                 if player.isRetired {stop = .retirement;break}
-                if try ContractEvaluationStore.unread(player:player,calendar:state,in:context) != nil || OverseasContractStore.needsEvaluation(player:player,calendar:state,in:context) {stop = .evaluation;break}
+                if let contract = try automaticContractStop(player: player, state: state, in: context, save: save) {
+                    stop = contract; break
+                }
             }
             if stop == .limit {
                 if try GameDate(player.gameDate) == plan.target { stop = .seasonOpening }

@@ -254,6 +254,13 @@ struct CareerCalendarPanel: View {
                     .buttonStyle(MatchPixelButtonStyle(primary: true))
                     .accessibilityIdentifier("calendarProgressOpenRecords")
             }
+        case .kboFA:
+            let targetPending = receipt.goal.observationDate
+                .map { $0.description > player.gameDate } ?? true
+            CalendarKBOFANotice(player: player, calendar: state, date: receipt.lastSavedDate,
+                                canContinue: canRetry && targetPending) {
+                advanceBatch(goal: receipt.goal)
+            }
         case .anniversary:
             Text("훈련 또는 휴식을 마친 뒤 ‘다음 날’에서 나이·학적 변경을 확인하세요.")
                 .font(.caption).foregroundStyle(GameTheme.boardMuted)
@@ -559,6 +566,35 @@ struct CalendarProgressReceipt:View {
             .background(GameTheme.navy,in:ManagementStepFrame())
             .overlay(ManagementStepFrame().strokeBorder(failure == nil ? GameTheme.boardLine:GameTheme.gold,lineWidth:2))
             .accessibilityElement(children:.contain).accessibilityIdentifier("calendarProgressReceipt")
+    }
+}
+
+struct CalendarKBOFANotice: View {
+    let player: CareerPlayer
+    let calendar: CareerCalendarState
+    let date: String
+    let canContinue: Bool
+    let proceed: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            NavigationLink {
+                ContractMarketView(player: player, calendar: calendar, focusKBOFA: true)
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("KBO 1군 FA 선언 가능").font(.headline)
+                    Text("\(ManagementDisplay.date(date))부터 · 11월 14일까지").font(.caption.monospacedDigit())
+                    Text("계약 시장 열기").font(.subheadline.bold())
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(MatchPixelButtonStyle(primary: true))
+            .accessibilityIdentifier("calendarOpenKBOFAMarket")
+            if canContinue {
+                Button("이어서 진행", action: proceed)
+                    .buttonStyle(ManagementButtonStyle(variant: .secondary))
+                    .accessibilityIdentifier("calendarProgressContinueKBOFA")
+            }
+        }
     }
 }
 

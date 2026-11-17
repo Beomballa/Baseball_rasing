@@ -3,6 +3,39 @@ import UIKit
 @testable import BM
 
 final class ClubIdentityTests: XCTestCase {
+    @MainActor func testV197OnlyTopTenPercentReceivesPremiumSalaryPresentation() {
+        for (position, isPremium) in [(1, true), (10, true), (11, false), (70, false), (100, false)] {
+            let standing = LeagueSalaryStanding(version: 1, competition: "domestic-first-team",
+                year: 2039, teamCount: 10, sampleCount: 101, rank: position)
+            let rank = TransferContractDocument.SalaryRank(standing)
+            XCTAssertEqual(rank.isPremium, isPremium)
+            XCTAssertEqual(rank.title, "리그 연봉지수 상위 \(position)%")
+            XCTAssertEqual(rank.comparison, standing.comparison)
+            XCTAssertEqual(rank.presentationIdentifier, isPremium ? "SalaryRankPremium" : "SalaryRankNeutral")
+        }
+    }
+
+    func testV196KBOOfferSalaryStandingUsesEffectiveSeasonRosterAndSharedRanks() throws {
+        let league = "domestic-first-team"
+        let expanded = try XCTUnwrap(LeagueSalaryStanding.benchmark(competition: league, year: 2039, expanded: true))
+        let legacy = try XCTUnwrap(LeagueSalaryStanding.benchmark(competition: league, year: 2039, expanded: false))
+        XCTAssertEqual(expanded.teamCount, 10)
+        XCTAssertEqual(expanded.indices.count, 100)
+        XCTAssertEqual(legacy.indices.count, 60)
+        XCTAssertNil(LeagueSalaryStanding.benchmark(competition: "npb-first-team", year: 2039, expanded: true))
+        XCTAssertEqual(expanded.indices, LeagueSalaryStanding.benchmark(competition: league, year: 2039, expanded: true)?.indices)
+        XCTAssertNotEqual(expanded.indices, LeagueSalaryStanding.benchmark(competition: league, year: 2040, expanded: true)?.indices)
+
+        let maximum = try XCTUnwrap(expanded.indices.max())
+        let tied = try XCTUnwrap(expanded.standing(economicIndex: maximum))
+        XCTAssertEqual(tied.sampleCount, 101)
+        XCTAssertEqual(tied.rank, 1)
+        XCTAssertEqual(tied.topPercent, 1)
+        let minimum = try XCTUnwrap(expanded.indices.min())
+        XCTAssertEqual(expanded.standing(economicIndex: minimum - 1)?.topPercent, 100)
+        XCTAssertEqual(tied, try JSONDecoder().decode(LeagueSalaryStanding.self, from: JSONEncoder().encode(tied)))
+    }
+
     @MainActor func testHomeVenueUsesParentArtworkForDevelopmentTeams() throws {
         let pairs = CareerTeamDirectory.expandedDomesticIDs.map { ($0, "pro-" + $0.dropFirst("dev-".count)) }
             + CareerTeamDirectory.americanDevelopmentIDs.map { ($0, "us-pro-" + $0.dropFirst("us-dev-".count)) }

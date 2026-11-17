@@ -63,6 +63,7 @@ import SwiftData
         let period: String?
         var dates: [ContractDate]
         var origin: String? = nil
+        var salaryStanding: LeagueSalaryStanding? = nil
     }
 
     struct ContractDate: Hashable {
@@ -380,6 +381,23 @@ import SwiftData
         }
         if let overseas = journal.overseasCareer {
             rows += try overseasContractEntries(overseas, today: today)
+        }
+        if let market = journal.kboTransfers {
+            for evaluation in market.evaluations {
+                guard let declaration = market.declarations.first(where: { $0.id == evaluation.declarationID }) else { continue }
+                for offer in evaluation.offers {
+                    let terms = ContractTerms(id: offer.id, club: ContractClub(id: offer.teamID, name: offer.name),
+                        kind: "KBO 1군 FA", role: DomesticContractOffer.roleName(offer.roleID),
+                        economicLabel: "연봉지수", economicIndex: offer.economicIndex, signingBonusWon: offer.signingBonusWon,
+                        period: "\(offer.years)년 · \(offer.effective) ~ \(offer.economicEnd)",
+                        dates: termDates(issued: offer.issued, expires: offer.expires, proposed: offer.effective, end: offer.economicEnd),
+                        origin: declaration.source.name, salaryStanding: offer.salaryStanding)
+                    guard let decision = market.decisions.first(where: { $0.offerID == offer.id }), decision.kind != .closed else { continue }
+                    let accepted = decision.kind == .accepted
+                    rows += try decisionRows(terms: terms, date: decision.date, accepted: accepted,
+                                             effective: accepted ? offer.effective : nil, today: today)
+                }
+            }
         }
         return rows
     }

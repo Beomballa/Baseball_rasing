@@ -59,6 +59,10 @@ enum CareerSchemaV2: VersionedSchema {
         func isExpandedDomestic(year: Int) throws -> Bool {
             try domesticExpansionYear.map { year >= $0 } ?? false
         }
+        func isExpandedDomesticAtFutureOpening(year: Int) throws -> Bool {
+            // The first day advancement adopts the expanded league by the next opening.
+            try domesticExpansionYear.map { year >= $0 } ?? (year <= 9998)
+        }
         func isExpandedCompetition(level: String, year: Int) throws -> Bool {
             switch level {
             case "domestic-development", "domestic-first-team": try isExpandedDomestic(year: year)
@@ -119,7 +123,13 @@ enum CareerSchemaV2: VersionedSchema {
                 guard members.count <= 1 else {throw ContractRegistrationError.invalid}
                 if let original=members.first {
                     let member=try journal.projected(original,on:first)
-                    let expanded = try isExpandedCompetition(level: member.level, year: year)
+                    let scheduledKBOTransfer = member.level == KBOFADeclaration.competition
+                        && journal.kboTransfers?.acceptedOffers.contains {
+                            $0.id == member.offerID && $0.effective <= first.description
+                        } == true
+                    let expanded = try scheduledKBOTransfer && GameDate(player.gameDate) < first
+                        ? isExpandedDomesticAtFutureOpening(year: year)
+                        : isExpandedCompetition(level: member.level, year: year)
                     let ids = CareerTeamDirectory.teams(level: member.level, expanded: expanded)
                     guard ids.contains(member.teamID) else { throw CalendarError.invalidGroup }
                     let fixtures = try CareerTeamDirectory.fixtures(level: member.level, year: year, expanded: expanded)
