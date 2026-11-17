@@ -130,7 +130,6 @@ struct CareerMatchReadSnapshot: Sendable, Equatable {
 struct CareerPreparedManualInput: Sendable {
     fileprivate let source:CareerMatchReadSnapshot
     fileprivate let calendarRevision:Int,playerDate:String,playerFatigue:Int
-    fileprivate let input:MatchInput,pitchCode:String?,control:ManualMatchInput
     fileprivate let previous:CareerMatch,updated:CareerMatch,payload:Data
     #if DEBUG
     var preparedOnMainThread=Thread.isMainThread
@@ -248,7 +247,22 @@ struct CareerCommittedManualInput {
     static func advance(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
                         revision: Int, input: MatchInput, pitchCode: String? = nil, control: ManualMatchInput? = nil, in context: ModelContext,
                         save: CalendarProgression.Save = { try $0.save() }) throws {
-        _ = try applyInput(player:player,state:state,record:record,revision:revision,input:input,pitchCode:pitchCode,control:control,prepared:nil,in:context,save:save)
+        _ = try applyAdvance(player: player, state: state, record: record, revision: revision, in: context, save: save) {
+            try $0.advance(input, pitchCode: pitchCode, control: control)
+        }
+    }
+
+    static func advanceToNextAppearance(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
+                                        revision: Int, in context: ModelContext,
+                                        save: CalendarProgression.Save = { try $0.save() }) throws -> CareerMatch.AutomaticSegmentStop {
+        guard player.modelContext === context, state.modelContext === context, record.modelContext === context else {
+            throw MatchError.stale
+        }
+        return try applyAdvance(player: player, state: state, record: record, revision: revision, in: context, save: save) { match in
+            let stop = try match.advanceToNextAppearance()
+            try match.pitchLog?.validate(match: match)
+            return stop
+        }.result
     }
 
     static func prepareManual(player:CareerPlayer,state:CareerCalendarState,record:CareerMatchRecord,revision:Int,
@@ -268,7 +282,7 @@ struct CareerCommittedManualInput {
             let payload=try JSONEncoder().encode(updated)
             try Task.checkCancellation()
             return CareerPreparedManualInput(source:source,calendarRevision:calendarRevision,playerDate:date,
-                playerFatigue:fatigue,input:input,pitchCode:pitchCode,control:control,previous:previous,updated:updated,payload:payload)
+                playerFatigue:fatigue,previous:previous,updated:updated,payload:payload)
         }
         let prepared=try await withTaskCancellationHandler(operation:{try await job.value},onCancel:{job.cancel()})
         try Task.checkCancellation()
@@ -282,8 +296,8 @@ struct CareerCommittedManualInput {
                              record:CareerMatchRecord,in context:ModelContext,
                              save:CalendarProgression.Save = {try $0.save()}) throws -> CareerCommittedManualInput {
         try Task.checkCancellation()
-        return try applyInput(player:player,state:state,record:record,revision:prepared.source.revision,input:prepared.input,
-            pitchCode:prepared.pitchCode,control:prepared.control,prepared:prepared,in:context,save:save)
+        return try applyAdvance(player: player, state: state, record: record, revision: prepared.source.revision,
+                                prepared: prepared, in: context, save: save) { _ in }.committed
     }
 
     nonisolated private static func validateAdvanced(_ match:CareerMatch) throws {
@@ -295,10 +309,10 @@ struct CareerCommittedManualInput {
         try match.abilityExperience?.validate(match:match)
     }
 
-    private static func applyInput(player:CareerPlayer,state:CareerCalendarState,record:CareerMatchRecord,
-                                   revision:Int,input:MatchInput,pitchCode:String?,control:ManualMatchInput?,
-                                   prepared:CareerPreparedManualInput?,in context:ModelContext,
-                                   save:CalendarProgression.Save) throws -> CareerCommittedManualInput {
+    private static func applyAdvance<Result>(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
+                                             revision: Int, prepared: CareerPreparedManualInput? = nil, in context: ModelContext,
+                                             save: CalendarProgression.Save, simulate: (inout CareerMatch) throws -> Result)
+        throws -> (committed: CareerCommittedManualInput, result: Result) {
         #if DEBUG
         MatchRenderMetrics.mark("career.store.begin")
         #endif
@@ -320,7 +334,7 @@ struct CareerCommittedManualInput {
         #if DEBUG
         MatchRenderMetrics.mark("career.store.snapshotReady")
         #endif
-        if prepared == nil {try match.advance(input,pitchCode:pitchCode,control:control)}
+        let result = try simulate(&match)
         #if DEBUG
         MatchRenderMetrics.mark("career.store.simulated")
         #endif
@@ -388,7 +402,7 @@ struct CareerCommittedManualInput {
         #if DEBUG
         MatchRenderMetrics.mark("career.store.saved")
         #endif
-        return CareerCommittedManualInput(previous:previous,updated:match,saved:saved)
+        return (CareerCommittedManualInput(previous:previous,updated:match,saved:saved), result)
     }
 
     private static func completionFeedback(_ match:CareerMatch,player:CareerPlayer,state:CareerCalendarState,record:CareerMatchRecord,fixture:SeasonFixture,in context:ModelContext) throws -> MatchProjectFeedback {

@@ -55,6 +55,7 @@ struct CareerGameView: View {
     @State private var error: String?
     @State private var pitchCode = ""
     @State private var confirmAutomatic = false
+    @State private var automaticBoundary: String?
     @State private var scene = BallparkScene(size: CGSize(width: 320, height: 400))
 
     @State private var visualSnapshot: CareerMatch?
@@ -247,6 +248,7 @@ struct CareerGameView: View {
         if livePerformanceQA {MatchRenderMetrics.mark(player.role == .pitcher ? "career.input.pitch":"career.input."+battingAction.rawValue)}
         #endif
         guard !presenting, !committing, attempt == nil, retrySave == nil, let record, let match = try? displaySnapshot.refresh(record), !match.completed, player.role != .pitcher || match.ownPitcherActive else { return }
+        automaticBoundary = nil
         let input: MatchInput = player.role == .pitcher ? .pitch : battingAction
         let actualCode=match.deliveryPitchCode(requested:pitchCode)
         let delivery = match.delivery(pitchCode: actualCode)
@@ -384,10 +386,51 @@ struct CareerGameView: View {
         do {
             try persist(record,revision:record.revision,input:input,pitchCode:pitchCode,control:nil)
             _ = try displaySnapshot.refresh(record)
+            automaticBoundary = nil
             _ = scene.demonstrate(reduceMotion: reduced)
         } catch { self.error = error.localizedDescription }
     }
+    private var canAdvanceToNextAppearance: Bool {
+        assessmentID == nil && displaySnapshot.match?.canAdvanceToNextAppearance == true
+    }
+    private var nextAppearanceLabel: String {
+        player.role == .pitcher ? "다음 내 등판 이닝까지" : "다음 내 타석까지"
+    }
+    private var automaticMessage: String {
+        if assessmentID != nil {
+            return "현재 평가 경기의 카운트·주자에서 이어서 진행합니다. 자동 입력을 구분해 평가전 원장에 저장합니다."
+        }
+        if record?.appearance == false {
+            return "팀 경기 결과만 저장합니다."
+        }
+        if canAdvanceToNextAppearance {
+            return player.role == .pitcher
+                ? "다음 수비 이닝의 첫 투구 전에 멈춥니다. 투수 교체나 경기 종료가 먼저 오면 그 시점에 멈춥니다."
+                : "현재 타석을 마치고 다음 내 타석의 첫 공 전에 멈춥니다. 다음 타석 전에 경기가 끝나면 결과를 저장합니다."
+        }
+        return "현재 카운트·주자에서 이어서 진행합니다. 실제 출전 성적과 피로를 반영하며 취소할 수 없습니다."
+    }
+    private func advanceToNextAppearance() {
+        guard !inputLocked, attempt == nil, canAdvanceToNextAppearance, let record else { return }
+        do {
+            let stop = try CareerMatchStore.advanceToNextAppearance(
+                player: player, state: calendar, record: record, revision: record.revision, in: context)
+            let match = try displaySnapshot.refresh(record)
+            cancelInput()
+            switch stop {
+            case .nextAppearance:
+                automaticBoundary = player.role == .pitcher
+                    ? "\(match.inningLabel) · 첫 투구 대기" : "\(match.inningLabel) · 내 타석 대기"
+            case .pitcherReplaced, .gameCompleted:
+                automaticBoundary = nil
+            }
+        } catch { self.error = error.localizedDescription }
+    }
     @ViewBuilder private func controls(_ match: CareerMatch) -> some View {
+        if let automaticBoundary {
+            Text(automaticBoundary).font(.caption.bold()).foregroundStyle(GameTheme.gold)
+                .accessibilityIdentifier("gameAutomaticBoundary")
+        }
         if let pending = retrySave {
             Text("직전 입력을 저장하지 못했습니다.").font(.caption)
             Button("같은 입력 다시 저장") { commit(pending) }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("retryGameInput")
@@ -1064,15 +1107,17 @@ struct CareerGameView: View {
                 cancelInput()
             }
         }
-        .managementConfirmationDialog("남은 경기를 자동으로 진행할까요?", isPresented: $confirmAutomatic, titleVisibility: .visible) {
+        .managementConfirmationDialog(canAdvanceToNextAppearance ? "어디까지 자동으로 진행할까요?" : "남은 경기를 자동으로 진행할까요?",
+                                      isPresented: $confirmAutomatic, titleVisibility: .visible) {
+            if canAdvanceToNextAppearance {
+                Button(nextAppearanceLabel) { advanceToNextAppearance() }
+                    .accessibilityIdentifier("gameAutomaticNextAppearance")
+            }
             Button("진행하고 결과 저장", role: .destructive) { advance(.automatic) }
         } message: {
-            if assessmentID != nil {
-                Text("현재 평가 경기의 카운트·주자에서 이어서 진행합니다. 자동 입력을 구분해 평가전 원장에 저장합니다.")
-            } else if record?.appearance == false {
-                Text("팀 경기 결과만 저장합니다.")
-            } else {
-                Text("현재 카운트·주자에서 이어서 진행합니다. 실제 출전 성적과 피로를 반영하며 취소할 수 없습니다.")
+            Text(automaticMessage)
+            if canAdvanceToNextAppearance {
+                Text("‘진행하고 결과 저장’을 선택하면 경기 종료까지 진행하고 출전 성적과 피로를 반영합니다.")
             }
         }
         .managementAlert("경기를 저장하지 못했습니다", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } }), kind: .failure) {

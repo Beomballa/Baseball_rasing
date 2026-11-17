@@ -324,6 +324,227 @@ import AVFoundation
         XCTAssertEqual(match.appliedFatigueCost, 20)
     }
 
+    func testV176BatterAutomaticStopsBeforeNextPlateAppearance() throws {
+        for home in [false, true] {
+            for midCount in [false, true] {
+                var match = CareerMatch(random: 41, isHome: home, role: "batter", appearance: true,
+                    contact: 65, power: 75, discipline: 60, mastery: [:])
+                match.settle()
+                XCTAssertTrue(match.canAdvanceToNextAppearance)
+                XCTAssertEqual(match.balls + match.strikes, 0)
+                if midCount { try match.advance(.watch) }
+                XCTAssertEqual(match.balls + match.strikes, midCount ? 1 : 0)
+                let before = match
+                var full = before
+                try full.advance(.automatic)
+
+                XCTAssertEqual(try match.advanceToNextAppearance(), .nextAppearance)
+                XCTAssertFalse(match.completed)
+                XCTAssertTrue(match.ownAtBat)
+                XCTAssertEqual(match.balls, 0)
+                XCTAssertEqual(match.strikes, 0)
+                XCTAssertEqual(match.line.plateAppearances, before.line.plateAppearances + 1)
+                XCTAssertEqual(home ? match.homeOrder : match.awayOrder, (home ? before.homeOrder : before.awayOrder) + 9)
+
+                var observedStops = 1
+                while match.canAdvanceToNextAppearance && observedStops < 25 {
+                    _ = try match.advanceToNextAppearance()
+                    observedStops += 1
+                }
+                XCTAssertTrue(match.completed)
+                XCTAssertEqual(match, full)
+            }
+        }
+    }
+
+    func testV176PitcherAutomaticStopsBeforeNextInningFirstPitch() throws {
+        for home in [false, true] {
+            var match = CareerMatch(random: 41, isHome: home, role: "pitcher", appearance: true,
+                contact: 65, power: 75, discipline: 60, mastery: ["four-seam": 72, "slider": 60])
+            match.settle()
+            let start = match
+            var full = start
+            try full.advance(.automatic)
+
+            XCTAssertEqual(try match.advanceToNextAppearance(), .nextAppearance)
+            XCTAssertTrue(match.ownPitcherActive)
+            XCTAssertFalse(match.offense)
+            XCTAssertEqual(match.half, start.half + 2)
+            XCTAssertEqual(match.outs, 0)
+            XCTAssertEqual(match.balls, 0)
+            XCTAssertEqual(match.strikes, 0)
+            XCTAssertEqual(match.bases, [false, false, false])
+            XCTAssertEqual(match.line.pitchingOuts, 3)
+            XCTAssertGreaterThan(match.line.pitches, start.line.pitches)
+
+            let firstPitch = match.line.pitches
+            try match.advance(.pitch, pitchCode: "four-seam")
+            XCTAssertEqual(match.line.pitches, firstPitch + 1)
+            try match.advance(.automatic)
+            XCTAssertEqual(match, full)
+        }
+
+        var replaced = reliefMatch()
+        replaced.pitching?.startingFatigue = 100
+        replaced.abilityStats = MatchAbilityStats(mental: 60, velocity: 60, control: 60, stuff: 60, stamina: 60, fatigue: 100)
+        var full = replaced
+        try full.advance(.automatic)
+        XCTAssertEqual(try replaced.advanceToNextAppearance(), .pitcherReplaced)
+        XCTAssertNotNil(replaced.ownPitcherChange)
+        XCTAssertFalse(replaced.canAdvanceToNextAppearance)
+        XCTAssertThrowsError(try replaced.advanceToNextAppearance())
+        try replaced.advance(.automatic)
+        XCTAssertEqual(replaced, full)
+    }
+
+    func testV176PartialAutomaticDiskResumePreservesStateAndAppliesCompletionOnce() throws {
+        enum Failure: Error { case injected }
+        for role in PlayerRole.allCases {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let url = directory.appendingPathComponent("next-appearance.store")
+            let interrupted = try autoreleasepool {
+                let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+                let (player, state) = try growthSetup(role: role, in: context)
+                let record = try ready(player, state, in: context)
+                let input: MatchInput = role == .batter ? .watch : .pitch
+                let code = role == .pitcher ? "four-seam" : nil
+                let initial = try record.snapshot()
+                // Select a deterministic first pitch that leaves the current count open.
+                let seed = try (UInt64(1)...64).first { seed in
+                    var candidate = initial
+                    candidate.random = seed
+                    try candidate.advance(input, pitchCode: code)
+                    return candidate.balls + candidate.strikes == 1
+                }
+                var seeded = initial
+                seeded.random = try XCTUnwrap(seed)
+                record.payload = try JSONEncoder().encode(seeded)
+                try context.save()
+                try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision,
+                    input: input, pitchCode: code, in: context)
+                let snapshot = try record.snapshot()
+                XCTAssertEqual(snapshot.balls + snapshot.strikes, 1)
+                return (key: record.key, payload: record.payload, revision: record.revision, calendarRevision: state.revision, snapshot: snapshot)
+            }
+
+            let savedSegment = try autoreleasepool {
+                let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+                let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+                let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+                let record = try CareerMatchStore.start(player: player, state: state, in: context)
+                let fatigue = player.fatigue
+                XCTAssertEqual(record.key, interrupted.key)
+                XCTAssertEqual(record.payload, interrupted.payload)
+                XCTAssertEqual(record.revision, interrupted.revision)
+                XCTAssertEqual(state.revision, interrupted.calendarRevision)
+                XCTAssertEqual(try record.snapshot(), interrupted.snapshot)
+
+                XCTAssertThrowsError(try CareerMatchStore.advanceToNextAppearance(player: player, state: state, record: record,
+                    revision: interrupted.revision, in: context, save: { _ in throw Failure.injected }))
+                XCTAssertEqual(record.payload, interrupted.payload)
+                XCTAssertEqual(record.revision, interrupted.revision)
+                XCTAssertEqual(state.revision, interrupted.calendarRevision)
+                XCTAssertEqual(player.fatigue, fatigue)
+
+                var expected = interrupted.snapshot
+                XCTAssertEqual(try expected.advanceToNextAppearance(), .nextAppearance)
+                var saveCount = 0
+                let save: CalendarProgression.Save = { context in
+                    saveCount += 1
+                    try context.save()
+                }
+                XCTAssertEqual(try CareerMatchStore.advanceToNextAppearance(player: player, state: state, record: record,
+                    revision: interrupted.revision, in: context, save: save), .nextAppearance)
+                XCTAssertEqual(try record.snapshot(), expected)
+                XCTAssertEqual(record.revision, interrupted.revision + 1)
+                XCTAssertEqual(state.revision, interrupted.calendarRevision + 1)
+                XCTAssertEqual(player.fatigue, fatigue)
+                XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID: player.id, year: 2026, in: context), 0)
+                XCTAssertThrowsError(try CareerMatchStore.advanceToNextAppearance(player: player, state: state, record: record,
+                    revision: interrupted.revision, in: context, save: save))
+                XCTAssertEqual(saveCount, 1)
+                return (payload: record.payload, revision: record.revision, snapshot: expected)
+            }
+
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let record = try CareerMatchStore.start(player: player, state: state, in: context)
+            XCTAssertEqual(record.key, interrupted.key)
+            XCTAssertEqual(record.payload, savedSegment.payload)
+            XCTAssertEqual(record.revision, savedSegment.revision)
+            XCTAssertEqual(try record.snapshot(), savedSegment.snapshot)
+
+            var expected = interrupted.snapshot
+            try expected.advance(.automatic)
+            let setupFatigue = player.fatigue
+            let kinds = MatchAbilityExperience.kinds(role: player.roleRaw)
+            let abilities = try kinds.map { try CareerTrainingStore.value(player: player, code: nil, kind: $0, in: context) }
+            let positions = try PlayerPositionStore.profile(playerID: player.id, in: context)?.payload
+
+            // Reach the final command through the new option while it is available.
+            var trySegmentOnCompletion = false
+            for _ in 0..<25 {
+                var preview = try record.snapshot()
+                if !preview.canAdvanceToNextAppearance { break }
+                if try preview.advanceToNextAppearance() == .gameCompleted {
+                    trySegmentOnCompletion = true
+                    break
+                }
+                _ = try CareerMatchStore.advanceToNextAppearance(player: player, state: state, record: record,
+                    revision: record.revision, in: context)
+            }
+            if role == .batter { XCTAssertTrue(trySegmentOnCompletion) }
+            let before = (payload: record.payload, revision: record.revision, calendarRevision: state.revision)
+            func finish(save: CalendarProgression.Save) throws {
+                if trySegmentOnCompletion {
+                    let stop = try CareerMatchStore.advanceToNextAppearance(player: player, state: state, record: record,
+                        revision: before.revision, in: context, save: save)
+                    XCTAssertEqual(stop, .gameCompleted)
+                } else {
+                    try CareerMatchStore.advance(player: player, state: state, record: record, revision: before.revision,
+                        input: .automatic, in: context, save: save)
+                }
+            }
+            XCTAssertThrowsError(try finish(save: { _ in throw Failure.injected }))
+            XCTAssertEqual(record.payload, before.payload)
+            XCTAssertEqual(record.revision, before.revision)
+            XCTAssertEqual(state.revision, before.calendarRevision)
+            XCTAssertEqual(player.fatigue, setupFatigue)
+            XCTAssertEqual(try kinds.map { try CareerTrainingStore.value(player: player, code: nil, kind: $0, in: context) }, abilities)
+            XCTAssertEqual(try PlayerPositionStore.profile(playerID: player.id, in: context)?.payload, positions)
+            XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID: player.id, year: 2026, in: context), 0)
+
+            try finish(save: { try $0.save() })
+            let actual = try record.snapshot(), finalPayload = record.payload
+            expected.projectFeedback = actual.projectFeedback
+            XCTAssertTrue(record.completed)
+            XCTAssertEqual(actual, expected)
+            XCTAssertEqual(record.revision, before.revision + 1)
+            XCTAssertEqual(state.revision, before.calendarRevision + 1)
+            XCTAssertEqual(player.fatigue, min(100, setupFatigue + actual.appliedFatigueCost))
+            let reward = try XCTUnwrap(actual.abilityExperience?.result)
+            XCTAssertGreaterThan(reward.rawXP, 0)
+            XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID: player.id, year: 2026, in: context), reward.rawXP)
+            for award in reward.awards {
+                XCTAssertEqual(try CareerTrainingStore.value(player: player, code: nil, kind: award.kind, in: context), award.after)
+            }
+            XCTAssertEqual(try CareerMatchStore.start(player: player, state: state, in: context).payload, finalPayload)
+            XCTAssertThrowsError(try CareerMatchStore.advanceToNextAppearance(player: player, state: state, record: record,
+                revision: record.revision, in: context))
+            XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: state, record: record, revision: record.revision,
+                input: .automatic, in: context))
+            XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerMatchRecord>()), 1)
+            XCTAssertEqual(record.payload, finalPayload)
+            XCTAssertEqual(record.revision, before.revision + 1)
+            XCTAssertEqual(state.revision, before.calendarRevision + 1)
+            XCTAssertEqual(player.fatigue, min(100, setupFatigue + actual.appliedFatigueCost))
+            XCTAssertEqual(try CareerMatchStore.annualAbilityXP(playerID: player.id, year: 2026, in: context), reward.rawXP)
+        }
+    }
+
     func testDirectAndAutomaticUseIdenticalEngineAndValidBaseballTotals() throws {
         for seed in 0..<100 {
             for home in [true, false] {

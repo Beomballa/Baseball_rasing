@@ -48,6 +48,10 @@ struct MatchInningScores: Codable, Equatable {
 
 /// The saved RNG and complete field state make retry/resume use the same next pitch.
 struct CareerMatch: Codable, Equatable {
+    enum AutomaticSegmentStop: Equatable {
+        case nextAppearance, pitcherReplaced, gameCompleted
+    }
+
     var random: UInt64
     var half = 0, outs = 0, balls = 0, strikes = 0
     var bases = [false, false, false]
@@ -91,6 +95,9 @@ struct CareerMatch: Codable, Equatable {
     var ownPitcherChange: PitcherChange? { role == "pitcher" && appearance ? pitching?.change(home:isHome) : nil }
     var offense: Bool { (half % 2 == 1) == isHome }
     var ownAtBat: Bool { offense && (isHome ? homeOrder : awayOrder) % 9 == 0 }
+    var canAdvanceToNextAppearance: Bool {
+        !completed && appearance && (role == "batter" ? ownAtBat : ownPitcherActive && !offense)
+    }
     var teamScore: Int { isHome ? homeScore : awayScore }
     var opponentScore: Int { isHome ? awayScore : homeScore }
     var inningLabel: String { completed ? "경기 종료" : "\(half / 2 + 1)회 \(half % 2 == 0 ? "초" : "말")" }
@@ -172,11 +179,43 @@ struct CareerMatch: Codable, Equatable {
         }
         if input != .automatic { scoutingPerformance?.manual = true }
         if input == .automatic {
-            while !completed { step(role == "batter" ? .swing : .pitch, pitchCode: mastery.keys.sorted().first); settle() }
+            while !completed { advanceAutomaticPitch() }
         } else {
             settle()
             if !completed { step(input, pitchCode: pitchCode, control: control, direct: true); settle() }
         }
+        finalizeAbilityExperience()
+    }
+
+    mutating func advanceToNextAppearance() throws -> AutomaticSegmentStop {
+        guard !completed else { throw MatchError.finished }
+        guard canAdvanceToNextAppearance else { throw MatchError.invalidInput }
+        let startingHalf = half
+        let startingOrder = isHome ? homeOrder : awayOrder
+
+        while !completed {
+            advanceAutomaticPitch()
+            if completed { break }
+            if ownPitcherChange != nil { return .pitcherReplaced }
+            guard balls == 0, strikes == 0 else { continue }
+            // Consume the current appearance even when it is waiting on its first pitch.
+            if role == "batter" {
+                if ownAtBat && (isHome ? homeOrder : awayOrder) != startingOrder { return .nextAppearance }
+            } else if half != startingHalf, !offense, outs == 0 {
+                return .nextAppearance
+            }
+        }
+
+        finalizeAbilityExperience()
+        return .gameCompleted
+    }
+
+    private mutating func advanceAutomaticPitch() {
+        step(role == "batter" ? .swing : .pitch, pitchCode: mastery.keys.sorted().first)
+        settle()
+    }
+
+    private mutating func finalizeAbilityExperience() {
         if completed, let experience = abilityExperience {
             let reward = experience.reward(for: self)
             abilityExperience?.result = reward
