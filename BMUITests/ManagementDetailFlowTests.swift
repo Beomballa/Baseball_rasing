@@ -57,6 +57,25 @@ final class ManagementDetailFlowTests: XCTestCase {
         }
         app.terminate()
     }
+    @MainActor func testV153FixedFieldScenesStepThroughSupportWithoutStore() {
+        continueAfterFailure=false
+        let app=XCUIApplication();app.launchArguments=["-field-replay-verification"]
+        app.launch();defer {app.terminate()}
+        XCTAssertTrue(app.staticTexts["fieldVerificationNotice"].waitForExistence(timeout:10))
+        for scenario in ["1루 뜬공","3루 뜬공","외야 사이 타구","포구·낙구 경계"] {
+            let menu=app.buttons["fieldVerificationScenario"];reveal(menu,app);menu.tap()
+            XCTAssertTrue(app.buttons[scenario].waitForExistence(timeout:5));app.buttons[scenario].tap()
+            XCTAssertFalse(app.staticTexts["fieldVerificationError"].exists)
+            let next=app.buttons["fieldVerificationNext"],time=app.staticTexts["fieldVerificationTime"]
+            XCTAssertTrue(next.waitForExistence(timeout:5));let initial=time.label
+            for _ in 0..<6 {reveal(next,app);next.tap()}
+            XCTAssertNotEqual(time.label,initial)
+            XCTAssertFalse(app.staticTexts["fieldVerificationError"].exists)
+            let canvas=app.descendants(matching:.any).matching(identifier:"fieldReplayCanvas").firstMatch
+            reveal(canvas,app);XCTAssertTrue(canvas.isHittable)
+        }
+    }
+
     @MainActor func testV56TrainingTerminationResumeAndStoredRewardBothRoles() {
         continueAfterFailure=false
         let app=XCUIApplication()

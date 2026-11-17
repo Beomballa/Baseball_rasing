@@ -33,6 +33,43 @@ import UIKit
         XCTAssertEqual(try encoder.encode(look), original)
     }
 
+    func testV116OpponentUniformKeepsHelmetSeparateFromJerseyAllPoses() throws {
+        let name="opponent-batter-v116"
+        let style=GameUniformStyle(id:"v116-red-green",pattern:"solid",body:0xd92b24,sleeves:0xd92b24,cap:0x248b36,brim:0x248b36,trim:0xd92b24,ink:0xffffff,mark:[])
+        func pixels(_ image:CGImage)->[UInt8] {
+            var bytes=[UInt8](repeating:0,count:image.width*image.height*4)
+            bytes.withUnsafeMutableBytes {p in
+                let c=CGContext(data:p.baseAddress,width:image.width,height:image.height,bitsPerComponent:8,bytesPerRow:image.width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo.byteOrder32Big.rawValue|CGImageAlphaInfo.premultipliedLast.rawValue)
+                c?.draw(image,in:CGRect(x:0,y:0,width:image.width,height:image.height))
+            };return bytes
+        }
+        for frame in 0..<6 {
+            let source=try XCTUnwrap(MatchArt.cell(name,column:frame%3,row:frame/3,columns:3,rows:2)?.cgImage)
+            let image=try XCTUnwrap(OpponentMotionArt.image(name,frame:frame,columns:3,rows:2,kit:0x1733dc,style:style)?.cgImage)
+            XCTAssertEqual(source.width, 512); XCTAssertEqual(source.height, 512)
+            XCTAssertEqual(image.width, source.width); XCTAssertEqual(image.height, source.height)
+            guard source.width == 512, source.height == 512, image.width == 512, image.height == 512 else { return }
+            let a=pixels(source),b=pixels(image),helmet=OpponentMotionArt.batterHelmet(frame:frame),shirt=OpponentMotionArt.torso(name,frame:frame)
+            var head=0,body=0
+            for y in 0..<512 {for x in 0..<512 {
+                let n=(y*512+x)*4;guard a[n+3]>200,Int(a[n+2])>36,Double(a[n+2])>Double(a[n])*1.35,Double(a[n+2])>Double(a[n+1])*1.1 else {continue}
+                let p=CGPoint(x:Double(x)/512,y:Double(y)/512)
+                if helmet.contains(p) {XCTAssertGreaterThan(b[n+1],b[n]);head += 1}
+                else if p.y > 0.24 && p.y < shirt.maxY {XCTAssertGreaterThan(b[n],b[n+1]);body += 1}
+            }}
+            XCTAssertGreaterThan(head,100);XCTAssertGreaterThan(body,100)
+        }
+        let follow=try XCTUnwrap(MatchArt.cell(name,column:0,row:1,columns:3,rows:2)?.cgImage),b=pixels(follow)
+        XCTAssertEqual(follow.width, 512); XCTAssertEqual(follow.height, 512)
+        guard follow.width == 512, follow.height == 512 else { return }
+        var face=0
+        for y in 143..<190 {for x in 266..<358 {
+            let n=(y*512+x)*4
+            if b[n+3]>200 && b[n]>160 && Double(b[n])>Double(b[n+1])*1.2 && Double(b[n+1])>Double(b[n+2])*1.2 {face += 1}
+        }}
+        XCTAssertGreaterThan(face,100,"팔로스루에서 등 뒤로 돌지 않고 투수 쪽 얼굴/가슴 방향 유지")
+    }
+
     func testV107VisibleHairAndCacheIsolationPreserveAppearance() throws {
         var look = PlayerAppearance(); look.creationVersion = 1; look.schoolKitID = "hs-ref-001"
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
