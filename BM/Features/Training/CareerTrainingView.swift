@@ -4,11 +4,18 @@ import SpriteKit
 
 struct CareerTrainingView: View {
     private enum ResultFocus: Hashable { case attempt, summary }
+    private struct AutoPreparationAttempt: Equatable {
+        let recordKey: String
+        let revision: Int
+        let savedAttempts: Int
+    }
+
     @AccessibilityFocusState(for: .voiceOver) private var resultFocus: ResultFocus?
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.careerCompletionNavigation) private var completionNavigation
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State private var chromeHeights: [String: CGFloat] = [:]
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduced
@@ -47,6 +54,8 @@ struct CareerTrainingView: View {
     @State private var replayScore: Int?
     @State private var feedbackVisible = false
     @State private var reviewReady = false
+    @State private var autoPrepareEnabled = false
+    @State private var autoPrepareTask: Task<Void, Never>?
     @State private var coachNote: TrainingCoachNote?
     @State private var releaseHint = ""
     @State private var feedbackTick = 0
@@ -79,6 +88,15 @@ struct CareerTrainingView: View {
     private var displayTraining: CareerTraining? { replay ?? training }
     private var replayLabel: String { feedbackVisible ? "결과 확인 중…" : "동작 진행 중…" }
     private var inputLocked: Bool { retryInput != nil || replay != nil }
+    private var usesManualReview: Bool { voiceOver || dynamicTypeSize.isAccessibilitySize }
+    private var autoPreparationAttempt: AutoPreparationAttempt? {
+        guard !practice, !usesManualReview, scenePhase == .active, reviewReady, feedbackVisible, retryInput == nil,
+              let record, let previous = replay, let training, isLocationDrill, training.selectedKind == .control,
+              !record.completed, !training.completed, record.key == CareerTrainingRecord.key(player.id, player.gameDate),
+              training.calendarRevision == calendar.revision,
+              (1...4).contains(training.scores.count), previous.scores.count + 1 == training.scores.count else { return nil }
+        return AutoPreparationAttempt(recordKey: record.key, revision: record.revision, savedAttempts: training.scores.count)
+    }
     private var isPitcher: Bool { player.role == .pitcher }
     private var selectedKind: TrainingKind { training?.selectedKind ?? (category == 0 && isPitcher ? .pitch : kind) }
     private var studyCode: String? { training?.pitchStudy?.code ?? initialPitchStudyCode ?? continuedPitchStudy?.code }
@@ -193,6 +211,7 @@ struct CareerTrainingView: View {
     }
     private func saveAttempt() {
         guard let input = retryInput, let revision = retryRevision else { return }
+        cancelAutoPreparation()
         if replay == nil { replay = training; replayStarted = Date(); feedbackVisible = false; reviewReady = false }
         do {
             if practice {
@@ -250,10 +269,27 @@ struct CareerTrainingView: View {
         feedbackVisible = true; feedbackTick += 1
     }
     private func finishReplay() {
-        guard replay != nil else { return }
+        guard replay != nil, !reviewReady else { return }
         reviewReady = true
+        scheduleAutoPreparation()
+    }
+    private func scheduleAutoPreparation() {
+        cancelAutoPreparation()
+        guard autoPrepareEnabled, let attempt = autoPreparationAttempt else { return }
+        autoPrepareTask = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            guard !Task.isCancelled else { return }
+            autoPrepareTask = nil
+            guard autoPrepareEnabled, autoPreparationAttempt == attempt else { return }
+            continueSession()
+        }
+    }
+    private func cancelAutoPreparation() {
+        autoPrepareTask?.cancel()
+        autoPrepareTask = nil
     }
     private func continueSession() {
+        cancelAutoPreparation()
         guard reviewReady else { return }
         replay = nil; feedbackVisible = false; reviewReady = false; deliveryArrived = false; scene.cancelDelivery()
         locationReplay = nil; locationScene.cancel(); tireScene.cancel()
@@ -287,6 +323,18 @@ struct CareerTrainingView: View {
             Button(training?.completed == true ? "세트 결산 보기" : "다음 시도 · \((training?.scores.count ?? 0) + 1)/5") {
                 continueSession()
             }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("trainingNext")
+            if autoPreparationAttempt != nil {
+                Toggle("다음 시도 자동 준비", isOn: $autoPrepareEnabled)
+                    .font(.subheadline).frame(minHeight: 44)
+                    .tint(GameTheme.green)
+                    .accessibilityHint("결과 확인 뒤 조준 준비 화면으로 이동합니다. 투구는 직접 확정합니다.")
+                    .accessibilityIdentifier("trainingControlAutoPrepare")
+                if autoPrepareTask != nil {
+                    Text("3초 뒤 다음 시도를 준비합니다.").font(.caption)
+                        .foregroundStyle(GameTheme.boardMuted)
+                        .accessibilityIdentifier("trainingControlAutoPrepareStatus")
+                }
+            }
             Text("성장은 5회 평균 성적으로 결정됩니다.").font(.caption2).foregroundStyle(GameTheme.boardMuted)
         }
     }
@@ -300,6 +348,7 @@ struct CareerTrainingView: View {
         }
     }
     private func cancelUncommitted() {
+        cancelAutoPreparation()
         clock.stop(); scene.cancelDelivery(); judging = false; deliveryArrived = false
         replayTask?.cancel(); replayTask = nil; replay = nil; feedbackVisible = false; reviewReady = false; coachNote = nil
         locationScene.cancel(); locationReplay = nil; tireScene.cancel(); tracePoints = []; rhythmTaps = Array(repeating: nil, count: 3)
@@ -380,11 +429,15 @@ struct CareerTrainingView: View {
             load(); if dynamicTypeSize.isAccessibilitySize { buttonInput = true }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: feedbackTick) { _, _ in UserDefaults.standard.object(forKey: "bm-haptics-enabled") as? Bool ?? true }
-        .onDisappear { cancelUncommitted() }
+        .onDisappear { autoPrepareEnabled = false; cancelUncommitted() }
         .toolbar {
             if practice { Button("훈련 바꾸기") { resetPractice() }.accessibilityIdentifier("practiceChangeTraining") }
         }
         .onChange(of: preparationKey) { _, _ in if training == nil { loadPreparation() } }
+        .onChange(of: autoPrepareEnabled) { _, _ in scheduleAutoPreparation() }
+        .onChange(of: usesManualReview) { _, manual in
+            if manual { autoPrepareEnabled = false; cancelAutoPreparation() }
+        }
         .onChange(of: clock.phase) { _, phase in
             if isSkillDrill && clock.running {
                 if selectedKind == .power { tireScene.prepare(phase) }

@@ -188,7 +188,7 @@ import SpriteKit
         let target = training.targets[training.scores.count]
         switch training.selectedKind {
         case .speed: return TrainingInput(footfalls: (0..<16).map { $0.isMultiple(of: 2) ? .left : .right })
-        case .defense: return TrainingInput(x: target.x, y: target.y)
+        case .control, .defense: return TrainingInput(x: target.x, y: target.y)
         default:
             let base = TrainingRules.throwBase(training.scores.count), target = TrainingRules.basePoint(TrainingRules.throwBase(training.scores.count))
             let angle = atan2(target.y - 0.63, target.x - 0.5) * 180 / .pi
@@ -268,6 +268,108 @@ import SpriteKit
             XCTAssertTrue(record.completed); XCTAssertEqual(player.fatigue,58); XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerTrainingRecord>()),1)
             XCTAssertEqual(try record.snapshot().scores,[100,100,100,100,100])
         }
+    }
+    func testControlTrainingDiskResumeAndCompletionAwardOnce() throws {
+        enum SaveFailure: Error { case injected }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("control.store")
+
+        let pending = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url)
+            let context = container.mainContext
+            var draft = PlayerDraft()
+            draft.name = "제구복원"
+            draft.schoolID = "hs-ref-001"
+            draft.role = .pitcher
+            let player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: context)
+            // Exercise a round eligible to record a development proof.
+            player.fatigue = 32
+            try context.save()
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let record = try CareerTrainingStore.start(player: player, state: state, kind: .control, in: context)
+            try advance(player, state, record, context)
+            let next = try record.snapshot().targets[1]
+            try CareerTrainingStore.attempt(player: player, state: state, record: record, revision: record.revision,
+                                            input: TrainingInput(x: next.x + 0.1, y: next.y), in: context)
+            let saved = try record.snapshot()
+            XCTAssertEqual(saved.scores, [100, 67])
+            XCTAssertFalse(state.hasAction(on: player.gameDate))
+            return (payload: record.payload, snapshot: saved, revision: record.revision, lifecycle: player.lifecycleData)
+        }
+
+        let completed = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url)
+            let context = container.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let record = try CareerTrainingStore.start(player: player, state: state, kind: .control, in: context,
+                                                       save: { _ in XCTFail("Opening a pending round must not write") })
+            let resumed = try record.snapshot()
+            XCTAssertEqual(record.payload, pending.payload)
+            XCTAssertEqual(resumed, pending.snapshot)
+            XCTAssertEqual(record.revision, pending.revision)
+            XCTAssertEqual(state.revision, pending.snapshot.calendarRevision)
+            XCTAssertEqual(player.fatigue, resumed.fatigue)
+            XCTAssertEqual(try CareerTrainingStore.value(player: player, code: nil, kind: .control, in: context), resumed.before)
+            let thirdInput = input(resumed)
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player: player, state: state, record: record,
+                revision: pending.revision - 1, input: thirdInput, in: context)) { error in
+                guard case TrainingError.stale = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            XCTAssertEqual(record.payload, pending.payload)
+            XCTAssertFalse(context.hasChanges)
+
+            for _ in 0..<2 { try advance(player, state, record, context) }
+            let fourth = try record.snapshot()
+            let fourthPayload = record.payload
+            let fourthRevision = record.revision
+            XCTAssertThrowsError(try CareerTrainingStore.attempt(player: player, state: state, record: record,
+                revision: fourthRevision, input: input(fourth), in: context, save: { _ in throw SaveFailure.injected })) { error in
+                guard case SaveFailure.injected = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            XCTAssertEqual(record.payload, fourthPayload)
+            XCTAssertEqual(record.revision, fourthRevision)
+            XCTAssertEqual(state.revision, fourth.calendarRevision)
+            XCTAssertFalse(record.completed)
+            XCTAssertFalse(state.hasAction(on: player.gameDate))
+            XCTAssertEqual(player.fatigue, resumed.fatigue)
+            XCTAssertEqual(player.lifecycleData, pending.lifecycle)
+            XCTAssertEqual(try CareerTrainingStore.value(player: player, code: nil, kind: .control, in: context), resumed.before)
+            XCTAssertFalse(context.hasChanges)
+
+            try advance(player, state, record, context)
+            let result = try record.snapshot()
+            XCTAssertEqual(result.scores, [100, 67, 100, 100, 100])
+            XCTAssertEqual(record.revision, fourthRevision + 1)
+            XCTAssertEqual(state.revision, fourth.calendarRevision + 1)
+            XCTAssertGreaterThan(result.after, result.before)
+            return (payload: record.payload, snapshot: result, revision: record.revision, lifecycle: player.lifecycleData)
+        }
+
+        let container = try CareerStore.makeContainer(url: url)
+        let context = container.mainContext
+        let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first)
+        let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+        let record = try CareerTrainingStore.start(player: player, state: state, kind: .control, in: context,
+                                                   save: { _ in XCTFail("Reopening a saved result must not write") })
+        XCTAssertThrowsError(try CareerTrainingStore.attempt(player: player, state: state, record: record,
+            revision: record.revision, input: TrainingInput(), in: context)) { error in
+            guard case TrainingError.finished = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertThrowsError(try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context))
+        XCTAssertTrue(record.completed)
+        XCTAssertEqual(record.payload, completed.payload)
+        XCTAssertEqual(record.revision, completed.revision)
+        XCTAssertEqual(state.revision, completed.snapshot.calendarRevision)
+        XCTAssertEqual(state.actionDate, player.gameDate)
+        XCTAssertEqual(player.fatigue, min(100, pending.snapshot.fatigue + TrainingRules.fatigueCost))
+        XCTAssertEqual(player.lifecycleData, completed.lifecycle)
+        XCTAssertEqual(try player.lifecycle.development?.proofs[TrainingKind.control.rawValue]?.map(\.key), [record.key])
+        XCTAssertEqual(try CareerTrainingStore.value(player: player, code: nil, kind: .control, in: context), completed.snapshot.after)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CareerTrainingRecord>()), 1)
+        XCTAssertFalse(context.hasChanges)
     }
     func testFieldAttemptFailureRollbackAndRetryAtEveryBoundary() throws {
         enum Injected:Error { case failure }
