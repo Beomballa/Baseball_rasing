@@ -874,6 +874,45 @@ extension PlayerAbilitiesTests {
         XCTAssertEqual(try c.fetchCount(FetchDescriptor<CareerScoutingReport>()),2)
         try ScoutingObservationStore.ensureCurrent(player:p,calendar:s,in:c,save:{_ in XCTFail("duplicate save")})
     }
+    func testCalendarScoutNoticeUsesOnlyNewSavedReportsWithInterestInProgressWindow() throws {
+        let container = try CareerStore.makeContainer(inMemory: true)
+        let context = container.mainContext
+        let (player, state) = try scoutingSetup(.pitcher, context: context)
+        player.gameDate = "2026-04-28"
+        try context.save()
+        let before = Set(try ScoutingObservationStore.reports(player: player, calendar: state, in: context).map(\.key))
+        try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision,
+                                           automaticRest: true, in: context)
+        let row = try XCTUnwrap(ScoutingObservationStore.reports(player: player, calendar: state, in: context).first)
+        let frozenPayload = row.payload
+        var observation = try row.snapshot()
+        let entry = ScoutingClubInterest(id: "kbo-0", name: "인천 하버스", roleID: "starter", roleLabel: "선발 투수",
+                                         level: .observing, fit: -4, reasons: ["선수층 보강"])
+        observation.interests = ScoutingInterests(entries: [entry], pendingReasons: [])
+        let notice = CalendarScoutNotice(key: row.key, observation: observation)
+
+        XCTAssertNil(notice.newClubIDs)
+        XCTAssertEqual(CalendarScoutNotice(key: row.key, observation: observation, previousClubIDs: []).newClubIDs,
+                       Set([entry.id]))
+        XCTAssertTrue(try XCTUnwrap(CalendarScoutNotice(key: row.key, observation: observation,
+                                                       previousClubIDs: [entry.id]).newClubIDs).isEmpty)
+        XCTAssertEqual(CalendarProgression.newScoutNotices(beforeKeys: before, after: [notice],
+            startDate: "2026-04-28", lastSavedDate: "2026-04-29").map(\.key), [row.key])
+        XCTAssertTrue(CalendarProgression.newScoutNotices(beforeKeys: before, after: [notice],
+            startDate: "2026-04-28", lastSavedDate: "2026-04-28").isEmpty)
+        XCTAssertTrue(CalendarProgression.newScoutNotices(beforeKeys: before.union([row.key]), after: [notice],
+            startDate: "2026-04-28", lastSavedDate: "2026-04-29").isEmpty)
+        XCTAssertTrue(CalendarProgression.newScoutNotices(beforeKeys: before, after: [notice],
+            startDate: "2026-04-29", lastSavedDate: "2026-04-30").isEmpty)
+        for missing in [nil, ScoutingInterests(entries: [], pendingReasons: [])] {
+            observation.interests = missing
+            let withoutInterest = CalendarScoutNotice(key: row.key, observation: observation)
+            XCTAssertTrue(CalendarProgression.newScoutNotices(beforeKeys: before, after: [withoutInterest],
+                startDate: "2026-04-28", lastSavedDate: "2026-04-29").isEmpty)
+        }
+        XCTAssertEqual(row.payload, frozenPayload)
+        XCTAssertFalse(context.hasChanges)
+    }
     func testObservationPartialBatchPreservesSuccessfulReportAndFailedDayOnly() async throws {
         enum Failure:Error {case injected}
         let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
@@ -1398,10 +1437,22 @@ extension PlayerAbilitiesTests {
             var old=value;old.version=3;old.interests=nil;old.signingBonusForecasts=nil;row.payload=try JSONEncoder().encode(old);bytes=row.payload;next=value.nextDate
             p.gameDate=try GameDate(next).adding(days:-1).description;try c.save()
             let before=preserved(p)
+            let startDate = p.gameDate
+            let priorKeys = Set(try ScoutingObservationStore.reports(player: p, calendar: s, in: c).map(\.key))
+            @MainActor func notices() throws -> [CalendarScoutNotice] {
+                let reports = try ScoutingObservationStore.reports(player: p, calendar: s, in: c)
+                return try CalendarProgression.newScoutNotices(beforeKeys: priorKeys,
+                    after: reports.map { CalendarScoutNotice(key: $0.key, observation: try $0.snapshot()) },
+                    startDate: startDate, lastSavedDate: p.gameDate)
+            }
             XCTAssertThrowsError(try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c,save:{_ in throw Failure.injected}))
             XCTAssertEqual(preserved(p),before);XCTAssertEqual(row.payload,bytes)
+            XCTAssertTrue(try notices().isEmpty)
             try CalendarProgression.advanceDay(player:p,state:s,revision:s.revision,automaticRest:true,in:c)
             XCTAssertEqual(p.gameDate,next)
+            let noticed = try notices()
+            XCTAssertEqual(noticed.map(\.observation.observedDate), [next])
+            XCTAssertNil(noticed.first?.newClubIDs)
         }
         try autoreleasepool {
             let container=try CareerStore.makeContainer(url:url),c=container.mainContext
@@ -1598,5 +1649,130 @@ extension PlayerAbilitiesTests {
                 XCTAssertEqual(restored.isSkillDrill,!legacy); XCTAssertFalse(record.completed)
             }
         }}
+    }
+}
+
+extension PlayerAbilitiesTests {
+    private func v159ScoutingFingerprint(_ report: ScoutingReportSnapshot) throws -> [Data] {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return [Data("\(report.date.description)|\(report.start.description)|\(report.age)|\(report.pending)".utf8),
+                try encoder.encode(report.abilities), try encoder.encode(report.groups), try encoder.encode(report.totals)]
+    }
+
+    private func v159StoredPayloads(_ context: ModelContext) throws -> [String: Data] {
+        let matches = try context.fetch(FetchDescriptor<CareerMatchRecord>())
+        let reports = try context.fetch(FetchDescriptor<CareerScoutingReport>())
+        let automatic = try context.fetch(FetchDescriptor<CareerLeagueGameRecord>())
+        return Dictionary(uniqueKeysWithValues: matches.map { ("match/" + $0.key, $0.payload) }
+            + reports.map { ("report/" + $0.key, $0.payload) }
+            + automatic.map { ("automatic/" + $0.key, $0.payload) })
+    }
+
+    func testV159RepeatedSeasonAndScoutingReadsRevalidateMutatedPayloadBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+            defer { withExtendedLifetime(container) {} }
+            let (player, state) = try scoutingSetup(role, context: context)
+            let fixture = try XCTUnwrap(state.fixtures(for: player, year: 2026).first { $0.isAppearance(for: role) })
+            let record = try scoutRecord(player, fixture, line: MatchLine())
+            player.gameDate = fixture.date.description
+            context.insert(record); try context.save()
+            let season = try CareerSeasonStore.load(player: player, state: state, year: 2026, in: context)
+            let scout = try v159ScoutingFingerprint(ScoutingReportSnapshot.load(player: player, calendar: state, in: context))
+            let originalPayload = record.payload, originalRevision = record.revision
+            let identity = preserved(player), revision = state.revision, action = state.actionDate
+            var mismatched = try record.snapshot()
+            mismatched.completed.toggle()
+            for damaged in [Data([0]), try JSONEncoder().encode(mismatched)] {
+                record.payload = damaged; try context.save()
+                XCTAssertThrowsError(try CareerSeasonStore.load(player: player, state: state, year: 2026, in: context))
+                XCTAssertThrowsError(try ScoutingReportSnapshot.load(player: player, calendar: state, in: context))
+                XCTAssertEqual(record.payload, damaged); XCTAssertEqual(record.revision, originalRevision)
+                XCTAssertEqual(preserved(player), identity); XCTAssertEqual(state.revision, revision)
+                XCTAssertEqual(state.actionDate, action); XCTAssertFalse(context.hasChanges)
+                record.payload = originalPayload; try context.save()
+                XCTAssertEqual(try CareerSeasonStore.load(player: player, state: state, year: 2026, in: context), season)
+                XCTAssertEqual(try v159ScoutingFingerprint(ScoutingReportSnapshot.load(player: player, calendar: state, in: context)), scout)
+                XCTAssertFalse(context.hasChanges)
+            }
+        }
+    }
+
+    func testV159SharedReadValidationKeepsDuplicateFutureAndPendingRejectionsBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+            defer { withExtendedLifetime(container) {} }
+            let (player, state) = try scoutingSetup(role, context: context)
+            let abilities = try profile(player, context), fixtures = try state.fixtures(for: player, year: 2026)
+            let current = try XCTUnwrap(fixtures.first), next = try XCTUnwrap(fixtures.dropFirst().first)
+            player.gameDate = current.date.description; try context.save()
+            let pending = try scoutRecord(player, current, line: MatchLine(), completed: false)
+            let accepted = try CareerSeasonStore.snapshot(player: player, state: state, year: 2026, records: [pending])
+            XCTAssertEqual(accepted.league.pendingIDs, [current.id]); XCTAssertEqual(accepted.totals.games, 0)
+            XCTAssertEqual(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: abilities, records: [pending]).pending, 1)
+            let future = try scoutRecord(player, next, line: MatchLine())
+            for records in [[pending, pending], [future]] {
+                XCTAssertThrowsError(try CareerSeasonStore.snapshot(player: player, state: state, year: 2026, records: records))
+                XCTAssertThrowsError(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: abilities, records: records))
+            }
+            player.gameDate = current.date.adding(days: 1).description; try context.save()
+            XCTAssertThrowsError(try CareerSeasonStore.snapshot(player: player, state: state, year: 2026, records: [pending])) { error in
+                guard case LeagueError.unfinishedPast = error else { return XCTFail("Unexpected past-pending error: \(error)") }
+            }
+            XCTAssertThrowsError(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: abilities, records: [pending])) { error in
+                guard case LeagueError.unfinishedPast = error else { return XCTFail("Unexpected past-pending error: \(error)") }
+            }
+            XCTAssertFalse(context.hasChanges)
+        }
+    }
+
+    func testV159RollingWindowStillValidatesEarlierSameYearAndPreservesStoredBytesBothRoles() throws {
+        for role in PlayerRole.allCases {
+            let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+            defer { withExtendedLifetime(container) {} }
+            let (player, state) = try scoutingSetup(role, context: context)
+            player.gameDate = "2027-04-07"
+            let start = try GameDate("2026-04-08")
+            let fixtures = try state.fixtures(for: player, year: 2026)
+            let earlier = try XCTUnwrap(fixtures.first { $0.date < start && $0.isAppearance(for: role) })
+            let included = try XCTUnwrap(fixtures.first { $0.date >= start && $0.isAppearance(for: role) })
+            let current = try XCTUnwrap(state.fixtures(for: player, year: 2027).first { $0.date.description == player.gameDate })
+            let outside = try scoutRecord(player, earlier, line: MatchLine())
+            let inside = try scoutRecord(player, included, line: MatchLine(), current: false)
+            let pending = try scoutRecord(player, current, line: MatchLine(), completed: false)
+            let records = [outside, inside, pending]
+            records.forEach { context.insert($0) }; try context.save()
+            let season = try CareerSeasonStore.load(player: player, state: state, year: 2026, in: context)
+            let report = try ScoutingReportSnapshot.load(player: player, calendar: state, in: context)
+            XCTAssertEqual(season.totals.games, 2); XCTAssertEqual(report.totals.games, 1)
+            XCTAssertEqual(report.start, start); XCTAssertEqual(report.pending, 1)
+            let scout = try v159ScoutingFingerprint(report), identity = preserved(player)
+            let revision = state.revision, action = state.actionDate
+            let matchBytes = records.map(CareerMatchReadSnapshot.init)
+            let storedBytes = try v159StoredPayloads(context)
+            for _ in 0..<3 {
+                XCTAssertEqual(try CareerSeasonStore.load(player: player, state: state, year: 2026, in: context), season)
+                XCTAssertEqual(try v159ScoutingFingerprint(ScoutingReportSnapshot.load(player: player, calendar: state, in: context)), scout)
+                XCTAssertEqual(records.map(CareerMatchReadSnapshot.init), matchBytes)
+                XCTAssertEqual(try v159StoredPayloads(context), storedBytes)
+                XCTAssertEqual(preserved(player), identity); XCTAssertEqual(state.revision, revision)
+                XCTAssertEqual(state.actionDate, action); XCTAssertFalse(context.hasChanges)
+            }
+            let originalPayload = outside.payload
+            outside.payload = Data([0]); try context.save()
+            XCTAssertThrowsError(try CareerSeasonStore.load(player: player, state: state, year: 2026, in: context))
+            XCTAssertThrowsError(try ScoutingReportSnapshot.load(player: player, calendar: state, in: context))
+            XCTAssertEqual(outside.payload, Data([0])); XCTAssertFalse(context.hasChanges)
+            outside.payload = originalPayload; try context.save()
+            XCTAssertEqual(try v159ScoutingFingerprint(ScoutingReportSnapshot.load(player: player, calendar: state, in: context)), scout)
+            let abilities = try profile(player, context)
+            XCTAssertThrowsError(try CareerSeasonStore.snapshot(player: player, state: state, year: 2026, records: [outside] + records))
+            XCTAssertThrowsError(try ScoutingReportSnapshot.make(player: player, calendar: state, profile: abilities, records: [outside] + records))
+            XCTAssertEqual(records.map(CareerMatchReadSnapshot.init), matchBytes)
+            XCTAssertEqual(try v159StoredPayloads(context), storedBytes)
+            XCTAssertEqual(preserved(player), identity); XCTAssertEqual(state.revision, revision)
+            XCTAssertEqual(state.actionDate, action); XCTAssertFalse(context.hasChanges)
+        }
     }
 }
