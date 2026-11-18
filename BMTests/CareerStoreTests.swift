@@ -1194,3 +1194,103 @@ extension CareerStoreTests {
             .filter {$0.lastPathComponent.hasPrefix("restored-")}.map(\.lastPathComponent))
     }
 }
+
+extension CareerStoreTests {
+    func testV201BackupCreationAndLocationFailuresChooseTheAvailableRetry() {
+        let permission = CocoaError(.fileWriteNoPermission)
+        let generation = SaveOperationFailure(permission, operation: .createBackup)
+        let exporting = SaveOperationFailure(permission, operation: .exportFile)
+        XCTAssertEqual(generation.retry(preparedState: nil, hasExport: false, hasProtection: true), .createBackup)
+        XCTAssertEqual(exporting.retry(preparedState: nil, hasExport: true, hasProtection: true), .chooseExportLocation)
+        XCTAssertEqual(exporting.retry(preparedState: nil, hasExport: false, hasProtection: true), .createBackup)
+        XCTAssertEqual(exporting.retry(preparedState: nil, hasExport: true, hasProtection: false), .close)
+    }
+
+    func testV201RestoreFailureOnlyReusesAPendingValidCandidate() {
+        let space = SaveOperationFailure(CocoaError(.fileWriteOutOfSpace), operation: .restore)
+        XCTAssertEqual(space.retry(preparedState: .pending, hasExport: false, hasProtection: true), .confirmRestore)
+        for state in [PreparedSave.State.discarded, nil] {
+            XCTAssertEqual(space.retry(preparedState: state, hasExport: false, hasProtection: true), .chooseBackup)
+        }
+        XCTAssertEqual(space.retry(preparedState: .committed, hasExport: false, hasProtection: true), .close)
+        let invalid = SaveOperationFailure(SaveProtectionError.invalid, operation: .restore)
+        XCTAssertEqual(invalid.retry(preparedState: .pending, hasExport: false, hasProtection: true), .chooseBackup)
+        let denied = SaveOperationFailure(CocoaError(.fileWriteNoPermission), operation: .restore)
+        XCTAssertEqual(denied.retry(preparedState: .pending, hasExport: false, hasProtection: true), .close)
+    }
+
+    func testV201ValidationAndCleanupRetriesKeepTheirDestination() {
+        let invalid = SaveOperationFailure(SaveProtectionError.invalid, operation: .validateBackup)
+        XCTAssertEqual(invalid.retry(preparedState: nil, hasExport: false, hasProtection: true), .chooseAnotherBackup)
+        XCTAssertFalse(invalid.explanation.contains("해시"), "The shared invalid error does not identify which validation failed.")
+        let closing = SaveOperationFailure(CocoaError(.fileWriteNoPermission), operation: .discardForClose)
+        let replacing = SaveOperationFailure(CocoaError(.fileWriteNoPermission), operation: .discardForSelection)
+        XCTAssertEqual(closing.retry(preparedState: .discarded, hasExport: false, hasProtection: true), .discardAndClose)
+        XCTAssertEqual(replacing.retry(preparedState: .discarded, hasExport: false, hasProtection: true), .discardAndChooseBackup)
+    }
+
+    func testV201RecoveryFeedbackReportsUnavailableCurrentStateAndRefreshesRepeatedErrors() {
+        let unreadable = SaveOperationFailure.currentState(hasProtection: true, recoveryOnly: true)
+        XCTAssertTrue(unreadable.contains("열기 확인 필요"))
+        XCTAssertFalse(unreadable.contains("플레이 가능"))
+        XCTAssertEqual(SaveOperationFailure.currentState(hasProtection: false, recoveryOnly: false), "저장 연결 확인 필요")
+        let first = SaveOperationFailure(SaveProtectionError.busy, operation: .restore)
+        let second = SaveOperationFailure(SaveProtectionError.busy, operation: .restore)
+        XCTAssertNotEqual(first.id, second.id, "Repeated failures must refresh focus and scroll placement.")
+    }
+
+    func testV201FileProviderUnderlyingSpaceFailureAndUnknownErrorsUseAccurateCopy() {
+        let wrapped = NSError(domain: "BM.FileProvider", code: 1,
+            userInfo: [NSUnderlyingErrorKey: CocoaError(.fileWriteOutOfSpace)])
+        let external = SaveOperationFailure(wrapped, operation: .exportFile)
+        XCTAssertEqual(external.title, "저장 공간이 부족해요")
+        XCTAssertTrue(external.explanation.contains("선택한 저장 위치"))
+        let internalWrite = SaveOperationFailure(wrapped, operation: .restore)
+        XCTAssertEqual(internalWrite.title, "기기 저장 공간이 부족해요")
+        let unknown = SaveOperationFailure(NSError(domain: "BM.Unknown", code: 9), operation: .exportFile)
+        XCTAssertFalse(unknown.explanation.contains("권한"))
+        XCTAssertFalse(unknown.explanation.contains("공간"))
+    }
+}
+
+extension CareerStoreTests {
+    func testV201OlderBackupRestoresCalendarActionTogetherWithFatigueAcrossRetry() async throws {
+        for restBeforeValidation in [true, false] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let base = directory.appendingPathComponent("Career.store")
+            let original = try CareerStore.makeContainer(url: base)
+            let player = try CareerStore.create(draft(.batter), schools: SchoolCatalog.load(), in: original.mainContext)
+            let calendar = try XCTUnwrap(original.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            let beforeFatigue = player.fatigue
+            let data = try await SaveArchiveStore.exportAsync(container: original)
+            func rest() throws {
+                try CalendarProgression.rest(player: player, state: calendar, revision: calendar.revision, in: original.mainContext)
+            }
+            if restBeforeValidation { try rest() }
+            let prepared = try await SaveArchiveStore.prepareAsync(data, base: base)
+            if !restBeforeValidation { try rest() }
+            XCTAssertTrue(calendar.hasAction(on: player.gameDate))
+            let candidate = try XCTUnwrap(prepared.container)
+            let candidateCalendar = try XCTUnwrap(candidate.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            XCTAssertNil(candidateCalendar.actionDate)
+            let protection = SaveProtection(container: original, base: base)
+            XCTAssertThrowsError(try protection.restore(prepared, commit: { _, _ in throw CocoaError(.fileWriteOutOfSpace) }))
+            XCTAssertTrue(protection.container === original)
+            XCTAssertTrue(calendar.hasAction(on: player.gameDate))
+            try protection.restore(prepared)
+            let restored = try XCTUnwrap(protection.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first)
+            let restoredCalendar = try XCTUnwrap(protection.container.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            XCTAssertEqual(restored.fatigue, beforeFatigue)
+            XCTAssertNil(restoredCalendar.actionDate)
+            XCTAssertEqual(restoredCalendar.revision, 0)
+            let generation = protection.generation
+            try protection.restore(prepared, commit: { _, _ in XCTFail("Repeated restore committed again") })
+            XCTAssertEqual(protection.generation, generation)
+            let reopened = try SaveProtection.open(base: base)
+            XCTAssertNil(try reopened.container.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first?.actionDate)
+            XCTAssertEqual(try reopened.container.mainContext.fetch(FetchDescriptor<CareerPlayer>()).first?.fatigue, beforeFatigue)
+        }
+    }
+}

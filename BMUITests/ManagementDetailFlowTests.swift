@@ -4236,3 +4236,161 @@ extension ManagementDetailFlowTests {
         finishJournal(expectedScore: matchResult[0])
     }
 }
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV201ExportAndValidationFailuresOpenTheCorrectPickerAndKeepCareer() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        for scenario in ["export", "verify"] {
+            app.terminate()
+            app.launchArguments = ["-management-career-verification", "-save-protection-verification",
+                                   "-save-feedback-failure", scenario]
+            app.launch()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+            let before = status(app)
+            let settings = app.buttons["clubhouse-settings"]
+            revealLocationChoice(settings, app); settings.tap()
+            XCTAssertTrue(app.staticTexts["saveFailureTitle"].waitForExistence(timeout: 15))
+            let retry = app.buttons["saveFailureRetry"]
+            reveal(retry, app)
+            XCTAssertEqual(retry.label, scenario == "export" ? "저장 위치 다시 선택" : "다른 백업 선택")
+            XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            capture(app, "V201-" + scenario + "-failure")
+            retry.tap()
+            let cancel = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "취소"])).firstMatch
+            if !cancel.waitForExistence(timeout: 3) {
+                let back = app.navigationBars.buttons["BackButton"]
+                XCTAssertTrue(back.exists); back.tap()
+            }
+            XCTAssertTrue(cancel.waitForExistence(timeout: 8)); cancel.tap()
+            XCTAssertTrue(app.staticTexts["saveProtectionMessage"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.staticTexts["saveFailureTitle"].exists)
+            app.buttons["closeSettings"].tap()
+            XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
+            XCTAssertEqual(status(app), before)
+        }
+    }
+
+    @MainActor func testV201RestoreFailureRequiresConfirmationAndReopensTheRestoredCareerOnce() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-save-protection-verification",
+                               "-v56-disk-session", UUID().uuidString, "-save-feedback-failure", "restore"]
+        defer { app.terminate() }
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        let before = status(app)
+        let settings = app.buttons["clubhouse-settings"]
+        revealLocationChoice(settings, app); settings.tap()
+        let restore = app.buttons["confirmRestoreSave"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 15)); reveal(restore, app); restore.tap()
+        app.buttons["전체 복원"].tap()
+        let title = app.staticTexts["saveFailureTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 12))
+        XCTAssertEqual(title.label, "기기 저장 공간이 부족해요")
+        let retry = app.buttons["saveFailureRetry"]
+        reveal(retry, app); XCTAssertEqual(retry.label, "복원 다시 확인")
+        capture(app, "V201-restore-write-failure")
+        retry.tap()
+        XCTAssertTrue(app.buttons["전체 복원"].waitForExistence(timeout: 5))
+        app.buttons["취소"].tap()
+        XCTAssertTrue(retry.waitForExistence(timeout: 5)); reveal(retry, app); retry.tap()
+        app.buttons["전체 복원"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15))
+        XCTAssertEqual(status(app), before)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        XCTAssertEqual(status(app), before)
+        capture(app, "V201-restored-career-after-relaunch")
+    }
+
+    @MainActor func testV201CleanupFailureRetriesOnlyThePreparedCopyAndCloses() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-save-protection-verification",
+                               "-save-feedback-failure", "cleanup"]
+        defer { app.terminate() }
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        let before = status(app)
+        let settings = app.buttons["clubhouse-settings"]
+        revealLocationChoice(settings, app); settings.tap()
+        XCTAssertTrue(app.buttons["confirmRestoreSave"].waitForExistence(timeout: 15))
+        app.buttons["closeSettings"].tap()
+        XCTAssertTrue(app.staticTexts["saveFailureTitle"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["confirmRestoreSave"].isEnabled)
+        let retry = app.buttons["saveFailureRetry"]
+        reveal(retry, app); XCTAssertEqual(retry.label, "정리 다시 시도")
+        capture(app, "V201-discarded-copy-cleanup-failure")
+        retry.tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
+        XCTAssertEqual(status(app), before)
+    }
+
+    @MainActor func testV201FailureRetryRemainsReachableAtLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-save-protection-verification",
+                               "-save-feedback-failure", "verify", "-UIPreferredContentSizeCategoryName",
+                               "UICTContentSizeCategoryAccessibilityXXXL"]
+        defer { app.terminate() }
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30))
+        let settings = app.buttons["clubhouse-settings"]
+        revealLocationChoice(settings, app); settings.tap()
+        let retry = app.buttons["saveFailureRetry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 15)); revealLocationChoice(retry, app)
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+        XCTAssertLessThanOrEqual(retry.frame.maxX, app.frame.maxX)
+        capture(app, "V201-largest-text-failure-retry")
+        app.buttons["closeSettings"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
+    }
+}
+
+
+extension ManagementDetailFlowTests {
+    @MainActor func testV201LocalFilesBackupRoundTripUsesIsolatedCareerOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["-management-career-verification", "-save-protection-verification"]; app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 30)); let before = status(app)
+        let settings = app.buttons["clubhouse-settings"]; revealLocationChoice(settings, app); settings.tap()
+        let export = app.buttons["exportSave"]; reveal(export, app); export.tap()
+        let save = app.buttons["DOCPicker.actionButton"]; XCTAssertTrue(save.waitForExistence(timeout: 12))
+        let local = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source: com.apple.FileProvider.LocalStorage")).firstMatch
+        if !local.exists {
+            let back = app.navigationBars.buttons["BackButton"]; XCTAssertTrue(back.exists); back.tap()
+            let onDevice = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["On My iPhone", "나의 iPhone"])).firstMatch
+            XCTAssertTrue(onDevice.waitForExistence(timeout: 5)); onDevice.tap()
+        }
+        let name = app.textFields["DOCPicker.filenameTextField"]; XCTAssertTrue(name.exists)
+        let unique = "BM-QA-V201-" + String(UUID().uuidString.prefix(8))
+        name.tap(); name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 50)); name.typeText(unique)
+        XCTAssertTrue((name.value as? String ?? "").hasPrefix(unique))
+        save.tap()
+        let exported = app.staticTexts["saveProtectionMessage"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "백업 내보내기 완료"), object: exported)], timeout: 15), .completed)
+        capture(app, "V201-local-files-exported")
+        let importing = app.buttons["importSave"]; reveal(importing, app); importing.tap()
+        let browse = app.tabBars["DOC.browsingModeTabBar"].buttons["둘러보기"]
+        XCTAssertTrue(browse.waitForExistence(timeout: 8)); browse.tap()
+        let localFolder = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["나의 iPhone", "On My iPhone"])).firstMatch
+        XCTAssertTrue(localFolder.waitForExistence(timeout: 8)); localFolder.tap()
+        let search = app.searchFields.matching(NSPredicate(format: "label IN %@", ["검색", "Search"])).firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 8)); search.tap(); search.typeText(unique)
+        let file = app.cells.matching(NSPredicate(format: "label BEGINSWITH %@", unique)).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 10))
+        for _ in 0..<5 where file.frame.maxY > app.tabBars["DOC.browsingModeTabBar"].frame.minY {
+            app.swipeUp()
+        }
+        XCTAssertTrue(file.isHittable); file.tap()
+        let restore = app.buttons["confirmRestoreSave"]; XCTAssertTrue(restore.waitForExistence(timeout: 15)); reveal(restore, app)
+        capture(app, "V201-local-files-verified")
+        restore.tap(); XCTAssertTrue(app.buttons["취소"].waitForExistence(timeout: 5)); app.buttons["취소"].tap(); XCTAssertTrue(restore.exists)
+        restore.tap(); app.buttons["전체 복원"].tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 15)); XCTAssertEqual(status(app), before)
+        capture(app, "V201-local-files-restored")
+    }
+}

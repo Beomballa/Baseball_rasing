@@ -920,8 +920,15 @@ struct SaveProtectionView: View {
     @State private var confirming=false
     @State private var message: String?
     @State private var working:String?
+    @State private var failure: SaveOperationFailure?
+    @State private var selectedFilename: String?
+    #if DEBUG
+    @State private var qaFailureRemaining = true
+    @State private var qaSeedApplied = false
+    #endif
     var body: some View {
         NavigationStack {
+            ScrollViewReader { scroll in
             ScrollView {
                 VStack(spacing: 16) {
                     if audioTypeSize.isAccessibilitySize {
@@ -932,7 +939,13 @@ struct SaveProtectionView: View {
                     } else {
                         ManagementFileHeader(eyebrow: "LOCAL SAVE", title: "이 기기의 커리어 보관", note: "내보내기 → 파일 검증 → 전체 복원 확인")
                     }
-                    if let message {
+                    if let failure {
+                        SaveOperationFailureView(failure: failure,
+                            currentState: SaveOperationFailure.currentState(hasProtection: protection != nil,
+                                recoveryOnly: protection?.recoveryOnly == true),
+                            retryTitle: failureRetry(failure).label, retry: retryFailure)
+                            .id("saveOperationFailure")
+                    } else if let message {
                         ManagementPanel("저장 작업 결과") {
                             Text(message).managementFont(.body)
                                 .accessibilityLabel("저장 작업 결과 · " + message)
@@ -962,7 +975,11 @@ struct SaveProtectionView: View {
                         }.tint(GameTheme.gold).accessibilityIdentifier("saveExportDetails")
                     }
                     ManagementPanel("2. 백업 선택·검증") {
-                        Button("백업 선택·검증") { importing=true }
+                        if let selectedFilename {
+                            Text("선택한 파일 · " + selectedFilename).managementFont(.label)
+                                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("saveSelectedFilename")
+                        }
+                        Button("백업 선택·검증", action: chooseBackup)
                             .buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("importSave")
                         Text("선택한 파일을 별도 저장소에서 검증합니다. 아직 현재 진행에 반영하지 않습니다.").managementFont(.helper)
                         DisclosureGroup("백업 형식·파일 보관 안내") {
@@ -970,8 +987,8 @@ struct SaveProtectionView: View {
                         }.tint(GameTheme.gold).accessibilityIdentifier("saveFormatDetails")
                     }
                     if let prepared {
-                        ManagementPanel("3. 검증 완료·전체 복원") {
-                            Text("검증 완료 · " + prepared.created.formatted(date: .abbreviated, time: .shortened))
+                        ManagementPanel(prepared.state == .discarded ? "3. 백업 다시 검증" : "3. 검증 완료·전체 복원") {
+                            Text((prepared.state == .discarded ? "다시 검증할 백업 · " : "검증 완료 · ") + prepared.created.formatted(date: .abbreviated, time: .shortened))
                                 .managementFont(.label).accessibilityIdentifier("saveVerifiedBackupDate")
                             CareerManagementNote(title:"전체 복원 영향 · 모든 커리어",detail:"날짜·기록·진행 중 경기와 훈련이 백업 시점으로 바뀝니다. 현재 기록과 합치지 않으며 확정 전까지 기존 저장을 사용합니다.",identifier:"restoreScopeSummary")
                             Text("현재 기기").managementFont(.label)
@@ -1027,28 +1044,48 @@ struct SaveProtectionView: View {
                         .accessibilityIdentifier("openSupportInformation")
                     }
                 }.padding(16).disabled(working != nil)
+            }
+            .task(id: failure?.id) {
+                guard failure != nil else { return }
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                scroll.scrollTo("saveOperationFailure", anchor: .top)
+            }
             }.safeAreaInset(edge:.bottom) {
                 if let working {HStack(spacing:12) {ProgressView();Text(working).font(.subheadline)}.padding(14).frame(maxWidth:.infinity).background(GameTheme.boardPanel).foregroundStyle(GameTheme.boardInk).accessibilityElement(children:.combine).accessibilityIdentifier("saveOperationProgress")}
             }.background(GameTheme.board).foregroundStyle(GameTheme.boardInk).navigationTitle("설정 · 저장 보호")
-                .toolbar { ManagementToolbarAction(title: "닫기", identifier: "closeSettings", disabled: working != nil) { if discardPrepared() {dismiss()} } }
+                .toolbar { ManagementToolbarAction(title: "닫기", identifier: "closeSettings", disabled: working != nil) { if discardPrepared(for: .discardForClose) {dismiss()} } }
         }
         .interactiveDismissDisabled(working != nil)
         .task {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-save-protection-preview"), prepared == nil, let protection {
-                do { prepared=try SaveArchiveStore.prepare(SaveArchiveStore.export(container:protection.container),base:protection.base) }
-                catch { message=error.localizedDescription }
-            }
+            do {
+                if ProcessInfo.processInfo.arguments.contains("-save-protection-preview"), prepared == nil, let protection {
+                    prepared = try SaveArchiveStore.prepare(SaveArchiveStore.export(container: protection.container), base: protection.base)
+                }
+                try await seedFailureVerification()
+            } catch { showFailure(error, during: .validateBackup) }
             #endif
         }
         .onDisappear {
             GameSound.shared.stop()
-            if !importing && !exporting && !confirming && working == nil {discardPrepared()}
+            if !importing && !exporting && !confirming && working == nil {discardPrepared(for: .discardForClose)}
         }
-        .fileExporter(isPresented: $exporting, document: document, contentType: .data, defaultFilename: "BM-career.bmbackup") { result in
-            switch result {case .success:message="백업 내보내기 완료 · 기기의 진행 기록은 유지됩니다.";case .failure(let error):message=isCancelled(error) ? "내보내기 취소 · 기존 저장은 유지됩니다.":error.localizedDescription}
-        }
-        .fileImporter(isPresented:$importing,allowedContentTypes:[.data],onCompletion:importBackup)
+        .fileExporter(isPresented: $exporting, document: document, contentTypes: [.data], defaultFilename: "BM-career.bmbackup", onCompletion: { result in
+            switch result {
+            case .success: showMessage("백업 내보내기 완료 · 기기의 진행 기록은 유지됩니다.")
+            case .failure(let error):
+                if isCancelled(error) { showMessage("내보내기 취소 · 기존 저장은 유지됩니다.") }
+                else { showFailure(error, during: .exportFile) }
+            }
+        }, onCancellation: { showMessage("내보내기 취소 · 기존 저장은 유지됩니다.") })
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.data], allowsMultipleSelection: false,
+            onCompletion: { result in
+                importBackup(result.flatMap { urls in
+                    guard urls.count == 1 else { return .failure(SaveProtectionError.invalid) }
+                    return .success(urls[0])
+                })
+            }, onCancellation: { showMessage("파일 선택 취소 · 기존 저장은 유지됩니다.") })
         .managementAlert("모든 커리어를 백업 시점으로 되돌릴까요?", isPresented: $confirming, kind: .confirmation) {
             Button("전체 복원", role: .destructive) {
                 guard working == nil else {return}
@@ -1056,56 +1093,146 @@ struct SaveProtectionView: View {
                 Task { @MainActor in
                     defer {working=nil}
                     do {guard let protection,let prepared else {throw SaveProtectionError.unavailable}
-                        try protection.restore(prepared);onRestored?();dismiss()
-                    } catch {message=error.localizedDescription}
+                        #if DEBUG
+                        if consumeVerificationFailure("restore") {
+                            try protection.restore(prepared, commit: { _, _ in throw CocoaError(.fileWriteOutOfSpace) })
+                        } else { try protection.restore(prepared) }
+                        #else
+                        try protection.restore(prepared)
+                        #endif
+                        onRestored?();dismiss()
+                    } catch { showFailure(error, during: .restore) }
                 }
             }
             Button("취소", role: .cancel) {}
         } message: { Text("현재 데이터와 합치지 않습니다. 복원 전 저장은 삭제하지 않습니다. 백업 이후 진행한 내용은 새 활성 커리어에 표시되지 않습니다.") }
     }
     private func isCancelled(_ error:Error) -> Bool {(error as? CocoaError)?.code == .userCancelled}
-    @discardableResult private func discardPrepared() -> Bool {
+    @discardableResult private func discardPrepared(for operation: SaveFailureOperation) -> Bool {
         guard let prepared else {return true}
         do {
             guard let protection else {throw SaveProtectionError.unavailable}
+            #if DEBUG
+            if consumeVerificationFailure("cleanup") {
+                try protection.discard(prepared, remove: { _ in throw CocoaError(.fileWriteNoPermission) })
+            } else { try protection.discard(prepared) }
+            #else
             try protection.discard(prepared)
+            #endif
             self.prepared=nil
             return true
         } catch {
-            message="검증 사본을 정리하지 못했습니다. 기존 저장은 유지됩니다. 다시 닫기를 눌러 정리를 재시도해 주세요."
+            showFailure(error, during: operation)
             return false
         }
     }
     private func exportBackup() {
         guard working == nil else {return}
-        working="백업 파일 만드는 중 · 기존 저장 유지";message=nil
+        working="백업 파일 만드는 중 · 기존 저장 유지";message=nil;failure=nil
+        document=nil;exportBytes=nil
         Task { @MainActor in
             defer {working=nil}
             do {
                 guard let protection,!protection.recoveryOnly else {throw SaveProtectionError.unavailable}
                 let data=try await SaveArchiveStore.exportAsync(container:protection.container)
                 document=SaveBackupDocument(data:data);exportBytes=data.count;exporting=true
-            } catch {message=error.localizedDescription}
+            } catch { showFailure(error, during: .createBackup) }
         }
     }
     private func importBackup(_ result:Result<URL,Error>) {
         guard working == nil else {return}
         let url:URL
         do {url=try result.get()}
-        catch {message=isCancelled(error) ? "파일 선택 취소 · 기존 저장은 유지됩니다.":error.localizedDescription;return}
-        guard discardPrepared() else {return}
-        working="백업 검증 중 · 확정 전까지 기존 저장 유지";message=nil
+        catch {
+            if isCancelled(error) { showMessage("파일 선택 취소 · 기존 저장은 유지됩니다.") }
+            else { showFailure(error, during: .chooseBackup) }
+            return
+        }
+        guard discardPrepared(for: .discardForSelection) else {return}
+        selectedFilename=url.lastPathComponent
+        working="백업 검증 중 · 확정 전까지 기존 저장 유지";message=nil;failure=nil
         Task { @MainActor in
             let access=url.startAccessingSecurityScopedResource()
             defer {if access {url.stopAccessingSecurityScopedResource()};working=nil}
             do {
                 guard let protection else {throw SaveProtectionError.unavailable}
                 prepared=try await SaveArchiveStore.prepareFileAsync(url,base:protection.base)
-                message="검증 완료 · 아래 날짜와 선수를 비교한 뒤 전체 복원을 결정하세요."
-            } catch {message=error.localizedDescription;prepared=nil}
+                showMessage("검증 완료 · 아래 날짜와 선수를 비교한 뒤 전체 복원을 결정하세요.")
+            } catch { prepared=nil;showFailure(error, during: .validateBackup) }
         }
     }
 
+
+    private func chooseBackup() {
+        guard working == nil, !exporting, !importing, !confirming else { return }
+        importing=true
+    }
+    private func showFailure(_ error: Error, during operation: SaveFailureOperation) {
+        message=nil
+        failure=SaveOperationFailure(error, operation: operation)
+    }
+    private func showMessage(_ text: String) {
+        failure=nil
+        message=text
+    }
+    private func failureRetry(_ failure: SaveOperationFailure) -> SaveFailureRetry {
+        failure.retry(preparedState: prepared?.state, hasExport: document != nil, hasProtection: protection != nil)
+    }
+    private func retryFailure() {
+        guard let failure, working == nil, !exporting, !importing, !confirming else { return }
+        switch failureRetry(failure) {
+        case .createBackup: exportBackup()
+        case .chooseExportLocation: exporting=true
+        case .chooseBackup, .chooseAnotherBackup: chooseBackup()
+        case .confirmRestore: confirming=true
+        case .discardAndClose, .close:
+            if discardPrepared(for: .discardForClose) { dismiss() }
+        case .discardAndChooseBackup:
+            if discardPrepared(for: .discardForSelection) { chooseBackup() }
+        }
+    }
+    #if DEBUG
+    private var verificationScenario: String? {
+        let arguments=ProcessInfo.processInfo.arguments
+        guard arguments.contains("-management-career-verification"),
+              arguments.contains("-save-protection-verification"), let protection,
+              (protection.base.deletingLastPathComponent().lastPathComponent.hasPrefix("save-qa-") ||
+               protection.base.deletingLastPathComponent().lastPathComponent.hasPrefix("v56-resume-")),
+              let index=arguments.firstIndex(of: "-save-feedback-failure"), index+1 < arguments.count else { return nil }
+        return arguments[index+1]
+    }
+    private func consumeVerificationFailure(_ scenario: String) -> Bool {
+        guard qaFailureRemaining, verificationScenario == scenario else { return false }
+        qaFailureRemaining=false
+        return true
+    }
+    private func seedFailureVerification() async throws {
+        guard !qaSeedApplied, let scenario=verificationScenario, let protection, prepared == nil, failure == nil,
+              !FileManager.default.fileExists(atPath: SaveArchiveStore.pointer(protection.base).path) else { return }
+        qaSeedApplied=true
+        switch scenario {
+        case "export":
+            let data=try await SaveArchiveStore.exportAsync(container: protection.container)
+            document=SaveBackupDocument(data: data);exportBytes=data.count
+            showFailure(CocoaError(.fileWriteNoPermission), during: .exportFile)
+        case "verify":
+            selectedFilename="BM-QA-invalid.bmbackup"
+            do { _ = try await SaveArchiveStore.prepareAsync(Data("invalid-backup".utf8), base: protection.base) }
+            catch { showFailure(error, during: .validateBackup) }
+        case "restore", "cleanup":
+            let data=try await SaveArchiveStore.exportAsync(container: protection.container)
+            selectedFilename="BM-QA-valid.bmbackup"
+            if scenario == "restore", let player=archivePlayers.first,
+               let calendar=try protection.container.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first(where: { $0.playerID == player.id }),
+               !calendar.hasAction(on: player.gameDate) {
+                try CalendarProgression.rest(player: player, state: calendar, revision: calendar.revision,
+                    in: protection.container.mainContext)
+            }
+            prepared=try await SaveArchiveStore.prepareAsync(data, base: protection.base)
+        default: break
+        }
+    }
+    #endif
 }
 
 private struct FailedSaveRecoveryView: View {
