@@ -544,3 +544,49 @@ final class ClubCareerVisualFlowTests: XCTestCase {
         let image = XCTAttachment(screenshot: app.screenshot()); image.name = "v79-" + name; image.lifetime = .keepAlways; add(image)
     }
 }
+
+extension ClubCareerVisualFlowTests {
+    @MainActor func testRestCompletionIsActionableAndReopensWithoutSecondRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-management-career-verification", "-v56-disk-session", UUID().uuidString]
+        defer { app.terminate() }
+        func value(_ id: String) -> String {
+            app.descendants(matching: .any).matching(identifier: id).firstMatch.label
+        }
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        let date = value("calendarDate")
+        let original = value("homeFatigue")
+        let rest = app.buttons["clubhouse-rest"]
+        reveal(rest, app)
+        rest.tap()
+        let confirm = app.buttons["confirmRest"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        reveal(confirm, app)
+        confirm.tap()
+        let done = app.buttons["restDone"]
+        XCTAssertTrue(done.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["restSaved"].exists)
+        XCTAssertFalse(confirm.exists)
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = "Rest saved with immediate completion control"
+        image.lifetime = .keepAlways
+        add(image)
+        reveal(done, app)
+        done.tap()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 10))
+        let fatigue = value("homeFatigue")
+        XCTAssertEqual(value("calendarDate"), date)
+        XCTAssertNotEqual(fatigue, original)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["homePlayerName"].waitForExistence(timeout: 40))
+        XCTAssertEqual(value("calendarDate"), date)
+        XCTAssertEqual(value("homeFatigue"), fatigue)
+        reveal(rest, app)
+        rest.tap()
+        XCTAssertFalse(app.buttons["confirmRest"].isEnabled)
+        XCTAssertTrue(app.staticTexts["restActionGate"].exists)
+    }
+}

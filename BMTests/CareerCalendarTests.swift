@@ -1448,12 +1448,28 @@ extension CareerCalendarTests {
             var values:[UUID:Data] = [:]
             for role in PlayerRole.allCases {
                 var draft = PlayerDraft();draft.name = role == .batter ? "이어타자":"이어투수";draft.role = role;draft.schoolID = schools[0].id
-                let p = try CareerStore.create(draft,schools:schools,in:c)
-                let s = try XCTUnwrap(c.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == p.id })
-                try CalendarProgression.rest(player:p,state:s,revision:s.revision,in:c)
-                let r = try CareerMatchStore.start(player:p,state:s,in:c)
-                try CareerMatchStore.advance(player:p,state:s,record:r,revision:r.revision,input:role == .batter ? .watch:.pitch,pitchCode:role == .pitcher ? "four-seam":nil,in:c)
-                values[p.id] = r.payload
+                let historical = CareerSchemaV1.Player(draft: draft, school: schools[0])
+                let projection = CareerPlayer(draft: draft, school: schools[0])
+                projection.id = historical.id
+                let state = CareerCalendarState(player: projection, schools: schools, legacySave: false)
+                let fixture = try XCTUnwrap(state.fixtures(for: projection, year: 2026).first {
+                    $0.date.description == historical.gameDate
+                })
+                XCTAssertTrue(fixture.isAppearance(for: role))
+                state.actionDate = historical.gameDate
+                let mastery = Dictionary(uniqueKeysWithValues: historical.pitches.map { ($0.code, $0.mastery) })
+                var match = CareerMatch(random: 42, isHome: fixture.homeID == historical.schoolID,
+                    role: role.rawValue, appearance: true, contact: historical.contact, power: historical.power,
+                    discipline: historical.discipline, mastery: mastery)
+                match.settle()
+                try match.advance(role == .batter ? .watch : .pitch, pitchCode: role == .pitcher ? "four-seam" : nil)
+                let record = try CareerMatchRecord(player: projection, fixture: fixture, match: match)
+                record.revision = 1
+                c.insert(historical)
+                c.insert(state)
+                c.insert(record)
+                try c.save()
+                values[historical.id] = record.payload
             }
             return values
         }
@@ -9561,3 +9577,59 @@ extension CareerCalendarTests {
     }
 }
 #endif
+
+extension CareerCalendarTests {
+    func testP02SeasonAwardFailureRetryAndDiskReopenPersistOneAward() throws {
+        enum InjectedFailure: Error { case beforeSave }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("p02-awards.store")
+        let schools = try SchoolCatalog.load()
+        let saved = try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url)
+            let context = container.mainContext
+            var draft = PlayerDraft()
+            draft.name = "시상 검증"
+            draft.schoolID = "hs-ref-001"
+            draft.role = .batter
+            let player = try CareerStore.create(draft, schools: schools, in: context)
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            _ = try finishSeason(player: player, state: state, in: context)
+            let revision = state.revision
+            let affiliation = try XCTUnwrap(CareerPathStore.record(player: player, calendar: state, in: context))
+            let before = affiliation.payload
+            let closingDay = player.gameDate
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player: player, state: state, revision: revision,
+                in: context, save: { _ in
+                    let history = try affiliation.snapshot(player: player, calendar: state)
+                    XCTAssertEqual(history.seasonAwards?.count, 1)
+                    throw InjectedFailure.beforeSave
+                }))
+            XCTAssertEqual(affiliation.payload, before)
+            XCTAssertEqual(player.gameDate, closingDay)
+            XCTAssertEqual(state.revision, revision)
+            try CalendarProgression.advanceDay(player: player, state: state, revision: revision, in: context)
+            let history = try affiliation.snapshot(player: player, calendar: state)
+            XCTAssertEqual(history.seasonAwards?.count, 1)
+            XCTAssertThrowsError(try CalendarProgression.advanceDay(player: player, state: state,
+                revision: revision, in: context))
+            return (player.id, affiliation.payload)
+        }
+        try autoreleasepool {
+            let container = try CareerStore.makeContainer(url: url)
+            let context = container.mainContext
+            let players = try context.fetch(FetchDescriptor<CareerPlayer>())
+            let player = try XCTUnwrap(players.first { $0.id == saved.0 })
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == player.id })
+            let affiliation = try XCTUnwrap(CareerPathStore.record(player: player, calendar: state, in: context))
+            XCTAssertEqual(affiliation.payload, saved.1)
+            for _ in 0..<2 {
+                let journal = try CareerJournal.load(player: player, calendar: state, schools: schools, in: context)
+                XCTAssertEqual(journal.flatMap(\.entries).filter { $0.kind == .award }.count, 1)
+            }
+            XCTAssertEqual(affiliation.payload, saved.1)
+            XCTAssertFalse(context.hasChanges)
+        }
+    }
+}
