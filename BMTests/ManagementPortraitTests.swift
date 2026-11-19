@@ -382,3 +382,78 @@ import UIKit
         let attachment = XCTAttachment(image: image); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
 }
+
+extension ManagementPortraitTests {
+    func testV202ReferenceBustKeepsWhitesNeckAndShoulders() throws {
+        let atlas = try XCTUnwrap(UIImage(named: "ManagementPortraitPartsV202")?.cgImage)
+        XCTAssertEqual(atlas.width, 1024); XCTAssertEqual(atlas.height, 512)
+        let reference = try v167Pixels(UIImage(cgImage: v167GridCell(atlas, column: 0, row: 0, columns: 4, rows: 2)))
+        let look = PlayerAppearance.creationDefault
+        let rendered = try XCTUnwrap(ManagementPortraitRasterV166.image(look))
+        let actual = try v167Pixels(rendered)
+        v167AssertSameRegion(reference, actual, rect: CGRect(x: 60, y: 10, width: 140, height: 130),
+                             message: "기본 얼굴의 흰자와 머리·얼굴 원화를 바꾸지 않는다")
+        let whites = v167Points(in: CGRect(x: 106, y: 95, width: 75, height: 24)).filter {
+            let color = actual.rgba($0.0, $0.1); return color[3] > 200 && color[0] > 180 && color[1] > 180 && color[2] > 180
+        }
+        XCTAssertGreaterThan(whites.count, 20)
+        for rect in [CGRect(x: 115, y: 150, width: 45, height: 40), CGRect(x: 40, y: 205, width: 170, height: 25)] {
+            let opaque = v167Points(in: rect).filter { actual.rgba($0.0, $0.1)[3] > 200 }
+            XCTAssertGreaterThan(opaque.count, 600, "목과 양 어깨까지 이어지는 상반신을 유지한다")
+        }
+        attach(sheet([[UIImage(cgImage: try v167GridCell(atlas, column: 0, row: 0, columns: 4, rows: 2)), rendered]],
+                     labels: ["V202 approved bust / native default"]), name: "V202-reference-and-native-bust")
+    }
+
+    func testV202PartsHaveIndependentPixelsCacheAndProtectedUniform() throws {
+        let base = PlayerAppearance.creationDefault
+        let before = try stored(base)
+        let baseline = try v167Pixels(XCTUnwrap(ManagementPortraitRasterV166.image(base)))
+        var rows = [[UIImage]]()
+        let dimensions: [(WritableKeyPath<PlayerPortraitParts, Int>, Int)] = [(\.face, 4), (\.eyes, 3), (\.gaze, 3), (\.ears, 3)]
+        for (field, count) in dimensions {
+            var images = Set<Data>(), keys = Set<String>(), pictures = [UIImage]()
+            for index in 0..<count {
+                var look = base, parts = PlayerPortraitParts(); parts[keyPath: field] = index; look.portraitParts = parts
+                let encoded = try stored(look), image = try XCTUnwrap(ManagementPortraitRasterV166.image(look))
+                let cached = ManagementPortraitRasterV166.image(look)
+                XCTAssertTrue(image === cached)
+                images.insert(try XCTUnwrap(image.pngData())); keys.insert(ManagementPortraitRasterV166.key(look))
+                let pixels = try v167Pixels(image)
+                v167AssertSameRegion(baseline, pixels, rect: CGRect(x: 0, y: 170, width: 256, height: 86),
+                                     message: "부위 조작은 목 아래 유니폼·어깨를 변경하지 않는다")
+                XCTAssertEqual(try stored(look), encoded)
+                pictures.append(image)
+            }
+            XCTAssertEqual(images.count, count); XCTAssertEqual(keys.count, count)
+            rows.append(pictures)
+        }
+        var hairImages = Set<Data>()
+        for hair in PlayerAppearance.hairNames.indices {
+            var look = base; look.hairStyle = hair
+            hairImages.insert(try XCTUnwrap(ManagementPortraitRasterV166.image(look)?.pngData()))
+        }
+        XCTAssertEqual(hairImages.count, 8)
+        XCTAssertEqual(try stored(base), before)
+        attach(sheet(rows, labels: ["face", "eye shape", "gaze tilt", "ears"]), name: "V202-independent-face-eye-gaze-ear-selections")
+    }
+
+    func testV202LegacyAndInvalidPartsKeepTheirOwnContract() throws {
+        let old = Data(#"{"version":1,"eye":2,"brow":3,"schoolKitID":"hs-ref-001"}"#.utf8)
+        let decoded = try JSONDecoder().decode(PlayerCreationLook.self, from: old)
+        XCTAssertNil(decoded.portraitParts); XCTAssertTrue(decoded.isValid)
+        var legacy = PlayerAppearance(); legacy.eyeShape = 2; legacy.browShape = 3
+        let key = ManagementPortraitRasterV166.key(legacy)
+        XCTAssertFalse(key.contains("v202"))
+        let image = try XCTUnwrap(ManagementPortraitRasterV166.image(legacy)?.pngData())
+        var current = legacy; current.portraitParts = PlayerPortraitParts()
+        XCTAssertNotEqual(key, ManagementPortraitRasterV166.key(current))
+        _ = ManagementPortraitRasterV166.image(current)
+        XCTAssertEqual(image, ManagementPortraitRasterV166.image(legacy)?.pngData())
+        for field in [\PlayerPortraitParts.face, \.eyes, \.gaze, \.ears] {
+            var invalid = PlayerAppearance.creationDefault
+            invalid.portraitParts![keyPath: field] = 99
+            XCTAssertFalse(invalid.isValid); XCTAssertNil(ManagementPortraitRasterV166.image(invalid))
+        }
+    }
+}

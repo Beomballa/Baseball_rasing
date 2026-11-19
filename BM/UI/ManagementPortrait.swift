@@ -6,15 +6,32 @@ struct ManagementPortrait: View {
     var role: PlayerRole = .batter
     var number: Int = 10
     var cap = false
+    var detail: ManagementPortraitDetail? = nil
     @State private var image: UIImage?
-    private var key: String { ManagementPortraitRasterV166.key(appearance, role: role, number: number, cap: cap) }
+    private var key: String { ManagementPortraitRasterV166.key(appearance, role: role, number: number, cap: cap) + (detail?.rawValue ?? "") }
 
     var body: some View {
         Group {
             if let image { Image(uiImage: image).resizable().interpolation(.none).scaledToFit() }
             else { Color.clear }
         }.accessibilityHidden(true)
-            .task(id: key) { image = ManagementPortraitRasterV166.image(appearance, role: role, number: number, cap: cap) }
+            .task(id: key) {
+                let portrait = ManagementPortraitRasterV166.image(appearance, role: role, number: number, cap: cap)
+                if let detail, let crop = portrait?.cgImage?.cropping(to: detail.crop) { image = UIImage(cgImage: crop) }
+                else { image = portrait }
+            }
+    }
+}
+
+enum ManagementPortraitDetail: String {
+    case face, eyes, gaze, hair, ears
+    var crop: CGRect {
+        switch self {
+        case .face: CGRect(x: 75, y: 86, width: 113, height: 89)
+        case .eyes, .gaze: CGRect(x: 106, y: 85, width: 75, height: 39)
+        case .hair: CGRect(x: 59, y: 10, width: 151, height: 100)
+        case .ears: CGRect(x: 73, y: 95, width: 42, height: 43)
+        }
     }
 }
 
@@ -27,10 +44,11 @@ struct ManagementPortrait: View {
     }()
 
     static func key(_ a: PlayerAppearance, role: PlayerRole = .batter, number: Int = 10, cap: Bool = false) -> String {
-        [version, role.rawValue, String(number), String(cap), String(a.skin), String(a.hair), String(a.kit),
+        let legacy = [version, role.rawValue, String(number), String(cap), String(a.skin), String(a.hair), String(a.kit),
          String(a.hairStyle), String(a.eyeIndex), String(a.browIndex), String(a.expression),
          a.schoolKitID ?? "legacy", String(a.creationVersion ?? 0), a.uniformTeamID ?? "", String(a.uniformAway)]
             .joined(separator: ":")
+        return legacy + (a.portraitParts.map { ":v202-" + $0.cacheKey } ?? "")
     }
 
     private struct Reference {
@@ -63,6 +81,11 @@ struct ManagementPortrait: View {
         guard a.isValid else { return nil }
         let key = key(a, role: role, number: number, cap: cap) as NSString
         if let image = cache.object(forKey: key) { return image }
+        if let parts = a.portraitParts {
+            guard let image = composedPortrait(a, parts: parts, role: role, number: number, cap: cap) else { return nil }
+            cache.setObject(image, forKey: key)
+            return image
+        }
         let reference = reference(for: a)
         guard let sheet = UIImage(named: "ManagementPortraitReferenceV167")?.cgImage,
               let features = UIImage(named: "ManagementFeaturesV166")?.cgImage,
@@ -93,6 +116,78 @@ struct ManagementPortrait: View {
         }
         cache.setObject(image, forKey: key)
         return image
+    }
+
+    private static let compositionBaseCache: NSCache<NSString, UIImage> = {
+        let value = NSCache<NSString, UIImage>(); value.countLimit = 32; return value
+    }()
+
+    /// 승인한 웹 시안의 V167 상반신·V166 머리 조합과 같은 원본을 사용한다.
+    private static func composedPortrait(_ a: PlayerAppearance, parts: PlayerPortraitParts,
+                                          role: PlayerRole, number: Int, cap: Bool) -> UIImage? {
+        // 저장 인덱스는 유지하고 시안의 머리 순서만 대응시킨다.
+        let sourceIndex = [0, 3, 7, 1, 2, 4, 5, 6][a.hairStyle]
+        let reference = Reference(index: 202 + sourceIndex, hairStyle: a.hairStyle, eye: 0, brow: 0, expression: 2, skin: 0,
+            eyes: references[0].eyes, brows: references[0].brows, mouth: references[0].mouth, nose: references[0].nose)
+        var baseLook = a; baseLook.portraitParts = nil
+        let baseKey = key(baseLook, role: role, number: number) as NSString
+        let base: UIImage
+        if let cached = compositionBaseCache.object(forKey: baseKey) { base = cached }
+        else {
+            guard let atlas = UIImage(named: "ManagementPortraitPartsV202")?.cgImage,
+                  let source = cell(atlas, column: sourceIndex % 4, row: sourceIndex / 4, columns: 4, rows: 2),
+                  let prepared = preparedReference(source, appearance: a, reference: reference),
+                  let features = UIImage(named: "ManagementFeaturesV166")?.cgImage else { return nil }
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            base = UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+                let context = renderer.cgContext; context.interpolationQuality = .none
+                prepared.draw(in: CGRect(origin: .zero, size: size))
+                // 기존 눈 스타일·눈썹·표정 선택도 계속 사용할 수 있다.
+                for (row, selected) in [a.eyeIndex, a.browIndex, a.expression].enumerated()
+                    where selected != [0, 0, 2][row] {
+                    guard let raw = cell(features, column: selected, row: row, columns: 6, rows: 3),
+                          let glyph = preparedFeature(raw, appearance: a, eyebrow: row == 1) else { continue }
+                    let rect = [reference.eyes, reference.brows, reference.mouth][row]
+                    context.saveGState()
+                    let permitted = CGMutablePath(); permitted.addRect(CGRect(origin: .zero, size: size)); permitted.addRect(reference.nose)
+                    context.addPath(permitted); context.clip(using: .evenOdd)
+                    glyph.draw(in: aspectFit(glyph.size, in: rect)); context.restoreGState()
+                }
+                drawUniformDetails(a, number: number, in: context)
+            }
+            compositionBaseCache.setObject(base, forKey: baseKey)
+        }
+        guard let raw = base.cgImage, var output = bytes(raw, width: 256, height: 256) else { return nil }
+        let original = output
+        let eyeY = sourceIndex == 0 ? 105.0 : 103.0
+        func smooth(_ distance: Double, _ radius: Double) -> Double {
+            let t = max(0, 1 - abs(distance) / radius); return t * t * (3 - 2 * t)
+        }
+        // 원본 좌표를 역으로 찾아 흰자·윤곽·음영을 함께 옮기고 목과 유니폼은 보존한다.
+        // 가장 가까운 도트를 복사하므로 경계에 빈 픽셀이나 보간 번짐이 생기지 않는다.
+        for y in 78..<170 { for x in 60..<193 {
+            let xx = Double(x), yy = Double(y)
+            var sx = xx, sy = yy
+            let jaw = smooth(yy - (parts.face == 2 ? 147 : 139), parts.face == 2 ? 20 : 31)
+            sx -= [0.0, 5, 6, -6][parts.face] * jaw * (xx - 139) / 38 * min(1, max(0, (xx - 105) / 16))
+            let ear = smooth(xx - 90, 20) * smooth(yy - 116, 20), earWidth = [0.0, -0.23, 0.32][parts.ears]
+            sx -= (xx - 101) * earWidth * ear; sy -= (yy - 114) * earWidth * 0.46 * ear
+            for cx in [126.0, 165] {
+                let dx = xx - cx, dy = yy - eyeY, weight = smooth(xx - cx, 20) * smooth(yy - eyeY, 15)
+                sx -= dx * [0.0, 0.14, -0.09][parts.eyes] * weight
+                sy -= dy * [0.0, 0.53, -0.37][parts.eyes] * weight
+                sy += (cx == 126 ? -dx : dx) * [0.0, 0.40, -0.38][parts.gaze] * weight
+            }
+            let src = (Int(sy.rounded()) * 256 + Int(sx.rounded())) * 4, dst = (y * 256 + x) * 4
+            for channel in 0..<4 { output[dst + channel] = original[src + channel] }
+        } }
+        guard let composed = image(&output, width: 256, height: 256) else { return nil }
+        guard cap else { return composed }
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+            composed.draw(in: CGRect(origin: .zero, size: size))
+            drawCap(a, reference: reference, in: renderer.cgContext)
+        }
     }
 
     private static func aspectFit(_ source: CGSize, in target: CGRect) -> CGRect {

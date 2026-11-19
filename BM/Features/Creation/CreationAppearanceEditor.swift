@@ -44,25 +44,31 @@ struct CreationAppearanceEditor: View {
                             LazyVGrid(columns: columns, spacing: 10) {
                                 ForEach(hairOrder, id: \.self) { index in
                                     thumbnail(PlayerAppearance.hairNames[index], id: "hairStyle-\(index)", selected: draft.appearance.hairStyle == index,
-                                        appearance: changed { $0.hairStyle = index }, cap: false) { draft.appearance.hairStyle = index }
+                                        appearance: changed { $0.hairStyle = index }, cap: false, detail: .hair) { draft.appearance.hairStyle = index }
                                 }
                             }
                             colors("머리색", values: PlayerAppearance.hairColors, selection: $draft.appearance.hair, prefix: "hair")
                         case .face:
-                            heading("눈매", detail: "4종")
-                            LazyVGrid(columns: columns, spacing: 10) {
-                                ForEach(PlayerAppearance.eyeNames.indices, id: \.self) { index in
-                                    thumbnail(PlayerAppearance.eyeNames[index], id: "eyeShape-\(index)", selected: draft.appearance.eyeIndex == index,
-                                        appearance: changed { $0.eyeShape = index }, cap: false) { draft.appearance.eyeShape = index }
+                            partChoices("얼굴형", names: PlayerPortraitParts.faceNames, field: \.face, detail: .face)
+                            partChoices("눈 크기·형태", names: PlayerPortraitParts.eyeNames, field: \.eyes, detail: .eyes)
+                            partChoices("눈매 기울기", names: PlayerPortraitParts.gazeNames, field: \.gaze, detail: .gaze)
+                            partChoices("귀", names: PlayerPortraitParts.earNames, field: \.ears, detail: .ears)
+                            DisclosureGroup("기존 눈 스타일 · 눈썹") {
+                                heading("기존 눈 스타일", detail: "4종")
+                                LazyVGrid(columns: columns, spacing: 10) {
+                                    ForEach(PlayerAppearance.eyeNames.indices, id: \.self) { index in
+                                        thumbnail(PlayerAppearance.eyeNames[index], id: "eyeShape-\(index)", selected: draft.appearance.eyeIndex == index,
+                                            appearance: changed { $0.eyeShape = index }, cap: false) { draft.appearance.eyeShape = index }
+                                    }
                                 }
-                            }
-                            heading("눈썹", detail: "4종")
-                            LazyVGrid(columns: columns, spacing: 10) {
-                                ForEach(PlayerAppearance.browNames.indices, id: \.self) { index in
-                                    thumbnail(PlayerAppearance.browNames[index], id: "browShape-\(index)", selected: draft.appearance.browIndex == index,
-                                        appearance: changed { $0.browShape = index }, cap: false) { draft.appearance.browShape = index }
+                                heading("눈썹", detail: "4종")
+                                LazyVGrid(columns: columns, spacing: 10) {
+                                    ForEach(PlayerAppearance.browNames.indices, id: \.self) { index in
+                                        thumbnail(PlayerAppearance.browNames[index], id: "browShape-\(index)", selected: draft.appearance.browIndex == index,
+                                            appearance: changed { $0.browShape = index }, cap: false) { draft.appearance.browShape = index }
+                                    }
                                 }
-                            }
+                            }.font(ManagementPixelFont.readable(.label)).accessibilityIdentifier("appearanceLegacyFeatures")
                         case .expression:
                             heading("기본 표정", detail: "6종")
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: type.isAccessibilitySize ? 2 : 3), spacing: 10) {
@@ -110,6 +116,24 @@ struct CreationAppearanceEditor: View {
     private func changed(_ change: (inout PlayerAppearance) -> Void) -> PlayerAppearance {
         var value = draft.appearance; change(&value); return value
     }
+    private func partChoices(_ title: String, names: [String], field: WritableKeyPath<PlayerPortraitParts, Int>,
+                             detail: ManagementPortraitDetail) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            heading(title, detail: "\(names.count)종")
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(names.indices, id: \.self) { index in
+                    let parts = draft.appearance.portraitParts ?? PlayerPortraitParts()
+                    let look = changed {
+                        var next = parts; next[keyPath: field] = index; $0.portraitParts = next
+                    }
+                    thumbnail(names[index], id: "portrait-\(detail.rawValue)-\(index)", selected: parts[keyPath: field] == index,
+                        appearance: look, cap: false, detail: detail) {
+                            draft.appearance.portraitParts = look.portraitParts
+                        }
+                }
+            }
+        }
+    }
     private var portraitPresets: some View {
         VStack(alignment: .leading, spacing: 12) {
             heading("얼굴 스타일", detail: "4가지 시작 모습")
@@ -130,7 +154,7 @@ struct CreationAppearanceEditor: View {
                         .accessibilityIdentifier("appearancePreset-\(index)")
                 }
             }
-            Text("스타일을 고른 뒤 헤어·눈매·눈썹·표정·색상을 각각 바꿀 수 있습니다.")
+            Text("시작 모습을 고른 뒤 얼굴형·눈·눈매·귀·헤어·표정·색상을 각각 바꿀 수 있습니다.")
                 .managementFont(.helper).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -161,9 +185,13 @@ struct CreationAppearanceEditor: View {
                         .font(.subheadline).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
                     Text("\(PlayerAppearance.hairNames[draft.appearance.hairStyle]) · \(PlayerAppearance.expressionNames[draft.appearance.expression])")
                         .font(.caption).foregroundStyle(GameTheme.boardMuted).fixedSize(horizontal: false, vertical: true)
+                    if let parts = draft.appearance.portraitParts {
+                        Text(parts.summary).font(.caption).foregroundStyle(GameTheme.boardMuted)
+                            .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("creationPortraitParts")
+                    }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.accessibilityElement(children: .combine).accessibilityIdentifier("creationMotionPreview")
-                .accessibilityValue("\(PlayerAppearance.hairNames[draft.appearance.hairStyle]) · \(PlayerAppearance.expressionNames[draft.appearance.expression]) · \(PlayerAppearance.eyeNames[draft.appearance.eyeIndex]) · \(PlayerAppearance.browNames[draft.appearance.browIndex])")
+                .accessibilityValue("\(PlayerAppearance.hairNames[draft.appearance.hairStyle]) · \(PlayerAppearance.expressionNames[draft.appearance.expression]) · \(PlayerAppearance.eyeNames[draft.appearance.eyeIndex]) · \(PlayerAppearance.browNames[draft.appearance.browIndex]) · \(draft.appearance.portraitParts?.summary ?? "")")
             Button { cap.toggle() } label: {
                 HStack(spacing: 8) { Text(cap ? "■" : "□"); Text("모자 보기"); Spacer() }
                     .font(.subheadline).frame(minHeight: 44).padding(.horizontal, 10)
@@ -177,14 +205,19 @@ struct CreationAppearanceEditor: View {
         HStack { Text(title).font(ManagementPixelFont.readable(.sectionTitle)); Spacer(); Text(detail).managementFont(.helper) }
     }
     private func thumbnail(_ label: String, id: String, selected: Bool, appearance: PlayerAppearance, cap: Bool,
+                           detail: ManagementPortraitDetail? = nil,
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
-                ManagementPortrait(appearance: appearance, role: draft.role, number: Int(draft.jerseyNumber) ?? 0, cap: cap).frame(height: type.isAccessibilitySize ? 96 : 80)
+                ManagementPortrait(appearance: appearance, role: draft.role, number: Int(draft.jerseyNumber) ?? 0, cap: cap, detail: detail)
+                    .frame(height: detail == nil ? (type.isAccessibilitySize ? 96 : 80) : 48)
                 Text(label).font(ManagementPixelFont.readable(.helper)).fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity).padding(4)
                 .overlay(alignment: .topTrailing) {
-                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(GameTheme.navy, GameTheme.gold).padding(3) }
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(GameTheme.navy, GameTheme.gold).padding(3).accessibilityHidden(true)
+                    }
                 }
         }.buttonStyle(CreationPaperChoice(selected: selected)).accessibilityLabel(label)
             .accessibilityAddTraits(selected ? .isSelected : []).accessibilityIdentifier(id)

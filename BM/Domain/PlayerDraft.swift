@@ -39,12 +39,13 @@ struct PlayerAppearance: Equatable, Codable {
     var browShape: Int?
     var schoolKitID: String?
     var creationVersion: Int?
+    var portraitParts: PlayerPortraitParts?
     // Render context only: never changes a saved creation look or a frozen game payload.
     var uniformTeamID: String? = nil
     var uniformAway = false
     var opponentUniformTeamID: String? = nil
     private enum CodingKeys: String, CodingKey {
-        case skin, hair, kit, hairStyle, expression, eyeShape, browShape, schoolKitID, creationVersion
+        case skin, hair, kit, hairStyle, expression, eyeShape, browShape, schoolKitID, creationVersion, portraitParts
     }
     func wearing(teamID: String?, away: Bool = false) -> Self {
         var copy = self; copy.uniformTeamID = teamID; copy.uniformAway = away; return copy
@@ -64,6 +65,35 @@ struct PlayerAppearance: Equatable, Codable {
         && Self.eyeNames.indices.contains(eyeIndex) && Self.browNames.indices.contains(browIndex)
         && (creationVersion == nil || creationVersion == 1)
         && (schoolKitID == nil || schoolKitID!.count <= 32)
+        && (portraitParts == nil || portraitParts!.isValid)
+    }
+
+    /// 새 초안만 최신 상반신 조합을 사용한다. 기존 저장의 nil은 종전 모습으로 남긴다.
+    static var creationDefault: Self {
+        var value = Self(); value.creationVersion = 1; value.expression = 2
+        value.portraitParts = PlayerPortraitParts()
+        return value
+    }
+}
+
+struct PlayerPortraitParts: Codable, Equatable {
+    var version = 1
+    var face = 0
+    var eyes = 0
+    var gaze = 0
+    var ears = 0
+    static let faceNames = ["기본형", "둥근형", "각진형", "좁은 턱"]
+    static let eyeNames = ["기본 눈", "둥근 눈", "또렷한 눈"]
+    static let gazeNames = ["수평 눈매", "올라간 눈매", "처진 눈매"]
+    static let earNames = ["기본 귀", "작은 귀", "돌출 귀"]
+    var isValid: Bool {
+        version == 1 && Self.faceNames.indices.contains(face) && Self.eyeNames.indices.contains(eyes)
+        && Self.gazeNames.indices.contains(gaze) && Self.earNames.indices.contains(ears)
+    }
+    var cacheKey: String { "parts\(version):\(face):\(eyes):\(gaze):\(ears)" }
+    var summary: String {
+        guard isValid else { return "외형 확인 필요" }
+        return [Self.faceNames[face], Self.eyeNames[eyes], Self.gazeNames[gaze], Self.earNames[ears]].joined(separator: " · ")
     }
 }
 
@@ -73,10 +103,12 @@ struct PlayerCreationLook: Codable, Equatable {
     var eye: Int
     var brow: Int
     var schoolKitID: String?
+    var portraitParts: PlayerPortraitParts?
     var isValid: Bool {
         version == 1 && PlayerAppearance.eyeNames.indices.contains(eye)
         && PlayerAppearance.browNames.indices.contains(brow)
         && (schoolKitID == nil || schoolKitID!.count <= 32)
+        && (portraitParts == nil || portraitParts!.isValid)
     }
 }
 
@@ -105,7 +137,7 @@ struct PlayerDraft {
     var schoolID = ""
     var position: FieldPosition = .center
     var throwingHand: ThrowingHand = .right
-    var appearance = PlayerAppearance()
+    var appearance = PlayerAppearance.creationDefault
 
     var abilityBudget: Int { role == .batter ? 388 : 459 }
     var initialAllocation: PlayerStatAllocation {

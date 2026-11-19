@@ -117,6 +117,9 @@ ART_HASHES.update({'BM/Resources/Assets.xcassets/ManagementHeadsV166.imageset/im
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/ManagementFeaturesV166.imageset/Contents.json', 'BM/Resources/Assets.xcassets/ManagementHeadsV166.imageset/Contents.json'})
 EXACT_PATHS.add("BM/Resources/Assets.xcassets/ManagementPortraitReferenceV167.imageset/Contents.json")
 ART_HASHES["BM/Resources/Assets.xcassets/ManagementPortraitReferenceV167.imageset/image.png"] = "dfdea7a78f410d8359e06fe5d7fab8c70608f2a0bd9e5c11213953571014e02a"
+# 승인한 V167 상반신 조합 시트만 허용하며 개인 이미지 경로는 열지 않는다.
+EXACT_PATHS.add("BM/Resources/Assets.xcassets/ManagementPortraitPartsV202.imageset/Contents.json")
+ART_HASHES["BM/Resources/Assets.xcassets/ManagementPortraitPartsV202.imageset/image.png"] = "e31307aa4782e1ad8d5290ded56026259ebf32fca53d006276e3a6b5757e4ff7"
 
 # V79 generated club logos reviewed in design_V79; no wildcard binary permission.
 EXACT_PATHS.update({'BM/Resources/Assets.xcassets/Club-kbo-0.imageset/Contents.json',
@@ -321,6 +324,7 @@ def allowed_path(path: str) -> bool:
     return (len(parts) > 1 and parts[0] in {"BM", "BMTests", "BMUITests"}
             and not any(part.startswith(".") for part in parts[1:-1])
             and path.endswith(".swift"))
+
 
 
 def content_issues(data: bytes) -> list[str]:

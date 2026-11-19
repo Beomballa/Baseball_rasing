@@ -164,6 +164,7 @@ enum CareerSchemaV15: VersionedSchema {
             if let look = try? lifecycle.creationLook {
                 value.eyeShape = look.eye; value.browShape = look.brow
                 value.schoolKitID = look.schoolKitID; value.creationVersion = look.version
+                value.portraitParts = look.portraitParts
             }
             return value
         }

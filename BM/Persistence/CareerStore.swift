@@ -69,7 +69,7 @@ import SwiftData
         lifecycle.development=PlayerDevelopment.initial(playerID:player.id,date:player.gameDate)
         if draft.appearance.creationVersion == 1 {
             lifecycle.creationLook = PlayerCreationLook(eye: draft.appearance.eyeIndex, brow: draft.appearance.browIndex,
-                schoolKitID: draft.appearance.schoolKitID)
+                schoolKitID: draft.appearance.schoolKitID, portraitParts: draft.appearance.portraitParts)
         }
         player.lifecycleData=try JSONEncoder().encode(lifecycle)
         let values = draft.initialValues
