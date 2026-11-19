@@ -475,6 +475,12 @@ struct PlayerHomeView: View {
                         playerNotebook(section)
                     } else if case .training(let section) = detail {
                         trainingNotebook(section, selectedKind: trainingKind)
+                    } else if detail == .career(.contracts) {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 24) {
+                                careerContent(.contracts)
+                            }.padding(16)
+                        }.accessibilityIdentifier("roomDetailScroll").background(GameTheme.board)
                     } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 24) {
@@ -2188,14 +2194,16 @@ struct OverseasEligibilityPanel:View {
     @Environment(\.modelContext) private var context
     @State private var failure:String?
     @State private var refreshed=0
+    @State private var eligibility: Result<OverseasEligibilitySnapshot, Error>?
     @State private var details=false
     @State private var selectedRoute: OverseasRoute?
     @Environment(\.dynamicTypeSize) private var typeSize
     var body:some View {
-        let _=calendar.revision;let _=refreshed
         GamePanel(title:"해외 진출 · 자격과 경력",onBoard:true,contentSpacing:12) {
-            switch Result(catching:{try OverseasEligibilityStore.current(player:player,calendar:calendar,in:context)}) {
-            case .success(let value):
+            switch eligibility {
+            case nil:
+                ProgressView("해외 진출 자격 확인 중")
+            case .some(.success(let value)):
                 Text("현재 자격 · "+value.evidence.date+" / 관찰과 정식 제의는 별도").font(.caption).foregroundStyle(GameTheme.boardMuted)
                 Text(value.evidence.release == nil ? "최초/현재 소속 진출 자격 · 재취업 자격과 구분":"방출 근거 있음 · 재취업 자격·역할/표본을 별도 심사").font(.subheadline.bold()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("overseasEntryContext")
                 let summaryLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment:.leading,spacing:8)) : AnyLayout(HStackLayout(spacing:12))
@@ -2283,9 +2291,12 @@ struct OverseasEligibilityPanel:View {
                         Text("최근 고정 자료 · "+last.evidence.date+" / \(journal.overseasEligibility?.count ?? 0)건 보존").font(.caption).foregroundStyle(GameTheme.growth).accessibilityIdentifier("overseasEligibilitySaved")
                     }
                 }
-            case .failure(let error):Text(error.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold)
+            case .some(.failure(let error)):Text(error.localizedDescription).font(.caption).foregroundStyle(GameTheme.gold)
             }
             if let failure {Text(failure).font(.caption).foregroundStyle(GameTheme.gold)}
+        }
+        .task(id: "\(player.id)/\(player.gameDate)/\(calendar.revision)/\(refreshed)") {
+            eligibility = Result { try OverseasEligibilityStore.current(player: player, calendar: calendar, in: context) }
         }
     }
     private func careerEvidence(_ evidence:OverseasCareerEvidence) -> some View {

@@ -20,13 +20,9 @@ import Observation
             defer {
                 if display?.id == current.id { display = nil; task = nil }
             }
-            do {
-                try await Task.sleep(for: .milliseconds(reduced ? 40 : 350))
-                try Task.checkCancellation()
-                await action()
-                try await Task.sleep(for: .milliseconds(reduced ? 40 : 300))
-            } catch is CancellationError { /* Already saved days remain committed. */ }
-            catch { return }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            await action()
         }
     }
 

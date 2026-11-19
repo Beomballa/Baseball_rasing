@@ -631,6 +631,10 @@ struct MatchResultSummary {
 
 
 enum FieldReplayPresentation {
+    static func framesPerSecond(finished: Bool, previewTime: Double?, reduced: Bool) -> Int {
+        finished || previewTime != nil || reduced ? 30 : 60
+    }
+
     static func confirmedHitLabel(_ play: MatchDetailedPlay) -> String? {
         // Preserve the full ruling when the same play includes an out or an error.
         guard play.misplay == nil, play.outsAdded == 0 else { return nil }
@@ -3023,7 +3027,7 @@ private struct InplayFieldSurface:View {
         if ProcessInfo.processInfo.arguments.contains("-inplay-30hz-comparison") {return 30}
         if ProcessInfo.processInfo.arguments.contains("-ground-60hz-comparison") {return 60}
         #endif
-        return lowPower || finished || previewTime != nil || reduced ? 30:60
+        return FieldReplayPresentation.framesPerSecond(finished: finished, previewTime: previewTime, reduced: reduced)
     }
     let scene:InplayFieldScene
     let scoreText:String
@@ -3043,20 +3047,21 @@ private struct InplayFieldSurface:View {
                     #endif
                     lowPower=ProcessInfo.processInfo.isLowPowerModeEnabled
                     scene.canvasFrame=geometry.frame(in:.global);scene.isPaused=false;scene.setScore(scoreText)
-                    scene.setReduced(reduced);scene.setEffectsReduced(effectsReduced);scene.setPreviewTime(previewTime);scene.setFinished(finished)
+                    scene.setReduced(reduced);scene.setEffectsReduced(effectsReduced || lowPower);scene.setPreviewTime(previewTime);scene.setFinished(finished)
                     #if DEBUG
                     scene.setContactPoints(showsContactPoints)
                     #endif
                 }
                 .onReceive(NotificationCenter.default.publisher(for:.NSProcessInfoPowerStateDidChange).receive(on:RunLoop.main)) {_ in
                     lowPower=ProcessInfo.processInfo.isLowPowerModeEnabled
+                    scene.setEffectsReduced(effectsReduced || lowPower)
                 }
                 .onChange(of:geometry.frame(in:.global)) {_,frame in scene.canvasFrame=frame}
                 .onChange(of:scoreText) {_,value in scene.setScore(value)}
                 .onChange(of:finished) {_,value in scene.setFinished(value)}
                 .onChange(of:previewTime) {_,value in scene.setPreviewTime(value)}
-                .onChange(of:reduced) {_,value in scene.setReduced(value);scene.setEffectsReduced(effectsReduced)}
-                .onChange(of:effectsReduced) {_,value in scene.setEffectsReduced(value)}
+                .onChange(of:reduced) {_,value in scene.setReduced(value);scene.setEffectsReduced(effectsReduced || lowPower)}
+                .onChange(of:effectsReduced) {_,value in scene.setEffectsReduced(value || lowPower)}
                 #if DEBUG
                 .onChange(of:showsContactPoints) {_,value in scene.setContactPoints(value)}
                 .onChange(of:frameRate) {_,value in MatchRenderMetrics.recordCadence(value,scene:scene)}

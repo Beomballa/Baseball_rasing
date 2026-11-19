@@ -146,7 +146,7 @@ struct CareerCalendarPanel: View {
                         try? await Task.sleep(for: .seconds(30))
                     }
                     #endif
-                    try? await Task.sleep(for:.milliseconds(reduced ? 0:100))
+                    await Task.yield()
                 })
                 if let receipt { updateScoutNotices(before: before, startDate: startDate, lastSavedDate: receipt.lastSavedDate) }
             } catch let failure as CalendarAdvanceFailure {

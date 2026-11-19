@@ -21,8 +21,6 @@ struct CareerRestConfirmation: View {
     var onResumeTraining: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var recovering = false
-    @State private var recoveryTask: Task<Void, Never>?
     @State private var displayFatigue = 0.0
     @State private var scheduleRetry = 0
     private var scheduleStatus: CalendarScheduleStatus { CalendarScheduleStatus(player: player, state: state) }
@@ -51,7 +49,7 @@ struct CareerRestConfirmation: View {
                         .frame(height: typeSize.isAccessibilitySize ? 108 : 132).clipped()
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(recovering ? "휴식을 저장했어요" : completed ? "회복을 마쳤어요" : canRest ? "오늘 휴식" : "현재 피로")
+                        Text(completed ? "회복을 마쳤어요" : canRest ? "오늘 휴식" : "현재 피로")
                             .font(ManagementPixelFont.readable(.sectionTitle)).accessibilityAddTraits(.isHeader)
                         if canRest || completed {
                             fatigueReceipt
@@ -70,7 +68,7 @@ struct CareerRestConfirmation: View {
                             Button("일정 다시 확인") { scheduleRetry += 1 }.frame(minHeight: 44).id(scheduleRetry)
                         }
                         if let failure { Text(failure).managementFont(.body).foregroundStyle(Color(hex: 0x8b431b)).accessibilityIdentifier("restError") }
-                        if completed && !recovering { Text("휴식을 저장했습니다.").managementFont(.label).accessibilityIdentifier("restSaved") }
+                        if completed { Text("휴식을 저장했습니다.").managementFont(.label).accessibilityIdentifier("restSaved") }
                     }.padding(16).foregroundStyle(GameTheme.navy).frame(maxWidth: .infinity, alignment: .leading).background(GameTheme.boardInk)
                     DisclosureGroup("다음 날 진행과는 달라요") {
                         Text("휴식은 오늘 행동을 사용해 최대 \(DailyRecovery.rest)을 회복하고 날짜를 유지합니다. 다음 날 진행 시 수면 회복 \(DailyRecovery.sleep)은 별도로 반영됩니다.")
@@ -87,9 +85,7 @@ struct CareerRestConfirmation: View {
                         Text(footerStatus(canRest: canRest)).font(ManagementPixelFont.readable(.helper))
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier(pending && !completed ? "restPendingGate" : used && !completed ? "restActionGate" : "restFooterStatus")
-                        if recovering {
-                            Button("회복 연출 건너뛰기") { finishRecovery() }.buttonStyle(ManagementButtonStyle(variant: .secondary)).accessibilityIdentifier("skipRestPresentation")
-                        } else if completed {
+                        if completed {
                             if let onContinue {
                                 Button("경기 · 다음 일정 확인") { onContinue(); dismiss() }.buttonStyle(ManagementButtonStyle()).accessibilityIdentifier("restGoGame")
                             }
@@ -111,8 +107,6 @@ struct CareerRestConfirmation: View {
                 .navigationTitle("휴식").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ManagementToolbarAction(title: "닫기") { dismiss() } }
         }.preferredColorScheme(.dark).presentationDragIndicator(.visible)
-            .onDisappear { recoveryTask?.cancel() }
-            .onChange(of: reduced) { _, value in if value && recovering { finishRecovery() } }
     }
     private func footerStatus(canRest: Bool) -> String {
         if completed { return "오늘 행동 사용 완료 · 날짜 유지" }
@@ -150,24 +144,14 @@ struct CareerRestConfirmation: View {
             Text(value).font(.subheadline.monospacedDigit().bold()).fixedSize(horizontal: false, vertical: true)
         }.accessibilityElement(children: .combine)
     }
-    private func finishRecovery() {
-        recoveryTask?.cancel(); displayFatigue = Double(player.fatigue); recovering = false
-    }
     private func save() {
         do {
             let old = player.fatigue
             try CalendarProgression.rest(player: player, state: state, revision: revision, in: context)
             before = old; completed = true; failure = nil; onCompleted?()
             displayFatigue = Double(old)
-            if reduced { finishRecovery() }
-            else {
-                recovering = true
-                withAnimation(.easeOut(duration: 3.2)) { displayFatigue = Double(player.fatigue) }
-                recoveryTask = Task { @MainActor in
-                    do { try await Task.sleep(for: .seconds(3.2)) } catch { return }
-                    guard !Task.isCancelled else { return }
-                    finishRecovery()
-                }
+            withAnimation(reduced ? nil : .easeOut(duration: 0.35)) {
+                displayFatigue = Double(player.fatigue)
             }
         } catch { failure = error.localizedDescription }
     }

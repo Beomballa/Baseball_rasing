@@ -4098,3 +4098,36 @@ extension FieldTrainingTests {
         }
     }
 }
+
+extension FieldTrainingTests {
+    func testActiveInplayKeepsSixtyFramesAndStaticPreviewUsesThirty() {
+        XCTAssertEqual(FieldReplayPresentation.framesPerSecond(finished: false, previewTime: nil, reduced: false), 60)
+        XCTAssertEqual(FieldReplayPresentation.framesPerSecond(finished: true, previewTime: nil, reduced: false), 30)
+        XCTAssertEqual(FieldReplayPresentation.framesPerSecond(finished: false, previewTime: 0, reduced: false), 30)
+        XCTAssertEqual(FieldReplayPresentation.framesPerSecond(finished: false, previewTime: nil, reduced: true), 30)
+    }
+
+    func testCalendarTransitionRejectsDuplicateAndUnlocksAfterAction() async {
+        let transition = CareerTransition()
+        let finished = expectation(description: "calendar command")
+        var calls = 0
+        transition.perform(date: "2026-05-01", label: "날짜 진행", reduced: false) {
+            calls += 1
+            finished.fulfill()
+        }
+        transition.perform(date: "2026-05-01", label: "중복 입력", reduced: false) { calls += 1 }
+        await fulfillment(of: [finished], timeout: 1)
+        XCTAssertEqual(calls, 1)
+        XCTAssertNil(transition.display)
+    }
+
+    func testCalendarTransitionCancellationBeforeCommitDoesNotRunAction() async {
+        let transition = CareerTransition()
+        var calls = 0
+        transition.perform(date: "2026-05-01", label: "날짜 진행", reduced: false) { calls += 1 }
+        transition.requestCancel()
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(calls, 0)
+        XCTAssertNil(transition.display)
+    }
+}
