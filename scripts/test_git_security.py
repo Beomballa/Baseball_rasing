@@ -97,6 +97,18 @@ class GitPrivacyTests(unittest.TestCase):
     def test_public_build_identifier_is_allowed(self):
         self.assertEqual(content_issues(b'PRODUCT_BUNDLE_IDENTIFIER = "dev.bm.career";'), [])
 
+    def test_only_reviewed_public_support_declaration_is_allowed(self):
+        address = ("jfmdr" + "@" + "naver.com").encode()
+        declaration = b'    static let contactEmail = "' + address + b'"\n'
+        path = "BM/UI/SupportInformationView.swift"
+        self.assertEqual(blob_issues(path, declaration), [])
+        self.assertIn("email-address", content_issues(declaration))
+        self.assertIn("email-address", blob_issues("BM/Other.swift", declaration))
+        self.assertIn("email-address", blob_issues(path, declaration * 2))
+        self.assertIn("email-address", blob_issues(path, declaration.replace(b"contactEmail", b"privateEmail")))
+        extra = b'let unrelated = "private' + b'@example.invalid"\n'
+        self.assertIn("email-address", blob_issues(path, declaration + extra))
+
     def test_calendar_commit_subject(self):
         self.assertTrue(valid_subject("2026.10.19 iOS 기본 구조 테스트 커밋 작업 수행"))
         self.assertTrue(valid_subject("2028.02.29 선수 홈 작업 수행"))

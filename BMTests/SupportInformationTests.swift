@@ -2,6 +2,12 @@ import XCTest
 @testable import BM
 
 final class SupportInformationTests: XCTestCase {
+    func testSupportContactOpensEmailComposerForConfiguredAddress() {
+        XCTAssertEqual(SupportInformation.contactURL.scheme, "mailto")
+        XCTAssertEqual(SupportInformation.contactURL.absoluteString, "mailto:" + SupportInformation.contactEmail)
+        XCTAssertNil(SupportInformation.contactURL.query)
+    }
+
     func testBundledFontLicenseCanBeReadInSupport() throws {
         let license = try XCTUnwrap(SupportInformation.fontLicense())
         XCTAssertTrue(license.contains("Eunbin Jeong"))

@@ -20,6 +20,11 @@ final class SupportInformationFlowTests: XCTestCase {
                 let first = app.descendants(matching: .any).matching(identifier: "supportSection-" + topic + "-0").firstMatch
                 XCTAssertTrue(first.waitForExistence(timeout: 5))
                 if !pitcher { capture(app, "support-" + topic) }
+                if topic == "dataRequests" {
+                    let request = app.descendants(matching: .any).matching(identifier: "supportDataRequestsEmail").firstMatch
+                    reveal(request, app)
+                    XCTAssertTrue(request.isHittable)
+                }
                 if topic == "refund" {
                     let help = app.descendants(matching: .any).matching(identifier: "supportRefundRequest").firstMatch
                     reveal(help, app); XCTAssertTrue(help.isHittable)
@@ -92,6 +97,10 @@ final class SupportInformationFlowTests: XCTestCase {
         XCTAssertTrue(support.waitForExistence(timeout: 8))
         reveal(support, app); support.tap()
         XCTAssertTrue(app.staticTexts["supportPendingNotice"].waitForExistence(timeout: 5))
+        let email = app.descendants(matching: .any).matching(identifier: "supportContactEmail").firstMatch
+        reveal(email, app)
+        XCTAssertTrue(email.isHittable)
+        XCTAssertGreaterThanOrEqual(email.frame.height, 44)
     }
     @MainActor private func reveal(_ element: XCUIElement, _ app: XCUIApplication) {
         for _ in 0..<28 {

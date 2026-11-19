@@ -7,6 +7,8 @@ enum SupportInformation {
     static let refundHelpURL = URL(string: "https://support.apple.com/ko-kr/118223")!
     static let refundRequestURL = URL(string: "https://reportaproblem.apple.com/")!
     static let testFlightPrivacyURL = URL(string: "https://www.apple.com/legal/privacy/data/en/test-flight/")!
+    static let contactEmail = "jfmdr@naver.com"
+    static let contactURL = URL(string: "mailto:" + contactEmail)!
 
     static func fontLicense(bundle: Bundle = .main) -> String? {
         guard let data = NSDataAsset(name: "ManagementPixelLicenseV59", bundle: bundle)?.data else { return nil }
@@ -48,13 +50,13 @@ enum SupportTopic: String, CaseIterable, Identifiable {
             ("기본 플레이와 설정", "이 버전에는 게임 계정·개발자 클라우드·광고 추적 기능이 없습니다. 기기 저장을 개발자 서버로 자동 전송하지 않습니다. 햅틱·타격 안내·재생 방식은 기기 설정에 보관합니다."),
             ("백업 파일", "설정에서 직접 내보낸 파일에는 전체 커리어와 선수 이름이 들어 있습니다. 파일은 암호화되지 않았으며 손상 검사와 암호화는 다릅니다. 파일 앱의 저장 위치나 iPhone 백업 설정에 따라 외부 저장소에 보관될 수 있습니다."),
             ("TestFlight는 별도", "TestFlight로 테스트하면 Apple이 사용·충돌 정보와 제출한 제보를 개발자에게 제공합니다. 초대 방식에 따라 이름·이메일이 포함될 수 있습니다. 기본 플레이의 기기 저장과 별개로 Apple의 안내를 확인해 주세요."),
-            ("공개 정책 준비", "문의 자료의 처리 근거·보관 기간·외부 업체·국외 이전·권리 요청 창구는 아직 확정 전입니다. 이 안내는 현재 기능 설명이며 확정된 개인정보 처리방침을 대신하지 않습니다.")
+            ("공개 정책 준비", "문의 자료의 처리 근거·보관 기간·외부 업체·국외 이전은 확정 전입니다. 열람·정정·삭제는 고객지원 이메일로 문의할 수 있습니다.")
         ]
         case .terms: [
             ("게임의 이용 범위", "픽셀야구인생은 기기에 선수 커리어를 저장하는 1인 야구 게임입니다. 선수·학교·구단·계약금·성적은 게임 안의 설정과 기록이며 실제 입단이나 금전 지급을 의미하지 않습니다."),
             ("계정과 저장", "별도의 게임 회원가입은 없습니다. 경기·훈련은 저장된 진행 상태부터 이어갈 수 있습니다. 앱 삭제·기기 분실 후 자동 복구는 보장되지 않으므로 중요한 기록은 설정에서 직접 백업해 주세요."),
             ("백업과 복원", "복원 전 파일을 검증하고 확인을 거쳐 전체 커리어를 백업 시점으로 되돌립니다. 현재 기록과 합치지 않습니다. 복원 전 저장과 은퇴 기록은 자동 삭제하지 않습니다."),
-            ("판매·지원 조건", "한국에서 앱 1회 유료 다운로드를 준비 중입니다. 이 버전에 인앱 결제·구독·자동 갱신은 없습니다. 최종 가격·운영자·지원 창구·약관 시행일은 공개 전 확정해야 합니다."),
+            ("판매·지원 조건", "한국에서 앱 1회 유료 다운로드를 준비 중입니다. 이 버전에 인앱 결제·구독·자동 갱신은 없습니다. 최종 가격·운영자·약관 시행일은 공개 전 확정합니다."),
             ("권리와 문의", "이 안내를 읽는 것만으로 권리를 포기하거나 새 약관에 동의한 것으로 처리하지 않습니다. 하자·환불·분쟁에 관한 법령상 권리를 일괄 제한하지 않습니다. 정식 이용약관은 운영 조건 확인 후 별도로 고지할 예정입니다.")
         ]
         case .refund: [
@@ -70,9 +72,9 @@ enum SupportTopic: String, CaseIterable, Identifiable {
         ]
         case .dataRequests: [
             ("오류 문의에 필요한 내용", "앱 버전, 기기·iOS 버전, 문제가 발생한 메뉴, 재현 순서와 기대한 동작을 먼저 정리해 주세요. 화면 사진은 선택 사항이며 이름·알림 등 개인정보를 가려 주세요."),
-            ("보내지 않아도 되는 정보", "비밀번호·인증번호·주민등록번호·카드번호는 문의에 필요하지 않습니다. 전체 저장 파일도 기본 문의 자료가 아닙니다. 공개 문의 이메일은 아직 준비 중입니다."),
+            ("보내지 않아도 되는 정보", "비밀번호·인증번호·주민등록번호·카드번호는 문의에 필요하지 않습니다. 전체 저장 파일도 기본 문의 자료가 아닙니다."),
             ("기기 기록과 외부 자료", "게임 계정 탈퇴 기능은 없습니다. 기기 내 커리어, 직접 내보낸 파일, 기기 백업, 문의로 보낸 자료는 보관 위치가 다릅니다. 앱을 삭제해도 별도로 저장한 백업 파일까지 함께 삭제되는 것은 아닙니다."),
-            ("삭제·권리 요청", "개발자가 받은 문의·제보 자료의 열람·정정·삭제 등은 별도 접수 창구를 준비 중입니다. 적절한 본인 확인과 법정 보관 여부를 확인한 후 처리해야 합니다. 이 화면은 자료를 삭제하거나 환불을 실행하지 않습니다.")
+            ("삭제·권리 요청", "개발자가 받은 문의·제보 자료의 열람·정정·삭제는 고객지원 이메일로 문의할 수 있습니다. 본인 확인과 보관 의무를 확인한 뒤 처리합니다.")
         ]
         case .licenses: [
             ("게임 글꼴", "NeoDunggeunmo · Eunbin Jeong (Dalgona.)\nSIL Open Font License 1.1. 아래 원문은 앱에 포함된 라이선스 파일입니다."),
@@ -89,16 +91,18 @@ struct SupportInformationView: View {
             VStack(alignment: .leading, spacing: ManagementTheme.Space.screen) {
                 ManagementFileHeader(eyebrow: "PLAYER SUPPORT", title: SupportInformation.title, note: "이용 안내 · 공개 전 검토본")
                 ManagementPanel("안내 준비 상태") {
-                    Text("공개 운영자와 문의 이메일을 준비 중입니다. 아래 안내를 읽거나 Apple의 환불 경로를 확인할 수 있으며, 이 화면에서 개인정보를 입력하거나 전송하지 않습니다.")
+                    Text("게임 사용과 기록 복구 문의는 고객지원 이메일에서 안내합니다. 공개 운영자 정보와 정책 시행일은 확정 후 안내합니다.")
                         .managementFont(.body).accessibilityIdentifier("supportPendingNotice")
                 }
                 ManagementPanel("공개 전 확인할 항목") {
-                    Text("지원 이메일 · 운영자 표시: 미확정")
+                    Text("운영자 표시와 정책 시행일을 준비 중입니다.")
                     Text("문의 보관 기준 · 어린이 문의 절차: 미확정")
                     Text("이미지·로고 이용권: 자료별 확인 필요")
-                    Text("확정 전에는 이 화면에서 문의 자료를 받지 않습니다. 전체 저장 파일이나 개인정보를 보내실 필요가 없습니다.")
+                    Text("문의에는 앱 버전과 재현 순서를 적어 주세요. 전체 저장 파일과 민감한 개인정보는 보내지 마세요.")
                         .managementFont(.helper)
                 }.managementFont(.body).accessibilityIdentifier("supportReleasePendingItems")
+                SupportExternalLink(title: "고객지원 이메일", url: SupportInformation.contactURL,
+                                    identifier: "supportContactEmail")
                 ForEach(SupportTopic.allCases) { topic in
                     NavigationLink {
                         SupportTopicView(topic: topic)
@@ -141,6 +145,10 @@ private struct SupportTopicView: View {
                 }
                 if topic == .privacy {
                     SupportExternalLink(title: "Apple TestFlight 개인정보 안내", url: SupportInformation.testFlightPrivacyURL, identifier: "supportTestFlightPrivacy")
+                }
+                if topic == .dataRequests {
+                    SupportExternalLink(title: "권리 요청 이메일", url: SupportInformation.contactURL,
+                                        identifier: "supportDataRequestsEmail")
                 }
                 if topic == .licenses {
                     ManagementPanel("경기 음원 · 출처와 편집",surface:.paper) {
@@ -190,14 +198,16 @@ private struct SupportExternalLink: View {
     let url: URL
     let identifier: String
     var body: some View {
+        let isEmail = url.scheme == "mailto"
         Link(destination: url) {
             VStack(spacing: ManagementTheme.Space.micro) {
                 Text(title)
-                Text("Apple 웹사이트 열기").managementFont(.helper)
+                Text(isEmail ? SupportInformation.contactEmail : "Apple 웹사이트 열기")
+                    .managementFont(.helper)
             }
         }
         .buttonStyle(ManagementButtonStyle(variant: .secondary))
-        .accessibilityHint("외부 Apple 웹사이트로 이동합니다. 앱의 저장은 변경하지 않습니다.")
+        .accessibilityHint(isEmail ? "메일 앱에서 문의를 작성합니다." : "외부 Apple 웹사이트로 이동합니다.")
         .accessibilityIdentifier(identifier)
     }
 }
