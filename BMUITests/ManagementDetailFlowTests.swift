@@ -3748,7 +3748,7 @@ extension ManagementDetailFlowTests {
 
         let list = app.scrollViews["careerJournalList"]
         XCTAssertTrue(list.waitForExistence(timeout: 10))
-        let allFilters = ["all", "game", "training", "scout", "contract"]
+        let allFilters = ["all", "game", "training", "scout", "contract", "award"]
         let counter = app.staticTexts["careerJournalCount"]
         let eventPrefix = "careerJournalEvent-"
         var checks: [ReturnCheck] = []
@@ -3841,12 +3841,15 @@ extension ManagementDetailFlowTests {
                       detail: "careerJournalScoutScroll", captureName: "scout")
         try roundTrip(filter: "contract", count: "3건", kind: "contract", prefix: "contract/decision/", date: "2030-04-03",
                       detail: "careerJournalContractScroll", captureName: "contract")
-        try roundTrip(filter: "all", count: "20건", kind: "scouting", suffix: ":observation-v1:52", date: "2030-04-01",
+        try roundTrip(filter: "all", count: "22건", kind: "scouting", suffix: ":observation-v1:52", date: "2030-04-01",
                       detail: "careerJournalScoutScroll", scrolled: true, moveNearTop: true)
-        try roundTrip(filter: "all", count: "20건", kind: "contract", prefix: "contract/evaluation/", suffix: ":2030-04", date: "2030-04-01",
+        try roundTrip(filter: "all", count: "22건", kind: "contract", prefix: "contract/evaluation/", suffix: ":2030-04", date: "2030-04-01",
                       detail: "careerJournalContractScroll", scrolled: true, moveNearTop: true)
-        try roundTrip(filter: "all", count: "20건", kind: "training", suffix: ":2026-04-02", date: "2026-04-02",
+        try roundTrip(filter: "all", count: "22건", kind: "training", suffix: ":2026-04-02", date: "2026-04-02",
                       detail: "careerJournalTrainingScroll", scrolled: true)
+
+        choose("award", count: "2건")
+        choose("all", count: "22건")
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

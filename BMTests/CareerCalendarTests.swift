@@ -3821,7 +3821,7 @@ extension CareerCalendarTests {
         defer {try? FileManager.default.removeItem(at:dir)}
         let url=dir.appendingPathComponent("career.store");var id:UUID!,terms:OverseasOffer!,matches:[Data]=[]
         do {
-            let (store,p,s)=try proCareerFixture(.batter,seasons:2,rating:99,legacyURL:url),c=store.mainContext
+            let (store,p,s)=try proCareerFixture(.batter,seasons:2,rating:99,legacyURL:url,legacyVersion:15),c=store.mainContext
             id=p.id;terms=try XCTUnwrap(professionalOffers(p,s,c).first {$0.route == .npbFirstTeam})
             matches=try c.fetch(FetchDescriptor<CareerMatchRecord>()).map(\.payload)
             try OverseasContractStore.decide(player:p,calendar:s,offerID:terms.id,accept:true,date:p.gameDate,revision:s.revision,in:c)
