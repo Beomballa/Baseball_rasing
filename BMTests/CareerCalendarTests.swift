@@ -9633,3 +9633,101 @@ extension CareerCalendarTests {
         }
     }
 }
+
+extension CareerCalendarTests {
+    private func acceptanceNaturalSeason(_ level: String, role: PlayerRole) throws {
+        guard ProcessInfo.processInfo.environment["BM_ACCEPTANCE_NATURAL_SEASONS"] == "1" else {
+            throw XCTSkip("Full daily-calendar seasons require BM_ACCEPTANCE_NATURAL_SEASONS=1 in the test action environment.")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("natural-season.store")
+        let saved = try autoreleasepool { () throws -> (UUID, Int, [String: Data], String, Int) in
+            let store: ModelContainer
+            let player: CareerPlayer
+            let state: CareerCalendarState
+            if level == "highschool" {
+                store = try CareerStore.makeContainer(url: url)
+                var draft = PlayerDraft(); draft.name = "시즌검증"; draft.role = role; draft.schoolID = "hs-ref-001"
+                player = try CareerStore.create(draft, schools: SchoolCatalog.load(), in: store.mainContext)
+                state = try XCTUnwrap(store.mainContext.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            } else {
+                (store, player, state) = try proCareerFixture(role, seasons: level == "mlb-first-team" ? 7 : 1,
+                    rating: 99, legacyURL: url, legacyVersion: 15)
+                try state.adoptProfessionalExpansion(after: GameDate(player.gameDate))
+                try store.mainContext.save()
+                if level == "domestic-first-team" {
+                    player.gameDate = "\(try GameDate(player.gameDate).year + 1)-04-01"
+                } else {
+                    let route: OverseasRoute = level == "npb-first-team" ? .npbFirstTeam : .mlbFirstTeam
+                    let offer = try XCTUnwrap(try professionalOffers(player, state, store.mainContext).first { $0.route == route })
+                    try OverseasContractStore.decide(player: player, calendar: state, offerID: offer.id,
+                        accept: true, date: player.gameDate, revision: state.revision, in: store.mainContext)
+                    player.gameDate = offer.effective
+                }
+                try store.mainContext.save()
+            }
+            let context = store.mainContext
+            let year = try GameDate(player.gameDate).year
+            let plan = try state.competition(for: player, year: year)
+            XCTAssertEqual(plan.membership?.level ?? "highschool", level)
+            let records = try finishSeason(player: player, state: state, in: context)
+            XCTAssertEqual(records.count, 30)
+            XCTAssertEqual(Set(records.map(\.key)).count, 30)
+            let lastLeagueDate = try XCTUnwrap(plan.fixtures.map(\.date).max())
+            while try GameDate(player.gameDate) <= lastLeagueDate {
+                try CalendarProgression.advanceDay(player: player, state: state, revision: state.revision,
+                    automaticRest: true, in: context)
+            }
+            let summary = try CareerSeasonStore.load(player: player, state: state, year: year, in: context)
+            XCTAssertTrue(summary.finalized)
+            XCTAssertEqual(summary.league.results.count, plan.fixtures.count)
+            XCTAssertTrue(summary.finalStandings.allSatisfy { $0.games == 30 })
+            XCTAssertEqual(summary.totals.games, records.filter(\.appearance).count)
+            let affiliation = try XCTUnwrap(CareerPathStore.record(player: player, calendar: state, in: context))
+            let awards = try affiliation.snapshot(player: player, calendar: state).seasonAwards?.filter { $0.year == year } ?? []
+            XCTAssertEqual(awards.count, 1)
+            let bytes = affiliation.payload
+            let payloads = Dictionary(uniqueKeysWithValues: records.map { ($0.key, $0.payload) })
+            let last = try XCTUnwrap(records.last)
+            XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: state, record: last,
+                revision: last.revision, input: .automatic, in: context))
+            for _ in 0..<2 {
+                _ = try CareerJournal.load(player: player, calendar: state, schools: SchoolCatalog.load(), in: context)
+                XCTAssertEqual(try CareerSeasonStore.load(player: player, state: state, year: year, in: context), summary)
+            }
+            XCTAssertEqual(affiliation.payload, bytes)
+            XCTAssertEqual(Dictionary(uniqueKeysWithValues: records.map { ($0.key, $0.payload) }), payloads)
+            let report: [String: Any] = ["level": level, "role": role.rawValue, "year": year,
+                "calendarEnd": player.gameDate, "teamGames": records.count, "personalGames": summary.totals.games,
+                "leagueResults": summary.league.results.count, "seasonAwardRecords": awards.count,
+                "scope": "Prepared career entry/contract history, then actual daily CalendarProgression and CareerMatchStore automatic games through one full season. No in-season date jumps or batch-inserted current-season results. Not manual UI play or full lifetime balance."]
+            let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]), uniformTypeIdentifier: "public.json")
+            attachment.name = "natural-calendar-season-" + level + "-" + role.rawValue
+            attachment.lifetime = .keepAlways; add(attachment)
+            return (player.id, year, payloads, bytes, summary.totals.games)
+        }
+        try autoreleasepool {
+            let store = try CareerStore.makeContainer(url: url), context = store.mainContext
+            let player = try XCTUnwrap(context.fetch(FetchDescriptor<CareerPlayer>()).first { $0.id == saved.0 })
+            let state = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first { $0.playerID == saved.0 })
+            let affiliation = try XCTUnwrap(CareerPathStore.record(player: player, calendar: state, in: context))
+            XCTAssertEqual(affiliation.payload, saved.3)
+            let records = try context.fetch(FetchDescriptor<CareerMatchRecord>()).filter { saved.2[$0.key] != nil }
+            XCTAssertEqual(Dictionary(uniqueKeysWithValues: records.map { ($0.key, $0.payload) }), saved.2)
+            XCTAssertEqual(try CareerSeasonStore.load(player: player, state: state, year: saved.1, in: context).totals.games, saved.4)
+            for _ in 0..<2 { _ = try CareerJournal.load(player: player, calendar: state, schools: SchoolCatalog.load(), in: context) }
+            XCTAssertEqual(affiliation.payload, saved.3)
+            XCTAssertFalse(context.hasChanges)
+        }
+    }
+    func testAcceptanceNaturalSeasonHighschoolBatter() throws { try acceptanceNaturalSeason("highschool", role: .batter) }
+    func testAcceptanceNaturalSeasonHighschoolPitcher() throws { try acceptanceNaturalSeason("highschool", role: .pitcher) }
+    func testAcceptanceNaturalSeasonKBOBatter() throws { try acceptanceNaturalSeason("domestic-first-team", role: .batter) }
+    func testAcceptanceNaturalSeasonKBOPitcher() throws { try acceptanceNaturalSeason("domestic-first-team", role: .pitcher) }
+    func testAcceptanceNaturalSeasonNPBBatter() throws { try acceptanceNaturalSeason("npb-first-team", role: .batter) }
+    func testAcceptanceNaturalSeasonNPBPitcher() throws { try acceptanceNaturalSeason("npb-first-team", role: .pitcher) }
+    func testAcceptanceNaturalSeasonMLBBatter() throws { try acceptanceNaturalSeason("mlb-first-team", role: .batter) }
+    func testAcceptanceNaturalSeasonMLBPitcher() throws { try acceptanceNaturalSeason("mlb-first-team", role: .pitcher) }
+}
