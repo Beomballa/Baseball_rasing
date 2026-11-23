@@ -247,19 +247,34 @@ enum MatchArt {
     }
     static func prepare(_ requests:[String:Request]) async -> Prepared? {
         let worker=Task.detached(priority:.userInitiated) { () -> Prepared? in
-            var images:[String:UIImage]=[:],sources:[String:CGImage]=[:]
-            for (key,request) in requests.sorted(by:{$0.key<$1.key}) {
-                guard !Task.isCancelled else {return nil}
-                let image:UIImage?=autoreleasepool {
-                    if sources[request.frame.file] == nil,
-                       let url=Bundle.main.url(forResource:request.frame.file,withExtension:nil,subdirectory:"MatchArt") {
-                        sources[request.frame.file]=UIImage(contentsOfFile:url.path)?.cgImage
+            let ordered=requests.sorted(by:{$0.key<$1.key})
+            // Bound raster work to two workers so cold images finish during ball flight.
+            return await withTaskGroup(of:[String:UIImage]?.self) { group in
+                for workerIndex in 0..<min(2,ordered.count) {
+                    let batch=ordered.enumerated().compactMap { $0.offset%2 == workerIndex ? $0.element:nil }
+                    group.addTask {
+                        var images:[String:UIImage]=[:],sources:[String:CGImage]=[:]
+                        for (key,request) in batch {
+                            guard !Task.isCancelled else {return nil}
+                            let image:UIImage?=autoreleasepool {
+                                if sources[request.frame.file] == nil,
+                                   let url=Bundle.main.url(forResource:request.frame.file,withExtension:nil,subdirectory:"MatchArt") {
+                                    sources[request.frame.file]=UIImage(contentsOfFile:url.path)?.cgImage
+                                }
+                                return sources[request.frame.file].flatMap {build(request,original:$0)}
+                            }
+                            if let image {images[key]=image}
+                        }
+                        return images
                     }
-                    return sources[request.frame.file].flatMap {build(request,original:$0)}
                 }
-                if let image {images[key]=image}
+                var images:[String:UIImage]=[:]
+                for await batch in group {
+                    guard let batch else {group.cancelAll();return nil}
+                    images.merge(batch,uniquingKeysWith: { first,_ in first })
+                }
+                return Task.isCancelled ? nil:Prepared(images:images)
             }
-            return Prepared(images:images)
         }
         return await withTaskCancellationHandler(operation:{await worker.value},onCancel:{worker.cancel()})
     }
@@ -276,6 +291,10 @@ enum MatchArt {
         var bounds=[(Int,Int)](repeating:(0,0),count:h)
         let pro = request.style?.pro != nil
         let catcher = f.file.hasPrefix("catcher-")
+        let runner = f.file.hasPrefix("runner-")
+        let width=Double(w),height=Double(h)
+        let gloveX=f.glove[0],gloveY=f.glove[1],gloveRadiusX=width*0.16,gloveRadiusY=height*0.18
+        let hairTop=height*0.19,hairBottom=height*0.36,hairLeft=width*0.23,hairRight=width*0.77
         let needsClothMask = back || (pro && !catcher)
         var backCloth = [Bool](repeating: false, count: needsClothMask ? w*h : 0)
         var sumX = 0.0, sumY = 0.0, clothCount = 0.0
@@ -294,11 +313,16 @@ enum MatchArt {
                 memset(row.advanced(by: span.upperBound*4), 0, (w-span.upperBound)*4)
             }
         }
-        for y in 0..<h {for x in visible[y] {
-            let i=(y*w+x)*4,a=Int(bytes[i+3])
+        bytes.withUnsafeMutableBufferPointer { pixels in
+        for y in 0..<h {
+            let ny=Double(y)/height
+            for x in visible[y] {
+            let i=(y*w+x)*4,a=Int(pixels[i+3])
             guard a>128 else {continue}
-            let r=Double(bytes[i])*255/Double(a),g=Double(bytes[i+1])*255/Double(a),b=Double(bytes[i+2])*255/Double(a)
-            let nx = Double(x) / Double(w), ny = Double(y) / Double(h)
+            let r:Double,g:Double,b:Double
+            if a == 255 {r=Double(pixels[i]);g=Double(pixels[i+1]);b=Double(pixels[i+2])}
+            else {r=Double(pixels[i])*255/Double(a);g=Double(pixels[i+1])*255/Double(a);b=Double(pixels[i+2])*255/Double(a)}
+            let nx=Double(x)/width
             var color:Int?,shade=1.0
             if b>40 && b>r*1.35 && b>g*1.08 {
                 if needsClothMask, (0.30...0.68).contains(nx), (0.30...0.65).contains(ny) {
@@ -332,10 +356,14 @@ enum MatchArt {
                 shade=max(0.35,min(1.1,(r+g+b)/735))
             }
             // Keep the glove's brown leather independent from skin recoloring.
-            else if (f.file.hasPrefix("runner-") || abs(Double(x)-f.glove[0])>Double(w)*0.16 || abs(Double(y)-f.glove[1])>Double(h)*0.18) && r>185 && r>g*1.13 && g>b*1.12 && g>95 {color=skin;shade=max(0.45,min(1.2,r/240))}
-            else if Double(y)>Double(h)*0.19 && Double(y)<Double(h)*0.36 && Double(x)>Double(w)*0.23 && Double(x)<Double(w)*0.77 && r<65 && abs(r-g)<22 && abs(g-b)<22 {color=hair;shade=max(0.5,(r+g+b)/100)}
-            if let color {for (offset,shift) in [(0,16),(1,8),(2,0)] {bytes[i+offset]=UInt8(min(255,Double((color>>shift)&255)*shade)*Double(a)/255)}}
-        }}
+            else if (runner || abs(Double(x)-gloveX)>gloveRadiusX || abs(Double(y)-gloveY)>gloveRadiusY) && r>185 && r>g*1.13 && g>b*1.12 && g>95 {color=skin;shade=max(0.45,min(1.2,r/240))}
+            else if Double(y)>hairTop && Double(y)<hairBottom && Double(x)>hairLeft && Double(x)<hairRight && r<65 && abs(r-g)<22 && abs(g-b)<22 {color=hair;shade=max(0.5,(r+g+b)/100)}
+            if let color {
+                pixels[i]=UInt8(min(255,Double((color>>16)&255)*shade)*Double(a)/255)
+                pixels[i+1]=UInt8(min(255,Double((color>>8)&255)*shade)*Double(a)/255)
+                pixels[i+2]=UInt8(min(255,Double(color&255)*shade)*Double(a)/255)
+            }
+        }}}
         if !back && !(pro && catcher) {
             request.style?.drawMark(at: CGPoint(x: Double(w) * (request.garmentMirrored ? 0.65 : 0.35), y: Double(h) * 0.40), unit: 1,
                                     mirrored: request.garmentMirrored, eligible: pro ? backCloth : nil, bytes: &bytes, width: w, height: h)

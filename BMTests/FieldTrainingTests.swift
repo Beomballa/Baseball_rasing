@@ -3,6 +3,7 @@ import SwiftData
 import SwiftUI
 import Darwin
 import SpriteKit
+import CryptoKit
 @testable import BM
 
 @MainActor final class FieldTrainingTests: XCTestCase {
@@ -2663,6 +2664,39 @@ import SpriteKit
 }
 
 @MainActor final class MatchMotionPreparationTests:XCTestCase {
+    func testConcurrentRasterPreparationMatchesSerialPixelsAcrossTeamsAndHands() async throws {
+        var requests:[String:FieldRasterArt.Request]=[:]
+        var expected:[String:Data]=[:]
+        for teamID in ["hs-ref-037","kbo-0","npb-4","mlb-12"] {
+            let appearance=PlayerAppearance(kit:2).wearing(teamID:teamID)
+            for kind in ["fielder","catcher","runner"] {
+                for left in [false,true] {
+                    for facing in [FieldFacing.north,.south] {
+                        let motion=FieldSpriteMotion(facing:facing,stage:.run,gait:1)
+                        for sample in FieldRasterArt.samples(motion,kind:kind,left:left) {
+                            let request=FieldRasterArt.Request(sample:sample,kit:appearance.uniformColor,
+                                skin:0xefbe91,hair:0x263b48,number:27,back:facing.back,style:appearance.uniformStyle)
+                            requests[request.key]=request
+                            let image=try XCTUnwrap(FieldRasterArt.image(sample,kit:request.kit,skin:request.skin,
+                                hair:request.hair,number:27,back:facing.back,style:appearance.uniformStyle))
+                            expected[request.key]=try XCTUnwrap(image.cgImage?.dataProvider?.data) as Data
+                        }
+                    }
+                }
+            }
+        }
+        let generated=await FieldRasterArt.prepare(requests)
+        let prepared=try XCTUnwrap(generated)
+        XCTAssertEqual(Set(prepared.images.keys),Set(expected.keys))
+        for (key,image) in prepared.images {
+            XCTAssertEqual(try XCTUnwrap(image.cgImage?.dataProvider?.data) as Data,expected[key],key)
+        }
+        let hashes=expected.mapValues { SHA256.hash(data:$0).map { String(format:"%02x",$0) }.joined() }
+        let attachment=XCTAttachment(data:try JSONEncoder().encode(hashes),uniformTypeIdentifier:"public.json")
+        attachment.name="raster-pixel-hashes";attachment.lifetime = .keepAlways;add(attachment)
+        let empty=await FieldRasterArt.prepare([:])
+        XCTAssertEqual(empty?.images.count,0)
+    }
     func testV122EarlyPreparationReusesExactEventImagesAndRejectsCancellation() async throws {
         let play=try FieldVerificationScenario.groundOut.make(),replay=InplayReplay.field(play)
         let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
