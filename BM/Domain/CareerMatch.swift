@@ -82,6 +82,7 @@ struct CareerMatch: Codable, Equatable {
     var detailedFieldVersion: Int?
     var battedBallVersion: Int?
     var fieldReviewVersion: Int? = nil
+    var specialRulesVersion: Int? = nil
     var npcFielders:MatchNPCFielders?
     var npcAttack:MatchNPCAttack? = nil
     var npcReadiness: MatchNPCReadiness? = nil
@@ -304,6 +305,7 @@ struct CareerMatch: Codable, Equatable {
             let flight = speed.map { 0.90 * 145 / $0 } ?? delivery(pitchCode: pitchCode).flightDuration
             resolveRunningPitch(before: runningBefore, eventCount: runningEventsBefore, fieldCount: fieldBefore,
                 homeRunCount: homeRunsBefore, attempted: attemptedRun, pitchFlight: flight)
+            resolveSharedPitch(before: runningBefore, eventCount: runningEventsBefore, fieldCount: fieldBefore, homeRunCount: homeRunsBefore, pitchFlight: flight)
         }
         let personal = appearance && (role == "batter" ? ownAtBat : ownPitcherActive && !offense)
         if personal {scoutingPerformance?.inputs?.record(direct:direct)}
@@ -709,7 +711,10 @@ struct MatchPitching: Codable, Equatable {
               let id=replaced.profile.responsiblePitcher else {return}
         play.runners[batter].profile.responsiblePitcher=id
         let destination=play.runners[batter].destination
-        if (1...3).contains(destination) {play.afterRunners[destination-1]=play.runners[batter].profile}
+        // 세 번째 아웃으로 비운 점유는 책임투수 승계 과정에서 다시 채우지 않는다.
+        if (1...3).contains(destination), play.special == nil || (play.outsBefore ?? 0) + play.outsAdded < 3 {
+            play.afterRunners[destination-1]=play.runners[batter].profile
+        }
     }
 }
 
@@ -1190,6 +1195,10 @@ private struct MatchFieldingCredits {
     var error: Int?
 
     static func make(result: String, play: MatchDetailedPlay?, clean: MatchDetailedPlay?, outsAdded: Int) -> Self? {
+        if let special = play?.special {
+            return Self(putouts: special.retirements.map(\.fielder),
+                assists: Set(special.retirements.flatMap(\.assists)), error: special.kind == .obstruction ? special.fielder : nil)
+        }
         if let play,play.review?.ruling?.kind == .overthrow {return Self(error:play.fielder)}
         if let pitch = play?.pitchEvent {
             return pitch.kind == .uncaughtThird && outsAdded == 1 ? Self(putouts: [2], assists: [1]) : Self()
@@ -1509,6 +1518,9 @@ struct EarnedView:Codable,Equatable {
         } else if ["안타","범타"].contains(context.initial),let original=context.clean {
             var play:MatchDetailedPlay
             if outs == context.outs,runners == actualBefore {play=original}
+            else if let special = original.special {
+                play = MatchSpecialRules.reconstruct(special.context, runners: runners.map { $0?.profile }, outs: outs) ?? original
+            }
             else {
                 let profiles=runners.map {$0?.profile}
                 let airborne=original.review != nil ? original.fly?.caught == true:original.battedBall?.kind.airborne ?? (original.fly != nil)

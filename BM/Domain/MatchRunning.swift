@@ -408,6 +408,7 @@ extension MatchEarnedState {
 }
 extension MatchDetailedPlay {
     func validateRunningField() throws {
+        if special != nil { try MatchSpecialRules.validate(self); return }
         guard let event = runningEvent, pitchEvent == nil, battedBall == nil, misplay == nil, secondThrow == nil, relay == nil,
               (0..<18).contains(half), order >= 0, (0...2).contains(outsBefore ?? -1), (1...3).contains(targetBase),
               afterRunners.count == 3, fielders.count == 9, runs >= 0, runs <= 1, hitBases == 0,

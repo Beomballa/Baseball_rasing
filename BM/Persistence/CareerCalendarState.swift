@@ -561,6 +561,7 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         match.enablePitchEvents()
         match.enableRunning()
         match.enableFieldReview()
+        match.enableSpecialPlays()
         try match.advance(.automatic)
         try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match);try match.pitchLog?.validate(match:match)
         // Automatic games retain their result/rosters/counters, not unused replay geometry.

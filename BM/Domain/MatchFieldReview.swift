@@ -337,13 +337,18 @@ extension CareerMatch {
             if play.review == nil {play.review = .init()}
             play.review?.before=before;play.review?.ruling=ruling
             clean=play
+            if specialRulesVersion == 1, !catchesFly, let revised = MatchSpecialRules.field(MatchSpecialRules.context(match: self, ball: shot, batter: entrant)) {
+                play = revised
+                if revised.special?.kind != .obstruction { clean = revised }
+            }
+            let resolvedBall = play.battedBall ?? shot
             let draws=(0..<7).map {_ in roll()}
-            let resolved=FieldMisplayRules.applying(to:play,stats:fieldStats,defending:defending,draws:draws,npc:npcDefenders)
-            if let outside=FieldReviewRules.overthrow(match:self,ball:shot,clean:play,resolved:resolved,batter:entrant,draw:draws[1]) {
+            let resolved = play.special == nil ? FieldMisplayRules.applying(to:play,stats:fieldStats,defending:defending,draws:draws,npc:npcDefenders) : play
+            if play.special == nil, let outside=FieldReviewRules.overthrow(match:self,ball:resolvedBall,clean:play,resolved:resolved,batter:entrant,draw:draws[1]) {
                 play=outside
             } else {
                 play=resolved
-                play.battedBall=shot
+                play.battedBall=resolvedBall
                 play.review = clean?.review
             }
         }
@@ -354,7 +359,8 @@ extension CareerMatch {
             let order=isHome ? awayOrder:homeOrder
             positionExperience?.events.append(.init(half:half,order:order,play:play.xpPlay))
         }
-        let result = play.review?.ruling?.kind == .overthrow ? "실책 출루"
+        let result = play.special?.kind == .interference || play.special?.kind == .sharedBase || (play.special?.kind == .passing && play.hitBases == 0 && (play.special?.subject ?? 0) > 0) ? "야수 선택"
+            : play.review?.ruling?.kind == .overthrow ? "실책 출루"
             : play.misplay?.reachedOnError == true ? "실책 출루"
             : play.fly?.caught == true ? (play.sacrificeFly ? "희생플라이":"뜬공")
             : play.hitBases == 3 ? "3루타" : play.hitBases == 2 ? "2루타" : play.hitBases == 1 ? "안타"

@@ -258,6 +258,7 @@ struct CareerCommittedManualInput {
         match.enablePitchEvents()
         match.enableRunning()
         match.enableFieldReview()
+        match.enableSpecialPlays()
         if match.appearance { match.settle() }
         try match.inningScores?.validate(match: match)
         try match.pitchLog?.validate(match:match)
