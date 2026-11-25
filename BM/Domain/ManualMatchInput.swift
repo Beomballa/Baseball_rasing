@@ -89,6 +89,7 @@ struct ManualMatchResult: Codable, Equatable {
     var outcome: String
     var pitchCode: String? = nil
     var pitchAim: PitchAim? = nil
+    var pitchEventSequence: Int? = nil
 }
 
 struct MatchDelivery: Equatable {
@@ -104,6 +105,7 @@ struct MatchDelivery: Equatable {
     static let windup = 0.35
     static let contactPhase = 0.82
     var duration: Double { 1.35 * 145 / (exactSpeed ?? Double(speed)) }
+    var flightDuration: Double { 0.90 * 145 / (exactSpeed ?? Double(speed)) }
 }
 
 enum ManualMatchRules {

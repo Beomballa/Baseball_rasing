@@ -104,9 +104,12 @@ struct CareerMatchReadSnapshot: Sendable, Equatable {
             }
             try match.projectFeedback?.validate(match:match,key:key,date:gameDate)
             try match.validatePitching()
+            try match.validateRunnerManagement()
             try match.inningScores?.validate(match: match)
             try match.pitchLog?.validate(match:match)
             try match.playerRecords?.validate(match:match)
+            try match.validatePitchEvents()
+            try match.validateRunning()
             if let records=match.playerRecords {
                 guard records.careerID == playerID,records.fixtureID == fixtureID,
                       records.year == (try GameDate(gameDate)).year,
@@ -233,14 +236,18 @@ struct CareerCommittedManualInput {
         }
         match.scoutingPerformance = .tracked
         match.inningScores = MatchInningScores()
+        match.prepareRunnerManagement()
         if match.npcAttack != nil {
             match.playerRecords = MatchPlayerRecords.make(match: match, careerID: player.id, fixtureID: fixture.id,
-                                                          trackEarnedRuns: true, trackDecisions: true, trackFielding: true)
+                                                          trackEarnedRuns: true, trackDecisions: true, trackFielding: true, trackPlateTrace: true)
         }
         if match.playerRecords != nil {
             match.pitchLog=MatchPitchLog()
             match.npcReadiness=try NPCSelectionStore.readiness(playerID:player.id,attack:match.npcAttack!,date:fixture.date,in:context)
         }
+        match.enablePitchEvents()
+        match.enableRunning()
+        match.enableFieldReview()
         if match.appearance { match.settle() }
         try match.inningScores?.validate(match: match)
         try match.pitchLog?.validate(match:match)
@@ -261,6 +268,19 @@ struct CareerCommittedManualInput {
         _ = try applyAdvance(player: player, state: state, record: record, revision: revision, in: context, save: save) {
             try $0.advance(input, pitchCode: pitchCode, control: control)
         }
+    }
+
+    /// 주루 의도와 다음 공도 기존 경기의 revision·원자 저장/rollback을 공유한다.
+    static func running(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
+                        revision: Int, reserve: Bool? = nil, pickoff: Bool = false, in context: ModelContext,
+                        save: CalendarProgression.Save = { try $0.save() }) throws -> CareerCommittedManualInput {
+        try applyAdvance(player: player, state: state, record: record, revision: revision, in: context, save: save) { match in
+            if let reserve { try match.reserveRunning(reserve) }
+            else if pickoff {
+                guard match.resolveRunningPickoff() else { throw MatchError.invalidInput }
+                match.settle(); match.finalizeAbilityExperience()
+            } else { try match.advanceRunning() }
+        }.committed
     }
 
     static func advanceToNextAppearance(player: CareerPlayer, state: CareerCalendarState, record: CareerMatchRecord,
@@ -359,6 +379,9 @@ struct CareerCommittedManualInput {
 
     nonisolated private static func validateAdvanced(_ match:CareerMatch) throws {
         try match.validatePitching()
+        try match.validatePitchEvents()
+            try match.validateRunning()
+        try match.validateRunnerManagement()
         try match.inningScores?.validate(match:match)
         try match.playerRecords?.validate(match:match)
         try match.validateDetailedField()

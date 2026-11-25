@@ -165,6 +165,18 @@ struct PitchingTargetMarker: View {
 enum MatchBroadcastData {
     static func inningMark(_ match: CareerMatch, home: Bool, inning: Int) -> String {
         guard (1...9).contains(inning), let scores = match.inningScores else { return "—" }
+        if match.fieldReviewVersion == 1 {
+            let half=(inning-1)*2+(home ? 1:0)
+            if half > match.half {return "·"}
+            if half == match.half {
+                let values=home ? scores.home:scores.away
+                if home,inning == 9,match.completed,values[8] == nil {return "X"}
+                let previous=Array(values.prefix(inning-1))
+                guard previous.allSatisfy({$0 != nil}) else {return "—"}
+                let current=(home ? match.homeScore:match.awayScore)-previous.compactMap {$0}.reduce(0,+)
+                return current >= 0 ? String(current):"—"
+            }
+        }
         if let runs = (home ? scores.home : scores.away)[inning - 1] { return String(runs) }
         return home && inning == 9 && match.completed && match.half == 17 && match.homeScore > match.awayScore ? "X" : "·"
     }
@@ -178,12 +190,28 @@ enum MatchBroadcastData {
     }
     static func hits(_ match: CareerMatch, home: Bool) -> Int? {
         guard let records = match.playerRecords else { return nil }
+        if match.fieldReviewVersion == 1 {
+            let order=home ? match.homeOrder:match.awayOrder
+            let team=home ? records.home:records.away
+            if team.battingTotal.plateAppearances != order {
+                guard let trace=records.plateTrace else {return nil}
+                let known=trace.filter {$0.battingHome == home && $0.half <= match.half && $0.order < order}
+                guard known.count == order else {return nil}
+                return known.filter {["안타","2루타","3루타","홈런"].contains($0.result)}.count
+            }
+        }
         return (home ? records.home : records.away).battingTotal.hits
     }
     static func errors(_ match: CareerMatch, home: Bool) -> Int? {
         guard match.detailedFieldVersion == 5, let plays = match.fieldPlays,
               plays.allSatisfy({ $0.version == 5 }) else { return nil }
-        return plays.filter { $0.misplay != nil && ($0.half.isMultiple(of: 2) == home) }.count
+        return plays.filter {play in
+            if match.fieldReviewVersion == 1 {
+                let order=play.half.isMultiple(of:2) ? match.awayOrder:match.homeOrder
+                guard play.half < match.half || play.half == match.half && play.order < order else {return false}
+            }
+            return (play.misplay != nil || play.review?.ruling?.kind == .overthrow) && play.half.isMultiple(of:2) == home
+        }.count
     }
 }
 
@@ -201,10 +229,13 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
     let pulseAt: Date
     var stadium: StadiumIdentity = .legacy
     var inplay: Inplay? = nil
+    var onRunners: (() -> Void)? = nil
+    var runnersEnabled = false
     static func ==(lhs:Self,rhs:Self)->Bool {
         lhs.match == rhs.match && lhs.homeName == rhs.homeName && lhs.awayName == rhs.awayName
             && lhs.date == rhs.date && lhs.pulse == rhs.pulse && lhs.pulseAt == rhs.pulseAt
             && lhs.stadium == rhs.stadium && lhs.inplay == rhs.inplay
+            && (lhs.onRunners != nil) == (rhs.onRunners != nil) && lhs.runnersEnabled == rhs.runnersEnabled
     }
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -275,7 +306,16 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
                         }.accessibilityElement(children: .ignore)
                             .accessibilityLabel("B \(match.balls) S \(match.strikes) O \(match.outs)")
                             .accessibilityIdentifier("careerGameCount")
-                        baseDiamond
+                        if let onRunners, match.bases.contains(true) {
+                            Button(action: onRunners) {
+                                baseDiamondGraphic.frame(width: 44, height: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).disabled(!runnersEnabled)
+                                .accessibilityLabel("주자 \(match.bases.enumerated().filter { $0.element }.map { String($0.offset + 1) }.joined(separator: "·"))루 · 주자 정보 보기")
+                                .accessibilityHint("점유한 루의 선수 정보를 1루부터 확인합니다.")
+                                .accessibilityIdentifier("openRunnerDetails")
+                                // 36×27 그림의 위치를 유지하고 실제 버튼 영역만 44×44로 넓힌다.
+                                .padding(.horizontal, -4).padding(.vertical, -8.5)
+                        } else { baseDiamond }
                     }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(MatchPresentation.pitchName(match.lastManual)).lineLimit(1)
@@ -370,6 +410,10 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
         }
     }
     private var baseDiamond: some View {
+        baseDiamondGraphic.accessibilityElement(children: .ignore)
+            .accessibilityLabel(match.bases.contains(true) ? "주자 \(match.bases.enumerated().filter { $0.element }.map { String($0.offset + 1) }.joined(separator: ","))루" : "주자 없음")
+    }
+    private var baseDiamondGraphic: some View {
         ZStack {
             ForEach(0..<3, id: \.self) { index in
                 Rectangle().fill(match.bases[index] ? GameTheme.gold : Color(hex: 0x294354))
@@ -377,8 +421,6 @@ struct MatchBroadcastBoard: View, @MainActor Equatable {
                     .position(x: index == 0 ? 28 : index == 1 ? 18 : 8, y: index == 1 ? 7 : 17)
             }
         }.frame(width: 36, height: 27)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(match.bases.contains(true) ? "주자 \(match.bases.enumerated().filter { $0.element }.map { String($0.offset + 1) }.joined(separator: ","))루" : "주자 없음")
     }
 }
 
@@ -388,11 +430,13 @@ struct MatchLastPlayStrip<Action: View>: View {
     let summary: String
     var summaryID = "gameLastPlaySummary"
     var emphasizesHit = false
+    var actionMaxWidth: CGFloat = 100
+    var stacksActions = false
     @ViewBuilder var action: () -> Action
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        let layout = typeSize.isAccessibilitySize
+        let layout = typeSize.isAccessibilitySize || stacksActions
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
             : AnyLayout(HStackLayout(spacing: 8))
         layout {
@@ -405,8 +449,8 @@ struct MatchLastPlayStrip<Action: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier(summaryID)
             }.layoutPriority(1)
-            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
-            action().frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : 100)
+            if !typeSize.isAccessibilitySize && !stacksActions { Spacer(minLength: 0) }
+            action().frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : actionMaxWidth)
         }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(.leading, emphasizesHit ? 10 : 0)
             .background(alignment: .leading) {

@@ -474,6 +474,9 @@ ART_HASHES.update({
     'BM/Resources/Assets.xcassets/CreationPitcherBodyV98.imageset/image.png': 'aa62e20884c943ece9018426379742d924c7a919c0050d8f6558c5e5e6d4bab0',
 })
 
+# 승인한 V240 공통 와이드 구장만 고정 해시로 허용한다.
+ART_HASHES["BM/Resources/MatchArt/inplay-stadium-wide-v240.png"] = "6aac9cebb8053c263e761dcb59c7790215eda5736d2e19ea2865875f4dfdab39"
+
 def main() -> int:
     names = git("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z").split(b"\0")
     failures = []

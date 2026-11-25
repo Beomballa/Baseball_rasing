@@ -442,7 +442,7 @@ struct HomeRunVerification:View {
                     Button("처음부터 재생") {live=true;time=0;replayID+=1}.buttonStyle(MatchPixelButtonStyle(primary:true))
                         .accessibilityIdentifier("homeRunVerifyPlay")
                     HomeRunReplayBoard(event:event,appearance:PlayerAppearance(kit:2),jerseyNumber:27,ownPosition:pitcher ? "P":"CF",throwingHand:"left",ownTeamFielding:pitcher,
-                        previewTime:live ? nil:time) {live=false;time=event.duration}
+                        previewTime:live ? nil:time,complete:{live=false;time=event.duration})
                         .id(replayID).frame(height:max(550,geometry.size.width*1.55+80))
                 }.padding(8)
             }.background(GameTheme.navy.ignoresSafeArea())

@@ -68,18 +68,20 @@ struct MatchScoutingPerformance: Codable, Equatable {
     var inputs: ScoutingInputUsage?
     static var tracked: Self {var value=Self();value.version=2;value.inputs=ScoutingInputUsage();return value}
     var singles = 0, doubles = 0, homers = 0, sacrificeFlies = 0
+    var triples: Int? = nil
     var battersFaced = 0, homersAllowed = 0
     mutating func record(_ result: String, batter: Bool, pitcher: Bool) {
         if batter {
             if result == "안타" { singles += 1 }
             if result == "2루타" { doubles += 1 }
+            if result == "3루타" { triples=(triples ?? 0)+1 }
             if result == "홈런" { homers += 1 }
             if result == "희생플라이" { sacrificeFlies += 1 }
         }
         if pitcher { battersFaced += 1; if result == "홈런" { homersAllowed += 1 } }
     }
     func validate(line: MatchLine, role: PlayerRole) throws {
-        guard [1,2].contains(version), [singles,doubles,homers,sacrificeFlies,battersFaced,homersAllowed].allSatisfy({ (0...100_000).contains($0) }) else { throw ScoutingObservationError.invalid }
+        guard [1,2].contains(version), [singles,doubles,triples ?? 0,homers,sacrificeFlies,battersFaced,homersAllowed].allSatisfy({ (0...100_000).contains($0) }) else { throw ScoutingObservationError.invalid }
         if version == 1 {guard inputs == nil else {throw ScoutingObservationError.invalid}}
         else {
             guard let inputs, manual == (inputs.direct > 0) else {throw ScoutingObservationError.invalid}
@@ -88,11 +90,11 @@ struct MatchScoutingPerformance: Codable, Equatable {
         }
         var check = PersonalSeasonTotals(); try check.add(line)
         if role == .batter {
-            guard singles+doubles+homers == line.hits, homers == line.homeRuns,
-                  line.atBats+line.walks+sacrificeFlies == line.plateAppearances,
+            guard singles+doubles+(triples ?? 0)+homers == line.hits, homers == line.homeRuns,
+                  line.atBats+line.walks+sacrificeFlies+(line.hitByPitch ?? 0) == line.plateAppearances,
                   battersFaced == 0, homersAllowed == 0 else { throw ScoutingObservationError.invalid }
         } else {
-            guard singles+doubles+homers+sacrificeFlies == 0,
+            guard singles+doubles+(triples ?? 0)+homers+sacrificeFlies == 0,
                   homersAllowed <= line.hitsAllowed,
                   line.hitsAllowed+line.pitchingWalks+line.pitchingStrikeouts <= battersFaced,
                   line.pitchingOuts <= battersFaced*3 else { throw ScoutingObservationError.invalid }
@@ -111,12 +113,17 @@ struct MatchScoutingPerformance: Codable, Equatable {
             guard !sum.overflow, (0...100_000).contains(sum.partialValue) else { throw ScoutingObservationError.invalid }
             self[keyPath:key] = sum.partialValue
         }
+        if triples != nil || value.triples != nil {
+            let sum=(triples ?? 0).addingReportingOverflow(value.triples ?? 0)
+            guard !sum.overflow,(0...100_000).contains(sum.partialValue) else {throw ScoutingObservationError.invalid}
+            triples=sum.partialValue
+        }
         manual = manual || value.manual
     }
     func sample(_ line: MatchLine, role: PlayerRole) -> Int { role == .batter ? line.plateAppearances : battersFaced }
     func contribution(_ line: MatchLine, role: PlayerRole) -> Double? {
         let n = sample(line,role:role); guard n > 0 else { return nil }
-        let numerator = role == .batter ? Double(line.walks)*0.7 + Double(singles)*0.9 + Double(doubles)*1.3 + Double(homers)*2 - Double(line.strikeouts)*0.25
+        let numerator = role == .batter ? Double(line.walks)*0.7 + Double(singles)*0.9 + Double(doubles)*1.3 + Double(triples ?? 0)*1.6 + Double(homers)*2 - Double(line.strikeouts)*0.25
             : Double(line.pitchingStrikeouts-line.pitchingWalks-2*homersAllowed)
         return numerator / Double(n)
     }
@@ -132,7 +139,9 @@ extension CareerMatch {
         let batted=battedBallVersion.map {"-batted\($0)"} ?? ""
         let npc=npcFielders.map {"-npc\($0.version)"} ?? ""
         let attack=npcAttack.map {"-attack\($0.version)"} ?? ""
-        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1\(batted)\(npc)\(attack)-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
+        let review=fieldReviewVersion.map {"-review\($0)"} ?? ""
+        let pitch = review + (pitchEvents.map { "-pitchEvents\($0.version)" } ?? "") + (running.map { "-running\($0.version)" } ?? "")
+        return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1\(batted)\(npc)\(attack)\(pitch)-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
     }
 }
 
@@ -177,7 +186,8 @@ struct ScoutingReference: Codable, Equatable {
         for (index, profile) in profiles.enumerated() {
             for game in 0..<count {
                 var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0,tracked:tracked,
-                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,npcAttackVersion:environment.contains("-attack2-") ? 2:environment.contains("-attack1-") ? 1:nil)
+                    battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,npcAttackVersion:environment.contains("-attack2-") ? 2:environment.contains("-attack1-") ? 1:nil,
+                    pitchEventsVersion: environment.contains("-pitchEvents1-") ? 1 : nil, runningVersion: environment.contains("-running1-") ? 1 : nil, fieldReviewVersion:environment.contains("-review1-") ? 1:nil)
                 // Empty input counts initially identify automatic; match rules/position must still match exactly.
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
                 try run(&match,mode:mode ?? .automatic)
@@ -196,6 +206,7 @@ struct ScoutingReference: Codable, Equatable {
     static func run(_ match: inout CareerMatch, mode: ScoutingInputMode) throws {
         var pitches=0
         while !match.completed {
+            if match.canPrepareRunning { try match.advanceRunning(); continue }
             if mode == .automatic || (mode == .mixed && pitches >= 8) || (match.role == "pitcher" && !match.ownPitcherActive) {
                 try match.advance(.automatic);break
             }
@@ -204,7 +215,7 @@ struct ScoutingReference: Codable, Equatable {
             pitches += 1
         }
     }
-    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil,fatigue:Int=24,assessmentRoster:MatchNPCFielders?=nil,npcAttackVersion:Int?=nil,competition:String?=nil) -> CareerMatch {
+    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil,fatigue:Int=24,assessmentRoster:MatchNPCFielders?=nil,npcAttackVersion:Int?=nil,competition:String?=nil,pitchEventsVersion:Int?=nil,runningVersion:Int?=nil,fieldReviewVersion:Int?=nil) -> CareerMatch {
         var match = CareerMatch(random:seed,isHome:home,role:role.rawValue,appearance:true,
             contact:values.contact,power:values.power,discipline:values.discipline,mastery:values.pitches)
         match.controlVersion=2;match.trainingEffectsVersion=1;match.detailedFieldVersion=5
@@ -223,6 +234,15 @@ struct ScoutingReference: Codable, Equatable {
         match.fieldStats?.version=role == .batter ? 3:2;match.fieldStats?.activeTraits=[]
         if role == .batter {match.fieldStats?.positionMastery=60}
         match.pitching=MatchPitching(startingFatigue:fatigue);match.scoutingPerformance=tracked ? .tracked:MatchScoutingPerformance()
+        if runningVersion == 1, match.npcAttack != nil {
+            match.prepareRunnerManagement()
+            match.playerRecords = MatchPlayerRecords.make(match: match,
+                careerID: UUID(uuidString: "00000000-0000-0000-0000-000000000008")!,
+                fixtureID: "running1-reference", trackEarnedRuns: true)
+        }
+        if pitchEventsVersion == 1 { match.enablePitchEvents() }
+        if runningVersion == 1 { match.enableRunning() }
+        if fieldReviewVersion == 1 {match.enableFieldReview()}
         match.settle();return match
     }
 }
@@ -1406,7 +1426,7 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
                 let roster=MatchNPCFielders.make(year:2026,competition:level,homeID:home ? ids[0]:ids[1+Int(seed%5)],awayID:home ? ids[1+Int(seed%5)]:ids[0])
                 var match=fixture(role:role,position:position,values:profile,seed:seed,home:home,tracked:true,
                     battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,
-                    assessmentRoster:modern ? roster:nil,npcAttackVersion:modern ? (environment.contains("-attack2-") ? 2:1):nil,competition:modern ? level:nil)
+                    assessmentRoster:modern ? roster:nil,npcAttackVersion:modern ? (environment.contains("-attack2-") ? 2:1):nil,competition:modern ? level:nil, pitchEventsVersion: environment.contains("-pitchEvents1-") ? 1 : nil, runningVersion: environment.contains("-running1-") ? 1 : nil, fieldReviewVersion:environment.contains("-review1-") ? 1:nil)
                 match.competition=level
                 if !modern,match.npcFielders != nil {match.npcFielders=roster}
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}

@@ -209,12 +209,18 @@ extension ManualMatchTests {
         enum Injected:Error {case save}
         let container=try CareerStore.makeContainer(inMemory:true),context=container.mainContext
         let (player,calendar,record)=try fixture(in:context)
-        var expected=try record.snapshot(),lastBefore=expected
-        for _ in 0..<200 where !expected.completed {
-            lastBefore=expected
-            let ball=expected.delivery(pitchCode:"four-seam")
-            try expected.advance(.swing,pitchCode:"four-seam",control:ManualMatchInput(x:ball.x,y:ball.y,timing:MatchDelivery.contactPhase))
+        let initial = try record.snapshot()
+        var final: (CareerMatch,CareerMatch)?
+        for seed in 1...64 where final == nil {
+            var sample = initial; sample.random = UInt64(seed) * 1_099_511_628_211
+            for _ in 0..<500 where !sample.completed {
+                if sample.canPrepareRunning { try sample.advanceRunning(); continue }
+                let before=sample,ball=sample.delivery(pitchCode:"four-seam")
+                try sample.advance(.swing,pitchCode:"four-seam",control:ManualMatchInput(x:ball.x,y:ball.y,timing:MatchDelivery.contactPhase))
+                if sample.completed { final=(sample,before) }
+            }
         }
+        let (expected,lastBefore) = try XCTUnwrap(final)
         XCTAssertTrue(expected.completed);XCTAssertFalse(lastBefore.completed)
         record.payload=try JSONEncoder().encode(lastBefore);try context.save()
         let payload=record.payload,values=try CareerLifecycleStore.values(player:player,in:context),fatigue=player.fatigue
@@ -277,6 +283,9 @@ extension ManualMatchTests {
             let (player,calendar,record)=try fixture(in:context,role:role)
             var display=MatchDisplaySnapshot();_ = try display.refresh(record)
             for _ in 0..<3 where !record.completed {
+                while try record.snapshot().canPrepareRunning {
+                    _ = try CareerMatchStore.running(player:player,state:calendar,record:record,revision:record.revision,in:context)
+                }
                 let before=try record.snapshot(),delivery=before.delivery(pitchCode:"four-seam")
                 let input:MatchInput=role == .batter ? .swing:.pitch
                 let control=role == .batter ? ManualMatchInput(x:delivery.x,y:delivery.y,timing:MatchDelivery.contactPhase):ManualMatchInput(release:ManualMatchRules.releaseCenter)
@@ -401,6 +410,9 @@ extension ManualMatchTests {
             let (player,calendar,record)=try fixture(in:container.mainContext,role:role)
             MatchRenderMetrics.reset()
             for _ in 0..<3 where !record.completed {
+                while try record.snapshot().canPrepareRunning {
+                    _ = try CareerMatchStore.running(player:player,state:calendar,record:record,revision:record.revision,in:container.mainContext)
+                }
                 let before=try record.snapshot(),delivery=before.delivery(pitchCode:"four-seam")
                 let input:MatchInput=role == .batter ? .swing:.pitch
                 let control=role == .batter ? ManualMatchInput(x:delivery.x,y:delivery.y,timing:MatchDelivery.contactPhase):ManualMatchInput(release:ManualMatchRules.releaseCenter)

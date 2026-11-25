@@ -16,6 +16,8 @@ import SwiftUI
     private var mittFrames: [SKTexture] = []
     private var hand = "right"
     private var role = PlayerRole.pitcher
+    private var failedCatch = false
+    private var bodyHit = false
     private var ready = false
     private var batterSide = OpponentBatterSide.left
     private var lastPitcherFrame = -1
@@ -243,7 +245,9 @@ import SwiftUI
             } else {
                 pitchStage = .received
                 markArrival()
-                if ["안타", "홈런", "범타", "파울"].contains(finish.outcome) {
+                if failedCatch || bodyHit {
+                    showMissedCatch(reduced: finish.reduced)
+                } else if ["안타", "홈런", "범타", "파울"].contains(finish.outcome) {
                     GameSound.shared.contact()
                     receivedBall.isHidden = true
                 } else {
@@ -261,7 +265,7 @@ import SwiftUI
                                 to: point(finish.action == "bunt" ? 0.54 : 0.7, finish.outcome == "홈런" ? 0.06 : 0.40),
                                 duration: finish.reduced ? 0.1 : 0.26), .hide(),
                         ]))
-                } else {
+                } else if !failedCatch && !bodyHit {
                     ball.isHidden = true
                 }
                 pitchReceipt = (
@@ -498,7 +502,7 @@ import SwiftUI
     }
     private func markArrival() {
         receivedBall.position = destination
-        receivedBall.isHidden = false
+        receivedBall.isHidden = failedCatch || bodyHit
     }
     /// 위쪽이 0인 정규화 좌표를 아래쪽이 0인 SpriteKit 좌표로 변환한다.
     private func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * size.width, y: (1 - y) * size.height) }
@@ -580,6 +584,7 @@ import SwiftUI
     /// 화면 이탈·재설정 때 진행 상태와 예약된 알림 함수을 함께 버려 취소된 연출이 완료되지 않게 한다.
     func cancelDelivery() {
         GameSound.shared.stop()
+        failedCatch = false; bodyHit = false
         contactFlight = nil
         fieldHandoff = nil
         pitchFlight = nil
@@ -632,6 +637,7 @@ import SwiftUI
         reduceMotion: Bool, flightDuration: Double? = nil, x: Double = 0.5, y: Double = 0.5,
         pitchCode: String = "four-seam", outcome: String? = nil, preparedRelease: Bool = false,
         matchJudgment: Bool = false, fieldPlay: MatchDetailedPlay? = nil, homeRun: MatchHomeRun? = nil,
+        pitchEvent: MatchPitchEvent? = nil,
         onArrival: (@MainActor () -> Void)? = nil, completion: (@MainActor () -> Void)? = nil,
         inputTimeline: MatchInputTimeline? = nil
     ) -> Bool {
@@ -639,6 +645,8 @@ import SwiftUI
         let preparedProgress = preparationPhase / 3
         let manualPreparation = preparationTimeline != nil
         cancelDelivery()
+        failedCatch = pitchEvent?.observation != nil
+        bodyHit = pitchEvent?.kind == .hitByPitch
         destination = arrivalPoint(x: x, y: y)
         let releaseFrame = role == .batter ? 4 : 3
         pitcherMotion(Double(releaseFrame))
@@ -701,6 +709,15 @@ import SwiftUI
     private func finishPitch(outcome: String?, reduced: Bool) {
         pitchStage = .received
         markArrival()
+        if failedCatch || bodyHit {
+            showMissedCatch(reduced: reduced)
+            return
+        }
+        if outcome == "파울" {
+            receivedBall.isHidden = true; ball.isHidden = true
+            GameSound.shared.contact()
+            return
+        }
         if !["헛스윙", "파울", "안타", "홈런", "범타"].contains(outcome ?? "") { batterPose(0) }
         let contact = ["안타", "홈런", "범타"].contains(outcome ?? "")
         if contact || outcome == "파울" { GameSound.shared.contact() } else { GameSound.shared.play(.catchBall) }
@@ -715,6 +732,13 @@ import SwiftUI
                 mitt.run(.sequence([.moveBy(x: 0, y: -2, duration: 0.06), .moveBy(x: 0, y: 2, duration: 0.1)]))
             }
         }
+    }
+    /// 포구 실패의 시각 표현만 수행한다. 기록과 진루 판정은 이미 저장된 사건을 따른다.
+    private func showMissedCatch(reduced: Bool) {
+        receivedBall.isHidden = true
+        ball.removeAllActions()
+        ball.position = destination; ball.isHidden = false
+        ball.run(.sequence([.moveBy(x: bodyHit ? -8 : 12, y: -size.height * 0.08, duration: reduced ? 0.01 : 0.2), .hide()]))
     }
     /// 배트 접촉 지점에서 타구 비행을 시작하고 수비 화면으로 넘길 상태를 보관한다.
     private func startContact(
@@ -737,9 +761,11 @@ import SwiftUI
 
     func finishBat(
         action: String, outcome: String, reduced: Bool, matchJudgment: Bool = false,
-        fieldPlay: MatchDetailedPlay? = nil, homeRun: MatchHomeRun? = nil, onArrival: (@MainActor () -> Void)? = nil,
+        fieldPlay: MatchDetailedPlay? = nil, homeRun: MatchHomeRun? = nil, pitchEvent: MatchPitchEvent? = nil, onArrival: (@MainActor () -> Void)? = nil,
         completion: @escaping @MainActor () -> Void
     ) {
+        failedCatch = pitchEvent?.observation != nil
+        bodyHit = pitchEvent?.kind == .hitByPitch
         let now = ProcessInfo.processInfo.systemUptime
         let continuedSwing = pendingBatDecision.map { $0.animatesSwing && $0.reachedContact } ?? false
         pendingBatDecision = nil

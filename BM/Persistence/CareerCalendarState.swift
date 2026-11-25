@@ -532,7 +532,7 @@ enum CareerSchemaV14:VersionedSchema {
                   fixtureID == gameDate+"-"+roster.home.teamID+"-"+roster.away.teamID,
                   match.fieldPlays?.isEmpty == true,match.homeRuns == nil else {throw LeagueError.invalidRecord}
             try match.npcReadiness?.validate(match:match,date:gameDate)
-            try attack.validate(roster:roster);try match.validatePitching();try match.validateDetailedField();try records.validate(match:match);try match.pitchLog?.validate(match:match)
+            try attack.validate(roster:roster);try match.validatePitching();try match.validateDetailedField();try records.validate(match:match);try match.pitchLog?.validate(match:match);try match.validateRunning()
             return match
         }
     }
@@ -558,10 +558,14 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         match.playerRecords = MatchPlayerRecords.make(match: match, careerID: playerID, fixtureID: fixture.id,
                                                       trackEarnedRuns: true, trackDecisions: true, trackFielding: true)
         match.pitchLog=MatchPitchLog();match.npcReadiness=readiness
+        match.enablePitchEvents()
+        match.enableRunning()
+        match.enableFieldReview()
         try match.advance(.automatic)
         try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match);try match.pitchLog?.validate(match:match)
         // Automatic games retain their result/rosters/counters, not unused replay geometry.
-        match.fieldPlays=[];match.homeRuns=nil
+        try match.validatePitchEvents();try match.validateRunning()
+        match.fieldPlays=[];match.homeRuns=nil;match.pitchEvents=nil
         return match
     }
     // Stages only today's other-team games; the caller commits these with the date transition in one save.

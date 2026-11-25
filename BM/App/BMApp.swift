@@ -777,9 +777,16 @@ private struct LiveCareerPerformanceRun:View {
     @State private var schools:[School]=[]
     @State private var failure:String?
     var body:some View {
-        NavigationStack {
+        Group {
             if let container,let player,let calendar {
-                CareerGameView(player:player,calendar:calendar,schools:schools).modelContainer(container)
+                Group {
+                    if ProcessInfo.processInfo.arguments.contains("-qa-full-career-root") {
+                        CareerRootView(schools:schools)
+                    } else {
+                        NavigationStack {CareerGameView(player:player,calendar:calendar,schools:schools)}
+                    }
+                }.modelContainer(container)
+                    .defaultAppStorage(UserDefaults(suiteName:"bm.qa."+player.id.uuidString)!)
             } else {Text(failure ?? "실제 경기 QA 준비 중")}
         }.task {
             guard container == nil,failure == nil else {return}
@@ -851,7 +858,8 @@ private struct LiveCareerPerformanceRun:View {
                     }
                     try c.mainContext.save()
                 }
-                if state.actionDate != p.gameDate {try CalendarProgression.rest(player:p,state:state,revision:state.revision,in:c.mainContext)}
+                let pending=try c.mainContext.fetch(FetchDescriptor<CareerMatchRecord>()).contains {$0.playerID==p.id && !$0.completed}
+                if state.actionDate != p.gameDate && !pending {try CalendarProgression.rest(player:p,state:state,revision:state.revision,in:c.mainContext)}
                 if let opponentHomeRun {
                     try LiveCareerQA.prepareOpponentHomeRun(opponentHomeRun, player: p, calendar: state, in: c.mainContext)
                 }
@@ -875,6 +883,20 @@ private struct LiveCareerPerformanceRun:View {
                         legacySnapshot = nil
                     }
                     try LiveCareerQA.prepareProVenueHomeRun(player: p, calendar: state, legacySnapshot: legacySnapshot, in: c.mainContext)
+                }
+                if !args.contains("-live-career-performance"),let index=args.firstIndex(of:"-qa-prepare-inputs") {
+                    guard args.indices.contains(index+1),let count=Int(args[index+1]),(0...60).contains(count) else {
+                        throw NSError(domain:"BM.QA",code:9)
+                    }
+                    let row=try CareerMatchStore.start(player:p,state:state,in:c.mainContext)
+                    for _ in 0..<count where !row.completed {
+                        let match=try row.snapshot()
+                        if p.role == .pitcher && !match.ownPitcherActive {break}
+                        let input:MatchInput=p.role == .batter ? .swing:.pitch
+                        let code=match.mastery.keys.sorted().first
+                        try CareerMatchStore.advance(player:p,state:state,record:row,revision:row.revision,input:input,
+                            pitchCode:code,control:match.automaticControl(input,pitchCode:code),in:c.mainContext)
+                    }
                 }
                 schools=catalog;player=p;calendar=state;container=c
             } catch {failure=error.localizedDescription}

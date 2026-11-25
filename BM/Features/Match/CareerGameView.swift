@@ -2,6 +2,35 @@ import SwiftUI
 import SwiftData
 import SpriteKit
 
+/// 경기 화면과 작은 화면/큰 글자 검수에서 같은 주루 준비 컴포넌트를 사용한다.
+struct MatchRunningPreparationBar: View {
+    let selected: Bool
+    let countdown: Int
+    let paused: Bool
+    let locked: Bool
+    let reserve: () -> Void
+    let next: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))
+        layout {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(selected ? "2루 도루 예약" : "1루 대기").font(.subheadline.bold())
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(paused ? "다음 공으로 진행" : "\(countdown)초 뒤 다음 공").font(.caption)
+                    .foregroundStyle(GameTheme.boardMuted)
+            }.accessibilityElement(children: .combine).accessibilityIdentifier("runningPreparation")
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            Button(selected ? "예약 취소" : "도루 예약", action: reserve)
+                .buttonStyle(MatchPixelButtonStyle(primary: selected, fillsWidth: false))
+                .accessibilityHint("다음 투구 전에만 변경할 수 있습니다.")
+                .accessibilityIdentifier("reserveSteal")
+            Button("다음 공", action: next).buttonStyle(MatchPixelButtonStyle(fillsWidth: false))
+                .accessibilityIdentifier("runningNextPitch")
+        }.disabled(locked).accessibilityElement(children: .contain)
+    }
+}
+
 struct CareerGameView: View {
     let player: CareerPlayer
     let calendar: CareerCalendarState
@@ -16,7 +45,17 @@ struct CareerGameView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var battingSwipe: MatchBattingSwipe?
     @State private var battingGestureRevision: Int?
-    @State private var showGameDetails = false
+    private struct GameInformationSnapshot: Identifiable {
+        let id = UUID()
+        let match: CareerMatch
+    }
+    @State private var gameDetailsSnapshot: GameInformationSnapshot?
+    @State private var informationFixtureID: String?
+    @State private var informationTab = MatchRecordTab.lineup
+    @State private var historySelection = MatchHistorySelection()
+    @State private var gameHistory: MatchGameHistory?
+    @State private var substitutionJournal: MatchSubstitutionJournal?
+    @State private var runnerDetails: MatchRunnerDetails?
     @State private var lastPitchReceipt: ManualMatchResult?
     @State private var showControlGuide = false
     @AppStorage("bm.battingGestureGuide.v1") private var battingGuideSeen = false
@@ -36,6 +75,12 @@ struct CareerGameView: View {
     @State private var clock = MatchInputClock()
     @State private var attempt: Attempt?
     @State private var retrySave: PendingSave?
+    private struct RunningRetry { let reserve: Bool?; let pickoff: Bool; let revision: Int }
+    @State private var runningRetry: RunningRetry?
+    @State private var runningSaving = false
+    @State private var runningCountdown = 5
+    @State private var runningVoiceOver = UIAccessibility.isVoiceOverRunning
+    @State private var activeRunningEvent: MatchRunningEvent?
     @State private var commitID:UUID?
     @State private var commitTask:Task<Void,Never>?
     private var committing:Bool {commitID != nil}
@@ -63,6 +108,9 @@ struct CareerGameView: View {
 
     @State private var visualSnapshot: CareerMatch?
     @State private var presenting = false
+    @State private var activePitchEvent: MatchPitchEvent?
+    @State private var catchComparison: MatchPitchEvent?
+    @State private var pitchCameraTask: Task<Void, Never>?
     @State private var judgment: ManualMatchResult?
     @State private var arrivedSnapshot: CareerMatch?
     @State private var activeHighlights: MatchHighlights?
@@ -134,7 +182,10 @@ struct CareerGameView: View {
                     let target=player.role == .pitcher ? ManualMatchRules.releaseCenter:MatchDelivery.contactPhase
                     while clock.running && clock.phase<target {try await Task.sleep(for:.milliseconds(10))}
                     if clock.running {resolveQA(phase:target)}
-                    while presenting || committing {try await Task.sleep(for:.milliseconds(50))}
+                    while presenting || committing {
+                        if fieldResolved && (replay?.pitchEvent != nil || replay?.runningEvent != nil || replay?.review != nil || homeRunReplay?.review != nil) { finishPitchEventPresentation() }
+                        try await Task.sleep(for:.milliseconds(50))
+                    }
                     if MatchRenderMetrics.lifecycle.contains(where:{$0.name=="career.inplay.resolved"}) {break}
                 }
             }
@@ -207,7 +258,7 @@ struct CareerGameView: View {
         #endif
     }
     private var fieldCoversArena:Bool {replay != nil || homeRunReplay != nil}
-    private var inputLocked: Bool { !fieldAssetsReady || clock.running || presenting || committing || retrySave != nil }
+    private var inputLocked: Bool { !fieldAssetsReady || clock.running || presenting || committing || retrySave != nil || runningSaving || runningRetry != nil }
     private var opponentSide: OpponentBatterSide { (visualSnapshot ?? displaySnapshot.match)?.opponentBatterSide ?? .right }
     private var displayedBatterTurn: String? {
         guard let match=visualSnapshot ?? displaySnapshot.match else {return nil}
@@ -282,12 +333,56 @@ struct CareerGameView: View {
             pitchCode = next; pitchTarget = nil
         } catch { self.error = error.localizedDescription }
     }
+    private var runningTimerToken: String? {
+        guard historyRecordKey == nil, assessmentID == nil, scenePhase == .active, !runningVoiceOver,
+              !inputLocked, runnerDetails == nil, gameDetailsSnapshot == nil, gameHistory == nil,
+              substitutionJournal == nil, catchComparison == nil, !showControlGuide, !confirmAutomatic,
+              lastPitchReceipt == nil, activeHighlights == nil, displaySnapshot.match?.canPrepareRunning == true,
+              let record else { return nil }
+        return record.key + "/running/" + String(record.revision)
+    }
+    /// 예약 저장 실패는 원래 revision으로만 다시 시도한다. 타격·투구 입력으로 대체하지 않는다.
+    private func performRunning(reserve: Bool? = nil, pickoff: Bool = false, retry: RunningRetry? = nil, expectedRevision: Int? = nil) {
+        guard !runningSaving, !presenting, !committing, attempt == nil, let record else { return }
+        if let expectedRevision, record.revision != expectedRevision { return }
+        let command = retry ?? RunningRetry(reserve: reserve, pickoff: pickoff, revision: record.revision)
+        runningSaving = true
+        defer { runningSaving = false }
+        do {
+            let committed = try CareerMatchStore.running(player: player, state: calendar, record: record,
+                revision: command.revision, reserve: command.reserve, pickoff: command.pickoff, in: context)
+            let updated = try displaySnapshot.refresh(record, committed: committed)
+            runningRetry = nil; error = nil; runningCountdown = 5
+            if let event = MatchRunningEvent.committedAction(previous: committed.previous, updated: updated) {
+                openRunningEvent(event, match: updated)
+            } else { scene.cancelDelivery() }
+        } catch {
+            runningRetry = command
+            self.error = error.localizedDescription
+        }
+    }
+    private func openRunningEvent(_ event: MatchRunningEvent, match: CareerMatch) {
+        scene.cancelDelivery()
+        activePitchEvent = nil; activeRunningEvent = event
+        visualSnapshot = event.before.displayMatch(match); presenting = true; fieldResolved = false
+        arrivedSnapshot = nil; judgment = nil; fieldHandoff = nil
+        replay = event.play; liveReplayPass += 1
+    }
+    private func runningControls(_ match: CareerMatch) -> some View {
+        let revision = record?.revision
+        return MatchRunningPreparationBar(selected: match.running?.reservation != nil, countdown: runningCountdown,
+            paused: runningVoiceOver, locked: inputLocked,
+            reserve: { performRunning(reserve: match.running?.reservation == nil, expectedRevision: revision) }, next: { performRunning(expectedRevision: revision) })
+    }
+
     private func begin() {
         guard fieldAssetsReady else {return}
         #if DEBUG
         if livePerformanceQA {MatchRenderMetrics.mark(player.role == .pitcher ? "career.input.pitch":"career.input."+battingAction.rawValue)}
         #endif
         guard !presenting, !committing, attempt == nil, retrySave == nil, let record, let match = try? displaySnapshot.refresh(record), !match.completed, player.role != .pitcher || match.ownPitcherActive else { return }
+        if match.canPrepareRunning { return }
+        if match.coachPickoff { performRunning(pickoff: true); return }
         automaticBoundary = nil
         let input: MatchInput = player.role == .pitcher ? .pitch : battingAction
         let actualCode=match.deliveryPitchCode(requested:pitchCode)
@@ -304,6 +399,7 @@ struct CareerGameView: View {
             battingGuideSeen = true
             scene.cancelDelivery()
             _ = scene.demonstrate(reduceMotion: reduced, flightDuration: flight.flightDuration, x: delivery.x, y: delivery.y, pitchCode: actualCode, inputTimeline: timeline)
+            if input == .watch { scene.awaitBatDecision(action: input.rawValue, reduced: reduced) }
         } else {
             scene.preparePitch(timeline: timeline)
         }
@@ -367,7 +463,15 @@ struct CareerGameView: View {
                 let homeRun=Array((updated.homeRuns ?? []).dropFirst(previous.homeRuns?.count ?? 0)).first {
                     $0.half == previous.half && $0.order == (previous.half%2 == 1 ? previous.homeOrder:previous.awayOrder) && pending.attempt.input != .watch
                 }
-                let fieldPlay=homeRun == nil ? added.first { $0.ownBatter || $0.ownParticipation || (player.role == .pitcher && $0.half == previous.half) } : nil
+                if let event = MatchRunningEvent.committedAction(previous: previous, updated: updated) {
+                    openRunningEvent(event, match: updated)
+                    return
+                }
+                let pitchEvent = updated.lastManual?.pitchEventSequence.flatMap { sequence in
+                    updated.pitchEvents?.events.first { $0.sequence == sequence && $0.direct }
+                }
+                let fieldPlay=homeRun == nil ? pitchEvent?.play ?? added.first { $0.ownBatter || $0.ownParticipation || (player.role == .pitcher && $0.half == previous.half) } : nil
+                activePitchEvent = pitchEvent
                 fieldPreparation?.cancel();fieldPreparation=nil
                 let inplay=homeRun.map {InplayReplay.homeRun($0)} ?? fieldPlay.map {InplayReplay.field($0)}
                 if let inplay {
@@ -389,28 +493,46 @@ struct CareerGameView: View {
                             fieldResolved=false;homeRunReplay=homeRun
                         } else if let fieldPlay {
                             fieldResolved=false
-                            var handoff=scene.fieldHandoff;handoff?.sourceFrame=arenaFrame;fieldHandoff=handoff
-                            replay=fieldPlay
+                            if fieldPlay.pitchEvent != nil {
+                                // 포구 실패를 먼저 보여주고, 저장된 주자의 출발 시점에만 카메라를 전환한다.
+                                let started = ProcessInfo.processInfo.systemUptime
+                                let departure = fieldPlay.runners.flatMap { runner in
+                                    zip(runner.nodes, runner.nodes.dropFirst()).filter { $0.point != $1.point }.map { $0.0.at }
+                                }.min() ?? 0
+                                judgment = result
+                                pitchCameraTask?.cancel()
+                                pitchCameraTask = Task { @MainActor in
+                                    do { try await Task.sleep(for: .seconds(departure)) } catch { return }
+                                    guard presenting, activePitchEvent?.id == pitchEvent?.id else { return }
+                                    judgment = nil
+                                    fieldHandoff = FieldContactHandoff(startedAt: started, cutAt: ProcessInfo.processInfo.systemUptime,
+                                        sourcePoint: CGPoint(x: 0.5, y: 0.7), sourceFrame: arenaFrame)
+                                    replay = fieldPlay
+                                }
+                            } else {
+                                var handoff=scene.fieldHandoff;handoff?.sourceFrame=arenaFrame;fieldHandoff=handoff
+                                replay=fieldPlay
+                            }
                         } else {
-                            judgment = result; arrivedSnapshot = updated
+                            judgment = result; arrivedSnapshot = pitchEvent.map { $0.after.displayMatch(updated) } ?? updated
                             pulse = MatchPresentation.countPulse(result.outcome); pulseAt = Date()
                             GameSound.shared.announce(outcome: result.outcome)
                         }
                     }
                     let showResult: @MainActor () -> Void = {
                         guard fieldPlay == nil && homeRun == nil else {return}
-                        judgment = nil;presenting = false; visualSnapshot = nil; arrivedSnapshot = nil
+                        judgment = nil;presenting = false; visualSnapshot = nil; arrivedSnapshot = nil; activePitchEvent = nil
                     }
-                    let contact=fieldPlay.flatMap {FieldContactPresentation.matches($0,previous:previous,action:result.action) ? $0:nil}
+                    let contact=fieldPlay.flatMap { $0.pitchEvent == nil && FieldContactPresentation.matches($0,previous:previous,action:result.action) ? $0:nil}
                     if player.role == .pitcher {
                         let started = scene.demonstrate(reduceMotion: reduced, flightDuration: PitchFlightPresentation(delivery: previous.delivery(pitchCode: result.pitchCode)).flightDuration,
                                               x: result.x, y: result.y, pitchCode: result.pitchCode ?? "four-seam",
-                                              outcome: fieldPlay == nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, onArrival: showCall, completion: showResult)
+                                              outcome: pitchEvent?.kind == .foulBunt ? "파울" : fieldPlay == nil || pitchEvent != nil ? result.outcome : "안타", preparedRelease: true, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, pitchEvent:pitchEvent, onArrival: showCall, completion: showResult)
                         if !started { showCall(); showResult() }
                     } else {
                         // Saved fair contact drives the barrel motion; localized multi-base labels are not contact flags.
-                        scene.finishBat(action: result.action, outcome: added.contains(where: \.ownBatter) ? "안타" : result.outcome,
-                                        reduced: reduced, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, onArrival: showCall, completion: showResult)
+                        scene.finishBat(action: result.action, outcome: pitchEvent?.kind == .foulBunt ? "파울" : added.contains(where: \.ownBatter) ? "안타" : result.outcome,
+                                        reduced: reduced, matchJudgment: true, fieldPlay:contact, homeRun:homeRun, pitchEvent:pitchEvent, onArrival: showCall, completion: showResult)
                     }
                 }
             } catch is CancellationError {
@@ -418,7 +540,13 @@ struct CareerGameView: View {
             } catch {retrySave=pending;self.error=error.localizedDescription;scene.cancelDelivery()}
         }
     }
+    private func finishPitchEventPresentation() {
+        pitchCameraTask?.cancel(); pitchCameraTask = nil
+        replay = nil; fieldHandoff = nil; presenting = false
+        visualSnapshot = nil; arrivedSnapshot = nil; fieldResolved = false; activePitchEvent = nil; activeRunningEvent = nil
+    }
     private func cancelInput() {
+        pitchCameraTask?.cancel(); pitchCameraTask = nil; activePitchEvent = nil; activeRunningEvent = nil
         fieldPreparation?.cancel();fieldPreparation=nil
         commitTask?.cancel();commitTask=nil;commitID=nil
         attempt?.prevalidation?.cancel()
@@ -497,7 +625,13 @@ struct CareerGameView: View {
         if !fieldAssetsReady {
             Text("경기장 준비 중…").font(.caption).accessibilityIdentifier("gameFieldAssetsPreparing")
         }
-        if let pending = retrySave {
+        if let pending = runningRetry {
+            Text("주루 입력을 저장하지 못했습니다.").font(.subheadline)
+            Button("같은 주루 입력 다시 저장") { performRunning(retry: pending) }
+                .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("retryRunningInput")
+        } else if match.canPrepareRunning {
+            runningControls(match)
+        } else if let pending = retrySave {
             Text("직전 입력을 저장하지 못했습니다.").font(.caption)
             Button("같은 입력 다시 저장") { commit(pending) }.buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("retryGameInput")
         } else if let change=match.ownPitcherChange {
@@ -546,7 +680,12 @@ struct CareerGameView: View {
     private func broadcast(_ match: CareerMatch, record: CareerMatchRecord, inplay: MatchBroadcastBoard.Inplay? = nil) -> some View {
         let (home, away) = teamNames(match, record: record)
         return MatchBroadcastBoard(match: match, homeName: home, awayName: away, date: record.gameDate,
-                                   pulse: pulse, pulseAt: pulseAt, stadium: stadium, inplay: inplay).equatable()
+                                   pulse: pulse, pulseAt: pulseAt, stadium: stadium, inplay: inplay,
+                                   onRunners: inplay == nil ? {
+                                       guard !inputLocked, !fieldCoversArena else { return }
+                                       runnerDetails = MatchRunnerDetails.current(match, careerName: player.name, homeName: home, awayName: away)
+                                   } : nil,
+                                   runnersEnabled: !inputLocked && !fieldCoversArena).equatable()
     }
     private var battingTouchLocked: Bool { !fieldAssetsReady || retrySave != nil || presenting || record?.completed != false || record?.appearance != true }
     private func tapBattingField() {
@@ -669,23 +808,29 @@ struct CareerGameView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(spacing: 10) {
-                            Button("조작부로 이동") { proxy.scrollTo("gameAccessibleControls", anchor: .top) }
+                            Button("조작부로 이동") { proxy.scrollTo(match.canPrepareRunning ? "gameAccessibleRunningControls" : "gameAccessibleControls", anchor: .top) }
                                 .buttonStyle(MatchPixelButtonStyle())
                                 .accessibilityHint("현재 카운트와 투구·타격 조작으로 이동합니다.")
                                 .accessibilityIdentifier("gameJumpToControls")
+                            if match.canPrepareRunning {
+                                controls(match).id("gameAccessibleRunningControls")
+                            }
                             broadcast(arrivedSnapshot ?? match, record: record)
                             arena(match, field: projection.size(width: max(1, available.width - 16)))
                             if player.role == .pitcher, match.ownPitcherActive, !match.completed {
                                 pitchCourse(match).frame(maxWidth: 280)
                             }
-                            if record.appearance && match.ownPitcherChange == nil {
+                            if record.appearance && match.ownPitcherChange == nil && !match.canPrepareRunning {
                                 if player.role == .batter { batterChoices } else { pitcherChoices(match) }
                             }
-                            if player.role == .batter, record.appearance { accessibleBattingAim }
+                            if player.role == .batter, record.appearance, !match.canPrepareRunning { accessibleBattingAim }
                             VStack(spacing: 10) {
-                                accessibleControlSummary(arrivedSnapshot ?? match)
-                                controls(match)
+                                if !match.canPrepareRunning {
+                                    accessibleControlSummary(arrivedSnapshot ?? match)
+                                    controls(match)
+                                }
                                 lastPlayStrip(arrivedSnapshot ?? match)
+                                substitutionJournalButton(arrivedSnapshot ?? match, record: record)
                             }.id("gameAccessibleControls")
                         }.padding(8)
                     }
@@ -694,6 +839,7 @@ struct CareerGameView: View {
                 let compact = record.appearance && match.ownPitcherChange == nil && available.height < 640
                 VStack(spacing: 0) {
                     liveScoreboard(match, record: record)
+                        .zIndex(1)
                     GeometryReader { geometry in
                         let viewport = geometry.size
                         // Keep the mound in view, cropping only the sky and distant stands when space is short.
@@ -712,7 +858,7 @@ struct CareerGameView: View {
                 ZStack {
                     arena(match, field: field)
                         .overlay(alignment: .bottomTrailing) {
-                            if record.appearance && match.ownPitcherChange == nil {
+                            if record.appearance && match.ownPitcherChange == nil && !match.canPrepareRunning {
                                 batterChoices.frame(width: 106).padding(.trailing, 10)
                                     .padding(.bottom, max(26, liveControlsHeight - (available.height - field.height) / 2 + 8))
                             }
@@ -740,6 +886,7 @@ struct CareerGameView: View {
             }
             controls(match, compactPitcher: compactPitcher)
             lastPlayStrip(arrivedSnapshot ?? match)
+            substitutionJournalButton(arrivedSnapshot ?? match, record: record)
         }.padding(.horizontal, 12).padding(.vertical, 8)
             .background(Color(hex: 0x102a3f))
     }
@@ -763,8 +910,12 @@ struct CareerGameView: View {
         }
     }
     private func liveJudgment(_ result: ManualMatchResult) -> some View {
-        PitchJudgmentToast(title: DeliveryPresentation.call(result.outcome),
-                           detail: "\(MatchPresentation.pitchName(result)) · \(result.speed) km/h")
+        let event = activePitchEvent
+        let title = event?.kind == .foul ? (event!.before.strikes == 2 ? "2스트라이크 유지" : "스트라이크 \(event!.before.strikes) → \(event!.after.strikes)")
+            : event?.play != nil ? (event?.kind == .hitByPitch ? "사구 · 볼 데드" : "포구 실패 · 주자 출발")
+            : event?.label ?? DeliveryPresentation.call(result.outcome)
+        return PitchJudgmentToast(title: title,
+                           detail: event?.kind == .foul ? "파울 · 같은 타자 · 타석 계속" : "\(MatchPresentation.pitchName(result)) · \(result.speed) km/h")
             .accessibilityIdentifier("pitchJudgmentToast")
     }
     private func lastPlayStrip(_ match: CareerMatch) -> some View {
@@ -776,6 +927,12 @@ struct CareerGameView: View {
                 Menu {
                     if let result {
                         Button("직전 투구 판정") { lastPitchReceipt = result }.accessibilityIdentifier("openLastPitchReceipt")
+                    }
+                    if let sequence = result?.pitchEventSequence, let event = match.pitchEvents?.events.first(where: { $0.sequence == sequence }) {
+                        if let play = event.play {
+                            Button(play.review?.ruling?.kind == .foul ? "파울 판정 다시 보기":"투구 중 진루") { activePitchEvent = event; openSavedFieldPlay(play, match: match) }
+                        }
+                        if event.observation != nil { Button("포구 순간 비교") { catchComparison = event } }
                     }
                     if let fieldPlay {
                         Button("최근 수비·주루") { openSavedFieldPlay(fieldPlay, match: match) }
@@ -796,10 +953,16 @@ struct CareerGameView: View {
         "\(DeliveryPresentation.call(result.outcome)) · \(MatchPresentation.pitchName(result)) · \(result.speed) km/h"
     }
     private func openSavedFieldPlay(_ play: MatchDetailedPlay, match: CareerMatch) {
-        visualSnapshot = match; presenting = true; fieldResolved = false; fieldHandoff = nil; replay = play
+        let event = match.pitchEvents?.events.first { $0.id == play.eventID }
+        activePitchEvent = event
+        visualSnapshot = play.review?.before?.displayMatch(match) ?? event.map { $0.before.displayMatch(match) } ?? match
+        presenting = true; fieldResolved = false; arrivedSnapshot = nil; fieldHandoff = nil; replay = play
     }
     private func openSavedHomeRun(_ event: MatchHomeRun, match: CareerMatch) {
-        visualSnapshot = match; presenting = true; fieldResolved = false; fieldHandoff = nil; homeRunReplay = event
+        visualSnapshot = event.review?.before?.displayMatch(match) ?? match; presenting = true; fieldResolved = false; fieldHandoff = nil; homeRunReplay = event
+    }
+    private func pitchEventName(_ id: String, match: CareerMatch) -> String {
+        MatchPitchEventNames(match: match, careerName: player.name).name(id)
     }
     private func accessibleControlSummary(_ match: CareerMatch) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -818,26 +981,38 @@ struct CareerGameView: View {
         let alreadySaved: Bool
         let summary: String?
         let emphasizesHit: Bool
+        let reviewsField: Bool
         switch event {
         case .field(let play):
             let hit = FieldReplayPresentation.confirmedHitLabel(play)
             half = play.half
             runs = play.runs
-            alreadySaved = match.fieldPlays?.contains { $0.eventID == play.eventID } == true
-            summary = hit ?? play.summary
+            alreadySaved = match.fieldPlays?.contains { $0.eventID == play.eventID } == true || match.pitchEvents?.events.contains { $0.id == play.eventID } == true || match.running?.events.contains { $0.id == play.eventID } == true
+            summary = activeRunningEvent?.label ?? activePitchEvent?.label ?? hit ?? play.summary
             emphasizesHit = hit != nil
+            reviewsField = play.review != nil
         case .homeRun(let homeRun):
             half = homeRun.half
             runs = homeRun.runs
             alreadySaved = match.homeRuns?.contains { $0.eventID == homeRun.eventID } == true
             summary = nil
             emphasizesHit = false
+            reviewsField = homeRun.review != nil
         }
-        let usesPlayContext = summary == nil || emphasizesHit
+        let usesPlayContext = summary == nil || emphasizesHit || activeRunningEvent != nil || reviewsField
         let battingHome = !half.isMultiple(of: 2)
         let isOwnOffense = battingHome == match.isHome
         let context = "\(half / 2 + 1)회 \(battingHome ? "말" : "초") · \(isOwnOffense ? "우리 팀 공격" : "상대 팀 공격")"
         let scoringHome: Bool? = fieldResolved && runs > 0 && arrivedSnapshot != nil ? battingHome : nil
+        let details: MatchRunnerDetails? = {
+            guard fieldResolved, arrivedSnapshot != nil, let record else { return nil }
+            let names = teamNames(match, record: record)
+            if case .field(let play) = event, play.pitchEvent == nil && play.runningEvent == nil && play.review?.ruling?.kind != .foul {
+                return MatchRunnerDetails.resolved(play, match: arrivedSnapshot ?? match, careerName: player.name,
+                                                   homeName: names.home, awayName: names.away)
+            }
+            return nil
+        }()
 
         return GeometryReader { geometry in
             let canvasWidth = max(1, min(geometry.size.width - 16, 500))
@@ -854,32 +1029,52 @@ struct CareerGameView: View {
                                     .font(.subheadline)
                                     .foregroundStyle(usesPlayContext ? GameTheme.boardMuted : GameTheme.gold)
                                     .fixedSize(horizontal: false, vertical: true)
-                            }.foregroundStyle(GameTheme.gold).frame(maxWidth: .infinity, alignment: .leading)
-                            if usesPlayContext, !alreadySaved, let record {
-                                broadcast(arrivedSnapshot ?? match, record: record, inplay: .init(half: half, scoringHome: scoringHome))
-                                    .frame(width: canvasWidth)
-                            }
+                                    .accessibilityIdentifier("inplayContext")
+                            }.foregroundStyle(GameTheme.gold).frame(width: canvasWidth, alignment: .leading)
                             if typeSize.isAccessibilitySize {
                                 Button("경기장 보기") { proxy.scrollTo("fieldGraphic", anchor: .center) }
                                     .buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("inplayJumpField")
                             }
+                            if usesPlayContext, !alreadySaved || reviewsField, let record {
+                                broadcast(arrivedSnapshot ?? match, record: record, inplay: .init(half: half, scoringHome: scoringHome))
+                                    .frame(width: canvasWidth)
+                            }
                             board(canvasWidth)
+                            if let event = activePitchEvent, event.play?.review == nil || fieldResolved {
+                                MatchPitchEventNotice(event: event, resolved: fieldResolved, name: { pitchEventName($0, match: match) },
+                                    openComparison: { catchComparison = event })
+                            }
                         }.padding(.horizontal, 4).padding(.vertical, 8)
-                    }
+                    }.accessibilityIdentifier("inplayFieldScroll")
                 }
-                if let summary {
+                if let summary, activeRunningEvent == nil || fieldResolved {
                     let showsHit = fieldResolved && emphasizesHit
                     MatchLastPlayStrip(title: showsHit ? "직전 플레이" : "인플레이 판정",
                                        summary: fieldResolved ? summary : "플레이 진행 중",
-                                       summaryID: "inplayLastPlaySummary", emphasizesHit: showsHit) {
-                        if fieldResolved { replayAgainButton }
-                    }.padding(.horizontal, 8).background(GameTheme.boardPanel)
+                                       summaryID: "inplayLastPlaySummary", emphasizesHit: showsHit,
+                                       actionMaxWidth: reviewsField ? 260 : activePitchEvent != nil || activeRunningEvent != nil ? 190 : (details == nil ? 100 : 160),
+                                       stacksActions: reviewsField) {
+                        if fieldResolved {
+                            let actions = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                                : AnyLayout(HStackLayout(spacing: 8))
+                            actions {
+                                if let details { resolvedRunnerButton(details) }
+                                replayAgainButton
+                                if activePitchEvent != nil || activeRunningEvent != nil || reviewsField {
+                                    Button(displaySnapshot.match?.completed == true ? "결과 보기" : "다음 준비") { finishPitchEventPresentation() }
+                                        .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("pitchEventContinue")
+                                }
+                            }.frame(minWidth: (activeRunningEvent != nil || reviewsField) && !typeSize.isAccessibilitySize ? 190 : nil)
+                                .accessibilityElement(children: .contain)
+                        }
+                    }.padding(.horizontal, 8).background(GameTheme.boardPanel).accessibilityElement(children: .contain)
                 } else if fieldResolved {
                     replayAgainButton.frame(maxWidth: .infinity, alignment: .trailing)
                         .padding(.horizontal, 8)
                         .background(GameTheme.boardPanel)
                 }
-            }.background(GameTheme.navy.ignoresSafeArea()).accessibilityIdentifier(identifier)
+            }.background(GameTheme.navy.ignoresSafeArea())
+                .accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
         }
     }
     private var replayAgainButton: some View {
@@ -890,6 +1085,28 @@ struct CareerGameView: View {
             liveReplayPass += 1
         }.buttonStyle(MatchPixelButtonStyle()).accessibilityIdentifier("inplayReplayAgain")
     }
+    private func resolvedRunnerButton(_ details: MatchRunnerDetails) -> some View {
+        Button {
+            guard fieldResolved, arrivedSnapshot != nil, !committing, retrySave == nil else { return }
+            runnerDetails = details
+        } label: {
+            VStack(spacing: 2) {
+                ZStack {
+                    ForEach(0..<3, id: \.self) { index in
+                        Rectangle().fill(details.bases[index] ? GameTheme.gold : GameTheme.boardLine)
+                            .frame(width: 7, height: 7).rotationEffect(.degrees(45))
+                            .position(x: index == 0 ? 28 : index == 1 ? 18 : 8, y: index == 1 ? 6 : 16)
+                    }
+                }.frame(width: 36, height: 22).accessibilityHidden(true)
+                Text(typeSize.isAccessibilitySize ? "주자 " + details.occupancy : details.occupancy)
+                    .font(typeSize.isAccessibilitySize ? .body : .caption2.bold())
+                    .fixedSize(horizontal: false, vertical: true)
+            }.frame(width: typeSize.isAccessibilitySize ? nil : 44, height: typeSize.isAccessibilitySize ? nil : 44)
+                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+        }.buttonStyle(.plain).foregroundStyle(GameTheme.boardInk)
+            .accessibilityLabel("주자 \(details.occupancy) · 주자 정보 보기")
+            .accessibilityIdentifier("openResolvedRunnerDetails")
+    }
     private func inplayStage(_ play: MatchDetailedPlay, match: CareerMatch) -> some View {
         liveReplayStage(.field(play), match: match, identifier: "inplayFieldStage") { width in
             DetailedFieldReplayBoard(play: play, appearance: renderAppearance, jerseyNumber: player.jerseyNumber,
@@ -897,18 +1114,25 @@ struct CareerGameView: View {
                 ownTeamFielding: (play.half % 2 == 0) == match.isHome, stadium: stadium,
                 scoreText: "H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",
                 handoff: fieldHandoff, playbackMode: fieldPlaybackMode, preparesMotion: preparesFieldMotion,
-                preparation: fieldPreparation, canvasWidth: width, showsHitReceipt: false, onResolved: {
+                preparation: fieldPreparation, canvasWidth: width, showsHitReceipt: false, onProgress: { time in
+                    if let event = activeRunningEvent, event.id == play.eventID, let saved = displaySnapshot.match {
+                        arrivedSnapshot = event.displayMatch(at: time, saved: saved)
+                    } else if let saved = displaySnapshot.match,play.review != nil {
+                        arrivedSnapshot = play.reviewDisplayMatch(at:time,saved:saved)
+                    }
+                }, onResolved: {
                     #if DEBUG
                     if livePerformanceQA { MatchRenderMetrics.mark("career.inplay.resolved") }
                     #endif
                     fieldResolved = true
                     if let call = UmpireCall.resolvedField(outsAdded: play.outsAdded) { GameSound.shared.announce(call) }
                     if let updated = displaySnapshot.match {
-                        arrivedSnapshot = updated
+                        arrivedSnapshot = play.review?.after.map {$0.displayMatch(updated)} ?? activeRunningEvent.map { $0.after.displayMatch(updated) } ?? activePitchEvent.map { $0.after.displayMatch(updated) } ?? updated
                         pulse = MatchPresentation.countPulse(updated.lastManual?.outcome ?? "")
                         pulseAt = Date()
                     }
                 }) {
+                    guard play.pitchEvent == nil && play.runningEvent == nil && play.review == nil else { return }
                     replay = nil; fieldHandoff = nil; presenting = false
                     visualSnapshot = nil; arrivedSnapshot = nil; fieldResolved = false
                 }
@@ -922,12 +1146,14 @@ struct CareerGameView: View {
                 ownTeamFielding: (event.half % 2 == 0) == match.isHome, stadium: stadium,
                 scoreText: "H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",
                 handoff: fieldHandoff, playbackMode: fieldPlaybackMode, preparesMotion: preparesFieldMotion,
-                preparation: fieldPreparation, playsSound: true, canvasWidth: width, onResolved: {
+                preparation: fieldPreparation, playsSound: true, canvasWidth: width, onProgress: {time in
+                    if let saved=displaySnapshot.match {arrivedSnapshot=event.reviewDisplayMatch(at:time,saved:saved)}
+                }, onResolved: {
                     #if DEBUG
                     if livePerformanceQA { MatchRenderMetrics.mark("career.inplay.resolved") }
                     #endif
                     fieldResolved = true
-                    arrivedSnapshot = displaySnapshot.match
+                    arrivedSnapshot = displaySnapshot.match.map {event.review?.after?.displayMatch($0) ?? $0}
                 }) {
                     homeRunReplay = nil; fieldHandoff = nil; presenting = false
                     visualSnapshot = nil; arrivedSnapshot = nil; fieldResolved = false
@@ -962,11 +1188,11 @@ struct CareerGameView: View {
                 .accessibilityLabel(player.role == .batter ? "도트 타자 경기장" : "도트 투수 경기장")
                 .accessibilityIdentifier("careerMatchField")
                 .overlay {
-                    if player.role == .batter, !match.completed, !fieldCoversArena {
+                    if player.role == .batter, !match.completed, !fieldCoversArena, !match.canPrepareRunning {
                         battingSurface(field)
                     }
                     if (replay != nil || homeRunReplay != nil) { EmptyView() }
-                    else if judgment == nil && player.role == .batter && !match.completed {
+                    else if judgment == nil && player.role == .batter && !match.completed && !match.canPrepareRunning {
                         BattingAimZone(x: $aimX, y: $aimY, locked: retrySave != nil || presenting, showsGrid:false)
                             .frame(width: field.width * 0.16, height: field.height * 0.22)
                             .position(x: field.width * 0.5, y: field.height * 0.68)
@@ -992,16 +1218,33 @@ struct CareerGameView: View {
                                   result: presenting ? judgment : match.lastManual, arrived: judgment != nil)
             .id(pitchCode)
     }
+    @ViewBuilder private func substitutionJournalButton(_ match: CareerMatch, record: CareerMatchRecord) -> some View {
+        let hasChanges = !(match.runnerManagement?.changes.isEmpty ?? true)
+            || match.pitching?.homeChange != nil || match.pitching?.awayChange != nil
+        if hasChanges {
+            let names = teamNames(match, record: record)
+            let journal = MatchSubstitutionJournal(match: match, careerName: player.name, homeName: names.home, awayName: names.away)
+            Button { substitutionJournal = journal } label: {
+                HStack(spacing: 8) {
+                    Text("교체 일지").font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 8)
+                    Text("총 \(journal.count)건").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    Image(systemName: "chevron.right").font(.caption.bold()).accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(GameTheme.boardInk)
+            .disabled(presenting || clock.running || committing || retrySave != nil || fieldCoversArena)
+            .accessibilityHint("이닝별로 나간 선수와 들어온 선수, 교체 사유를 확인합니다.")
+            .accessibilityIdentifier("openSubstitutionJournal")
+        }
+    }
     private func historicalResults(_ match: CareerMatch, record: CareerMatchRecord) -> some View {
         let summary = MatchResultSummary(match: match, fatigueBefore: record.fatigueBefore, fatigueAfter: record.fatigueAfter)
         let (home, away) = teamNames(match, record: record)
         let highlights = MatchHighlights(match: match, homeName: home, awayName: away)
-        let isPitcher = match.role == PlayerRole.pitcher.rawValue
-        let primaryIDs = isPitcher ? ["innings", "pitchingStrikeouts", "runsAllowed", "pitches"]
-            : ["atBats", "hits", "homeRuns", "rbi"]
-        let metrics = summary.metrics
-        let primaryMetrics = primaryIDs.compactMap { id in metrics.first { $0.id == id } }
-        let secondaryMetrics = metrics.filter { !primaryIDs.contains($0.id) }
+        let report = MatchPlayerReportData(summary: summary)
 
         return ScrollView {
             VStack(alignment: .leading, spacing: ManagementTheme.Space.compact) {
@@ -1009,35 +1252,13 @@ struct CareerGameView: View {
                     JournalDetailHeader(date: date, title: "경기 결과", status: summary.outcome,
                                         highlighted: match.teamScore > match.opponentScore, identifier: "careerJournalMatch")
                 }
-                ManagementPanel("최종 점수") {
-                    let layout = typeSize.isAccessibilitySize
-                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: ManagementTheme.Space.inline))
-                        : AnyLayout(HStackLayout(alignment: .top, spacing: ManagementTheme.Space.inline))
-                    layout {
-                        historicalTeam(label: "내 팀", name: match.isHome ? home : away) {
-                            Text("\(match.teamScore)").foregroundStyle(GameTheme.gold)
-                                .accessibilityLabel("내 팀 \(match.teamScore) : \(match.opponentScore) 상대")
-                                .accessibilityValue("\(match.teamScore):\(match.opponentScore)")
-                                .accessibilityIdentifier("gameFinalScore")
-                        }
-                        historicalTeam(label: "상대", name: match.isHome ? away : home) {
-                            Text("\(match.opponentScore)").accessibilityHidden(true)
-                        }
-                    }
-                }
-                ManagementPanel(isPitcher ? "내 투구 성적" : "내 타격 성적") {
-                    if match.appearance {
-                        historicalMetrics(primaryMetrics)
-                    } else {
-                        Text(isPitcher ? "비등판" : "비출전").managementFont(.body)
-                            .accessibilityIdentifier("gameResultNoAppearance")
-                    }
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("careerJournalMatchPersonal")
-                JournalDisclosure(title: "이닝별 기록", identifier: "careerJournalMatchInnings") {
+                playerReport(summary, home: home, away: away)
+                    .accessibilityIdentifier("careerJournalMatchPersonal")
+                JournalDisclosure(title: "이닝별 득점", identifier: "careerJournalMatchInnings") {
                     historicalInnings(match)
                 }
+                substitutionJournalButton(match, record: record)
+                gameHistoryButton(match, record: record)
                 ManagementPanel("경기 하이라이트") {
                     Text("홈런 \(highlights.homeRunCount)개 · 수비·주루 \(highlights.fieldCount)개")
                         .managementFont(.helper).foregroundStyle(GameTheme.boardMuted)
@@ -1045,8 +1266,8 @@ struct CareerGameView: View {
                         .buttonStyle(MatchPixelButtonStyle(primary: true))
                         .accessibilityIdentifier("openMatchHighlights")
                 }
-                JournalDisclosure(title: "경기 상세", identifier: "careerJournalMatchDetails") {
-                    historicalMetrics(secondaryMetrics)
+                JournalDisclosure(title: "세부 경기 기록", identifier: "careerJournalMatchDetails") {
+                    historicalMetrics(report.other)
                     if let decisions = match.playerRecords?.decisions, decisions.settled,
                        let winner = decisions.winner, let loser = decisions.loser {
                         Text("승리투수 " + (winner == player.id.uuidString ? player.name : NPCIdentity.name(winner))
@@ -1063,20 +1284,6 @@ struct CareerGameView: View {
         .background(GameTheme.board)
         .foregroundStyle(GameTheme.boardInk)
         .accessibilityIdentifier("careerJournalMatchScroll")
-    }
-
-    private func historicalTeam<Score: View>(label: String, name: String, @ViewBuilder score: () -> Score) -> some View {
-        VStack(alignment: .leading, spacing: ManagementTheme.Space.micro) {
-            HStack(alignment: .firstTextBaseline, spacing: ManagementTheme.Space.inline) {
-                Text(label).managementFont(.helper).foregroundStyle(GameTheme.boardMuted)
-                Spacer(minLength: 0)
-                score().managementFont(.metric).monospacedDigit()
-            }
-            Text(name).managementFont(.body).fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(ManagementTheme.Space.inline)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(GameTheme.board, in: ManagementStepFrame())
     }
 
     private func historicalMetrics(_ metrics: [MatchResultSummary.Metric]) -> some View {
@@ -1142,82 +1349,47 @@ struct CareerGameView: View {
         let summary = MatchResultSummary(match: match, fatigueBefore: record.fatigueBefore, fatigueAfter: record.fatigueAfter)
         let (home, away) = teamNames(match, record: record)
         let highlights = MatchHighlights(match: match, homeName: home, awayName: away)
-        return VStack(spacing: 10) {
-            GamePanel(title: "FINAL · 팀 경기 결과", onBoard: true) {
-                let heading = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
-                heading {
-                    DetailGamePortrait(role: player.role, appearance: renderAppearance, number: player.jerseyNumber,
-                                       hand: player.throwingHandRaw, label: player.name + "의 경기 도트")
-                        .frame(width: 64, height: 84).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(summary.outcome).font(ManagementPixelFont.readable(.metric))
-                            .foregroundStyle(GameTheme.gold).accessibilityIdentifier("careerGameFinished")
-                        Text("내 팀 \(match.teamScore) : \(match.opponentScore) 상대")
-                            .managementFont(.metric).monospacedDigit().fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("gameFinalScore")
-                        Text("\(player.name) #\(player.jerseyNumber)").managementFont(.label)
-                    }
-                }
-                if let decisions=match.playerRecords?.decisions,decisions.settled {
-                    if let winner=decisions.winner,let loser=decisions.loser {
-                        Text("승리투수 " + (winner == player.id.uuidString ? player.name:NPCIdentity.name(winner)) + " · 패전투수 " + (loser == player.id.uuidString ? player.name:NPCIdentity.name(loser)))
-                            .managementFont(.body).accessibilityIdentifier("gamePitcherDecision")
-                    } else {Text("무승부 · 승리·패전투수 없음").managementFont(.body)}
-                } else {Text("투수 승패 미채점 · 이전 경기 기록 유지").managementFont(.helper)}
-                Text("결과 저장 완료 · 재열기는 기록·XP·피로 추가 반영 없음").font(.subheadline.bold()).foregroundStyle(GameTheme.growth)
-                    .accessibilityIdentifier("gameResultSaved")
-            }
-
+        let report = MatchPlayerReportData(summary: summary)
+        return VStack(alignment: .leading, spacing: 16) {
+            playerReport(summary, home: home, away: away, saved: true)
+            Text("재열기는 기록·XP·피로를 추가 반영하지 않습니다.")
+                .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+            substitutionJournalButton(match, record: record)
+            gameHistoryButton(match, record: record)
             GamePanel(title: "경기 하이라이트", onBoard: true) {
                 Text("홈런 \(highlights.homeRunCount)개 · 수비·주루 \(highlights.fieldCount)개")
                     .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                 Button("하이라이트 보기") { activeHighlights = highlights }
-                    .buttonStyle(MatchPixelButtonStyle(primary: true))
-                    .accessibilityIdentifier("openMatchHighlights")
+                    .buttonStyle(MatchPixelButtonStyle(primary: true)).accessibilityIdentifier("openMatchHighlights")
             }
-            .overlay {
-                Rectangle().strokeBorder(GameTheme.gold, lineWidth: ManagementTheme.Control.border)
-                    .allowsHitTesting(false).accessibilityHidden(true)
-            }
-
-            GamePanel(title: player.role == .batter ? "타자 경기 기록" : "투수 경기 기록", onBoard: true) {
-
+            JournalDisclosure(title: "세부 경기 기록", identifier: "gameResultDetails") {
+                historicalMetrics(report.other)
                 if let decision = match.clubSelection {
                     Text(decision.appearance ? "주전 기용 · 경기 시작 때 고정" : decision.rotationDay ? "벤치 · 개인 성적/XP 없음" : "로테이션 휴식 · 개인 성적/XP 없음")
-                        .font(.subheadline).foregroundStyle(GameTheme.gold).accessibilityIdentifier("matchSelectionResult")
+                        .font(.subheadline).accessibilityIdentifier("matchSelectionResult")
                 }
-                if !record.appearance {
-                    Text("비출전 · 팀 경기 결과").font(.headline).accessibilityIdentifier("gameResultNoAppearance")
-                    Text("개인 기록과 피로 변화가 없습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
-                } else {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 6) {
-                        ForEach(summary.metrics) { metric in
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(metric.label).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-                                Spacer(minLength: 8)
-                                Text(metric.value).font(.system(.title3, design: .monospaced, weight: .bold))
-                            }.padding(8).background(GameTheme.board)
-                                .accessibilityElement(children: .combine).accessibilityIdentifier("gameResult-" + metric.id)
-                        }
-                    }
+                if let decisions = match.playerRecords?.decisions, decisions.settled,
+                   let winner = decisions.winner, let loser = decisions.loser {
+                    Text("승리투수 " + (winner == player.id.uuidString ? player.name : NPCIdentity.name(winner))
+                         + " · 패전투수 " + (loser == player.id.uuidString ? player.name : NPCIdentity.name(loser)))
+                        .font(.body).accessibilityIdentifier("gamePitcherDecision")
                 }
+                additionalResultPanels(match, record: record, summary: summary)
             }
-            additionalResultPanels(match, record: record, summary: summary)
             CareerProjectNextActions(player:player,calendar:calendar)
             Button("경기 화면 닫기") { dismiss() }.buttonStyle(MatchPixelButtonStyle(primary: completionNavigation == nil)).accessibilityIdentifier("gameReturnHome")
             Text("홈에서 다음 날로 진행할 수 있습니다.").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }.accessibilityElement(children: .contain)
     }
 
-    @ViewBuilder private func additionalResultPanels(_ match: CareerMatch, record: CareerMatchRecord, summary: MatchResultSummary) -> some View {
-        if let experience = match.abilityExperience {
-            MatchAbilityGrowthPanel(experience: experience)
-        } else {
-            GamePanel(title: "경기 능력 성장", onBoard: true) {
-                Text(match.appearance ? "이전 규칙 경기 · 능력 XP 소급 지급 없음" : "비출전 팀 경기 · 개인 능력 XP 없음")
-                    .font(.caption).accessibilityIdentifier("gameAbilityXPExcluded")
-            }
+    private func playerReport(_ summary: MatchResultSummary, home: String, away: String, saved: Bool = false) -> some View {
+        MatchPlayerReport(data: MatchPlayerReportData(summary: summary), name: player.name, number: player.jerseyNumber,
+                          ownTeam: summary.match.isHome ? home : away, opponent: summary.match.isHome ? away : home, showsSaved: saved) {
+            DetailGamePortrait(role: player.role, appearance: renderAppearance, number: player.jerseyNumber,
+                               hand: player.throwingHandRaw, label: player.name + "의 경기 도트")
         }
+    }
+    @ViewBuilder private func additionalResultPanels(_ match: CareerMatch, record: CareerMatchRecord, summary: MatchResultSummary) -> some View {
         if let experience = match.positionExperience {
             GamePanel(title: "실전 포지션 성장 · " + experience.position.label, onBoard: true) {
                 Text("수비 참여 \(experience.events.count)회 · 아웃 성공 \(experience.successes)회")
@@ -1227,15 +1399,6 @@ struct CareerGameView: View {
                 Text("잔여 XP \(experience.after.xp, specifier: "%.1f") / 100 · 다음 새 경기 반영")
                     .font(.caption).foregroundStyle(GameTheme.boardMuted)
             }
-        }
-        GamePanel(title: "피로 변화", onBoard: true) {
-            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(spacing: 12))
-            layout {
-                Text("\(record.fatigueBefore) → \(record.fatigueAfter)")
-                    .font(.system(.title2, design: .monospaced, weight: .bold)).accessibilityIdentifier("gameResultFatigue")
-                Text(summary.fatigueChange).font(.headline).foregroundStyle(GameTheme.gold)
-            }
-            Text("경기 전 → 경기 후 · 100 기준").font(.caption).foregroundStyle(GameTheme.boardMuted)
         }
         GamePanel(title: "적용 특성 · 마지막 개인 경합", onBoard: true) {
             Text(summary.traitMessage).font(.caption).foregroundStyle(GameTheme.boardMuted).accessibilityIdentifier("gameResultTraitStatus")
@@ -1273,10 +1436,73 @@ struct CareerGameView: View {
         }
         MatchProjectFeedbackPanel(feedback:match.projectFeedback)
     }
-    var body: some View {
-        #if DEBUG
-        let _ = MatchRenderMetrics.bodyEvaluated("career")
-        #endif
+    private func openGameInformation() {
+        guard !inputLocked, !fieldCoversArena, let match = displaySnapshot.match else { return }
+        if informationFixtureID != record?.fixtureID {
+            informationFixtureID = record?.fixtureID
+            informationTab = .lineup
+            historySelection = MatchHistorySelection()
+        }
+        gameDetailsSnapshot = GameInformationSnapshot(match: match)
+    }
+    private func historyProjection(_ match: CareerMatch, record: CareerMatchRecord) -> MatchGameHistory {
+        let names = teamNames(match, record: record)
+        return MatchGameHistory(match: match, fixtureID: record.fixtureID, careerName: player.name,
+                                homeName: names.home, awayName: names.away)
+    }
+    private func gameHistoryButton(_ match: CareerMatch, record: CareerMatchRecord) -> some View {
+        Button { gameHistory = historyProjection(match, record: record) } label: {
+            HStack(spacing: 8) {
+                Text("경기 이력").font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.caption.bold()).accessibilityHidden(true)
+            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+        }.buttonStyle(.plain).foregroundStyle(GameTheme.boardInk)
+            .disabled(presenting || clock.running || committing || retrySave != nil || fieldCoversArena)
+            .accessibilityHint("이닝별 양 팀의 타석과 교체, 당시 점수와 주자 변화를 확인합니다.")
+            .accessibilityIdentifier("openGameHistory")
+    }
+    private func lineupComparison(_ match: CareerMatch) -> MatchLineupComparison {
+        let homeID = match.playerRecords?.home.teamID ?? match.npcAttack?.home.teamID ?? match.npcFielders?.home.teamID
+        let awayID = match.playerRecords?.away.teamID ?? match.npcAttack?.away.teamID ?? match.npcFielders?.away.teamID
+        return MatchLineupComparison(match: match, fixtureID: record?.fixtureID, careerName: player.name,
+            homeName: homeID.map { CareerTeamDirectory.name($0, schools: schools) } ?? "홈 팀",
+            awayName: awayID.map { CareerTeamDirectory.name($0, schools: schools) } ?? "원정 팀", gameDate: record?.gameDate)
+    }
+    private func gameInformation(_ match: CareerMatch) -> some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                MatchRecordTabs(selection: $informationTab).padding(16)
+                if informationTab == .history, let record {
+                    MatchGameHistoryView(history: historyProjection(match, record: record), selection: $historySelection, embedded: true, role: player.role, appearance: renderAppearance)
+                } else {
+                  ScrollView {
+                    VStack(spacing: 16) {
+                        if let plan = match.preparation {
+                            NavigationLink("경기 계획 · " + plan.choice.label) {
+                                MatchOpponentCenter(analysis: plan.analysis, fielders: match.npcFielders?.team(home: !match.isHome),
+                                    ownRole: match.role, ownRatings: MatchOpponentCenter.ratings(player: player, stats: match.abilityStats, match: match),
+                                    teamName: CareerTeamDirectory.name(plan.analysis.teamID, schools: schools), ownTeamName: CareerTeamDirectory.name((try? calendar.teamID(for: player, on: GameDate(record?.gameDate ?? player.gameDate))) ?? player.schoolID, schools: schools),
+                                    date: record?.gameDate ?? player.gameDate, activePitcher: match.opponentPitcher, season: plan.season, locked: true,
+                                    progress: MatchPlanOutcome.make(match: match, includingLive: true), choice: .constant(plan.choice))
+                            }.frame(minHeight: 44).accessibilityIdentifier("openLiveGamePlan")
+                        }
+                        MatchLineupComparisonView(comparison: lineupComparison(match), schools: schools)
+                        MatchNPCFieldersPanel(match: match, schools: schools)
+                    }.padding(16)
+                  }.accessibilityIdentifier("gameInformationScroll")
+                }
+            }.background(GameTheme.board).foregroundStyle(GameTheme.paper)
+                .navigationTitle("경기 정보").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("닫기") { gameDetailsSnapshot = nil }.frame(minWidth: 44, minHeight: 44)
+                            .accessibilityIdentifier("closeGameDetails")
+                    }
+                }
+        }.preferredColorScheme(.dark)
+    }
+    private var gameSurface: some View {
         GeometryReader { geometry in
             if let record, let savedMatch = displaySnapshot.match {
                 let match = visualSnapshot ?? savedMatch
@@ -1321,8 +1547,18 @@ struct CareerGameView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("경기 조작 안내") { showControlGuide = true }
-                        Button("경기 계획·출전 선수") { showGameDetails = true }
+                        Button("경기 계획·출전 선수") { openGameInformation() }
+                            .accessibilityIdentifier("openGameDetails")
                         if let saved = displaySnapshot.match {
+                            if let last = saved.running?.events.last {
+                                Button("직전 주루 다시 보기") { openRunningEvent(last, match: saved) }
+                                    .accessibilityIdentifier("replayLastRunningEvent")
+                            }
+                            if let sequence = saved.lastManual?.pitchEventSequence,
+                               let event = saved.pitchEvents?.events.first(where: { $0.sequence == sequence }), let play = event.play {
+                                Button("직전 투구 진루 다시 보기") { openSavedFieldPlay(play, match: saved) }
+                                    .accessibilityIdentifier("replayLastPitchEvent")
+                            }
                             if let last = saved.fieldPlays?.last {
                                 Button("직전 수비·주루 다시 보기") {
                                     openSavedFieldPlay(last, match: saved)
@@ -1349,6 +1585,12 @@ struct CareerGameView: View {
                 }
             }
         }
+    }
+    var body: some View {
+        #if DEBUG
+        let _ = MatchRenderMetrics.bodyEvaluated("career")
+        #endif
+        gameSurface
         .sheet(isPresented: Binding(get: { lastPitchReceipt != nil }, set: { if !$0 { lastPitchReceipt = nil } })) {
             NavigationStack {
                 ScrollView {
@@ -1384,27 +1626,59 @@ struct CareerGameView: View {
                     .toolbar {ToolbarItem(placement:.topBarTrailing) {Button("닫기") {showControlGuide=false;battingGuideSeen=true}.frame(minWidth:44,minHeight:44)}}
             }
         }
-        .sheet(isPresented: $showGameDetails) {
-            NavigationStack {
-                ScrollView {
-                    if let match = displaySnapshot.match {
-                        VStack(spacing: 12) {
-                            if let plan = match.preparation {
-                                NavigationLink("경기 계획 · " + plan.choice.label) {
-                                    MatchOpponentCenter(analysis: plan.analysis, fielders: match.npcFielders?.team(home: !match.isHome),
-                                        ownRole: match.role, ownRatings: MatchOpponentCenter.ratings(player: player, stats: match.abilityStats, match: match),
-                                        teamName: CareerTeamDirectory.name(plan.analysis.teamID, schools: schools), ownTeamName: CareerTeamDirectory.name((try? calendar.teamID(for: player, on: GameDate(record?.gameDate ?? player.gameDate))) ?? player.schoolID, schools: schools),
-                                        date: record?.gameDate ?? player.gameDate, activePitcher: match.opponentPitcher, season: plan.season, locked: true,
-                                        progress: MatchPlanOutcome.make(match: match, includingLive: true), choice: .constant(plan.choice))
-                                }.accessibilityIdentifier("openLiveGamePlan")
-                            }
-                            MatchNPCFieldersPanel(match: match, schools: schools)
-                        }.padding()
-                    }
-                }.background(GameTheme.board).foregroundStyle(GameTheme.paper).navigationTitle("경기 정보")
-                    .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("닫기") { showGameDetails = false } } }
-            }
+        .sheet(item: $catchComparison) { event in
+            PitchCatchComparison(event: event, role: player.role, appearance: renderAppearance)
         }
+        .sheet(item: $gameDetailsSnapshot) { snapshot in gameInformation(snapshot.match) }
+        .sheet(item: $gameHistory) { history in
+            NavigationStack { MatchGameHistoryView(history: history, role: player.role, appearance: renderAppearance).id(history.id) }
+        }
+        .sheet(item: $substitutionJournal) { journal in
+            NavigationStack {
+                MatchSubstitutionJournalView(journal: journal)
+                    .navigationTitle("교체 일지").navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(GameTheme.boardPanel, for: .navigationBar)
+                    .toolbarBackground(.visible, for: .navigationBar)
+                    .toolbarColorScheme(.dark, for: .navigationBar)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("닫기") { substitutionJournal = nil }
+                                .frame(minWidth: 44, minHeight: 44)
+                                .accessibilityIdentifier("closeSubstitutionJournal")
+                        }
+                    }
+            }.preferredColorScheme(.dark).presentationDragIndicator(.visible)
+        }
+        .sheet(item: $runnerDetails) { details in
+            NavigationStack {
+                MatchRunnerDetailsView(details: details)
+                    .navigationTitle("베이스 주자").navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("닫기") { runnerDetails = nil }.frame(minWidth: 44, minHeight: 44)
+                                .accessibilityIdentifier("closeRunnerDetails")
+                        }
+                    }
+            }.preferredColorScheme(.dark).presentationDragIndicator(.visible)
+        }
+        .task(id: runningTimerToken) {
+            guard let token = runningTimerToken else { return }
+            runningCountdown = 5
+            do {
+                for remaining in (1...5).reversed() {
+                    runningCountdown = remaining
+                    try await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled, token == runningTimerToken else { return }
+                }
+                performRunning()
+            } catch { }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
+            runningVoiceOver = UIAccessibility.isVoiceOverRunning
+        }
+        .onChange(of: clock.running) { _, running in if running { runnerDetails = nil; gameDetailsSnapshot = nil; gameHistory = nil } }
+        .onChange(of: committing) { _, saving in if saving { runnerDetails = nil; gameDetailsSnapshot = nil; gameHistory = nil } }
+        .onChange(of: fieldResolved) { _, resolved in if !resolved { runnerDetails = nil } }
         .onAppear {
             if historyRecordKey != nil {
                 load()
@@ -1452,6 +1726,7 @@ struct CareerGameView: View {
         }
         .onChange(of: presenting) { previous, current in
             if previous && !current { pitchTarget = nil }
+            if current { runnerDetails = nil }
         }
         .task(id: pulseAt) {
             guard pulse != nil else { return }
@@ -1474,7 +1749,14 @@ struct CareerGameView: View {
                 if livePerformanceQA {MatchRenderMetrics.mark("career.inactive");MatchRenderMetrics.exportLive(role:player.role.rawValue+"-actual-career-interrupted-\(Int(ProcessInfo.processInfo.systemUptime*1000))")}
                 #endif
                 cancelFieldAssets()
-                cancelInput()
+                // 저장된 비교·주루 읽기는 짧은 비활성화에도 유지한다. 실제 백그라운드와 미확정 입력은 취소한다.
+                let readsComparison = catchComparison != nil && fieldResolved && activePitchEvent != nil && attempt == nil && !committing
+                let readsRunning = phase == .inactive && (activeRunningEvent != nil || replay?.review != nil || homeRunReplay?.review != nil) && attempt == nil && !committing && retrySave == nil && !clock.running
+                if readsComparison || readsRunning {
+                    scene.cancelDelivery()
+                } else {
+                    cancelInput()
+                }
             } else if !fieldAssetsReady,fieldAssetsTask == nil {prepareFieldAssets()}
         }
         .managementConfirmationDialog(canAdvanceToNextAppearance ? "어디까지 자동으로 진행할까요?" : "남은 경기를 자동으로 진행할까요?",

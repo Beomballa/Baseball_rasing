@@ -370,6 +370,12 @@ struct PersonalSeasonTotals: Equatable, Codable {
             guard !sum.overflow else { throw LeagueError.invalidRecord }
             next[keyPath: key] = sum.partialValue
         }
+        for key in [\MatchLine.hitByPitch, \.hitBatters, \.wildPitches, \.passedBalls, \.strikeoutsWithoutOut] {
+            let current = next[keyPath: key] ?? 0, incoming = value[keyPath: key] ?? 0
+            let sum = current.addingReportingOverflow(incoming)
+            guard current >= 0, incoming >= 0, !sum.overflow else { throw LeagueError.invalidRecord }
+            if next[keyPath: key] != nil || value[keyPath: key] != nil { next[keyPath: key] = sum.partialValue }
+        }
         let count = games.addingReportingOverflow(1)
         guard !count.overflow else { throw LeagueError.invalidRecord }
         line = next; games = count.partialValue

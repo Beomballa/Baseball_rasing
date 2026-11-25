@@ -1130,7 +1130,8 @@ import AVFoundation
             let (p,s)=try setup(role:.pitcher,in:c),r=try ready(p,s,in:c)
             func oldJSON(_ object:Any) -> Any {
                 if let d=object as? [String:Any] {
-                    let laterFields = ["pitching", "responsiblePitcher", "playerRecords", "inningScores", "pitchLog", "npcReadiness"]
+                    let laterFields = ["pitching", "responsiblePitcher", "playerRecords", "inningScores", "pitchLog", "npcReadiness",
+                        "running", "stolenBases", "caughtStealing", "pitchEvents", "pitchEventSequence", "runnerManagement", "battingOrder", "hitByPitch", "hitBatters", "wildPitches", "passedBalls", "strikeoutsWithoutOut"]
                     return d.filter { !laterFields.contains($0.key) }.mapValues {oldJSON($0)}
                 }
                 if let a=object as? [Any] {return a.map {oldJSON($0)}}
@@ -1429,7 +1430,7 @@ import AVFoundation
     func testExistingNPCNilMatchIsNotBackfilledAndCorruptNPCIsNeverReset() throws {
         let container=try CareerStore.makeContainer(inMemory:true),c=container.mainContext
         let (p,s)=try growthSetup(in:c),row=try ready(p,s,in:c)
-        var old=try row.snapshot();old.npcFielders=nil
+        var old=try row.snapshot();old.npcFielders=nil;old.pitchEvents=nil;old.running=nil;old.runnerManagement=nil;old.battingOrder=nil
         old.npcAttack=nil;old.playerRecords=nil;old.preparation=nil;old.inningScores=nil;old.pitchLog=nil;old.npcReadiness=nil
         row.payload=try JSONEncoder().encode(old);try c.save()
         let original=row.payload
@@ -1668,17 +1669,32 @@ extension CareerMatchTests {
             var inputs=0,manualInputs=0,checkedFailure=false
             while !row.completed && inputs<250 {
                 let snapshot=try row.snapshot()
+                if snapshot.canPrepareRunning {
+                    _ = try CareerMatchStore.running(player:player,state:state,record:row,revision:row.revision,in:context)
+                    inputs += 1;continue
+                }
                 let manual=role == .batter || snapshot.ownPitcherActive
                 let input:MatchInput=manual ? (role == .batter ? .swing:.pitch):.automatic
                 let code=role == .pitcher && manual ? player.pitches.sorted {$0.order<$1.order}.first?.code:nil
                 let control:ManualMatchInput?=manual ? (role == .batter ? ManualMatchInput(x:0.5,y:0.5,timing:MatchDelivery.contactPhase):ManualMatchInput(release:0.68)):nil
                 let before=(row.payload,row.revision,player.fatigue,state.revision)
-                if inputs == 2 {
+                if inputs >= 2 && !checkedFailure {
                     XCTAssertThrowsError(try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:input,pitchCode:code,control:control,in:context,save:{_ in throw Injected.save}))
                     XCTAssertEqual(row.payload,before.0);XCTAssertEqual(row.revision,before.1);XCTAssertEqual(player.fatigue,before.2);XCTAssertEqual(state.revision,before.3);checkedFailure=true
                 }
                 XCTAssertEqual(try CareerMatchStore.start(player:player,state:state,in:context).payload,before.0)
-                try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:input,pitchCode:code,control:control,in:context)
+                do {
+                    try CareerMatchStore.advance(player:player,state:state,record:row,revision:row.revision,input:input,pitchCode:code,control:control,in:context)
+                } catch {
+                    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+                    var candidate = snapshot; try candidate.advance(input, pitchCode: code, control: control)
+                    for (label, value) in [("before", snapshot), ("after", candidate)] {
+                        let attachment = XCTAttachment(data: try encoder.encode(value), uniformTypeIdentifier: "public.json")
+                        attachment.name = "V52 direct input \(role.rawValue) \(inputs) \(label)"
+                        attachment.lifetime = .keepAlways; add(attachment)
+                    }
+                    throw error
+                }
                 inputs += 1;if manual {manualInputs += 1}
             }
             XCTAssertTrue(row.completed);XCTAssertGreaterThan(manualInputs,2);XCTAssertTrue(checkedFailure)
