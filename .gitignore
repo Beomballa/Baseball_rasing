@@ -111,6 +111,10 @@
 
 !/BM/Resources/MatchArt/inplay-stadium-arcade-v1.png
 !/BM/Resources/MatchArt/inplay-stadium-wide-v240.png
+!/BM/Resources/MatchArt/WideStadiums/
+!/BM/Resources/MatchArt/WideStadiums/venues.json
+!/BM/Resources/MatchArt/WideStadiums/venues/
+!/BM/Resources/MatchArt/WideStadiums/venues/*.jpg
 
 # V187 reviewed game turf overlays.
 !/BM/Resources/MatchArt/stadium-turf-v187-dome-batter.png

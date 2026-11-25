@@ -24,6 +24,18 @@ class GitPrivacyTests(unittest.TestCase):
         self.assertFalse(allowed_path("BM/Resources/MatchArt/private.png"))
         self.assertFalse(allowed_path("qa/screenshot.png"))
 
+    def test_wide_stadium_manifest_is_pinned_and_unknown_images_stay_blocked(self):
+        root = "BM/Resources/MatchArt/WideStadiums/"
+        data = (ROOT / (root + "venues.json")).read_bytes()
+        self.assertEqual(blob_issues(root + "venues.json", data), [])
+        catalog = json.loads(data)
+        self.assertEqual(len(catalog["venues"]), 90)
+        self.assertEqual(len(catalog["aliases"]), 40)
+        for venue in catalog["venues"].values():
+            self.assertEqual(ART_HASHES[root + venue["asset"]], venue["sha256"])
+        self.assertFalse(allowed_path(root + "venues/private.jpg"))
+        self.assertFalse(allowed_path(root + "venues/hs-ref-999.jpg"))
+
     def test_named_app_icons_are_opaque_square_and_only_reviewed_catalogs_are_allowed(self):
         catalog = ROOT / "BM/Resources/Assets.xcassets"
         for name in ["AppIcon", "AppIconQA"]:

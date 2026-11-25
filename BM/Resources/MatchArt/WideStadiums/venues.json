@@ -1,0 +1,1670 @@
+{
+  "version": 241,
+  "coordinateOrigin": "topLeft",
+  "rectUnits": "normalized",
+  "fallback": "V240",
+  "venues": {
+    "hs-ref-001": {
+      "name": "서울북악고",
+      "league": "고교",
+      "asset": "venues/hs-ref-001.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "809a1bfc16f23348c576b97426dcf5ebbdb7981f0f81fde7382dfc2538de1af6",
+      "boardRect": {
+        "x": 0.45663501812673374,
+        "y": 0.1657599598259123,
+        "width": 0.08797195253505935,
+        "height": 0.03770226537216829
+      },
+      "turf": "park",
+      "primary": "#953e3f"
+    },
+    "hs-ref-002": {
+      "name": "한강청운고",
+      "league": "고교",
+      "asset": "venues/hs-ref-002.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "8706dffd77f3984871d89eedc62ee8be43d816f169535ce00724c7c3e314aa2b",
+      "boardRect": {
+        "x": 0.4375616598877321,
+        "y": 0.07545336787564767,
+        "width": 0.123433971037598,
+        "height": 0.047013252291749706
+      },
+      "turf": "canopy",
+      "primary": "#245e7f"
+    },
+    "hs-ref-003": {
+      "name": "동대문혜성고",
+      "league": "고교",
+      "asset": "venues/hs-ref-003.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "1850d9d8e2e28cd6ed7d0e4c6aecf7ac2f8d9f41287f341b4b37fde7a489db0f",
+      "boardRect": {
+        "x": 0.4431202840656902,
+        "y": 0.13467800508413028,
+        "width": 0.11375943186861963,
+        "height": 0.028204817818666024
+      },
+      "turf": "canopy",
+      "primary": "#364f85"
+    },
+    "hs-ref-004": {
+      "name": "성동은솔고",
+      "league": "고교",
+      "asset": "venues/hs-ref-004.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "82f29acc8d3c3f23ba41ed27666448cf49686e38156bfb375da160c003f5874d",
+      "boardRect": {
+        "x": 0.45663501812673374,
+        "y": 0.1657599598259123,
+        "width": 0.08797195253505935,
+        "height": 0.03770226537216829
+      },
+      "turf": "park",
+      "primary": "#377455"
+    },
+    "hs-ref-005": {
+      "name": "잠실가람고",
+      "league": "고교",
+      "asset": "venues/hs-ref-005.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "62d1ecb28df6986ead587f4b532c51a8f7a1c809679ef6735615f902eaa1087c",
+      "boardRect": {
+        "x": 0.4375616598877321,
+        "y": 0.07545336787564767,
+        "width": 0.123433971037598,
+        "height": 0.047013252291749706
+      },
+      "turf": "canopy",
+      "primary": "#843b42"
+    },
+    "hs-ref-006": {
+      "name": "강동명휘고",
+      "league": "고교",
+      "asset": "venues/hs-ref-006.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "b9f2faac7f3acfcd831364aa94949a39fe71592d4099fe88e701da744d086632",
+      "boardRect": {
+        "x": 0.41614603273525197,
+        "y": 0.11703072071019742,
+        "width": 0.16919557684071176,
+        "height": 0.02177315734143208
+      },
+      "turf": "canopy",
+      "primary": "#58497c"
+    },
+    "hs-ref-007": {
+      "name": "서초명륜고",
+      "league": "고교",
+      "asset": "venues/hs-ref-007.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "23c63e0c4bd12272e0f90be3f5818c1fe479edb9a76e63d4d397ed8b353a27ea",
+      "boardRect": {
+        "x": 0.4235990799197376,
+        "y": 0.14881074732051094,
+        "width": 0.15280184016052464,
+        "height": 0.07183967112024667
+      },
+      "turf": "brick",
+      "primary": "#386659"
+    },
+    "hs-ref-008": {
+      "name": "마포월성고",
+      "league": "고교",
+      "asset": "venues/hs-ref-008.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "107276695a16ea1d959658b50dd48791915e4b56c765e5c9ee469334285b0e05",
+      "boardRect": {
+        "x": 0.45663501812673374,
+        "y": 0.1657599598259123,
+        "width": 0.08797195253505935,
+        "height": 0.03770226537216829
+      },
+      "turf": "park",
+      "primary": "#2f5270"
+    },
+    "hs-ref-009": {
+      "name": "송파백린고",
+      "league": "고교",
+      "asset": "venues/hs-ref-009.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "2bac6d954f4f1486dde72a03e630bd1b631fb740ecfc86c1c5e794de6efea793",
+      "boardRect": {
+        "x": 0.4431202840656902,
+        "y": 0.13467800508413028,
+        "width": 0.11375943186861963,
+        "height": 0.028204817818666024
+      },
+      "turf": "canopy",
+      "primary": "#883f42"
+    },
+    "hs-ref-010": {
+      "name": "강북서광고",
+      "league": "고교",
+      "asset": "venues/hs-ref-010.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "2c60da233751a44621a44db36d2dc1248f8a790527d60d38a355fb4ea4a4332d",
+      "boardRect": {
+        "x": 0.4456961173090193,
+        "y": 0.13195104128607965,
+        "width": 0.10735801567003612,
+        "height": 0.047530751431007184
+      },
+      "turf": "terrace",
+      "primary": "#245e7f"
+    },
+    "hs-ref-011": {
+      "name": "용산해오름고",
+      "league": "고교",
+      "asset": "venues/hs-ref-011.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "4e90e02dff58ebc668edfcf7acf08ba05f2697435977296b577186e5e0153b2e",
+      "boardRect": {
+        "x": 0.4375616598877321,
+        "y": 0.07545336787564767,
+        "width": 0.123433971037598,
+        "height": 0.047013252291749706
+      },
+      "turf": "canopy",
+      "primary": "#364f85"
+    },
+    "hs-ref-012": {
+      "name": "은평청솔고",
+      "league": "고교",
+      "asset": "venues/hs-ref-012.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "57ff44a886d55bfad4d8ea6d8064e53c09817e35b16b55cedae77e4d66b7aa8f",
+      "boardRect": {
+        "x": 0.43087248891598534,
+        "y": 0.16410833575370318,
+        "width": 0.13703891954690678,
+        "height": 0.05075515538774325
+      },
+      "turf": "woodland",
+      "primary": "#377455"
+    },
+    "hs-ref-013": {
+      "name": "강남태성고",
+      "league": "고교",
+      "asset": "venues/hs-ref-013.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "a9406413461d61437425b1152b0f9befce52efc615e553c4679a98eb2a24b960",
+      "boardRect": {
+        "x": 0.4470575386815685,
+        "y": 0.11774756347009988,
+        "width": 0.10840251875025068,
+        "height": 0.046257971363253526
+      },
+      "turf": "park",
+      "primary": "#843b42"
+    },
+    "hs-ref-014": {
+      "name": "고양서린고",
+      "league": "고교",
+      "asset": "venues/hs-ref-014.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "5faf5244a90c87c535dcbe6756e47243a514db4e07a5f2c1bc0914504858eae7",
+      "boardRect": {
+        "x": 0.4456961173090193,
+        "y": 0.13195104128607965,
+        "width": 0.10735801567003612,
+        "height": 0.047530751431007184
+      },
+      "turf": "stone",
+      "primary": "#58497c"
+    },
+    "hs-ref-015": {
+      "name": "수원화린고",
+      "league": "고교",
+      "asset": "venues/hs-ref-015.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "da9350afb97b8d0caf2b9d4146cc76867a4c2e8ce38463b8acae7fb0c4bd34cd",
+      "boardRect": {
+        "x": 0.45663501812673374,
+        "y": 0.1657599598259123,
+        "width": 0.08797195253505935,
+        "height": 0.03770226537216829
+      },
+      "turf": "park",
+      "primary": "#386659"
+    },
+    "hs-ref-017": {
+      "name": "화성비연고",
+      "league": "고교",
+      "asset": "venues/hs-ref-017.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "ea81c4152c56cf19a51e66a362412f03f5d1b346cce83251fba6d007b5b15361",
+      "boardRect": {
+        "x": 0.41614603273525197,
+        "y": 0.11703072071019742,
+        "width": 0.16919557684071176,
+        "height": 0.02177315734143208
+      },
+      "turf": "canopy",
+      "primary": "#2f5270"
+    },
+    "hs-ref-018": {
+      "name": "시흥연성원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-018.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "eef79912f0abf384f7bf95148d20ab401880ec67f2ae33d3872a1393a471cd59",
+      "boardRect": {
+        "x": 0.7734952250504129,
+        "y": 0.12499714644446981,
+        "width": 0.10150477494958719,
+        "height": 0.05119563976714987
+      },
+      "turf": "coastal",
+      "primary": "#883f42"
+    },
+    "hs-ref-019": {
+      "name": "안산해송고",
+      "league": "고교",
+      "asset": "venues/hs-ref-019.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "08761a9c98902777228207caac9a03e5b1a6b95316f378547c99efcc878376a2",
+      "boardRect": {
+        "x": 0.7734952250504129,
+        "y": 0.12499714644446981,
+        "width": 0.10150477494958719,
+        "height": 0.05119563976714987
+      },
+      "turf": "coastal",
+      "primary": "#245e7f"
+    },
+    "hs-ref-020": {
+      "name": "안양만휘고",
+      "league": "고교",
+      "asset": "venues/hs-ref-020.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "5a7caa8e03c29710e5cf0a504f568c707a7795ff67933c932ff3850af424f403",
+      "boardRect": {
+        "x": 0.4235990799197376,
+        "y": 0.14881074732051094,
+        "width": 0.15280184016052464,
+        "height": 0.07183967112024667
+      },
+      "turf": "brick",
+      "primary": "#364f85"
+    },
+    "hs-ref-021": {
+      "name": "의정부천봉고",
+      "league": "고교",
+      "asset": "venues/hs-ref-021.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "01b53e08d944cef2fb755cb28fa248221167517ff82bd90e38fb424827607fd5",
+      "boardRect": {
+        "x": 0.4456961173090193,
+        "y": 0.13195104128607965,
+        "width": 0.10735801567003612,
+        "height": 0.047530751431007184
+      },
+      "turf": "terrace",
+      "primary": "#377455"
+    },
+    "hs-ref-022": {
+      "name": "성남문현고",
+      "league": "고교",
+      "asset": "venues/hs-ref-022.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "eeeb9eb1d510dd41f02356ebeb47f14b4b1c572a06d100d2fbcfb83209654aa9",
+      "boardRect": {
+        "x": 0.4470575386815685,
+        "y": 0.11774756347009988,
+        "width": 0.10840251875025068,
+        "height": 0.046257971363253526
+      },
+      "turf": "park",
+      "primary": "#843b42"
+    },
+    "hs-ref-023": {
+      "name": "남양주정산고",
+      "league": "고교",
+      "asset": "venues/hs-ref-023.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "468aef04cdb0d35040b622ccec48bdaca6c072cfbc0e7e0e2fd5adb1c1858d1d",
+      "boardRect": {
+        "x": 0.4456961173090193,
+        "y": 0.13195104128607965,
+        "width": 0.10735801567003612,
+        "height": 0.047530751431007184
+      },
+      "turf": "terrace",
+      "primary": "#58497c"
+    },
+    "hs-ref-024": {
+      "name": "평택항명고",
+      "league": "고교",
+      "asset": "venues/hs-ref-024.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "bb2a8cb86bab31150a75e7d8e6995449bbfce52e659826aaf5b868c309cd47b4",
+      "boardRect": {
+        "x": 0.7734952250504129,
+        "y": 0.12499714644446981,
+        "width": 0.10150477494958719,
+        "height": 0.05119563976714987
+      },
+      "turf": "harbor",
+      "primary": "#1b665e"
+    },
+    "hs-ref-025": {
+      "name": "부천도원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-025.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "d6c358b5a6ff361627749a9943f97fce22391572bb4517bc95830084d0da421b",
+      "boardRect": {
+        "x": 0.4375616598877321,
+        "y": 0.07545336787564767,
+        "width": 0.123433971037598,
+        "height": 0.047013252291749706
+      },
+      "turf": "canopy",
+      "primary": "#694d72"
+    },
+    "hs-ref-026": {
+      "name": "인천제물진고",
+      "league": "고교",
+      "asset": "venues/hs-ref-026.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "b07acb8725e869b4ddbf9265536ab6b677d8b3e09112f1535982e4c90d2982af",
+      "boardRect": {
+        "x": 0.4375616598877321,
+        "y": 0.07545336787564767,
+        "width": 0.123433971037598,
+        "height": 0.047013252291749706
+      },
+      "turf": "canopy",
+      "primary": "#953e3f"
+    },
+    "hs-ref-027": {
+      "name": "인천송림원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-027.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "8404b564c0fabf4eff4a5dde743e2b92a7d5faf95420545fde65bb178072d822",
+      "boardRect": {
+        "x": 0.4431202840656902,
+        "y": 0.13467800508413028,
+        "width": 0.11375943186861963,
+        "height": 0.028204817818666024
+      },
+      "turf": "canopy",
+      "primary": "#245e7f"
+    },
+    "hs-ref-028": {
+      "name": "강화고려빛고",
+      "league": "고교",
+      "asset": "venues/hs-ref-028.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "4ad32c9a9993bb54ad031f2aa70d73f735ad2957f052a0c46dd47e04d4d2b6cb",
+      "boardRect": {
+        "x": 0.43087248891598534,
+        "y": 0.16410833575370318,
+        "width": 0.13703891954690678,
+        "height": 0.05075515538774325
+      },
+      "turf": "woodland",
+      "primary": "#364f85"
+    },
+    "hs-ref-029": {
+      "name": "강릉경포온고",
+      "league": "고교",
+      "asset": "venues/hs-ref-029.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "a6f0f7cb612173facd5e8f6b9d1cd24142e77dddaed0325e2b5e0b6cbdb07b91",
+      "boardRect": {
+        "x": 0.43087248891598534,
+        "y": 0.16410833575370318,
+        "width": 0.13703891954690678,
+        "height": 0.05075515538774325
+      },
+      "turf": "woodland",
+      "primary": "#377455"
+    },
+    "hs-ref-030": {
+      "name": "춘천의암솔고",
+      "league": "고교",
+      "asset": "venues/hs-ref-030.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "45df8eaf035594b7a25094a0d26d53219b03fee7073ad827fc8683cd5114cc89",
+      "boardRect": {
+        "x": 0.43087248891598534,
+        "y": 0.16410833575370318,
+        "width": 0.13703891954690678,
+        "height": 0.05075515538774325
+      },
+      "turf": "woodland",
+      "primary": "#843b42"
+    },
+    "hs-ref-031": {
+      "name": "대전한빛원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-031.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "dc52f983ad83de3dfee28bc2ae26ffa81e3386b28713d94c755ffac6dc389c33",
+      "boardRect": {
+        "x": 0.41614603273525197,
+        "y": 0.11703072071019742,
+        "width": 0.16919557684071176,
+        "height": 0.02177315734143208
+      },
+      "turf": "canopy",
+      "primary": "#315e78"
+    },
+    "hs-ref-032": {
+      "name": "청주직운고",
+      "league": "고교",
+      "asset": "venues/hs-ref-032.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "89ba9f7bf7e9a1b30cab1951b4b84016cf1208e4e45f6c408e3c2a7fad37e914",
+      "boardRect": {
+        "x": 0.41614603273525197,
+        "y": 0.11703072071019742,
+        "width": 0.16919557684071176,
+        "height": 0.02177315734143208
+      },
+      "turf": "canopy",
+      "primary": "#1b665e"
+    },
+    "hs-ref-033": {
+      "name": "천안청룡원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-033.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "e64da3525db518c3d8a4d9c562afc8bc03d3365cf8b318ede783398e47ea09c9",
+      "boardRect": {
+        "x": 0.4470575386815685,
+        "y": 0.11774756347009988,
+        "width": 0.10840251875025068,
+        "height": 0.046257971363253526
+      },
+      "turf": "park",
+      "primary": "#2f5270"
+    },
+    "hs-ref-034": {
+      "name": "공주금휘고",
+      "league": "고교",
+      "asset": "venues/hs-ref-034.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "2e8e72d6ac0f331052c4eaed460b0f4bea967f206c9f58a3520a125d1ce4e781",
+      "boardRect": {
+        "x": 0.4235990799197376,
+        "y": 0.14881074732051094,
+        "width": 0.15280184016052464,
+        "height": 0.07183967112024667
+      },
+      "turf": "brick",
+      "primary": "#883f42"
+    },
+    "hs-ref-035": {
+      "name": "아산온샘고",
+      "league": "고교",
+      "asset": "venues/hs-ref-035.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "4294e69b48d32c922cb89923093e841bc47abada4a9b245c7e86ac31d85d4944",
+      "boardRect": {
+        "x": 0.41614603273525197,
+        "y": 0.11703072071019742,
+        "width": 0.16919557684071176,
+        "height": 0.02177315734143208
+      },
+      "turf": "canopy",
+      "primary": "#245e7f"
+    },
+    "hs-ref-036": {
+      "name": "광주무등원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-036.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "c5f895a8e5c4065c6aed97f35a59ac0d8ae37c7c1d461d384f7a258ed3d30493",
+      "boardRect": {
+        "x": 0.45663501812673374,
+        "y": 0.1657599598259123,
+        "width": 0.08797195253505935,
+        "height": 0.03770226537216829
+      },
+      "turf": "park",
+      "primary": "#386659"
+    },
+    "hs-ref-037": {
+      "name": "전주한옥림고",
+      "league": "고교",
+      "asset": "venues/hs-ref-037.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "42b16a2bf48975d163320f7822940271966892cc1346a0cfcdd3c925d5b80523",
+      "boardRect": {
+        "x": 0.4235990799197376,
+        "y": 0.14881074732051094,
+        "width": 0.15280184016052464,
+        "height": 0.07183967112024667
+      },
+      "turf": "brick",
+      "primary": "#377455"
+    },
+    "hs-ref-038": {
+      "name": "군산금해고",
+      "league": "고교",
+      "asset": "venues/hs-ref-038.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "2f937dfd864d17d152834106033dd74277cc5b4c808efe529122b85a997bd6ed",
+      "boardRect": {
+        "x": 0.7734952250504129,
+        "y": 0.12499714644446981,
+        "width": 0.10150477494958719,
+        "height": 0.05119563976714987
+      },
+      "turf": "coastal",
+      "primary": "#843b42"
+    },
+    "hs-ref-039": {
+      "name": "순천만솔고",
+      "league": "고교",
+      "asset": "venues/hs-ref-039.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "1c87022e514068aa1fe16a658768151a2bf227050bfb13746f7bd8808333a301",
+      "boardRect": {
+        "x": 0.7308790670398762,
+        "y": 0.08183178597605668,
+        "width": 0.07020930043163125,
+        "height": 0.08823601270461764
+      },
+      "turf": "terrace",
+      "primary": "#58497c"
+    },
+    "hs-ref-040": {
+      "name": "목포유달원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-040.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "d91eff583ebcefa0c779bba3b6d70614390da926896cf628adac7ce24718bd64",
+      "boardRect": {
+        "x": 0.7308790670398762,
+        "y": 0.08183178597605668,
+        "width": 0.07020930043163125,
+        "height": 0.08823601270461764
+      },
+      "turf": "terrace",
+      "primary": "#1b665e"
+    },
+    "hs-ref-042": {
+      "name": "대구팔공원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-042.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "353b102c1303aebbe144bb3ebfdb0e58643bd809841e15ed00bcf5e8f3bf3c19",
+      "boardRect": {
+        "x": 0.4470575386815685,
+        "y": 0.11774756347009988,
+        "width": 0.10840251875025068,
+        "height": 0.046257971363253526
+      },
+      "turf": "park",
+      "primary": "#2f5270"
+    },
+    "hs-ref-043": {
+      "name": "부산동래온고",
+      "league": "고교",
+      "asset": "venues/hs-ref-043.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "200eec48ef2c3a06b27d0f0b9d65a4aef4bd30fefb9a5bd3adf57e0c98fb5841",
+      "boardRect": {
+        "x": 0.4431202840656902,
+        "y": 0.13467800508413028,
+        "width": 0.11375943186861963,
+        "height": 0.028204817818666024
+      },
+      "turf": "canopy",
+      "primary": "#953e3f"
+    },
+    "hs-ref-044": {
+      "name": "경주서라빛고",
+      "league": "고교",
+      "asset": "venues/hs-ref-044.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "79a3051f8418fecd8b6f0b2bbc5e47b51212bff6f68a8b1ec292219cda95886a",
+      "boardRect": {
+        "x": 0.4456961173090193,
+        "y": 0.13195104128607965,
+        "width": 0.10735801567003612,
+        "height": 0.047530751431007184
+      },
+      "turf": "terrace",
+      "primary": "#245e7f"
+    },
+    "hs-ref-045": {
+      "name": "포항해룡원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-045.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "ed2c0d683e897434bbfaaff2f90903513614b9fcdb6ff17aa2a033a3dca95c01",
+      "boardRect": {
+        "x": 0.4431202840656902,
+        "y": 0.13467800508413028,
+        "width": 0.11375943186861963,
+        "height": 0.028204817818666024
+      },
+      "turf": "canopy",
+      "primary": "#364f85"
+    },
+    "hs-ref-046": {
+      "name": "김해가야온고",
+      "league": "고교",
+      "asset": "venues/hs-ref-046.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "1e91cf8437cd495d6f795c4bfcbc0bc0f20df8e47a7f76e27cbdaa8877cfc117",
+      "boardRect": {
+        "x": 0.4235990799197376,
+        "y": 0.14881074732051094,
+        "width": 0.15280184016052464,
+        "height": 0.07183967112024667
+      },
+      "turf": "brick",
+      "primary": "#377455"
+    },
+    "hs-ref-047": {
+      "name": "울산태화림고",
+      "league": "고교",
+      "asset": "venues/hs-ref-047.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "be5d8e467dfac349c5ae99609a1ef2aafe6fe355a2551ae62d6dfd294ab95639",
+      "boardRect": {
+        "x": 0.43087248891598534,
+        "y": 0.16410833575370318,
+        "width": 0.13703891954690678,
+        "height": 0.05075515538774325
+      },
+      "turf": "woodland",
+      "primary": "#843b42"
+    },
+    "hs-ref-048": {
+      "name": "창원진해솔고",
+      "league": "고교",
+      "asset": "venues/hs-ref-048.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "898539345242476fd2db01ea52c2e4cd3584ba6a91832524ad866c17bed9fb45",
+      "boardRect": {
+        "x": 0.7308790670398762,
+        "y": 0.08183178597605668,
+        "width": 0.07020930043163125,
+        "height": 0.08823601270461764
+      },
+      "turf": "terrace",
+      "primary": "#58497c"
+    },
+    "hs-ref-049": {
+      "name": "마산합포원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-049.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "87d99dd9a200ef657e4d83c211f236ecdb1d5f052a0930f451e940c570f1c97c",
+      "boardRect": {
+        "x": 0.7308790670398762,
+        "y": 0.08183178597605668,
+        "width": 0.07020930043163125,
+        "height": 0.08823601270461764
+      },
+      "turf": "terrace",
+      "primary": "#1b665e"
+    },
+    "hs-ref-050": {
+      "name": "제주한라온고",
+      "league": "고교",
+      "asset": "venues/hs-ref-050.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "6b8e2030c05350bad30451c659c58db230e25d07a65ffbf235ffb27bbbc64caa",
+      "boardRect": {
+        "x": 0.7308790670398762,
+        "y": 0.08183178597605668,
+        "width": 0.07020930043163125,
+        "height": 0.08823601270461764
+      },
+      "turf": "terrace",
+      "primary": "#694d72"
+    },
+    "hs-ref-051": {
+      "name": "진주남강원고",
+      "league": "고교",
+      "asset": "venues/hs-ref-051.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "7c6b376ae9a0c685abcc61c1069ce2c959575ab0f45570f9643b9338302f02a7",
+      "boardRect": {
+        "x": 0.4470575386815685,
+        "y": 0.11774756347009988,
+        "width": 0.10840251875025068,
+        "height": 0.046257971363253526
+      },
+      "turf": "park",
+      "primary": "#883f42"
+    },
+    "hs-ref-052": {
+      "name": "여수오동빛고",
+      "league": "고교",
+      "asset": "venues/hs-ref-052.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "fdcc9df881851714481a5994126f0e831b54dc96b73fdb94332b5d87b0d254ff",
+      "boardRect": {
+        "x": 0.7734952250504129,
+        "y": 0.12499714644446981,
+        "width": 0.10150477494958719,
+        "height": 0.05119563976714987
+      },
+      "turf": "coastal",
+      "primary": "#245e7f"
+    },
+    "kbo-0": {
+      "name": "인천 하버스",
+      "league": "KBO",
+      "asset": "venues/kbo-0.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "c809ead453f6ed196ed4069cd080d078d9ab3b8d9c9d6a75764420337c124eb9",
+      "boardRect": {
+        "x": 0.44231483391788734,
+        "y": 0.12498452651124409,
+        "width": 0.1153703321642253,
+        "height": 0.04506653600165051
+      },
+      "turf": "coastal",
+      "primary": "#358c85"
+    },
+    "kbo-1": {
+      "name": "대전 코멧츠",
+      "league": "KBO",
+      "asset": "venues/kbo-1.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "856dd44a65f24526af9d8fe2fa4602c42f1e0d2376b9f9c2e3880bf183e72a75",
+      "boardRect": {
+        "x": 0.125,
+        "y": 0.0803866429386878,
+        "width": 0.09857632126787992,
+        "height": 0.03637935665838426
+      },
+      "turf": "canopy",
+      "primary": "#8c662c"
+    },
+    "kbo-2": {
+      "name": "부산 타이즈",
+      "league": "KBO",
+      "asset": "venues/kbo-2.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "f17433a3f1314f9d4c35489355baf5f68687df9ac6fddcd797feff385469269b",
+      "boardRect": {
+        "x": 0.42587125883506455,
+        "y": 0.08980753522564837,
+        "width": 0.1363964331903887,
+        "height": 0.04876965489074944
+      },
+      "turf": "coastal",
+      "primary": "#1d5f8c"
+    },
+    "kbo-3": {
+      "name": "서울 스타즈",
+      "league": "KBO",
+      "asset": "venues/kbo-3.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "b0f7dc24129a2cb5233d67bc8d5bd0504728c6de786a4508630617659ac738ca",
+      "boardRect": {
+        "x": 0.4255108523258781,
+        "y": 0.10185213260561957,
+        "width": 0.14286773128495386,
+        "height": 0.053575399231857695
+      },
+      "turf": "dome",
+      "primary": "#8c6e3f"
+    },
+    "kbo-4": {
+      "name": "광주 폭시스",
+      "league": "KBO",
+      "asset": "venues/kbo-4.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "4a15ba55255bedaf33c01a7b4ac0441d7fdab7fe8b75f1e60abccdaf21a78d5d",
+      "boardRect": {
+        "x": 0.4472194074073998,
+        "y": 0.10025954511303874,
+        "width": 0.10025954511303874,
+        "height": 0.06206543268902398
+      },
+      "turf": "brick",
+      "primary": "#8c222f"
+    },
+    "kbo-5": {
+      "name": "대구 팔콘스",
+      "league": "KBO",
+      "asset": "venues/kbo-5.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "bb113a2adb9412c3ddf3221c571c4423cdfa3dc8348d0f3415ca1d46b1418fd8",
+      "boardRect": {
+        "x": 0.4483361400654782,
+        "y": 0.11637136843558071,
+        "width": 0.09808156786971224,
+        "height": 0.04823683665723553
+      },
+      "turf": "sunlit",
+      "primary": "#348578"
+    },
+    "kbo-6": {
+      "name": "수원 기어즈",
+      "league": "KBO",
+      "asset": "venues/kbo-6.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "61a4a55c6dc1f58180fde4ed0478efc4158ea9c27e17ee0f0cef8dbe30163006",
+      "boardRect": {
+        "x": 0.7678808058954769,
+        "y": 0.05730089243458861,
+        "width": 0.10711919410452303,
+        "height": 0.04312335203840173
+      },
+      "turf": "canopy",
+      "primary": "#8c4a2c"
+    },
+    "kbo-7": {
+      "name": "창원 실버혼즈",
+      "league": "KBO",
+      "asset": "venues/kbo-7.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "4dcf6bc50f8cd4eb52181402196cf1afc23ee6a6e5f7440d11100aac2bd3b667",
+      "boardRect": {
+        "x": 0.4475562238666326,
+        "y": 0.12210331727833933,
+        "width": 0.099579404382335,
+        "height": 0.046233294891798386
+      },
+      "turf": "terrace",
+      "primary": "#3f7363"
+    },
+    "kbo-8": {
+      "name": "성남 오로라스",
+      "league": "KBO",
+      "asset": "venues/kbo-8.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "b9562a803d2423bac2a3f11709871211b372489258d24c96b8b9464558c10f30",
+      "boardRect": {
+        "x": 0.44091563292440544,
+        "y": 0.10239959564114867,
+        "width": 0.1181687341511891,
+        "height": 0.05868514837913783
+      },
+      "turf": "canopy",
+      "primary": "#3f308c"
+    },
+    "kbo-9": {
+      "name": "전주 크라운즈",
+      "league": "KBO",
+      "asset": "venues/kbo-9.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "b97c6b190deeefd33a7d106a2a9cf13413868495cf6f5a8dbe03124dd3dfcffc",
+      "boardRect": {
+        "x": 0.44738838880504295,
+        "y": 0.08445476822544416,
+        "width": 0.0999183173371452,
+        "height": 0.04936440677966102
+      },
+      "turf": "brick",
+      "primary": "#8c6839"
+    },
+    "npb-0": {
+      "name": "동도 스카이스",
+      "league": "NPB",
+      "asset": "venues/npb-0.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "fef1ddddacca69c0ffc01ef10f4f76bd29fcb4b1ce63d45eef442f3e575f616e",
+      "boardRect": {
+        "x": 0.44230341621184555,
+        "y": 0.1477739033757833,
+        "width": 0.11539316757630887,
+        "height": 0.04238932686476653
+      },
+      "turf": "park",
+      "primary": "#286b8c"
+    },
+    "npb-1": {
+      "name": "항남 마리너즈",
+      "league": "NPB",
+      "asset": "venues/npb-1.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "e842fd3be3c9659db0083df52ce18e847018873ecb8b6bbe596720dccd8957d4",
+      "boardRect": {
+        "x": 0.4505382884629075,
+        "y": 0.12921613187707753,
+        "width": 0.09760362254935216,
+        "height": 0.04030594939284988
+      },
+      "turf": "coastal",
+      "primary": "#8c6a26"
+    },
+    "npb-2": {
+      "name": "서경 피닉스",
+      "league": "NPB",
+      "asset": "venues/npb-2.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "790b4988b854e4ccf1b5f8daf597347888d32430e401dc6672db7fa9f99630fe",
+      "boardRect": {
+        "x": 0.4486625799958442,
+        "y": 0.1153703321642253,
+        "width": 0.10134963207482293,
+        "height": 0.04266298741489582
+      },
+      "turf": "brick",
+      "primary": "#8c0f1c"
+    },
+    "npb-3": {
+      "name": "북해 스노우스",
+      "league": "NPB",
+      "asset": "venues/npb-3.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "79bbca9a95a5403e72ca297a8e990b0a36948f31f44e9b7000cfa9f7fdb89494",
+      "boardRect": {
+        "x": 0.4448442011953529,
+        "y": 0.14141007991404206,
+        "width": 0.11031159760929421,
+        "height": 0.035792592841313545
+      },
+      "turf": "canopy",
+      "primary": "#49788c"
+    },
+    "npb-4": {
+      "name": "중앙 레일즈",
+      "league": "NPB",
+      "asset": "venues/npb-4.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "5c0817a1cd060c647866c4ca3b46141700312ee1af51f25c658c8c8a56b839c9",
+      "boardRect": {
+        "x": 0.44322105212035273,
+        "y": 0.17161669518637007,
+        "width": 0.11224425265977235,
+        "height": 0.04095398407856559
+      },
+      "turf": "canopy",
+      "primary": "#8c6628"
+    },
+    "npb-5": {
+      "name": "남양 선즈",
+      "league": "NPB",
+      "asset": "venues/npb-5.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "61299e421a31dceb681c1e537efab97769ade995f35e3532888b1f9fd45fe481",
+      "boardRect": {
+        "x": 0.4518580889877402,
+        "y": 0.11261956448002171,
+        "width": 0.09760362254935216,
+        "height": 0.037935011193270474
+      },
+      "turf": "sunlit",
+      "primary": "#8c601a"
+    },
+    "npb-6": {
+      "name": "센다이 스피릿츠",
+      "league": "NPB",
+      "asset": "venues/npb-6.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "cdbdffa0d1f2044f9530a920b3fb099a1233bc0e977f9d9bc3ab42c3e7c29307",
+      "boardRect": {
+        "x": 0.45208667072483183,
+        "y": 0.12430314478251991,
+        "width": 0.0971428085222245,
+        "height": 0.03806412089034103
+      },
+      "turf": "terrace",
+      "primary": "#8c6822"
+    },
+    "npb-7": {
+      "name": "치바 라군스",
+      "league": "NPB",
+      "asset": "venues/npb-7.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "c85d1c0cfd6fccbeda996ee1b77b6ae52cce31d4fe8c43d09eb1a103f03684b2",
+      "boardRect": {
+        "x": 0.44686883125723237,
+        "y": 0.12906115989381256,
+        "width": 0.10626233748553537,
+        "height": 0.038658872779252604
+      },
+      "turf": "coastal",
+      "primary": "#268c7f"
+    },
+    "npb-8": {
+      "name": "사이타마 실버울브스",
+      "league": "NPB",
+      "asset": "venues/npb-8.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "e2df962f2ef9e18e972487d7bcc4eecce332972e4053648a0047b7d4afa81be9",
+      "boardRect": {
+        "x": 0.4477619181154595,
+        "y": 0.12269605182823418,
+        "width": 0.1031358116817041,
+        "height": 0.037342276643375624
+      },
+      "turf": "woodland",
+      "primary": "#39708c"
+    },
+    "npb-9": {
+      "name": "고베 오리온즈",
+      "league": "NPB",
+      "asset": "venues/npb-9.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "79d05527866c10fd6bdbde50565273dc95bd873d4fa967ad33124a001f34be5f",
+      "boardRect": {
+        "x": 0.44488632496086034,
+        "y": 0.11716612211558097,
+        "width": 0.11022735007827923,
+        "height": 0.0416326322238105
+      },
+      "turf": "coastal",
+      "primary": "#8c661e"
+    },
+    "npb-10": {
+      "name": "모리오카 아이언스",
+      "league": "NPB",
+      "asset": "venues/npb-10.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "902193549a39d0a92ee338f8d53c40f56745e4bf17fbb019604d15cfb1fa5980",
+      "boardRect": {
+        "x": 0.44033138864391835,
+        "y": 0.11913964452886508,
+        "width": 0.11933722271216336,
+        "height": 0.04149141849263958
+      },
+      "turf": "terrace",
+      "primary": "#384a5d"
+    },
+    "npb-11": {
+      "name": "니가타 리드스",
+      "league": "NPB",
+      "asset": "venues/npb-11.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "f4f7f6e2af317e8dbc8dcf1043e82077cc021fbe70136756c890d4125f343ecd",
+      "boardRect": {
+        "x": 0.4405330944493273,
+        "y": 0.11696470826854169,
+        "width": 0.11893381110134542,
+        "height": 0.037806774389831654
+      },
+      "turf": "park",
+      "primary": "#346751"
+    },
+    "npb-12": {
+      "name": "히로시마 메이플스",
+      "league": "NPB",
+      "asset": "venues/npb-12.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "97e5bdae1033587453c172af6383771b6845be449dacfe1a22e961caf42b791a",
+      "boardRect": {
+        "x": 0.4429265939484728,
+        "y": 0.1228080449769092,
+        "width": 0.11696004283515161,
+        "height": 0.04152081520647882
+      },
+      "turf": "brick",
+      "primary": "#8a2d35"
+    },
+    "npb-13": {
+      "name": "후쿠오카 게일스",
+      "league": "NPB",
+      "asset": "venues/npb-13.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "823587b73737327f53f039fe6ff92750890e9f316d44f3c1819ff45f4343427c",
+      "boardRect": {
+        "x": 0.44541864667692926,
+        "y": 0.1462000535439395,
+        "width": 0.10916270664614151,
+        "height": 0.03216401177966669
+      },
+      "turf": "coastal",
+      "primary": "#20676b"
+    },
+    "npb-14": {
+      "name": "마쓰야마 시트러스",
+      "league": "NPB",
+      "asset": "venues/npb-14.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "c9142ebf2ae83ac35accd8a7bc64c0311ff5238bce1ad20def492f2b05cccb41",
+      "boardRect": {
+        "x": 0.4419131206884776,
+        "y": 0.12353408237142273,
+        "width": 0.1161737586230449,
+        "height": 0.040581244450515676
+      },
+      "turf": "sunlit",
+      "primary": "#bb571f"
+    },
+    "mlb-0": {
+      "name": "퍼시픽 웨이브스",
+      "league": "MLB",
+      "asset": "venues/mlb-0.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "45f0102de50edc5d08e9e1a8c4a9cb4a32aa2cff3e76ab4d174e6867de6d277d",
+      "boardRect": {
+        "x": 0.4384176210725717,
+        "y": 0.11963662695016787,
+        "width": 0.12462148640642486,
+        "height": 0.03508574155750115
+      },
+      "turf": "pacific",
+      "primary": "#38878c"
+    },
+    "mlb-1": {
+      "name": "캐니언 호크스",
+      "league": "MLB",
+      "asset": "venues/mlb-1.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "f823654f1979d4d1622f9ee4fa9f2651a98ac4daa08013a98028652100640b19",
+      "boardRect": {
+        "x": 0.125,
+        "y": 0.07147843283077547,
+        "width": 0.08191467784463526,
+        "height": 0.03130873504157934
+      },
+      "turf": "terrace",
+      "primary": "#8c311f"
+    },
+    "mlb-2": {
+      "name": "레이크 베어스",
+      "league": "MLB",
+      "asset": "venues/mlb-2.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "10d2d99958018f8ba888b0f770b29f08a1bc7ab66b1f8add6c4a22c5af3965b9",
+      "boardRect": {
+        "x": 0.44662640712828655,
+        "y": 0.062026739233317564,
+        "width": 0.10948211750388749,
+        "height": 0.05080285308633629
+      },
+      "turf": "woodland",
+      "primary": "#8c532d"
+    },
+    "mlb-3": {
+      "name": "메트로 나이츠",
+      "league": "MLB",
+      "asset": "venues/mlb-3.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "1e36896a4cd892f47f3aa5080657c660529b3e4e07a117d186400b2a20b5a800",
+      "boardRect": {
+        "x": 0.41700675103212576,
+        "y": 0.11483802258767585,
+        "width": 0.15003962750148606,
+        "height": 0.040972359817713494
+      },
+      "turf": "park",
+      "primary": "#34578c"
+    },
+    "mlb-4": {
+      "name": "애틀랜틱 세일러스",
+      "league": "MLB",
+      "asset": "venues/mlb-4.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "6afb81662913e968eed1f9b452110c688fe022f6aa4c8fc3145ad06689c6cc77",
+      "boardRect": {
+        "x": 0.44194801777124554,
+        "y": 0.08830483234053947,
+        "width": 0.12475737902416172,
+        "height": 0.046199216919884885
+      },
+      "turf": "coastal",
+      "primary": "#8c4f21"
+    },
+    "mlb-5": {
+      "name": "프레리 버팔로스",
+      "league": "MLB",
+      "asset": "venues/mlb-5.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "972de9e11c4b280f5eb7e1479fd96477392c6947177120761d9ef821cee6f5a5",
+      "boardRect": {
+        "x": 0.4614371931959134,
+        "y": 0.06922682876852675,
+        "width": 0.07837750153678029,
+        "height": 0.060275083669148286
+      },
+      "turf": "park",
+      "primary": "#8c4a24"
+    },
+    "mlb-6": {
+      "name": "텍사스 아르마딜로스",
+      "league": "MLB",
+      "asset": "venues/mlb-6.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "89d4f3eaec900bae38bf096465505985fa194877e154684e7134afc79e44afee",
+      "boardRect": {
+        "x": 0.4415779176662859,
+        "y": 0.08856925642534826,
+        "width": 0.11542574063174417,
+        "height": 0.04057043358838533
+      },
+      "turf": "canopy",
+      "primary": "#8c4720"
+    },
+    "mlb-7": {
+      "name": "마이애미 코럴스",
+      "league": "MLB",
+      "asset": "venues/mlb-7.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "07532cc957b86c8510046af3a587d958c61e58c21db6babb2dbf5bb4b1b88383",
+      "boardRect": {
+        "x": 0.7797304035635929,
+        "y": 0.11211604946479622,
+        "width": 0.09526959643640716,
+        "height": 0.042987500831061766
+      },
+      "turf": "coastal",
+      "primary": "#8c2e1f"
+    },
+    "mlb-8": {
+      "name": "볼티모어 라이트하우스",
+      "league": "MLB",
+      "asset": "venues/mlb-8.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "c80749835d81bae8d915c61ccabdbb1a5811979a7eb282136a05589334f6fe8b",
+      "boardRect": {
+        "x": 0.21534283725822453,
+        "y": 0.06970624028125212,
+        "width": 0.07600736934622405,
+        "height": 0.04312335203840173
+      },
+      "turf": "brick",
+      "primary": "#8c6729"
+    },
+    "mlb-9": {
+      "name": "덴버 서밋츠",
+      "league": "MLB",
+      "asset": "venues/mlb-9.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "1f3a75d126154d8c1f2473bca8d00b3bead356f8dafdb84aea6a78984d4b1e49",
+      "boardRect": {
+        "x": 0.44984540314766824,
+        "y": 0.12547702945282893,
+        "width": 0.10301509208164351,
+        "height": 0.042987500831061766
+      },
+      "turf": "terrace",
+      "primary": "#51498c"
+    },
+    "mlb-10": {
+      "name": "보스턴 브라스",
+      "league": "MLB",
+      "asset": "venues/mlb-10.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "2688fb597aa1d8b311a7bd518342b4f98c981e069818b0f91e1ce2506eef63c8",
+      "boardRect": {
+        "x": 0.16833548195589831,
+        "y": 0.11207188906050636,
+        "width": 0.11031159760929421,
+        "height": 0.03344553757303069
+      },
+      "turf": "brick",
+      "primary": "#31565a"
+    },
+    "mlb-11": {
+      "name": "롤리 오크스",
+      "league": "MLB",
+      "asset": "venues/mlb-11.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "55ae28efcef3d58dd2bf63f0d4162e99e97d7abdf80161ac4609858aa80cc176",
+      "boardRect": {
+        "x": 0.4278119805446147,
+        "y": 0.11960860954763394,
+        "width": 0.14288270446807033,
+        "height": 0.033393266624973945
+      },
+      "turf": "woodland",
+      "primary": "#4c6236"
+    },
+    "mlb-12": {
+      "name": "포틀랜드 에버그린스",
+      "league": "MLB",
+      "asset": "venues/mlb-12.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "1ef5f8e5a3fa64aa8b637167b4298296cb460b6c1a9201d327bd6b576f6539cd",
+      "boardRect": {
+        "x": 0.42945138116542064,
+        "y": 0.1190614508590613,
+        "width": 0.1380422618655783,
+        "height": 0.03623609373971431
+      },
+      "turf": "woodland",
+      "primary": "#275848"
+    },
+    "mlb-13": {
+      "name": "샌디에이고 선레이스",
+      "league": "MLB",
+      "asset": "venues/mlb-13.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "d9b2fbf0b431b5ebd140816e3cd4702d787b1e517fea8160a387aa4e0a55f978",
+      "boardRect": {
+        "x": 0.4228016698694586,
+        "y": 0.153431681134451,
+        "width": 0.15439666026108276,
+        "height": 0.03300228613080644
+      },
+      "turf": "sunlit",
+      "primary": "#214c76"
+    },
+    "mlb-14": {
+      "name": "라스베이거스 미라지스",
+      "league": "MLB",
+      "asset": "venues/mlb-14.jpg",
+      "pixelSize": {
+        "width": 1536,
+        "height": 1024
+      },
+      "sha256": "d41927cd739e054f508b1e58cc79bfa293ac8994ee36578aaf37d8b2017f607d",
+      "boardRect": {
+        "x": 0.4328961227042328,
+        "y": 0.12423803567902048,
+        "width": 0.13420775459153447,
+        "height": 0.03623609373971431
+      },
+      "turf": "sunlit",
+      "primary": "#58387a"
+    }
+  },
+  "aliases": {
+    "pro-harbors": "kbo-0",
+    "pro-comets": "kbo-1",
+    "pro-tides": "kbo-2",
+    "pro-stars": "kbo-3",
+    "pro-foxes": "kbo-4",
+    "pro-falcons": "kbo-5",
+    "pro-gears": "kbo-6",
+    "pro-silverhorns": "kbo-7",
+    "pro-auroras": "kbo-8",
+    "pro-crowns": "kbo-9",
+    "jp-pro-0": "npb-0",
+    "jp-pro-1": "npb-1",
+    "jp-pro-2": "npb-2",
+    "jp-pro-3": "npb-3",
+    "jp-pro-4": "npb-4",
+    "jp-pro-5": "npb-5",
+    "jp-pro-6": "npb-6",
+    "jp-pro-7": "npb-7",
+    "jp-pro-8": "npb-8",
+    "jp-pro-9": "npb-9",
+    "jp-pro-10": "npb-10",
+    "jp-pro-11": "npb-11",
+    "jp-pro-12": "npb-12",
+    "jp-pro-13": "npb-13",
+    "jp-pro-14": "npb-14",
+    "us-pro-0": "mlb-0",
+    "us-pro-1": "mlb-1",
+    "us-pro-2": "mlb-2",
+    "us-pro-3": "mlb-3",
+    "us-pro-4": "mlb-4",
+    "us-pro-5": "mlb-5",
+    "us-pro-6": "mlb-6",
+    "us-pro-7": "mlb-7",
+    "us-pro-8": "mlb-8",
+    "us-pro-9": "mlb-9",
+    "us-pro-10": "mlb-10",
+    "us-pro-11": "mlb-11",
+    "us-pro-12": "mlb-12",
+    "us-pro-13": "mlb-13",
+    "us-pro-14": "mlb-14"
+  }
+}

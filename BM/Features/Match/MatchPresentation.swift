@@ -1559,10 +1559,10 @@ enum InplayFieldProjection {
         let texture=SKTexture(image:image);texture.filteringMode = .nearest;return texture
     }()
     static func backgroundImage(for stadium:StadiumIdentity) -> UIImage? {
-        image
+        InplayWideStadiumArt.artwork(for:stadium)?.image ?? image
     }
     static func backgroundTexture(for stadium:StadiumIdentity) -> SKTexture? {
-        baseTexture
+        InplayWideStadiumArt.artwork(for:stadium)?.texture ?? baseTexture
     }
 
     static func prewarm(_ stadium:StadiumIdentity) async -> Bool {
@@ -1694,7 +1694,8 @@ enum InplayFieldProjection {
     }
     static func scoreboard(_ stadium:StadiumIdentity,in canvas:CGSize) -> Scoreboard? {
         guard let venue=stadium.backdrop else {return nil}
-        let frame=legacyScoreFrame(in:canvas,homeRun:false)
+        let frame=InplayWideStadiumArt.artwork(for:stadium)?.venue.boardRect.topLeftFrame(in:canvas)
+            ?? legacyScoreFrame(in:canvas,homeRun:false)
         return Scoreboard(venue:venue,frame:frame)
     }
     static func draw(in context:GraphicsContext,size:CGSize,stadium:StadiumIdentity) -> Scoreboard? {
