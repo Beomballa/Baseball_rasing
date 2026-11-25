@@ -1986,3 +1986,91 @@ extension CareerMatchTests {
         }
     }
 }
+
+extension CareerMatchTests {
+    func testV249NewBothTeamSnapshotsRollbackReopenAndCompleteOnlyOnce() throws {
+        for role in PlayerRole.allCases {
+            let container = try CareerStore.makeContainer(inMemory: true), context = container.mainContext
+            let (player, state) = try setup(role: role, in: context)
+            try CalendarProgression.rest(player: player, state: state, revision: state.revision, in: context)
+            let record = try CareerMatchStore.start(player: player, state: state, in: context)
+            let original = try record.snapshot(), sources = try XCTUnwrap(original.lineupSeasons)
+            XCTAssertEqual(sources.count, 2)
+            XCTAssertEqual(Set(sources.map(\.teamID)), Set([original.playerRecords!.home.teamID, original.playerRecords!.away.teamID]))
+            XCTAssertTrue(sources.allSatisfy { $0.through == "2026-03-31" })
+            XCTAssertTrue(sources.allSatisfy { $0.honorsPending != nil })
+            let payload = record.payload, revision = record.revision, fatigue = player.fatigue, day = player.gameDate
+            enum SaveFailure: Error { case injected }
+            XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: state, record: record,
+                revision: revision, input: .automatic, in: context, save: { _ in throw SaveFailure.injected }))
+            XCTAssertEqual(record.payload, payload); XCTAssertEqual(record.revision, revision)
+            XCTAssertEqual(player.fatigue, fatigue); XCTAssertEqual(player.gameDate, day)
+            XCTAssertEqual(try record.snapshot().lineupSeasons, sources)
+            try CareerMatchStore.advance(player: player, state: state, record: record, revision: revision, input: .automatic, in: context)
+            XCTAssertTrue(try record.snapshot().completed)
+            XCTAssertEqual(try record.snapshot().lineupSeasons, sources)
+            let completed = record.payload, finalFatigue = player.fatigue
+            XCTAssertThrowsError(try CareerMatchStore.advance(player: player, state: state, record: record,
+                revision: record.revision, input: .automatic, in: context))
+            XCTAssertEqual(record.payload, completed); XCTAssertEqual(player.fatigue, finalFatigue)
+            var bad = try record.snapshot(); bad.lineupSeasons = [sources[0],sources[0]]
+            record.payload = try JSONEncoder().encode(bad)
+            XCTAssertThrowsError(try record.snapshot())
+            record.payload = completed
+            XCTAssertEqual(try record.snapshot().lineupSeasons, sources)
+        }
+    }
+}
+
+extension CareerMatchTests {
+    /// 화면 인수용 고정 성적이다. 사용자 저장이나 실제 시즌 집계에는 쓰지 않는다.
+    func testPrepareV249LineupEntryFixtures() throws {
+        for index in 0..<3 {
+            let session = String(format: "B249B249-2026-4125-8000-%012d", index + 1)
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("live-career-" + session + ".store")
+            for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: url.path + suffix) }
+            let container = try CareerStore.makeContainer(url: url), context = container.mainContext
+            var draft = PlayerDraft(); draft.name = "타순인수"; draft.schoolID = "hs-ref-001"
+            draft.role = index == 1 ? .pitcher : .batter
+            let player = try LegacyPlayerFixture.create(draft, schools: SchoolCatalog.load(), in: context)
+            let calendar = try XCTUnwrap(context.fetch(FetchDescriptor<CareerCalendarState>()).first)
+            try CalendarProgression.rest(player: player, state: calendar, revision: calendar.revision, in: context)
+            let record = try CareerMatchStore.startPrepared(player: player, state: calendar,
+                choice: index == 1 ? .control : .contact, date: player.gameDate, revision: calendar.revision, in: context)
+            var match = try record.snapshot()
+            match.lineupSeasons = try [true, false].map { home in
+                let team = home ? match.playerRecords!.home : match.playerRecords!.away
+                let source = try XCTUnwrap(match.lineupSeasons?.first { $0.teamID == team.teamID })
+                var batting = MatchBattingCounts(); batting.plateAppearances = 20; batting.atBats = 20
+                batting.singles = home ? 8 : 6; batting.homeRuns = home ? 0 : 2
+                let row = MatchOpponentSeasonPlayer(id: team.lineup[0], battingGames: 5, pitchingGames: 0,
+                    earnedRunGames: 0, unscoredPitchingGames: 0, batting: batting, pitching: MatchPitchingCounts())
+                let pitcherID = team.pitching[0].id
+                var pitching = MatchPitchingCounts(earnedRuns: 2)
+                pitching.pitches = 120; pitching.battersFaced = 40; pitching.outs = 27
+                pitching.hits = 5; pitching.walks = 3; pitching.strikeouts = 12; pitching.runsAllowed = 2
+                let pitcher = MatchOpponentSeasonPlayer(id: pitcherID, battingGames: 0, pitchingGames: 3,
+                    earnedRunGames: 3, unscoredPitchingGames: 0, batting: MatchBattingCounts(), pitching: pitching, wins: 1)
+                var season = MatchOpponentSeason(version: 1, year: source.year, competition: source.competition,
+                    teamID: source.teamID, through: source.through, uncollectedGames: 0, players: [row, pitcher])
+                season.honors = [LeagueHonor(playerID: row.id, teamID: source.teamID, kind: home ? .average : .homeRuns,
+                    value: home ? 0.4 : 2, tied: false, final: false)]
+                if home {
+                    season.honors! += [
+                        LeagueHonor(playerID: pitcherID, teamID: source.teamID, kind: .strikeouts, value: 12, tied: false, final: false),
+                        LeagueHonor(playerID: pitcherID, teamID: source.teamID, kind: .era, value: 2, tied: false, final: false),
+                        LeagueHonor(playerID: pitcherID, teamID: source.teamID, kind: .wins, value: 1, tied: false, final: false)
+                    ]
+                }
+                return season
+            }
+            let history = match.preparation?.season?.pitchHistory
+            let opponentID = match.preparation?.analysis.teamID
+            match.preparation?.season = match.lineupSeasons?.first { $0.teamID == opponentID }
+            match.preparation?.season?.pitchHistory = history
+            record.payload = try JSONEncoder().encode(match)
+            try context.save()
+            XCTAssertEqual(try record.snapshot().lineupSeasons?.count, 2)
+        }
+    }
+}

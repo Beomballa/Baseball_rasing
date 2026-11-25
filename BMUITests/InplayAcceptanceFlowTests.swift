@@ -782,3 +782,64 @@ final class InplayAcceptanceFlowTests: XCTestCase {
         attachment.name = name; attachment.lifetime = .keepAlways; test.add(attachment)
     }
 }
+
+extension InplayAcceptanceFlowTests {
+    @MainActor func testV249BothRolesLineupDetailsResumeWithoutChangingGame() throws {
+        try v249Details(index: 0, large: false)
+        try v249Details(index: 1, large: false)
+    }
+    @MainActor func testV249LargeTypeLineupDetailsRemainReachable() throws {
+        try v249Details(index: 2, large: true)
+    }
+    @MainActor private func v249Details(index: Int, large: Bool) throws {
+        continueAfterFailure = false
+        typealias Scenario = InplayAcceptanceScenario
+        let app = XCUIApplication(bundleIdentifier: Scenario.bundleID)
+        defer { app.terminate() }
+        let session = String(format: "B249B249-2026-4125-8000-%012d", index + 1)
+        app.launchArguments = Scenario.gameArguments(session: session, pitcher: index == 1) + ["-qa-full-career-root"]
+        if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
+        app.launch(); Scenario.waitHome(app); let home = Scenario.homeState(app)
+        Scenario.openGame(app)
+        let fields = large ? ["careerGameInning", "careerGameCount", "boardTeam-home", "boardTeam-away", "boardPitchCount"]
+            : ["careerGameInning", "careerGameCount", "careerGameScore", "boardPitchCount"]
+        let game = Scenario.labels(app, fields)
+        func openInformation() {
+            Scenario.tap(app, "gamePlaybackMenu"); Scenario.tap(app, "경기 계획·출전 선수")
+            XCTAssertTrue(Scenario.element(app, "gameLineupComparison").waitForExistence(timeout: 15))
+        }
+        openInformation()
+        for (side, slot) in [("home", 1), ("away", 1), ("home", 9)] {
+            let id = "gameLineup-" + side + "-" + String(slot), button = app.buttons[id]
+            let scroll = app.scrollViews["gameInformationScroll"]
+            for _ in 0..<12 where !button.isHittable {
+                if button.exists && button.frame.midY < scroll.frame.minY { scroll.swipeDown(velocity: .slow) }
+                else { scroll.swipeUp(velocity: .slow) }
+            }
+            XCTAssertTrue(button.waitForExistence(timeout: 10)); XCTAssertTrue(button.isHittable)
+            XCTAssertTrue(button.label.contains(slot == 9 ? "ERA 선두" : side == "home" ? "타율 선두" : "홈런 선두"))
+            button.tap()
+            XCTAssertTrue(app.buttons["closeLineupPlayerDetail"].waitForExistence(timeout: 10))
+            XCTAssertTrue(Scenario.element(app, "gameLineupPlayerDetail").exists)
+            Scenario.capture(app, name: "V249 isolated fixture \(index) \(side) slot\(slot) player detail", test: self)
+            let detail = app.scrollViews["gameLineupPlayerDetail"]
+            let through = Scenario.element(app, "lineupDetailThrough")
+            for _ in 0..<8 where !through.isHittable { detail.swipeUp(velocity: .slow) }
+            XCTAssertTrue(through.isHittable)
+            XCTAssertTrue(through.label.contains("2026-03-31"))
+            if slot == 9 { XCTAssertTrue(app.staticTexts["ERA"].exists) }
+            Scenario.capture(app, name: "V249 isolated fixture \(index) \(side) slot\(slot) season detail", test: self)
+            Scenario.tap(app, "closeLineupPlayerDetail")
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+        }
+        Scenario.tap(app, "closeGameDetails")
+        XCTAssertEqual(Scenario.labels(app, fields), game)
+        app.terminate(); app.launch(); Scenario.waitHome(app)
+        XCTAssertEqual(Scenario.homeState(app), home)
+        Scenario.openGame(app); XCTAssertEqual(Scenario.labels(app, fields), game)
+        openInformation()
+        XCTAssertTrue(app.buttons["gameLineup-home-1"].label.contains("타율 선두"))
+        Scenario.tap(app, "closeGameDetails")
+        XCTAssertEqual(Scenario.labels(app, fields), game)
+    }
+}

@@ -26,6 +26,7 @@ import UIKit
         XCTAssertEqual(b.home.entries[8].name, "대주자")
         XCTAssertEqual(b.home.entries[8].note, "최태현 대신"); XCTAssertNil(b.home.entries[8].position)
         XCTAssertEqual(b.away.entries[8].name, "손상우"); XCTAssertEqual(b.away.entries[8].position, "구원 투수")
+        XCTAssertEqual(b.away.entries[8].note, "안승현 대신 등판")
         XCTAssertEqual(b.home.status(slot: 1), "현재 타자"); XCTAssertEqual(b.home.status(slot: 2), "다음 타자")
         XCTAssertEqual(projection(before), a)
     }
@@ -132,5 +133,103 @@ import UIKit
             let attachment = XCTAttachment(image: image); attachment.name = "P04 C lineup \(Int(viewport.width)) \(size)"
             attachment.lifetime = .keepAlways; add(attachment)
         }
+    }
+}
+
+extension MatchLineupComparisonTests {
+    private func v249FrozenMatch() -> CareerMatch {
+        var match = InplayIntegrationTests().makeMatch()
+        match.lineupSeasons = [true, false].map { home in
+            let team = home ? match.playerRecords!.home : match.playerRecords!.away
+            var batting = MatchBattingCounts()
+            batting.plateAppearances = 20; batting.atBats = 20; batting.singles = home ? 7 : 8
+            batting.homeRuns = home ? 2 : 0
+            let row = MatchOpponentSeasonPlayer(id: team.lineup[0], battingGames: 5, pitchingGames: 0,
+                earnedRunGames: 0, unscoredPitchingGames: 0, batting: batting, pitching: MatchPitchingCounts())
+            var season = MatchOpponentSeason(version: 1, year: 2026, competition: "highschool",
+                teamID: team.teamID, through: "2026-06-07", uncollectedGames: 0, players: [row])
+            season.honors = [LeagueHonor(playerID: row.id, teamID: team.teamID,
+                kind: home ? .homeRuns : .average, value: home ? 2 : 0.4, tied: false, final: false)]
+            return season
+        }
+        return match
+    }
+    private func v249Projection(_ match: CareerMatch, date: String = "2026-06-08") -> MatchLineupComparison {
+        MatchLineupComparison(match: match, fixtureID: "integration-205", careerName: "내 선수",
+            homeName: "서울북악고", awayName: "한강청운고", gameDate: date)
+    }
+    func testV249BothTeamsReadFrozenHonorsStatsAndActualAbilityWithoutMutation() throws {
+        let match = v249FrozenMatch(), before = match
+        _ = try match.validatedLineupSeasons(on: GameDate("2026-06-08"), fixtureID: "integration-205")
+        let view = v249Projection(match)
+        XCTAssertEqual(view.home.entries[0].honors.first?.label, "홈런 선두")
+        XCTAssertEqual(view.away.entries[0].honors.first?.label, "타율 선두")
+        XCTAssertEqual(view.home.entries[0].season?.value("AVG"), "0.450")
+        XCTAssertEqual(view.away.entries[0].season?.value("AVG"), "0.400")
+        XCTAssertEqual(view.home.entries[0].through, "2026-06-07")
+        XCTAssertEqual(view.home.entries[0].ratings.first(where: { $0.label == "컨택" })?.value, 70)
+        XCTAssertFalse(view.away.entries[0].ratings.isEmpty)
+        XCTAssertEqual(match, before)
+        let restored = try JSONDecoder().decode(CareerMatch.self, from: JSONEncoder().encode(match))
+        XCTAssertEqual(v249Projection(restored), view)
+        XCTAssertEqual(restored, before)
+    }
+    func testV249UnknownOldStatsRemainMissingAndWrongSnapshotsCannotDecorate() throws {
+        var legacy = v249FrozenMatch(); legacy.lineupSeasons = nil
+        let data = try JSONEncoder().encode(legacy)
+        XCTAssertNil((try JSONSerialization.jsonObject(with: data) as! [String: Any])["lineupSeasons"])
+        let old = v249Projection(try JSONDecoder().decode(CareerMatch.self, from: data))
+        XCTAssertNil(old.home.entries[0].season); XCTAssertNil(old.home.entries[0].through)
+        XCTAssertFalse(old.home.entries[0].honorsRecorded)
+        XCTAssertTrue(old.away.entries.allSatisfy { $0.honors.isEmpty })
+        XCTAssertFalse(old.home.entries[0].ratings.isEmpty)
+        var bad = v249FrozenMatch(); bad.lineupSeasons = [bad.lineupSeasons![0], bad.lineupSeasons![0]]
+        XCTAssertThrowsError(try bad.validatedLineupSeasons(on: GameDate("2026-06-08"), fixtureID: "integration-205"))
+        XCTAssertTrue(v249Projection(bad).home.entries.allSatisfy { $0.honors.isEmpty && $0.season == nil })
+        let good = v249FrozenMatch()
+        XCTAssertThrowsError(try good.validatedLineupSeasons(on: GameDate("2026-06-09"), fixtureID: "integration-205"))
+        XCTAssertThrowsError(try good.validatedLineupSeasons(on: GameDate("2026-06-08"), fixtureID: "other-game"))
+        XCTAssertTrue(v249Projection(good, date: "2026-06-09").away.entries.allSatisfy { $0.honors.isEmpty })
+    }
+    func testV249SnapshotWithUnknownPlayerKeepsMissingSeparateFromNoHonor() throws {
+        var match = v249FrozenMatch()
+        match.lineupSeasons![0].honors = []
+        let result = v249Projection(match)
+        XCTAssertTrue(result.home.entries[0].honorsRecorded)
+        XCTAssertTrue(result.home.entries[0].honors.isEmpty)
+        XCTAssertNotNil(result.home.entries[0].season)
+        XCTAssertNil(result.home.entries[1].season)
+        XCTAssertNotNil(result.home.entries[1].through)
+        match.lineupSeasons![0].honorsPending = "리그 기록 확인 중"
+        XCTAssertEqual(v249Projection(match).home.entries[0].honorsPending, "리그 기록 확인 중")
+    }
+    func testV249PitcherAndReplacementReadTheirOwnProfilesNotPreviousSlot() throws {
+        var pitcher = InplayIntegrationTests().makeMatch(role: .pitcher)
+        pitcher.abilityStats = MatchAbilityStats(mental: 91, velocity: 55, control: 66, stuff: 77, stamina: 88, fatigue: 24)
+        let ownID = pitcher.playerRecords!.careerID.uuidString
+        let own = try XCTUnwrap(v249Projection(pitcher).away.entries.first { $0.playerID == ownID })
+        XCTAssertEqual(own.ratings.first(where: { $0.label == "제구" })?.value, 66)
+        XCTAssertEqual(own.ratings.first(where: { $0.label == "멘탈" })?.value, 91)
+        var match = try InplayIntegrationTests().seventhInning(role: .batter)
+        let original = match.npcAttack!.away.starter.id
+        let oldRow = MatchOpponentSeasonPlayer(id: original, battingGames: 0, pitchingGames: 5, earnedRunGames: 5,
+            unscoredPitchingGames: 0, batting: MatchBattingCounts(), pitching: MatchPitchingCounts(), wins: 1)
+        match.lineupSeasons = [true, false].map { home in
+            let teamID = (home ? match.playerRecords!.home : match.playerRecords!.away).teamID
+            var season = MatchOpponentSeason(version: 1, year: 2026, competition: "highschool", teamID: teamID,
+                through: "2026-06-07", uncollectedGames: 0, players: home ? [] : [oldRow])
+            season.honors = home ? [] : [LeagueHonor(playerID: original, teamID: teamID, kind: .wins, value: 1, tied: false, final: false)]
+            return season
+        }
+        XCTAssertEqual(v249Projection(match).away.entries.flatMap(\.honors).count, 1)
+        match.balls = 3; match.strikes = 0; match.random = 2; match.settle()
+        let relief = try XCTUnwrap(v249Projection(match).away.entries.first { $0.position == "구원 투수" })
+        XCTAssertEqual(relief.playerID, match.npcAttack!.away.relief.id)
+        XCTAssertTrue(relief.honors.isEmpty); XCTAssertNil(relief.season)
+        XCTAssertEqual(relief.ratings.first(where: { $0.label == "제구" })?.value, match.npcAttack!.away.relief.control)
+        XCTAssertEqual(relief.pitches, match.npcAttack!.away.relief.pitches)
+        let reserve = try XCTUnwrap(v249Projection(match).home.entries.first { $0.roleLabel == "대주자" })
+        XCTAssertNil(reserve.position)
+        XCTAssertEqual(reserve.ratings.first(where: { $0.label == "주력" })?.value, match.runnerManagement!.home.speed)
     }
 }

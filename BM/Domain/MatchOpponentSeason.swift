@@ -11,6 +11,7 @@ struct MatchOpponentSeason: Codable, Equatable {
     let players: [MatchOpponentSeasonPlayer]
     var pitchHistory:[OpponentPitchHistory]? = nil
     var honors: [LeagueHonor]? = nil
+    var honorsPending: String? = nil
 
     func player(_ id: String) -> MatchOpponentSeasonPlayer? { players.first { $0.id == id } }
     func validate(analysis: MatchOppositionAnalysis, date: GameDate) throws {
@@ -42,6 +43,30 @@ struct MatchOpponentSeason: Codable, Equatable {
         }
     }
 }
+extension CareerMatch {
+    /// 새 경기의 양 팀 자료만 읽는다. 옛 경기의 미기록을 현재 성적으로 채우지 않는다.
+    func validatedLineupSeasons(on date: GameDate, fixtureID: String) throws -> [MatchOpponentSeason] {
+        guard let lineupSeasons else { return [] }
+        guard let roster = npcFielders, let records = playerRecords, npcAttack != nil,
+              records.fixtureID == fixtureID, lineupSeasons.count == 2,
+              Set(lineupSeasons.map(\.teamID)).count == 2,
+              Set(lineupSeasons.map(\.teamID)) == Set([roster.home.teamID, roster.away.teamID]) else {
+            throw MatchError.invalidRecord
+        }
+        for season in lineupSeasons {
+            let home = season.teamID == roster.home.teamID
+            let analysis = MatchOppositionAnalysis.make(roster: roster, isHome: !home, attack: npcAttack)
+            try season.validate(analysis: analysis, date: date)
+            if let prepared = preparation?.season, prepared.teamID == season.teamID {
+                var before = prepared, lineup = season
+                before.pitchHistory = nil; lineup.pitchHistory = nil
+                guard before == lineup else { throw MatchError.invalidRecord }
+            }
+        }
+        return lineupSeasons
+    }
+}
+
 struct MatchOpponentSeasonPlayer: Codable, Equatable {
     let id: String
     let battingGames: Int

@@ -96,6 +96,9 @@ struct CareerMatchReadSnapshot: Sendable, Equatable {
                 try roster.validate()
                 guard preparation.analysis == MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack) else {throw MatchError.invalidRecord}
             }
+            if match.lineupSeasons != nil {
+                _ = try match.validatedLineupSeasons(on: GameDate(gameDate), fixtureID: fixtureID)
+            }
             try match.npcReadiness?.validate(match:match,date:gameDate)
             try match.clubSelection?.validate(fixtureID:fixtureID,playerID:playerID,date:gameDate,competition:match.competition,appearance:match.appearance,role:match.role)
             if let selection=match.clubSelection {
@@ -223,7 +226,6 @@ struct CareerCommittedManualInput {
         if let planChoice {
             guard match.appearance,MatchPlanChoice.choices(match.role).contains(planChoice),let roster=match.npcFielders else {throw MatchError.invalidInput}
             match.preparation=MatchPreparation(version:2,fixtureID:fixture.id,choice:planChoice,analysis:MatchOppositionAnalysis.make(roster:roster,isHome:match.isHome,attack:match.npcAttack))
-            if let analysis = match.preparation?.analysis { match.preparation?.season = try opponentSeason(player: player, state: state, analysis: analysis, in: context) }
         }
         if match.appearance, match.abilityStats != nil {
             let values = try Dictionary(uniqueKeysWithValues: MatchAbilityExperience.kinds(role: player.roleRaw).map {
@@ -244,6 +246,14 @@ struct CareerCommittedManualInput {
         if match.playerRecords != nil {
             match.pitchLog=MatchPitchLog()
             match.npcReadiness=try NPCSelectionStore.readiness(playerID:player.id,attack:match.npcAttack!,date:fixture.date,in:context)
+            match.lineupSeasons = try lineupSeasons(player: player, state: state, match: match, in: context)
+            if let analysis = match.preparation?.analysis, let attack = analysis.attack,
+               var opponent = match.lineupSeasons?.first(where: { $0.teamID == analysis.teamID }) {
+                opponent.pitchHistory = try opponentPitchHistory(playerID: player.id, year: fixture.date.year,
+                    competition: attack.competition, teamID: analysis.teamID,
+                    through: fixture.date.adding(days: -1), in: context)
+                match.preparation?.season = opponent
+            }
         }
         match.enablePitchEvents()
         match.enableRunning()
@@ -790,17 +800,45 @@ extension CareerMatchStore {
         guard let attack = analysis.attack else { throw MatchError.invalidRecord }
         let cutoff = fixture.date.adding(days: -1)
         let ledger = try seasonPlayerRecords(playerID: player.id, year: fixture.date.year, competition: attack.competition, through: cutoff, in: context)
-        let rows = ledger.players.filter { $0.teamID == analysis.teamID }.map {
-            MatchOpponentSeasonPlayer(id: $0.id, battingGames: $0.battingGames, pitchingGames: $0.pitchingGames,
-                earnedRunGames: $0.earnedRunGames, unscoredPitchingGames: $0.unscoredPitchingGames, batting: $0.batting, pitching: $0.pitching, wins: $0.unscoredDecisionGames == 0 && $0.decisionGames > 0 ? $0.wins:nil)
-        }
-        var snapshot = MatchOpponentSeason(version: 1, year: fixture.date.year, competition: attack.competition, teamID: analysis.teamID,
-            through: cutoff.description, uncollectedGames: ledger.uncollectedGames, players: rows)
         let plan = try state.competition(for: player, year: fixture.date.year)
         let required = Set(plan.fixtures.filter { $0.date <= cutoff }.map(\.id))
-        snapshot.honors = LeagueHonorRules.leaders(ledger, requiredFixtureIDs: required, teamCount: plan.teamIDs.count).filter { $0.teamID == analysis.teamID }
+        let honors = LeagueHonorRules.leaders(ledger, requiredFixtureIDs: required, teamCount: plan.teamIDs.count)
+        var snapshot = seasonSnapshot(ledger: ledger, date: fixture.date, competition: attack.competition,
+            teamID: analysis.teamID, honors: honors,
+            pending: LeagueHonorRules.pendingReason(ledger, requiredFixtureIDs: required, teamCount: plan.teamIDs.count))
         snapshot.pitchHistory=try opponentPitchHistory(playerID:player.id,year:fixture.date.year,competition:attack.competition,teamID:analysis.teamID,through:cutoff,in:context)
         try snapshot.validate(analysis: analysis, date: fixture.date)
+        return snapshot
+    }
+
+    /// 경기 시작 때 한 번 조회한 원장을 양 팀에 나눠 같은 저장에 포함한다.
+    static func lineupSeasons(player: CareerPlayer, state: CareerCalendarState, match: CareerMatch, in context: ModelContext) throws -> [MatchOpponentSeason] {
+        let fixture = try today(player: player, state: state)
+        guard let roster = match.npcFielders, let attack = match.npcAttack else { throw MatchError.invalidRecord }
+        let cutoff = fixture.date.adding(days: -1)
+        let ledger = try seasonPlayerRecords(playerID: player.id, year: fixture.date.year,
+            competition: attack.competition, through: cutoff, in: context)
+        let plan = try state.competition(for: player, year: fixture.date.year)
+        let required = Set(plan.fixtures.filter { $0.date <= cutoff }.map(\.id))
+        let honors = LeagueHonorRules.leaders(ledger, requiredFixtureIDs: required, teamCount: plan.teamIDs.count)
+        let pending = LeagueHonorRules.pendingReason(ledger, requiredFixtureIDs: required, teamCount: plan.teamIDs.count)
+        return [roster.home.teamID, roster.away.teamID].map {
+            seasonSnapshot(ledger: ledger, date: fixture.date, competition: attack.competition, teamID: $0, honors: honors, pending: pending)
+        }
+    }
+
+    private static func seasonSnapshot(ledger: SeasonPlayerLedger, date: GameDate, competition: String,
+                                       teamID: String, honors: [LeagueHonor], pending: String?) -> MatchOpponentSeason {
+        let rows = ledger.players.filter { $0.teamID == teamID }.map {
+            MatchOpponentSeasonPlayer(id: $0.id, battingGames: $0.battingGames, pitchingGames: $0.pitchingGames,
+                earnedRunGames: $0.earnedRunGames, unscoredPitchingGames: $0.unscoredPitchingGames,
+                batting: $0.batting, pitching: $0.pitching,
+                wins: $0.unscoredDecisionGames == 0 && $0.decisionGames > 0 ? $0.wins : nil)
+        }
+        var snapshot = MatchOpponentSeason(version: 1, year: date.year, competition: competition, teamID: teamID,
+            through: date.adding(days: -1).description, uncollectedGames: ledger.uncollectedGames, players: rows)
+        snapshot.honors = honors.filter { $0.teamID == teamID }
+        snapshot.honorsPending = pending
         return snapshot
     }
 }
