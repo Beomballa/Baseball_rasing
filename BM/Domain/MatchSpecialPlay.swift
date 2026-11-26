@@ -7,7 +7,8 @@ struct MatchRunnerTiming {
 }
 
 /// 판정을 다시 시뮬레이션하지 않고 검증할 수 있도록 당시 입력만 고정한다.
-struct MatchSpecialContext: Codable, Equatable {
+/// 당시 입력은 불변 공유하여 중첩 타구 계산에서 큰 값 복사를 피한다.
+final class MatchSpecialContext: Codable, Equatable, Sendable {
     let before: MatchPitchState
     let ball: MatchBattedBall?
     let batter: FieldRunnerProfile?
@@ -16,8 +17,20 @@ struct MatchSpecialContext: Codable, Equatable {
     let defending: Bool
     let ownBatter: Bool
     let discipline: [String: Double]
-    var pitchDuration: Double? = nil
-    var runningID: String? = nil
+    let pitchDuration: Double?
+    let runningID: String?
+    init(before: MatchPitchState, ball: MatchBattedBall?, batter: FieldRunnerProfile?, stats: MatchFieldStats?,
+         npc: [MatchNPCPlayer]?, defending: Bool, ownBatter: Bool, discipline: [String: Double],
+         pitchDuration: Double? = nil, runningID: String? = nil) {
+        self.before=before;self.ball=ball;self.batter=batter;self.stats=stats;self.npc=npc
+        self.defending=defending;self.ownBatter=ownBatter;self.discipline=discipline
+        self.pitchDuration=pitchDuration;self.runningID=runningID
+    }
+    static func ==(lhs: MatchSpecialContext, rhs: MatchSpecialContext) -> Bool {
+        lhs.before == rhs.before && lhs.ball == rhs.ball && lhs.batter == rhs.batter && lhs.stats == rhs.stats
+            && lhs.npc == rhs.npc && lhs.defending == rhs.defending && lhs.ownBatter == rhs.ownBatter
+            && lhs.discipline == rhs.discipline && lhs.pitchDuration == rhs.pitchDuration && lhs.runningID == rhs.runningID
+    }
 
     func read(_ runner: FieldRunnerProfile) -> Double { discipline[runner.id ?? ""] ?? 60 }
     var skills: [DetailedFieldRules.Skill] { DetailedFieldRules.skills(stats: stats, defending: defending, npc: npc) }
@@ -195,7 +208,7 @@ enum MatchSpecialRules {
         return candidates.min { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }?.2 ?? source
     }
 
-    private static func clipped(_ nodes: [FieldNode], at: Double) -> [FieldNode] {
+    static func clipped(_ nodes: [FieldNode], at: Double) -> [FieldNode] {
         nodes.filter { $0.at < at } + [.init(at: at, point: FieldNode.sample(nodes, at: at))]
     }
     private static func stopped(_ runner: DetailedRunner, at: Double) -> DetailedRunner {
@@ -385,12 +398,10 @@ enum MatchSpecialRules {
         return nil
     }
 
-    static func validate(_ play: MatchDetailedPlay) throws {
-        guard let event = play.special, event.context.before.valid, event.context.before.runners.count == 3,
-              (0..<18).contains(event.context.before.half),
-              event.context.discipline.values.allSatisfy({ $0.isFinite && (0...100).contains($0) }),
-              !event.context.before.completed else { throw MatchError.invalidRecord }
-        let context = event.context
+    static func validateContext(_ context: MatchSpecialContext) throws {
+        guard context.before.valid, context.before.runners.count == 3, (0..<18).contains(context.before.half),
+              context.discipline.values.allSatisfy({ $0.isFinite && (0...100).contains($0) }),
+              !context.before.completed else { throw MatchError.invalidRecord }
         let profiles = context.before.runners.compactMap({ $0 }) + [context.batter].compactMap({ $0 })
         guard profiles.allSatisfy({ $0.speed.isFinite && (0...100).contains($0.speed) && TraitLoadout.valid($0.traits) && $0.id != nil }),
               Set(profiles.compactMap(\.id)).count == profiles.count else { throw MatchError.invalidRecord }
@@ -407,20 +418,30 @@ enum MatchSpecialRules {
                   ball.speed > 0, ball.speed < 70, ball.flight > 0, ball.flight <= 12, ball.distance > 0, ball.distance < 250,
                   context.batter != nil else { throw MatchError.invalidRecord }
         }
+    }
+
+    static func validateAfter(_ after: MatchPitchState, play: MatchDetailedPlay, before: MatchPitchState) throws {
+        let third = before.outs + play.outsAdded == 3
+        guard after.valid, after.balls == 0, after.strikes == 0,
+              after.completed == (after.half == 18 || after.half == 17 && after.home > after.away),
+              after.half == before.half + (third ? 1 : 0), after.outs == (third ? 0 : before.outs + play.outsAdded),
+              after.ids == play.afterRunners.map({ $0?.id }),
+              after.home == before.home + (before.half % 2 == 1 ? play.runs : 0),
+              after.away == before.away + (before.half % 2 == 0 ? play.runs : 0),
+              after.homeOrder == before.homeOrder + (before.half % 2 == 1 ? 1 : 0),
+              after.awayOrder == before.awayOrder + (before.half % 2 == 0 ? 1 : 0) else { throw MatchError.invalidRecord }
+    }
+
+    static func validate(_ play: MatchDetailedPlay) throws {
+        guard let event = play.special else { throw MatchError.invalidRecord }
+        let context = event.context
+        try validateContext(context)
         guard let expected = context.ball == nil ? sharedPitch(context) : field(context), expected.special != nil else { throw MatchError.invalidRecord }
         var comparison = expected
         if play.runningEvent == nil {
             guard play.review?.before == event.context.before else { throw MatchError.invalidRecord }
             if let after = play.review?.after {
-                let before = context.before, third = before.outs + play.outsAdded == 3
-                guard after.valid, after.balls == 0, after.strikes == 0,
-                      after.completed == (after.half == 18 || after.half == 17 && after.home > after.away),
-                      after.half == before.half + (third ? 1 : 0), after.outs == (third ? 0 : before.outs + play.outsAdded),
-                      after.ids == play.afterRunners.map({ $0?.id }),
-                      after.home == before.home + (before.half % 2 == 1 ? play.runs : 0),
-                      after.away == before.away + (before.half % 2 == 0 ? play.runs : 0),
-                      after.homeOrder == before.homeOrder + (before.half % 2 == 1 ? 1 : 0),
-                      after.awayOrder == before.awayOrder + (before.half % 2 == 0 ? 1 : 0) else { throw MatchError.invalidRecord }
+                try validateAfter(after, play: play, before: context.before)
             }
             comparison.review?.after = play.review?.after
         }
@@ -497,8 +518,10 @@ extension CareerMatch {
               before.runners == runnerProfiles, before.runners[0]?.own == false,
               pitchEvents?.events.count == eventCount, fieldPlays?.count == fieldCount, homeRuns?.count == homeRunCount else { return }
         let movement = MatchPitchState(self)
-        var inputs = MatchSpecialRules.context(match: self, ball: nil, batter: nil)
-        inputs.pitchDuration = pitchFlight; inputs.runningID = "running:\((running?.events.count ?? 0)+1)"
+        let source = MatchSpecialRules.context(match: self, ball: nil, batter: nil)
+        let inputs = MatchSpecialContext(before:source.before,ball:nil,batter:nil,stats:source.stats,npc:source.npc,
+            defending:source.defending,ownBatter:source.ownBatter,discipline:source.discipline,
+            pitchDuration:pitchFlight,runningID:"running:\((running?.events.count ?? 0)+1)")
         if let play = MatchSpecialRules.sharedPitch(inputs) { applyRunning(play, before: before, movement: movement) }
     }
 
@@ -508,37 +531,40 @@ extension CareerMatch {
               specialRulesVersion != nil || !plays.contains(where: { $0.special != nil }) else { throw MatchError.invalidRecord }
         for play in plays {
             guard let event = play.special else { continue }
-            let context = event.context
-            var frame = self
-            frame.half = play.half
-            frame.homeOrder = context.before.homeOrder; frame.awayOrder = context.before.awayOrder
-            frame.runnerManagement?.changes = (runnerManagement?.changes ?? []).filter {
-                $0.half < play.half || $0.half == play.half && $0.order <= context.before.order
-            }
-            let change = pitching?.change(home: isHome)
-            let ownActive = change.map { play.half < $0.half || play.half == $0.half && context.before.order < $0.order } ?? true
-            let expectedDefense = (play.half % 2 == 1) != isHome && appearance && (role != "pitcher" || ownActive)
-            guard context.stats == fieldStats, context.before.half == play.half, context.before.order == play.order,
-                  context.npc == frame.npcDefenders, context.defending == expectedDefense,
-                  context.ownBatter == (context.batter?.own == true),
-                  context.before.ids.compactMap({ $0 }).allSatisfy({ id in
-                      let attack = play.half % 2 == 1 ? playerRecords?.home : playerRecords?.away
-                      return attack?.batting.contains(where: { $0.id == id }) == true
-                  }) else { throw MatchError.invalidRecord }
-            if context.ball != nil, let traces = playerRecords?.plateTrace {
-                guard let trace = traces.first(where: { $0.half == play.half && $0.order == play.order }),
-                      trace.batter == context.batter?.id, trace.outsBefore == context.before.outs,
-                      trace.beforeHome == context.before.home, trace.beforeAway == context.before.away,
-                      trace.beforeRunners == context.before.ids,
-                      trace.afterRunners == play.review?.after?.ids else { throw MatchError.invalidRecord }
-            }
-            for runner in context.before.runners.compactMap({ $0 }) + [context.batter].compactMap({ $0 }) {
-                guard let id = runner.id else { throw MatchError.invalidRecord }
-                let reserve = runnerManagement?.reserve(home: play.half % 2 == 1)
-                let expected = id == playerRecords?.careerID.uuidString ? discipline : reserve?.id == id ? reserve!.discipline
-                    : npcAttack?.team(home: play.half % 2 == 1).batters.first { $0.id == id }?.discipline ?? 60
-                guard context.discipline[id] == expected else { throw MatchError.invalidRecord }
-            }
+            try validateFieldContext(event.context, play: play)
         }
     }
+    func validateFieldContext(_ context: MatchSpecialContext, play: MatchDetailedPlay) throws {
+        var frame = self
+        frame.half = play.half
+        frame.homeOrder = context.before.homeOrder; frame.awayOrder = context.before.awayOrder
+        frame.runnerManagement?.changes = (runnerManagement?.changes ?? []).filter {
+            $0.half < play.half || $0.half == play.half && $0.order <= context.before.order
+        }
+        let change = pitching?.change(home: isHome)
+        let ownActive = change.map { play.half < $0.half || play.half == $0.half && context.before.order < $0.order } ?? true
+        let expectedDefense = (play.half % 2 == 1) != isHome && appearance && (role != "pitcher" || ownActive)
+        guard context.stats == fieldStats, context.before.half == play.half, context.before.order == play.order,
+              context.npc == frame.npcDefenders, context.defending == expectedDefense,
+              context.ownBatter == (context.batter?.own == true),
+              context.before.ids.compactMap({ $0 }).allSatisfy({ id in
+                  let attack = play.half % 2 == 1 ? playerRecords?.home : playerRecords?.away
+                  return attack?.batting.contains(where: { $0.id == id }) == true
+              }) else { throw MatchError.invalidRecord }
+        if context.ball != nil, let traces = playerRecords?.plateTrace {
+            guard let trace = traces.first(where: { $0.half == play.half && $0.order == play.order }),
+                  trace.batter == context.batter?.id, trace.outsBefore == context.before.outs,
+                  trace.beforeHome == context.before.home, trace.beforeAway == context.before.away,
+                  trace.beforeRunners == context.before.ids,
+                  trace.afterRunners == play.review?.after?.ids else { throw MatchError.invalidRecord }
+        }
+        for runner in context.before.runners.compactMap({ $0 }) + [context.batter].compactMap({ $0 }) {
+            guard let id = runner.id else { throw MatchError.invalidRecord }
+            let reserve = runnerManagement?.reserve(home: play.half % 2 == 1)
+            let expected = id == playerRecords?.careerID.uuidString ? discipline : reserve?.id == id ? reserve!.discipline
+                : npcAttack?.team(home: play.half % 2 == 1).batters.first { $0.id == id }?.discipline ?? 60
+            guard context.discipline[id] == expected else { throw MatchError.invalidRecord }
+        }
+    }
+
 }

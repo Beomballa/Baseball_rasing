@@ -141,7 +141,9 @@ extension CareerMatch {
         let attack=npcAttack.map {"-attack\($0.version)"} ?? ""
         let review=fieldReviewVersion.map {"-review\($0)"} ?? ""
         let special = specialRulesVersion.map {"-special\($0)"} ?? ""
-        let pitch = review + special + (pitchEvents.map { "-pitchEvents\($0.version)" } ?? "") + (running.map { "-running\($0.version)" } ?? "")
+        let appeal = appealRulesVersion.map {"-appeal\($0)"} ?? ""
+        let official = officialReview.map {"-official\($0.version)"} ?? ""
+        let pitch = review + special + appeal + official + (pitchEvents.map { "-pitchEvents\($0.version)" } ?? "") + (running.map { "-running\($0.version)" } ?? "")
         return "\(competition ?? "highschool")/\(role.rawValue)/manual2-training1-field5-stats\(fieldStats!.version)-ability1-pitching1\(batted)\(npc)\(attack)\(pitch)-events\(perf.version)/\(position)/" + (perf.version == 2 ? (perf.inputs?.mode.suffix ?? "unknown") : perf.manual ? "manual-unverified":"auto-v1")
     }
 }
@@ -188,7 +190,7 @@ struct ScoutingReference: Codable, Equatable {
             for game in 0..<count {
                 var match = fixture(role:role,position:position,values:profile,seed:UInt64(811_001+index*1_000+game),home:game%2 == 0,tracked:tracked,
                     battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,npcAttackVersion:environment.contains("-attack2-") ? 2:environment.contains("-attack1-") ? 1:nil,
-                    pitchEventsVersion: environment.contains("-pitchEvents1-") ? 1 : nil, runningVersion: environment.contains("-running1-") ? 1 : nil, fieldReviewVersion:environment.contains("-review1-") ? 1:nil, specialRulesVersion:environment.contains("-special1-") ? 1:nil)
+                    pitchEventsVersion: environment.contains("-pitchEvents1-") ? 1 : nil, runningVersion: environment.contains("-running1-") ? 1 : nil, fieldReviewVersion:environment.contains("-review1-") ? 1:nil, specialRulesVersion:environment.contains("-special1-") ? 1:nil, appealRulesVersion:environment.contains("-appeal1-") ? 1:nil, officialReviewVersion:environment.contains("-official1-") ? 1:nil)
                 // Empty input counts initially identify automatic; match rules/position must still match exactly.
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}
                 try run(&match,mode:mode ?? .automatic)
@@ -216,7 +218,7 @@ struct ScoutingReference: Codable, Equatable {
             pitches += 1
         }
     }
-    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil,fatigue:Int=24,assessmentRoster:MatchNPCFielders?=nil,npcAttackVersion:Int?=nil,competition:String?=nil,pitchEventsVersion:Int?=nil,runningVersion:Int?=nil,fieldReviewVersion:Int?=nil,specialRulesVersion:Int?=nil) -> CareerMatch {
+    static func fixture(role: PlayerRole, position: String, values: PlayerInitialValues, seed: UInt64, home: Bool, tracked: Bool = false,battedBallVersion:Int?=nil,npcFieldersVersion:Int?=nil,fatigue:Int=24,assessmentRoster:MatchNPCFielders?=nil,npcAttackVersion:Int?=nil,competition:String?=nil,pitchEventsVersion:Int?=nil,runningVersion:Int?=nil,fieldReviewVersion:Int?=nil,specialRulesVersion:Int?=nil,appealRulesVersion:Int?=nil,officialReviewVersion:Int?=nil) -> CareerMatch {
         var match = CareerMatch(random:seed,isHome:home,role:role.rawValue,appearance:true,
             contact:values.contact,power:values.power,discipline:values.discipline,mastery:values.pitches)
         match.controlVersion=2;match.trainingEffectsVersion=1;match.detailedFieldVersion=5
@@ -239,12 +241,14 @@ struct ScoutingReference: Codable, Equatable {
             match.prepareRunnerManagement()
             match.playerRecords = MatchPlayerRecords.make(match: match,
                 careerID: UUID(uuidString: "00000000-0000-0000-0000-000000000008")!,
-                fixtureID: "running1-reference", trackEarnedRuns: true)
+                fixtureID: "running1-reference", trackEarnedRuns: true, trackPlateTrace: appealRulesVersion == 1 || officialReviewVersion == 1)
         }
         if pitchEventsVersion == 1 { match.enablePitchEvents() }
         if runningVersion == 1 { match.enableRunning() }
         if fieldReviewVersion == 1 {match.enableFieldReview()}
         if specialRulesVersion == 1 {match.enableSpecialPlays()}
+        if appealRulesVersion == 1 {match.enableAppeals()}
+        if officialReviewVersion == 1 {match.enableOfficialReviews()}
         match.settle();return match
     }
 }
@@ -1428,7 +1432,7 @@ struct OverseasEligibilitySnapshot:Codable,Equatable {
                 let roster=MatchNPCFielders.make(year:2026,competition:level,homeID:home ? ids[0]:ids[1+Int(seed%5)],awayID:home ? ids[1+Int(seed%5)]:ids[0])
                 var match=fixture(role:role,position:position,values:profile,seed:seed,home:home,tracked:true,
                     battedBallVersion:environment.contains("-batted1-") ? 1:nil,npcFieldersVersion:environment.contains("-npc1-") ? 1:nil,
-                    assessmentRoster:modern ? roster:nil,npcAttackVersion:modern ? (environment.contains("-attack2-") ? 2:1):nil,competition:modern ? level:nil, pitchEventsVersion: environment.contains("-pitchEvents1-") ? 1 : nil, runningVersion: environment.contains("-running1-") ? 1 : nil, fieldReviewVersion:environment.contains("-review1-") ? 1:nil, specialRulesVersion:environment.contains("-special1-") ? 1:nil)
+                    assessmentRoster:modern ? roster:nil,npcAttackVersion:modern ? (environment.contains("-attack2-") ? 2:1):nil,competition:modern ? level:nil, pitchEventsVersion: environment.contains("-pitchEvents1-") ? 1 : nil, runningVersion: environment.contains("-running1-") ? 1 : nil, fieldReviewVersion:environment.contains("-review1-") ? 1:nil, specialRulesVersion:environment.contains("-special1-") ? 1:nil, appealRulesVersion:environment.contains("-appeal1-") ? 1:nil, officialReviewVersion:environment.contains("-official1-") ? 1:nil)
                 match.competition=level
                 if !modern,match.npcFielders != nil {match.npcFielders=roster}
                 guard match.scoutingEnvironment?.components(separatedBy:"/").dropLast().joined(separator:"/") == environment.components(separatedBy:"/").dropLast().joined(separator:"/") else {return nil}

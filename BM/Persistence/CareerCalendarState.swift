@@ -556,17 +556,20 @@ typealias CareerLeagueGameRecord=CareerSchemaV14.LeagueGameRecord
         match.npcAttack=MatchNPCAttack.makeComplete(roster:match.npcFielders!)
         match.pitching=MatchPitching();match.fieldPlays=[];match.runnerProfiles=[nil,nil,nil]
         match.playerRecords = MatchPlayerRecords.make(match: match, careerID: playerID, fixtureID: fixture.id,
-                                                      trackEarnedRuns: true, trackDecisions: true, trackFielding: true)
+                                                      trackEarnedRuns: true, trackDecisions: true, trackFielding: true, trackPlateTrace: true)
         match.pitchLog=MatchPitchLog();match.npcReadiness=readiness
         match.enablePitchEvents()
         match.enableRunning()
         match.enableFieldReview()
         match.enableSpecialPlays()
+        match.enableAppeals()
+        match.enableOfficialReviews()
         try match.advance(.automatic)
         try match.validatePitching();try match.validateDetailedField();try match.playerRecords?.validate(match:match);try match.pitchLog?.validate(match:match)
         // Automatic games retain their result/rosters/counters, not unused replay geometry.
         try match.validatePitchEvents();try match.validateRunning()
         match.fieldPlays=[];match.homeRuns=nil;match.pitchEvents=nil
+        match.playerRecords?.plateTrace=nil;match.officialReview=nil
         return match
     }
     // Stages only today's other-team games; the caller commits these with the date transition in one save.

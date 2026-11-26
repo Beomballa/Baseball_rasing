@@ -259,6 +259,8 @@ struct CareerCommittedManualInput {
         match.enableRunning()
         match.enableFieldReview()
         match.enableSpecialPlays()
+        match.enableAppeals()
+        match.enableOfficialReviews()
         if match.appearance { match.settle() }
         try match.inningScores?.validate(match: match)
         try match.pitchLog?.validate(match:match)

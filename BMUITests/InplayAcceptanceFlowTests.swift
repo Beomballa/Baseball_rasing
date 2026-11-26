@@ -843,3 +843,52 @@ extension InplayAcceptanceFlowTests {
         XCTAssertEqual(Scenario.labels(app, fields), game)
     }
 }
+
+
+extension InplayAcceptanceFlowTests {
+    @MainActor func testP12NormalAppealReplayAndResume() throws { try p12Entry(index:0) }
+    @MainActor func testP12NormalCorrectionResultAndHistory() throws { try p12Entry(index:1) }
+    @MainActor private func p12Entry(index:Int) throws {
+        continueAfterFailure=false
+        typealias Scenario=InplayAcceptanceScenario
+        let app=XCUIApplication(bundleIdentifier:Scenario.bundleID)
+        let session=String(format:"B012B012-2026-4126-8000-%012d",index+1)
+        app.launchArguments=Scenario.gameArguments(session:session,pitcher:true)+["-qa-full-career-root"]
+        app.launch();defer {app.terminate()}
+        Scenario.waitHome(app);let home=Scenario.homeState(app);Scenario.openGame(app)
+        Scenario.waitEnabled(app.buttons["gamePitch"],app:app)
+        Scenario.capture(app,name:"P12 normal entry ready \(index)",test:self)
+        let frame=app.buttons["gamePitch"].frame
+        let touch=app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:frame.midX,dy:frame.midY))
+        touch.tap();touch.tap()
+        XCTAssertTrue(Scenario.element(app,"inplayFieldStage").waitForExistence(timeout:25))
+        let next=app.buttons["pitchEventContinue"];XCTAssertTrue(next.waitForExistence(timeout:45))
+        let summary=Scenario.element(app,"inplayLastPlaySummary").label
+        if index == 0 {XCTAssertTrue(summary.contains("어필"),summary);XCTAssertTrue(Scenario.element(app,"appealScoreStatus").exists)}
+        else {XCTAssertTrue(summary.contains("공식 기록 검토 예정"),summary)}
+        Scenario.capture(app,name:"P12 normal entry resolved \(index)",test:self)
+        Scenario.tap(app,"inplayReplayAgain");XCTAssertTrue(next.waitForExistence(timeout:45))
+        XCTAssertEqual(Scenario.element(app,"inplayLastPlaySummary").label,summary)
+        Scenario.tap(app,"pitchEventContinue")
+        Scenario.waitEnabled(app.buttons["gameAutomatic"],app:app)
+        let state=Scenario.labels(app,["careerGameInning","careerGameCount","careerGameScore","boardPitchCount"])
+        app.terminate();app.launch();Scenario.waitHome(app);XCTAssertEqual(Scenario.homeState(app),home)
+        Scenario.openGame(app);XCTAssertEqual(Scenario.labels(app,["careerGameInning","careerGameCount","careerGameScore","boardPitchCount"]),state)
+        if index == 1 {
+            Scenario.tap(app,"gameAutomatic");Scenario.tap(app,"진행하고 결과 저장")
+            XCTAssertTrue(Scenario.element(app,"gameResultSaved").waitForExistence(timeout:90))
+            Scenario.tap(app,"openGameHistory")
+            let picker=Scenario.element(app,"gameHistoryInning");XCTAssertTrue(picker.waitForExistence(timeout:10));picker.tap()
+            app.buttons.matching(identifier:"1회").element(boundBy:0).tap()
+            let correction=app.descendants(matching:.any).matching(NSPredicate(format:"identifier BEGINSWITH %@","gameHistoryCorrection-")).firstMatch
+            XCTAssertTrue(correction.waitForExistence(timeout:10))
+            let applied=app.staticTexts["정정 반영"];Scenario.reveal(applied,app:app);XCTAssertTrue(applied.isHittable)
+            XCTAssertTrue(app.staticTexts["최초 기록"].exists);XCTAssertTrue(app.staticTexts["해당 타석 1루 유지"].exists)
+            Scenario.capture(app,name:"P12 normal entry correction history",test:self)
+            XCTAssertTrue(app.staticTexts["기록 변경 이력"].exists)
+            Scenario.tap(app,"closeGameHistory")
+        }
+        try Scenario.attach(["session":session,"case":index,"summary":summary,"resumed":state,
+            "scope":"normal pitcher touch; stored abilities; replay and relaunch; correction case finishes then reads original inning"],name:"P12 normal entry audit",test:self)
+    }
+}

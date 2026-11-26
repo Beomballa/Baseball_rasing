@@ -275,53 +275,201 @@ struct FieldFlyPlay: Codable, Equatable {
     let reachAt: Double
 }
 
-struct MatchDetailedPlay: Codable, Equatable {
-    var version = 1
-    let half: Int
-    let order: Int
-    let landing: FieldPoint
-    let flight: Double
-    let fielder: Int
-    let receiver: Int
-    let ownDefense: Bool
-    let ownBatter: Bool
-    let appliedTraits: [PlayerTrait]
-    let positionDelay: Double
-    let pickupAt: Double
-    let releaseAt: Double
-    let ballAt: Double
-    let controlAt: Double
-    let targetBase: Int
-    let targetRunner: Int?
-    let force: Bool
-    let out: Bool
-    let runnerAt: Double?
-    var runners: [DetailedRunner]
-    var ball: [FieldNode]
-    var fielders: [[FieldNode]]
-    var afterRunners: [FieldRunnerProfile?]
-    let runs: Int
-    let outsAdded: Int
-    let hitBases: Int
-    var secondThrow: FieldSecondThrow?
-    var outsBefore: Int?
-    var doublePlayGrounder: Bool?
-    var fly: FieldFlyPlay?
-    var relay: FieldRelay?
-    var misplay: FieldMisplay?
-    var battedBall: MatchBattedBall?
-    var pitchEvent: MatchPitchField? = nil
-    var runningEvent: MatchRunningField? = nil
-    var review: MatchFieldReview? = nil
-    var special: MatchSpecialField? = nil
+/// 큰 타구 원장은 값 의미를 유지하되 저장 공간을 공유한다. 변경 시에만 복사해 백그라운드 계산 스택을 줄인다.
+struct MatchDetailedPlay: Codable, Equatable, Sendable {
+    private struct Payload: Codable, Equatable, Sendable {
+        var version = 1
+        let half: Int
+        let order: Int
+        let landing: FieldPoint
+        let flight: Double
+        let fielder: Int
+        let receiver: Int
+        let ownDefense: Bool
+        let ownBatter: Bool
+        let appliedTraits: [PlayerTrait]
+        let positionDelay: Double
+        let pickupAt: Double
+        let releaseAt: Double
+        let ballAt: Double
+        let controlAt: Double
+        let targetBase: Int
+        let targetRunner: Int?
+        let force: Bool
+        let out: Bool
+        let runnerAt: Double?
+        var runners: [DetailedRunner]
+        var ball: [FieldNode]
+        var fielders: [[FieldNode]]
+        var afterRunners: [FieldRunnerProfile?]
+        let runs: Int
+        let outsAdded: Int
+        let hitBases: Int
+        var secondThrow: FieldSecondThrow?
+        var outsBefore: Int?
+        var doublePlayGrounder: Bool?
+        var fly: FieldFlyPlay?
+        var relay: FieldRelay?
+        var misplay: FieldMisplay?
+        var battedBall: MatchBattedBall?
+        var pitchEvent: MatchPitchField? = nil
+        var runningEvent: MatchRunningField? = nil
+        var review: MatchFieldReview? = nil
+        var special: MatchSpecialField? = nil
+        var appeal: MatchAppealPlay? = nil
+    }
+    // 외부에는 참조를 노출하지 않는다. 서로 다른 값의 쓰기는 makeUnique에서 분리한다.
+    private final class Storage: @unchecked Sendable {
+        var value: Payload
+        init(_ value: Payload) { self.value=value }
+    }
+    private var storage: Storage
+    private mutating func makeUnique() {
+        if !isKnownUniquelyReferenced(&storage) { storage=Storage(storage.value) }
+    }
+    init(version: Int = 1,
+         half: Int,
+         order: Int,
+         landing: FieldPoint,
+         flight: Double,
+         fielder: Int,
+         receiver: Int,
+         ownDefense: Bool,
+         ownBatter: Bool,
+         appliedTraits: [PlayerTrait],
+         positionDelay: Double,
+         pickupAt: Double,
+         releaseAt: Double,
+         ballAt: Double,
+         controlAt: Double,
+         targetBase: Int,
+         targetRunner: Int?,
+         force: Bool,
+         out: Bool,
+         runnerAt: Double?,
+         runners: [DetailedRunner],
+         ball: [FieldNode],
+         fielders: [[FieldNode]],
+         afterRunners: [FieldRunnerProfile?],
+         runs: Int,
+         outsAdded: Int,
+         hitBases: Int,
+         secondThrow: FieldSecondThrow? = nil,
+         outsBefore: Int? = nil,
+         doublePlayGrounder: Bool? = nil,
+         fly: FieldFlyPlay? = nil,
+         relay: FieldRelay? = nil,
+         misplay: FieldMisplay? = nil,
+         battedBall: MatchBattedBall? = nil,
+         pitchEvent: MatchPitchField? = nil,
+         runningEvent: MatchRunningField? = nil,
+         review: MatchFieldReview? = nil,
+         special: MatchSpecialField? = nil,
+         appeal: MatchAppealPlay? = nil) {
+        storage=Storage(Payload(version: version, half: half, order: order, landing: landing, flight: flight, fielder: fielder, receiver: receiver, ownDefense: ownDefense, ownBatter: ownBatter, appliedTraits: appliedTraits, positionDelay: positionDelay, pickupAt: pickupAt, releaseAt: releaseAt, ballAt: ballAt, controlAt: controlAt, targetBase: targetBase, targetRunner: targetRunner, force: force, out: out, runnerAt: runnerAt, runners: runners, ball: ball, fielders: fielders, afterRunners: afterRunners, runs: runs, outsAdded: outsAdded, hitBases: hitBases, secondThrow: secondThrow, outsBefore: outsBefore, doublePlayGrounder: doublePlayGrounder, fly: fly, relay: relay, misplay: misplay, battedBall: battedBall, pitchEvent: pitchEvent, runningEvent: runningEvent, review: review, special: special, appeal: appeal))
+    }
+    init(from decoder: Decoder) throws { storage=Storage(try Payload(from:decoder)) }
+    func encode(to encoder: Encoder) throws { try storage.value.encode(to:encoder) }
+    static func ==(lhs: Self, rhs: Self) -> Bool { lhs.storage.value == rhs.storage.value }
+    var version: Int {
+        get { storage.value.version }
+        set { makeUnique(); storage.value.version = newValue }
+    }
+    var half: Int { storage.value.half }
+    var order: Int { storage.value.order }
+    var landing: FieldPoint { storage.value.landing }
+    var flight: Double { storage.value.flight }
+    var fielder: Int { storage.value.fielder }
+    var receiver: Int { storage.value.receiver }
+    var ownDefense: Bool { storage.value.ownDefense }
+    var ownBatter: Bool { storage.value.ownBatter }
+    var appliedTraits: [PlayerTrait] { storage.value.appliedTraits }
+    var positionDelay: Double { storage.value.positionDelay }
+    var pickupAt: Double { storage.value.pickupAt }
+    var releaseAt: Double { storage.value.releaseAt }
+    var ballAt: Double { storage.value.ballAt }
+    var controlAt: Double { storage.value.controlAt }
+    var targetBase: Int { storage.value.targetBase }
+    var targetRunner: Int? { storage.value.targetRunner }
+    var force: Bool { storage.value.force }
+    var out: Bool { storage.value.out }
+    var runnerAt: Double? { storage.value.runnerAt }
+    var runners: [DetailedRunner] {
+        get { storage.value.runners }
+        set { makeUnique(); storage.value.runners = newValue }
+    }
+    var ball: [FieldNode] {
+        get { storage.value.ball }
+        set { makeUnique(); storage.value.ball = newValue }
+    }
+    var fielders: [[FieldNode]] {
+        get { storage.value.fielders }
+        set { makeUnique(); storage.value.fielders = newValue }
+    }
+    var afterRunners: [FieldRunnerProfile?] {
+        get { storage.value.afterRunners }
+        set { makeUnique(); storage.value.afterRunners = newValue }
+    }
+    var runs: Int { storage.value.runs }
+    var outsAdded: Int { storage.value.outsAdded }
+    var hitBases: Int { storage.value.hitBases }
+    var secondThrow: FieldSecondThrow? {
+        get { storage.value.secondThrow }
+        set { makeUnique(); storage.value.secondThrow = newValue }
+    }
+    var outsBefore: Int? {
+        get { storage.value.outsBefore }
+        set { makeUnique(); storage.value.outsBefore = newValue }
+    }
+    var doublePlayGrounder: Bool? {
+        get { storage.value.doublePlayGrounder }
+        set { makeUnique(); storage.value.doublePlayGrounder = newValue }
+    }
+    var fly: FieldFlyPlay? {
+        get { storage.value.fly }
+        set { makeUnique(); storage.value.fly = newValue }
+    }
+    var relay: FieldRelay? {
+        get { storage.value.relay }
+        set { makeUnique(); storage.value.relay = newValue }
+    }
+    var misplay: FieldMisplay? {
+        get { storage.value.misplay }
+        set { makeUnique(); storage.value.misplay = newValue }
+    }
+    var battedBall: MatchBattedBall? {
+        get { storage.value.battedBall }
+        set { makeUnique(); storage.value.battedBall = newValue }
+    }
+    var pitchEvent: MatchPitchField? {
+        get { storage.value.pitchEvent }
+        set { makeUnique(); storage.value.pitchEvent = newValue }
+    }
+    var runningEvent: MatchRunningField? {
+        get { storage.value.runningEvent }
+        set { makeUnique(); storage.value.runningEvent = newValue }
+    }
+    var review: MatchFieldReview? {
+        get { storage.value.review }
+        set { makeUnique(); storage.value.review = newValue }
+    }
+    var special: MatchSpecialField? {
+        get { storage.value.special }
+        set { makeUnique(); storage.value.special = newValue }
+    }
+    var appeal: MatchAppealPlay? {
+        get { storage.value.appeal }
+        set { makeUnique(); storage.value.appeal = newValue }
+    }
     var sacrificeFly: Bool { if let misplay { return misplay.sacrificeFly }; return fly?.caught == true && fielder >= 6 && runs > 0 && (outsBefore ?? 2) < 2 }
     var ownParticipation: Bool { if special?.kind == .interference || special?.kind == .passing { return false }; if let misplay { return misplay.participation }; return ownDefense || secondThrow?.ownThrower == true || relay?.ownThrower == true }
-    var outAt: Double { if let special { return special.retirements.map(\.at).max() ?? special.at }; return fly?.caught == true ? controlAt : force ? controlAt : runnerAt ?? controlAt }
-    var decisionAt: Double { if let special { return special.settledAt }; if let runningEvent { return runningEvent.settledAt }; if let pitchEvent { return pitchEvent.settledAt }; if let ruling = review?.ruling, ruling.kind != .fairBase { return max(ruling.at, runners.map(\.arrival).max() ?? 0) }; if misplay != nil { return controlAt }; return secondThrow?.decisionAt ?? (out ? outAt : max(controlAt,runnerAt ?? 0)) }
+    var outAt: Double { if let appeal { return appeal.selected.last.map { appeal.attempts[$0].at } ?? flight }; if let special { return special.retirements.map(\.at).max() ?? special.at }; return fly?.caught == true ? controlAt : force ? controlAt : runnerAt ?? controlAt }
+    var decisionAt: Double { if let appeal { return appeal.finalizedAt }; if let special { return special.settledAt }; if let runningEvent { return runningEvent.settledAt }; if let pitchEvent { return pitchEvent.settledAt }; if let ruling = review?.ruling, ruling.kind != .fairBase { return max(ruling.at, runners.map(\.arrival).max() ?? 0) }; if misplay != nil { return controlAt }; return secondThrow?.decisionAt ?? (out ? outAt : max(controlAt,runnerAt ?? 0)) }
     var duration: Double { max(decisionAt, runners.map(\.arrival).max() ?? 0) + 0.4 }
     var rbi: Int { if let special { return special.kind == .passing && hitBases > 0 ? runs : 0 }; if review?.ruling?.kind == .overthrow || review?.ruling?.kind == .foul {return 0}; if runningEvent != nil { return 0 }; if let pitchEvent { return pitchEvent.kind == .hitByPitch ? runs : 0 }; if let misplay { return misplay.rbi }; return fly?.caught == true ? runs : secondThrow != nil || out && force && targetRunner != 0 ? 0 : runs }
     var eventID: String { runningEvent?.id ?? pitchEvent?.id ?? review?.eventID ?? "\(half):\(order)" }
     var summary: String {
+        if let appeal { return appeal.label }
         if let special { return special.label }
         if let ruling = review?.ruling, ruling.kind != .fairBase { return ruling.label }
         if review?.heldAtSecond == true { return "2루 세이프 · 2루수 공 보유" }
@@ -368,6 +516,7 @@ struct MatchDetailedPlay: Codable, Equatable {
                        appliedTraits: appliedTraits, positionDelay: ownDefense ? positionDelay : nil)
     }
     func validate() throws {
+        if appeal != nil { try MatchAppealRules.validate(self); return }
         if special != nil { try MatchSpecialRules.validate(self); return }
         if runningEvent != nil { try validateRunningField(); return }
         if pitchEvent != nil { try validatePitchField(); return }
@@ -724,6 +873,8 @@ extension CareerMatch {
         try validateHomeRuns()
         try validateFieldReviews()
         try validateSpecialPlays()
+        try validateAppeals()
+        try validateOfficialReviews()
         if let npcFielders {
             try npcFielders.validate()
             guard detailedFieldVersion == 5,battedBallVersion == 1,(0...18).contains(half),homeOrder>=0,awayOrder>=0,npcFielders.competition == (competition ?? "highschool") else {throw MatchError.invalidRecord}
@@ -1228,6 +1379,7 @@ struct MatchHighlights {
         let detail: String
         let tags: [String]
         let play: Play
+        var officialRecordLabel: String? = nil
 
         var id: String { "\(half):\(order)" }
         var inningLabel: String { "\(half / 2 + 1)회 \(half.isMultiple(of: 2) ? "초" : "말")" }
@@ -1271,7 +1423,7 @@ struct MatchHighlights {
         for event in match.fieldPlays ?? [] {
             let key = Plate(half: event.half, order: event.order)
             guard byPlate[key] == nil else { continue }
-            byPlate[key] = Self.fieldRow(event)
+            byPlate[key] = Self.fieldRow(event, officialLabel: match.officialLabel(for:event))
         }
         rows = byPlate.values.sorted {
             ($0.half, $0.order) < ($1.half, $1.order)
@@ -1282,7 +1434,7 @@ struct MatchHighlights {
         filter == .all ? rows : rows.filter { $0.play.filter == filter }
     }
 
-    private static func fieldRow(_ event: MatchDetailedPlay) -> Row {
+    private static func fieldRow(_ event: MatchDetailedPlay, officialLabel: String?) -> Row {
         var tags = ["수비"]
         if event.fly != nil { tags.append("뜬공") }
         if event.relay != nil { tags.append("중계 송구") }
@@ -1291,7 +1443,13 @@ struct MatchHighlights {
         var details: [String]
         let target = event.targetBase == 4 ? "홈" : "\(event.targetBase)루"
         let fielder = positionLabel(event.fielder)
-        if let secondThrow = event.secondThrow {
+        if let appeal = event.appeal {
+            title = appeal.label; tags = ["리터치 어필"]
+            details = ["포구 뒤 어필 · 최종 3아웃 이내", "잠정 \(appeal.provisionalRuns)점 → 확정 \(event.runs)점"]
+        } else if let special = event.special {
+            title = special.label; tags = [special.dead ? "볼 데드" : "인플레이"]
+            details = ["주자·야수의 실제 동선 판정"]
+        } else if let secondThrow = event.secondThrow {
             title = secondThrow.out ? "병살 성공" : "병살 무산"
             tags += ["병살 시도", title]
             details = [secondThrow.out ? "2루 아웃 → 1루 아웃" : "2루 아웃 → 1루 세이프"]
@@ -1333,7 +1491,7 @@ struct MatchHighlights {
         if event.ownParticipation { tags.append("내 수비") }
 
         return Row(half: event.half, order: event.order, title: title,
-                   detail: details.joined(separator: " · "), tags: tags, play: .field(event))
+                   detail: details.joined(separator: " · "), tags: tags, play: .field(event), officialRecordLabel:officialLabel)
     }
 
     private static func positionLabel(_ index: Int) -> String {

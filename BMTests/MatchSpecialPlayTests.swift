@@ -18,7 +18,7 @@ final class MatchSpecialPlayTests: XCTestCase {
             pitchDuration: 0.9, runningID: "running:1")
     }
 
-    private func fieldInput(_ kind: MatchSpecialField.Kind, outs: Int = 1, inherited: Bool = false) -> MatchSpecialContext {
+    func fieldInput(_ kind: MatchSpecialField.Kind, outs: Int = 1, inherited: Bool = false) -> MatchSpecialContext {
         let setup: Int, angleIndex: Int, directionIndex: Int
         switch kind {
         case .interference: (setup,angleIndex,directionIndex) = (5,0,17)

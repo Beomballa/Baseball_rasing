@@ -988,7 +988,7 @@ struct CareerGameView: View {
             half = play.half
             runs = play.runs
             alreadySaved = match.fieldPlays?.contains { $0.eventID == play.eventID } == true || match.pitchEvents?.events.contains { $0.id == play.eventID } == true || match.running?.events.contains { $0.id == play.eventID } == true
-            summary = activeRunningEvent?.label ?? activePitchEvent?.label ?? hit ?? play.summary
+            summary = activeRunningEvent?.label ?? activePitchEvent?.label ?? displaySnapshot.match?.officialLabel(for:play) ?? hit ?? play.summary
             emphasizesHit = hit != nil
             reviewsField = play.review != nil
         case .homeRun(let homeRun):
@@ -1114,7 +1114,7 @@ struct CareerGameView: View {
                 ownTeamFielding: (play.half % 2 == 0) == match.isHome, stadium: stadium,
                 scoreText: "H \((arrivedSnapshot ?? match).homeScore) : \((arrivedSnapshot ?? match).awayScore) A",
                 handoff: fieldHandoff, playbackMode: fieldPlaybackMode, preparesMotion: preparesFieldMotion,
-                preparation: fieldPreparation, canvasWidth: width, showsHitReceipt: false, onProgress: { time in
+                preparation: fieldPreparation, canvasWidth: width, showsHitReceipt: false, officialRecordLabel: displaySnapshot.match?.officialLabel(for:play), onProgress: { time in
                     if let event = activeRunningEvent, event.id == play.eventID, let saved = displaySnapshot.match {
                         arrivedSnapshot = event.displayMatch(at: time, saved: saved)
                     } else if let saved = displaySnapshot.match,play.review != nil {
@@ -1993,7 +1993,7 @@ private struct MatchHighlightReplayScreen: View {
                     }
                     replayBoard
                     if finished, case .field(let play) = row.play {
-                        FieldReplayDetails(play: play).frame(maxWidth: .infinity, alignment: .leading)
+                        FieldReplayDetails(play: play, officialRecordLabel: row.officialRecordLabel).frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(ManagementTheme.Space.inline)
@@ -2017,7 +2017,7 @@ private struct MatchHighlightReplayScreen: View {
             DetailedFieldReplayBoard(play: play, appearance: appearance, jerseyNumber: jerseyNumber,
                                      ownPosition: ownPosition, throwingHand: throwingHand, ownTeamFielding: ownTeamFielding,
                                      stadium: stadium, scoreText: "REPLAY", playbackMode: playbackMode,
-                                     complete: { finished = true })
+                                     officialRecordLabel: row.officialRecordLabel, complete: { finished = true })
         }
     }
 }

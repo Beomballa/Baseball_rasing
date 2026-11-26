@@ -697,17 +697,18 @@ enum FieldReplayPresentation {
         return (bag, badge)
     }
 
-    static func resultTitle(_ play:MatchDetailedPlay) -> String {
+    static func resultTitle(_ play:MatchDetailedPlay, officialRecordLabel:String? = nil) -> String {
+        if officialRecordLabel != nil, let error=play.misplay {return error.kind == .fielding ? "포구 놓침":"송구 놓침"}
         if let ruling=play.review?.ruling {
             switch ruling.kind {case .foul:return "FOUL";case .groundRuleDouble:return "GROUND-RULE DOUBLE";case .overthrow:return "BALL DEAD";case .fairBase:break}
         }
         if let error=play.misplay {return error.kind == .fielding ? "포구 실책":"악송구"}
         return play.secondThrow?.out == true ? "DOUBLE PLAY":play.fly?.caught == true && play.targetRunner == nil ? "CATCH · OUT":play.out ? "OUT":"SAFE"
     }
-    static func errorDetail(_ play:MatchDetailedPlay,ownTeamFielding:Bool) -> String? {
+    static func errorDetail(_ play:MatchDetailedPlay,ownTeamFielding:Bool,officialRecordLabel:String? = nil) -> String? {
         guard let error=play.misplay else {return nil}
         let positions=["투수","포수","1루수","2루수","3루수","유격수","좌익수","중견수","우익수"]
-        let result=error.reachedOnError ? "실책 출루 · 안타 제외":error.ordinaryHitBases>0 ? "안타 인정 · 실책 별도":error.extraBases.isEmpty ? "실책으로 주자 생존":"실책으로 추가 진루"
+        let result=officialRecordLabel ?? (error.reachedOnError ? "실책 출루 · 안타 제외":error.ordinaryHitBases>0 ? "안타 인정 · 실책 별도":error.extraBases.isEmpty ? "실책으로 주자 생존":"실책으로 추가 진루")
         return "\(ownTeamFielding ? "우리 팀":"상대 팀") \(positions[error.fielder]) · \(result)"
     }
     static func stageHeight(width:CGFloat,available:CGFloat,accessibility:Bool=false) -> CGFloat {
@@ -1894,6 +1895,7 @@ struct DetailedFieldReplayBoard:View {
     var preparation:FieldReplayPreparation?=nil
     var canvasWidth: CGFloat? = nil
     var showsHitReceipt = true
+    var officialRecordLabel: String? = nil
     var onProgress: @MainActor (Double) -> Void = { _ in }
     var onResolved:@MainActor () -> Void = {}
     let complete:@MainActor () -> Void
@@ -1953,7 +1955,7 @@ struct DetailedFieldReplayBoard:View {
             MatchRenderMetrics.mark("imagesReady")
             #endif
             if usesSpriteKit {
-                let next=InplayFieldScene(replay:playback,sprites:sprites,prepared:images,scoreText:scoreText,stadium:stadium,backupRoutes:routes)
+                let next=InplayFieldScene(replay:playback,sprites:sprites,prepared:images,scoreText:scoreText,stadium:stadium,backupRoutes:routes,officialRecordLabel:officialRecordLabel)
                 #if DEBUG
                 MatchRenderMetrics.mark("sceneCreated")
                 #endif
@@ -2022,14 +2024,16 @@ struct DetailedFieldReplayBoard:View {
             }.aspectRatio(3.0/2,contentMode:.fit)
                 .frame(width: canvasWidth, height: canvasWidth.map { $0 * 2/3 })
                 .overlay {MatchFieldRulingOverlay(play:play,time:time)}
-                .accessibilityLabel(finished ? "도트 수비 주루 재생 · "+play.summary:"인플레이 · "+(play.runningEvent?.label ?? play.pitchEvent?.summary ?? (play.fly == nil ? "땅볼":"공중 타구")))
-                .accessibilityValue(finished ? FieldReplayPresentation.errorDetail(play,ownTeamFielding:ownTeamFielding ?? !play.ownBatter) ?? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
+                .overlay {MatchInplayRuleOverlay(play:play,time:time)}
+                .accessibilityLabel(finished ? "도트 수비 주루 재생 · "+(officialRecordLabel ?? play.summary):"인플레이 · "+(play.runningEvent?.label ?? play.pitchEvent?.summary ?? (play.fly == nil ? "땅볼":"공중 타구")))
+                .accessibilityValue(finished ? officialRecordLabel ?? FieldReplayPresentation.errorDetail(play,ownTeamFielding:ownTeamFielding ?? !play.ownBatter) ?? "플레이 완료":"진행 \(Int(min(1,time/max(0.001,play.duration))*100))%")
                 .accessibilityIdentifier("fieldReplayCanvas").id("fieldGraphic")
             if play.review != nil {
-                Text(finished ? play.summary:FieldReplayPresentation.phase(play,time:time,finished:false))
+                Text(finished ? officialRecordLabel ?? play.summary:FieldReplayPresentation.phase(play,time:time,finished:false))
                     .font(.system(.subheadline,design:.monospaced,weight:.bold)).foregroundStyle(GameTheme.gold)
                     .frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true)
                     .padding(.horizontal,8).padding(.vertical,6).accessibilityIdentifier("fieldReplayPhase")
+                MatchInplayRuleNotice(play:play,time:time)
                 MatchFieldReviewNotice(play:play,time:time)
             }
             if finished, showsHitReceipt, let label = FieldReplayPresentation.confirmedHitLabel(play) {
@@ -2121,8 +2125,8 @@ struct DetailedFieldReplayBoard:View {
                                      at: CGPoint(x: layout.badge.midX, y: layout.badge.midY))
                     }
                     if finished && FieldReplayPresentation.confirmedHitLabel(play) == nil {
-                        let label=FieldReplayPresentation.resultTitle(play)
-                        let detail=FieldReplayPresentation.errorDetail(play,ownTeamFielding:defenseOwn)
+                        let label=FieldReplayPresentation.resultTitle(play,officialRecordLabel:officialRecordLabel)
+                        let detail=FieldReplayPresentation.errorDetail(play,ownTeamFielding:defenseOwn,officialRecordLabel:officialRecordLabel)
                         let frame=CGRect(x:size.width*(detail == nil ? 0.18:0.04),y:size.height*0.27,width:size.width*(detail == nil ? 0.64:0.92),height:detail == nil ? 32:78)
                         context.fill(Path(frame),with:.color(GameTheme.board.opacity(0.96)))
                         context.stroke(Path(frame),with:.color(GameTheme.gold),lineWidth:2)
@@ -2139,6 +2143,7 @@ struct DetailedFieldReplayBoard:View {
 
 struct FieldReplayDetails: View {
     let play:MatchDetailedPlay
+    var officialRecordLabel: String? = nil
     @State private var expanded=false
     var body: some View {
         DisclosureGroup("플레이 상세",isExpanded:$expanded) {
@@ -2150,7 +2155,7 @@ struct FieldReplayDetails: View {
                 if let error=play.misplay {
                     Text("실책 \(error.at,specifier:"%.2f")초 → 회수 \(error.recoveredAt,specifier:"%.2f")초 · 추가 \(error.extraBases.values.reduce(0,+))베이스")
                         .font(.subheadline.monospaced()).foregroundStyle(GameTheme.gold).accessibilityIdentifier("fieldReplayMisplayTimes")
-                    Text(error.reachedOnError ? "실책 출루 · 안타 제외" : "정상 타격 기록 유지 · 실책 추가 진루 분리")
+                    Text(officialRecordLabel ?? (error.reachedOnError ? "실책 출루 · 안타 제외" : "정상 타격 기록 유지 · 실책 추가 진루 분리"))
                         .font(.subheadline).foregroundStyle(GameTheme.boardInk).accessibilityIdentifier("fieldReplayMisplayScoring")
                 }
                 if let relay=play.relay {
@@ -2791,6 +2796,7 @@ struct InplayStartupReadiness {
     private let result=SKNode()
     private let hitSafe = SKNode()
     private let stadium:StadiumIdentity
+    private let officialRecordLabel:String?
     private var venueScoreboard:InplayStadiumArt.Scoreboard?
     private var stadiumDress:StadiumSceneDress?
     private var actors:[ActorNode]=[]
@@ -2847,9 +2853,9 @@ struct InplayStartupReadiness {
         self.init(replay:.homeRun(event),sprites:sprites,prepared:prepared,scoreText:scoreText,stadium:stadium)
     }
     init(replay:InplayReplay,sprites:FieldReplaySprites,prepared:FieldRasterArt.Prepared,scoreText:String,stadium:StadiumIdentity = .legacy,
-         backupRoutes:[Int:FieldBackupRoutes.Route]? = nil) {
+         backupRoutes:[Int:FieldBackupRoutes.Route]? = nil, officialRecordLabel:String? = nil) {
         self.replay=replay;self.sprites=sprites;self.prepared=prepared;self.stadium=stadium
-        self.backupRoutes=backupRoutes ?? replay.backupRoutes
+        self.backupRoutes=backupRoutes ?? replay.backupRoutes;self.officialRecordLabel=officialRecordLabel
         super.init(size:Self.fieldSize)
         scaleMode = .aspectFit;backgroundColor=UIColor(GameTheme.board);addChild(content)
         if let texture=InplayStadiumArt.backgroundTexture(for:stadium) {
@@ -2945,9 +2951,9 @@ struct InplayStartupReadiness {
         case .field(let p):
             guard FieldReplayPresentation.confirmedHitLabel(p) == nil else { return }
             let doublePlay=p.secondThrow?.out == true
-            detail=doublePlay ? "2루 아웃 → 1루 아웃" : FieldReplayPresentation.errorDetail(p,ownTeamFielding:sprites.ownTeamFielding ?? !p.ownBatter)
+            detail=doublePlay ? "2루 아웃 → 1루 아웃" : FieldReplayPresentation.errorDetail(p,ownTeamFielding:sprites.ownTeamFielding ?? !p.ownBatter,officialRecordLabel:officialRecordLabel)
             frame=CGRect(x:size.width*(detail == nil ? 0.18:0.04),y:size.height*0.27,width:size.width*(detail == nil ? 0.64:0.92),height:detail == nil ? 32:78)
-            title=doublePlay ? "DOUBLE PLAY · 병살" : FieldReplayPresentation.resultTitle(p);home=false
+            title=doublePlay ? "DOUBLE PLAY · 병살" : FieldReplayPresentation.resultTitle(p,officialRecordLabel:officialRecordLabel);home=false
         case .homeRun(let h):
             frame = HomeRunPresentation.resultFrame(size: size)
             title = h.resultTitle

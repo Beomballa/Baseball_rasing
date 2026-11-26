@@ -26,6 +26,8 @@ struct MatchGameHistory: Identifiable, Equatable {
         let runs: Int
         let scorers: String?
         let changes: [Change]
+        var correction: MatchHistoryCorrection? = nil
+        var teamID: String? = nil
         var title: String { "\(order % 9 + 1)번 \(batter)" }
     }
     struct Side: Equatable {
@@ -154,15 +156,22 @@ struct MatchGameHistory: Identifiable, Equatable {
                 ? event.scoring.compactMap { name($0.id, home: event.battingHome) } : []
             let scorers = runs > 0 ? (scorerNames.isEmpty ? "득점 주자 이름 미기록"
                 : scorerNames.joined(separator: "·") + (scorerNames.count < runs ? " 외 득점 주자 이름 미기록" : " 홈인")) : nil
+            let correction = match.officialReview?.changes.first { $0.id == event.id }
+            let displayed = correction.map { $0.visible(in:match) ? event.result : $0.proof.recordedResult } ?? event.result
+            let visible = correction.flatMap { change in change.visible(in:match) ? MatchHistoryCorrection(change:change,
+                teamID:team(event.battingHome)?.teamID,team:event.battingHome ? homeName:awayName,home:event.battingHome,
+                batter:name(event.batter,home:event.battingHome) ?? "타자 이름 미기록",
+                ordinal:startOrder(half:event.half).map { event.order-$0+1 }) : nil }
             return Entry(id: event.id, half: event.half, order: event.order,
                 ordinal: startOrder(half: event.half).flatMap { event.order >= $0 ? event.order - $0 + 1 : nil },
                 batter: name(event.batter, home: event.battingHome) ?? "타자 이름 미기록",
                 pitcher: name(event.pitcher, home: !event.battingHome, pitcher: true) ?? "투수 이름 미기록",
-                result: event.result, before: baseState(outs: event.outsBefore, runners: event.beforeRunners),
+                result: displayed, before: baseState(outs: event.outsBefore, runners: event.beforeRunners),
                 after: event.afterHalf == event.half ? baseState(outs: event.afterOuts, runners: event.afterRunners) : "공수교대",
                 scoreBefore: score(event.beforeHome, event.beforeAway), scoreAfter: score(event.home, event.away),
                 runs: runs, scorers: scorers,
-                changes: changes.filter { $0.half == event.half && $0.order == event.order + 1 && event.afterHalf == event.half })
+                changes: changes.filter { $0.half == event.half && $0.order == event.order + 1 && event.afterHalf == event.half },
+                correction:visible,teamID:team(event.battingHome)?.teamID)
         }
         let paired = Set(entries.flatMap(\.changes).map(\.id))
         var numbers = Set(entries.map { $0.half / 2 + 1 } + changes.map { $0.half / 2 + 1 } + pitchEvents.map { $0.before.half / 2 + 1 } + runningEvents.map { $0.before.half / 2 + 1 })
@@ -255,8 +264,7 @@ struct MatchGameHistoryView: View {
           ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("경기 이력").font(.headline).foregroundStyle(GameTheme.gold).id("history-top")
-                    Text(history.context).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
+                    Text(history.context).id("history-top").font(.subheadline).foregroundStyle(GameTheme.boardMuted)
                         .accessibilityIdentifier("gameHistoryContext")
                     Text(history.recorded ? "타석 \(history.plateCount)개 · 교체 \(history.changeCount)건"
                          : "타석별 기록 미수집 · 교체 \(history.changeCount)건")
@@ -325,14 +333,8 @@ struct MatchGameHistoryView: View {
         let stack = typeSize.isAccessibilitySize || pairWidth < columnWidth * 2 + 8
         let cellWidth = max(0, (pairWidth - 8) / 2)
         return VStack(alignment: .leading, spacing: 16) {
-            Text("행 번호는 각 팀의 이닝 내 타석 순서입니다. 원정이 초에 먼저 공격합니다.")
+            Text("행 번호는 이닝 내 타석 순서 · 원정이 초에 먼저 공격합니다.")
                 .font(.subheadline).foregroundStyle(GameTheme.boardMuted)
-            if !stack {
-                HStack(alignment: .top, spacing: 8) {
-                    teamHeading(inning.home, number: inning.number)
-                    teamHeading(inning.away, number: inning.number)
-                }.padding(.leading, 28)
-            }
             if inning.rowCount == 0 {
                 Text(history.recorded ? "순번이 확인되는 타석이 없습니다." : "타석 순번과 점수 미기록").font(.body)
             }
@@ -353,6 +355,9 @@ struct MatchGameHistoryView: View {
                                 stacked(inning, ordinal: ordinal)
                             }
                         }
+                    }
+                    ForEach((inning.home.entries+inning.away.entries).filter { $0.ordinal == ordinal }.compactMap(\.correction)) { correction in
+                        MatchRecordCorrectionCard(value:correction)
                     }
                     Rectangle().fill(GameTheme.boardLine.opacity(0.6)).frame(height: 1).accessibilityHidden(true)
                 }.accessibilityElement(children: .contain).accessibilityIdentifier("gameHistoryRow-\(ordinal)")
@@ -380,6 +385,7 @@ struct MatchGameHistoryView: View {
             if let entry = side.entry(at: ordinal) {
                 entryView(entry, team: side.name, home: side.home)
             } else {
+                teamHeading(side, number:number)
                 let reason = side.absence(at: ordinal)
                 let previous = ordinal > 1 && side.entry(at: ordinal - 1) == nil ? side.absence(at: ordinal - 1) : nil
                 Text(previous == reason ? "—" : reason).font(.subheadline).foregroundStyle(GameTheme.boardMuted)
@@ -389,6 +395,14 @@ struct MatchGameHistoryView: View {
     }
     private func entryView(_ entry: MatchGameHistory.Entry, team: String, home: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing:8) {
+                MatchTeamCrest(teamID:entry.teamID,name:team,schools:(try? SchoolCatalog.load()) ?? []).frame(width:28,height:28).accessibilityHidden(true)
+                VStack(alignment:.leading,spacing:4) {
+                    Text(team).font(.subheadline.weight(.semibold))
+                    Text("\(entry.half/2+1)회 "+(home ? "말 · 홈":"초 · 원정")).font(.footnote).foregroundStyle(GameTheme.boardMuted)
+                }
+            }.frame(maxWidth:.infinity,alignment:.leading)
+            Rectangle().fill(GameTheme.boardLine).frame(height:1).accessibilityHidden(true)
             DisclosureGroup(isExpanded: Binding(get: { selection.wrappedValue.expanded.contains(entry.id) }, set: {
                 if $0 { selection.wrappedValue.expanded.insert(entry.id) } else { selection.wrappedValue.expanded.remove(entry.id) }
             })) {
@@ -416,7 +430,8 @@ struct MatchGameHistoryView: View {
                 Text("타석 후 교체").font(.subheadline.weight(.semibold))
                 ForEach(entry.changes) { change in changeView(change) }
             }
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("gameHistoryEntry-" + entry.id)
+        }.padding(10).background(GameTheme.board).overlay(Rectangle().strokeBorder(GameTheme.boardLine,lineWidth:1))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("gameHistoryEntry-" + entry.id)
     }
     private func fact(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {

@@ -248,6 +248,8 @@ extension CareerMatch {
         applyRunning(play, before: before, movement: movement)
     }
     mutating func applyRunning(_ play: MatchDetailedPlay, before: MatchPitchState, movement: MatchPitchState) {
+        rememberOfficialRunning(play)
+        defer { closeOfficialReview() }
         let battingHome = half % 2 == 1, defendingHome = !battingHome
         let oldOuts = outs
         let goals = play.runners.filter { !$0.out && $0.destination == 4 && (!(outs + play.outsAdded == 3) || $0.arrival < play.controlAt) }

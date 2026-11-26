@@ -265,6 +265,7 @@ extension CareerMatch {
     }
     mutating func pitchLoose(before: MatchPitchState, observation: MatchCatchObservation, personal: Bool, direct: Bool, walked: Bool) {
         guard !completed else { return }
+        defer { closeOfficialReview() }
         let movement = MatchPitchState(self)
         var forced = 0
         while forced < 3 && before.runners[forced] != nil { forced += 1 }
@@ -315,6 +316,7 @@ extension CareerMatch {
             }
             for tag in responsible { defense.pitching[tag == MatchPitching.reliefID(home: !battingHome) ? 1 : 0].counts.runsAllowed += 1 }
             if var earned = records.earned {
+                rememberOfficialLoose(play, credit: credit)
                 let credits = earned.observeLoose(play, credit: credit)
                 for (tag, count) in credits {
                     let i = tag == MatchPitching.reliefID(home: !battingHome) ? 1 : 0

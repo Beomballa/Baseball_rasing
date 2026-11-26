@@ -341,10 +341,14 @@ extension CareerMatch {
                 play = revised
                 if revised.special?.kind != .obstruction { clean = revised }
             }
+            if appealRulesVersion == 1, catchesFly,
+               let appealed = MatchAppealRules.resolve(MatchSpecialRules.context(match: self, ball: shot, batter: entrant)) {
+                play = appealed; clean = appealed
+            }
             let resolvedBall = play.battedBall ?? shot
             let draws=(0..<7).map {_ in roll()}
-            let resolved = play.special == nil ? FieldMisplayRules.applying(to:play,stats:fieldStats,defending:defending,draws:draws,npc:npcDefenders) : play
-            if play.special == nil, let outside=FieldReviewRules.overthrow(match:self,ball:resolvedBall,clean:play,resolved:resolved,batter:entrant,draw:draws[1]) {
+            let resolved = play.special == nil && play.appeal == nil ? FieldMisplayRules.applying(to:play,stats:fieldStats,defending:defending,draws:draws,npc:npcDefenders) : play
+            if play.special == nil, play.appeal == nil, let outside=FieldReviewRules.overthrow(match:self,ball:resolvedBall,clean:play,resolved:resolved,batter:entrant,draw:draws[1]) {
                 play=outside
             } else {
                 play=resolved

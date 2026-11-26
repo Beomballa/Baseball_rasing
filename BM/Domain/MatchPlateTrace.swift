@@ -10,7 +10,7 @@ struct MatchPlateTrace: Codable, Equatable, Identifiable {
     let order: Int
     let batter: String
     let pitcher: String
-    let result: String
+    var result: String
     let outsBefore: Int
     let beforeHome: Int
     let beforeAway: Int

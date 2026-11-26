@@ -30,6 +30,7 @@ extension MatchDetailedPlay {
     var reviewDisplayTimes:[Double] {
         let times = [0,decisionAt,duration] + (review?.ruling.map {[$0.at]+($0.bounceAt.map {[$0]} ?? [])} ?? [])
             + runners.flatMap {$0.nodes.map(\.at)} + runners.compactMap(\.retiredAt)
+            + (appeal?.stages.map(\.at) ?? []) + (special.map { [$0.at]+($0.awardedAt.map {[$0]} ?? [])+($0.resumeAt.map {[$0]} ?? [])+$0.tags.map(\.at) } ?? [])
             + [controlAt] + (secondThrow.map {[$0.controlAt]} ?? [])
         return Array(Set(times.map {max(0,min(duration,$0))})).sorted()
     }
@@ -37,6 +38,7 @@ extension MatchDetailedPlay {
     /// 해당 타구의 전후만 읽는다. 후속 CPU 타석의 상태나 재판정을 섞지 않는다.
     func reviewDisplayMatch(at time:Double,saved:CareerMatch) -> CareerMatch? {
         guard let review,let before=review.before,let after=review.after else {return nil}
+        if appeal != nil { return appealDisplayMatch(at:time,saved:saved) }
         if time >= duration {return after.displayMatch(saved)}
         var match=before.displayMatch(saved)
         let foul=review.ruling?.kind == .foul
@@ -93,6 +95,7 @@ struct MatchFieldReviewNotice: View {
 
 extension FieldReplayPresentation {
     static func reviewedPhase(_ play:MatchDetailedPlay,time:Double) -> String? {
+        if let text = play.rulePhase(at:time) { return text }
         guard let review=play.review else {return nil}
         if let ruling=review.ruling,time >= ruling.at {
             if ruling.kind == .foul {return "파울 · 볼 데드 · 원래 루로 귀루"}
